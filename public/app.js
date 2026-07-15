@@ -7,7 +7,7 @@ let message = "";
 let messageBad = false;
 let selectedCardIds = new Set();
 let dragSelect = null;
-let suppressNextCardClick = null;
+let suppressCardClickUntil = 0;
 let activeDialog = null;
 let dismissedActionDialogKey = null;
 let messageTimer = null;
@@ -837,8 +837,8 @@ function renderRoom() {
     : "人数已满足，可以开始";
 
   renderShell(`
-    <div class="grid">
-      <div class="stack">
+    <div class="grid room-grid">
+      <div class="stack room-main">
         <section class="panel stack">
           <div class="row" style="justify-content:space-between">
             <div>
@@ -882,7 +882,7 @@ function renderRoom() {
         </section>
       </div>
 
-      <aside class="stack">
+      <aside class="stack room-sidebar">
         <section class="panel">
           <h3>玩家</h3>
           <div class="players">
@@ -1486,9 +1486,9 @@ function playStatusText(trick, play, index, current, options = {}) {
     if (play.winning) return "本轮最大";
     return play.played ? "已出" : "未出牌";
   }
-  if (trick.currentTurnPlayerId === play.playerId) return "当前出牌";
-  if (play.played) return `第${index + 1}手已出`;
-  return `第${index + 1}手`;
+  if (trick.currentTurnPlayerId === play.playerId) return "当前";
+  if (play.played) return `${index + 1}手已出`;
+  return `${index + 1}手`;
 }
 
 function playStatusTone(trick, play, current, options = {}) {
@@ -1540,8 +1540,8 @@ function seatStyle(index, total) {
   const safeTotal = Math.max(1, total);
   const angle = 90 - (360 / safeTotal) * index;
   const radian = (angle * Math.PI) / 180;
-  const xRadius = safeTotal >= 7 ? 39 : 37;
-  const yRadius = safeTotal >= 7 ? 34 : 35;
+  const xRadius = safeTotal >= 7 ? 38 : 36;
+  const yRadius = safeTotal >= 7 ? 36 : 35;
   const x = 50 + xRadius * Math.cos(radian);
   const y = 50 + yRadius * Math.sin(radian);
   return `--seat-x:${x.toFixed(2)}%;--seat-y:${y.toFixed(2)}%;`;
@@ -1768,33 +1768,61 @@ function cardIdFromEvent(event) {
   return event.target.closest("[data-card-id]")?.dataset.cardId || null;
 }
 
-function setCardSelected(cardId, selected) {
+function syncCardSelectionVisual(cardId) {
   if (!cardId) return;
+  const selected = selectedCardIds.has(cardId);
+  document.querySelectorAll("[data-card-id]").forEach((element) => {
+    if (element.dataset.cardId !== cardId) return;
+    element.classList.toggle("selected", selected);
+    element.setAttribute("aria-pressed", selected ? "true" : "false");
+  });
+}
+
+function setCardSelected(cardId, selected, syncVisual = false) {
+  if (!cardId) return false;
+  if (selectedCardIds.has(cardId) === selected) return false;
   if (selected) selectedCardIds.add(cardId);
   else selectedCardIds.delete(cardId);
+  if (syncVisual) syncCardSelectionVisual(cardId);
+  return true;
+}
+
+function suppressNextCardClick() {
+  suppressCardClickUntil = Date.now() + 500;
+}
+
+function shouldSuppressCardClick() {
+  if (!suppressCardClickUntil) return false;
+  if (Date.now() > suppressCardClickUntil) {
+    suppressCardClickUntil = 0;
+    return false;
+  }
+  suppressCardClickUntil = 0;
+  return true;
 }
 
 function toggleCard(cardId) {
   if (!cardId || !viewerCanSelectCards()) return;
-  if (selectedCardIds.has(cardId)) selectedCardIds.delete(cardId);
-  else selectedCardIds.add(cardId);
+  setCardSelected(cardId, !selectedCardIds.has(cardId));
   render();
 }
 
 function beginDragSelect(event) {
-  const cardId = cardIdFromEvent(event);
-  if (!cardId || !viewerCanSelectCards() || event.button !== 0) return;
-  suppressNextCardClick = cardId;
+  const cardElement = event.target.closest("[data-card-id]");
+  const cardId = cardElement?.dataset.cardId;
+  if (!cardId || !viewerCanSelectCards()) return;
+  if (event.pointerType === "mouse" && event.button !== 0) return;
+  suppressNextCardClick();
   dragSelect = {
     pointerId: event.pointerId,
     add: !selectedCardIds.has(cardId),
     moved: false,
-    startCardId: cardId
+    startCardId: cardId,
+    lastCardId: cardId
   };
-  setCardSelected(cardId, dragSelect.add);
-  event.target.closest("[data-card-id]")?.setPointerCapture?.(event.pointerId);
+  setCardSelected(cardId, dragSelect.add, true);
+  cardElement.setPointerCapture?.(event.pointerId);
   event.preventDefault();
-  render();
 }
 
 function continueDragSelect(event) {
@@ -1802,17 +1830,17 @@ function continueDragSelect(event) {
   const target = document.elementFromPoint(event.clientX, event.clientY)?.closest("[data-card-id]");
   const cardId = target?.dataset.cardId;
   if (!cardId || !viewerCanSelectCards()) return;
+  if (cardId === dragSelect.lastCardId) return;
   if (cardId !== dragSelect.startCardId) dragSelect.moved = true;
-  setCardSelected(cardId, dragSelect.add);
-  render();
+  dragSelect.lastCardId = cardId;
+  setCardSelected(cardId, dragSelect.add, true);
 }
 
 function endDragSelect(event) {
   if (!dragSelect || event.pointerId !== dragSelect.pointerId) return;
+  suppressNextCardClick();
   dragSelect = null;
-  window.setTimeout(() => {
-    suppressNextCardClick = null;
-  }, 0);
+  render();
 }
 
 document.addEventListener("submit", (event) => {
@@ -1872,10 +1900,7 @@ document.addEventListener("click", (event) => {
   }
   if (action === "toggle-card") {
     const cardId = cardIdFromEvent(event);
-    if (suppressNextCardClick === cardId) {
-      suppressNextCardClick = null;
-      return;
-    }
+    if (shouldSuppressCardClick()) return;
     toggleCard(cardId);
   }
   if (action === "clear-selection") {
