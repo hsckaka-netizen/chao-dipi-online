@@ -1254,6 +1254,7 @@ function renderPlayTable() {
 function renderTrick(trick, current) {
   if (!trick) return `<div class="empty">等待发牌。</div>`;
   const plays = trick.plays || [];
+  const displayPlays = current ? orderedTrickPlays(trick, plays) : plays;
   const titleMeta = current
     ? `${trick.leaderName ? `首家 ${trick.leaderName}` : "等待首家"}`
     : `${trick.winnerName ? `胜者 ${trick.winnerName} · ${trick.points} 分` : "已完成"}`;
@@ -1263,22 +1264,21 @@ function renderTrick(trick, current) {
         <span>${current ? "当前轮" : `第 ${trick.number} 轮`}</span>
         <span>${escapeHtml(titleMeta)}</span>
       </div>
-      <div class="trick-grid ${current ? `table-circle table-seats-${plays.length}` : ""}">
+      <div class="trick-grid ${current ? `table-circle table-seats-${displayPlays.length}` : ""}">
         ${current ? `
           <div class="table-center">
             <strong>第 ${trick.number} 轮</strong>
             <span>${escapeHtml(titleMeta)}</span>
           </div>
         ` : ""}
-        ${plays.map((play, index) => `
-          <div class="trick-player ${play.played ? "played" : ""} ${play.winning ? "winning" : ""}" ${current ? `style="${seatStyle(index, plays.length)}"` : ""}>
+        ${displayPlays.map((play, index) => `
+          <div class="trick-player ${play.played ? "played" : ""} ${play.winning ? "winning" : ""}" ${current ? `style="${seatStyle(index, displayPlays.length)}"` : ""}>
             <div class="trick-name">
               <strong>${escapeHtml(play.playerName)}</strong>
-              <span>${play.winning ? "本轮最大" : play.played ? fmtTime(play.at) : "未出牌"}</span>
+              <span>${escapeHtml(playStatusText(trick, play, index, current))}</span>
             </div>
             <div class="tags">
               ${play.role ? `<span class="tag ${play.role === "主" || play.role === "狗腿" ? "accent" : ""}">${escapeHtml(play.role)}</span>` : ""}
-              ${current && state.currentTrick?.currentTurnPlayerId === play.playerId ? `<span class="tag good">出牌</span>` : ""}
             </div>
             ${play.played ? renderMiniCards(play.cards) : `<div class="meta">等待出牌</div>`}
           </div>
@@ -1286,6 +1286,22 @@ function renderTrick(trick, current) {
       </div>
     </div>
   `;
+}
+
+function orderedTrickPlays(trick, plays) {
+  if (!plays.length) return plays;
+  const leaderIndex = Math.max(0, plays.findIndex((play) => play.playerId === trick.leaderId));
+  return [...plays.slice(leaderIndex), ...plays.slice(0, leaderIndex)];
+}
+
+function playStatusText(trick, play, index, current) {
+  if (!current) {
+    if (play.winning) return "本轮最大";
+    return play.played ? fmtTime(play.at) : "未出牌";
+  }
+  if (trick.currentTurnPlayerId === play.playerId) return "当前出牌";
+  if (play.played) return `第${index + 1}手已出`;
+  return `第${index + 1}手`;
 }
 
 function seatStyle(index, total) {
