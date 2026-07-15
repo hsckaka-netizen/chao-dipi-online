@@ -400,6 +400,50 @@ label {
   white-space: nowrap;
 }
 
+.player-name-line {
+  min-width: 0;
+}
+
+.name-with-role {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  max-width: 100%;
+  vertical-align: top;
+}
+
+.name-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.role-mark {
+  flex: 0 0 auto;
+  display: inline-grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #e7eee9;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 900;
+  line-height: 1;
+}
+
+.role-mark.accent {
+  background: #f8ead9;
+  color: #8a4b12;
+}
+
+.role-mark.idle {
+  background: #e5f4ec;
+  color: var(--good);
+}
+
 .player-stats {
   display: grid;
   grid-template-columns: 1fr;
@@ -755,7 +799,7 @@ label {
   width: min(var(--seat-width, 158px), 24vw);
   height: var(--seat-height, 124px);
   min-height: 0;
-  grid-template-rows: auto auto minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr);
   overflow: hidden;
   transform: translate(-50%, -50%);
   box-shadow: 0 8px 22px rgba(31, 45, 38, 0.11);
@@ -805,15 +849,24 @@ label {
 }
 
 .trick-name strong {
+  min-width: 0;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .trick-name span {
   color: var(--muted);
   font-size: 12px;
   white-space: nowrap;
+}
+
+.seat-status.good {
+  color: var(--good);
+  font-weight: 900;
+}
+
+.seat-status.accent {
+  color: #8a4b12;
+  font-weight: 900;
 }
 
 .mini-cards {

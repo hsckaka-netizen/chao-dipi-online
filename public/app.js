@@ -788,7 +788,7 @@ function renderRoom() {
         ${started && state.setup?.doglegCard ? renderDoglegPanel() : ""}
         ${started && state.stage === "finished" ? renderResultPanel() : ""}
         ${started && state.stage !== "playing" && state.stage !== "finished" ? renderSetupPanel() : ""}
-        ${started && (state.stage === "playing" || state.stage === "finished") ? renderPlayTable() : ""}
+        ${started ? renderPlayTable() : ""}
 
         <section class="panel">
           <div class="section-head">
@@ -927,7 +927,6 @@ function renderSetupPanel() {
         ${viewerCanPassBid() ? `<button type="button" class="secondary" data-action="bid-pass">过</button>` : ""}
         ${state.viewer.host && !setup.bid ? `<button type="button" class="secondary" data-action="random-bid">无人叫主，随机指定</button>` : ""}
       </div>
-      ${renderSetupPlayers("bid")}
     `;
   }
 
@@ -969,7 +968,6 @@ function renderSetupPanel() {
         ${viewerCanFry() ? `<button type="button" data-action="open-fry-dialog">选择2炒底</button>` : ""}
         ${viewerCanFry() ? `<button type="button" class="secondary" data-action="fry-pass">不炒</button>` : ""}
       </div>
-      ${renderSetupPlayers("fry")}
     `;
   }
 
@@ -1233,6 +1231,7 @@ function renderPlayTable() {
       </section>
     `;
   }
+  if (state.stage !== "playing") return renderSetupTable();
   const turnText = state.currentTrick?.currentTurnPlayerName
     ? `轮到 ${state.currentTrick.currentTurnPlayerName}`
     : "等待下一轮";
@@ -1253,6 +1252,97 @@ function renderPlayTable() {
   `;
 }
 
+function renderSetupTable() {
+  const setup = state.setup || {};
+  const titleByStage = {
+    bidding: "叫主牌桌",
+    burying: "贴底牌桌",
+    frying: "炒底牌桌",
+    "fry-burying": "炒底贴底",
+    dogleg: "狗腿牌"
+  };
+  const currentAction = setupTableActionText();
+  const seats = state.players.map((player) => {
+    const status = setupSeatStatus(player);
+    return {
+      playerId: player.id,
+      playerName: player.name,
+      role: player.role,
+      played: false,
+      winning: false,
+      cards: [],
+      cardCount: player.cardCount,
+      statusText: status.text,
+      statusTone: status.tone
+    };
+  });
+  const tableTrick = {
+    number: state.currentTrick?.number || 1,
+    leaderId: state.hostId,
+    leaderName: "",
+    points: 0,
+    plays: seats
+  };
+  return `
+    <section class="panel stack">
+      <div class="section-head">
+        <h2>${escapeHtml(titleByStage[state.stage] || "牌桌")}</h2>
+        <div class="tags">
+          <span class="tag accent">${escapeHtml(state.phase)}</span>
+          ${setup.currentTrumpSuitName ? `<span class="tag good">当前主牌 ${escapeHtml(setup.currentTrumpSuitName)}</span>` : ""}
+          ${currentAction ? `<span class="tag good">${escapeHtml(currentAction)}</span>` : ""}
+        </div>
+      </div>
+      ${renderTrick(tableTrick, true, { setupTable: true })}
+    </section>
+  `;
+}
+
+function setupTableActionText() {
+  const setup = state.setup || {};
+  const fry = setup.fry || {};
+  if (state.stage === "bidding") {
+    if (!setup.bid) return "等待玩家叫主";
+    return setup.biddingTurnPlayerName ? `轮到 ${setup.biddingTurnPlayerName} 抢主或过` : "叫主结束";
+  }
+  if (state.stage === "burying") return setup.bankerName ? `等待 ${setup.bankerName} 贴底` : "等待贴底";
+  if (state.stage === "frying") return fry.currentPlayerName ? `轮到 ${fry.currentPlayerName} 炒底或不炒` : "等待炒底";
+  if (state.stage === "fry-burying") return fry.currentPlayerName ? `等待 ${fry.currentPlayerName} 贴底` : "等待贴底";
+  if (state.stage === "dogleg") return setup.bankerName ? `等待 ${setup.bankerName} 选择狗腿牌` : "等待选择狗腿牌";
+  return "";
+}
+
+function setupSeatStatus(player) {
+  const setup = state.setup || {};
+  const fry = setup.fry || {};
+  if (state.stage === "bidding") {
+    if (!setup.bid) return { text: "等待叫主", tone: "" };
+    if (setup.biddingTurnPlayerId === player.id) return { text: "抢主/过", tone: "good" };
+    if (setup.bid?.playerId === player.id) return { text: setup.bid.random ? "随机主" : "当前叫主", tone: "accent" };
+    if ((setup.bidPassIds || []).includes(player.id)) return { text: "已过", tone: "" };
+    return { text: "等待抢主", tone: "" };
+  }
+  if (state.stage === "burying") {
+    if (setup.bankerId === player.id) return { text: "贴底", tone: "good" };
+    return { text: "等待贴底", tone: "" };
+  }
+  if (state.stage === "frying") {
+    if (fry.currentPlayerId === player.id) return { text: "炒底/过", tone: "good" };
+    if (fry.lastFryerId === player.id) return { text: "当前底牌", tone: "accent" };
+    if ((fry.passIds || []).includes(player.id)) return { text: "已过", tone: "" };
+    return { text: "等待炒底", tone: "" };
+  }
+  if (state.stage === "fry-burying") {
+    if (fry.currentPlayerId === player.id) return { text: "贴底", tone: "good" };
+    return { text: "等待贴底", tone: "" };
+  }
+  if (state.stage === "dogleg") {
+    if (setup.bankerId === player.id) return { text: "选狗腿牌", tone: "good" };
+    return { text: "等待选择", tone: "" };
+  }
+  return { text: "等待", tone: "" };
+}
+
 function visibleTableTrick() {
   const currentTrick = state.currentTrick;
   if (!currentTrick) return null;
@@ -1265,36 +1355,36 @@ function visibleTableTrick() {
 function renderTrick(trick, current, options = {}) {
   if (!trick) return `<div class="empty">等待发牌。</div>`;
   const plays = trick.plays || [];
-  const displayPlays = current ? orderedTrickPlays(trick, plays) : plays;
+  const displayPlays = plays;
   const heldResult = Boolean(options.heldResult);
+  const setupTable = Boolean(options.setupTable);
   const titleMeta = current
-    ? heldResult
+    ? setupTable
+      ? state.phase
+      : heldResult
       ? `${trick.winnerName ? `胜者 ${trick.winnerName} · ${trick.points} 分` : "上一轮结果"}`
       : `${trick.leaderName ? `首家 ${trick.leaderName}` : "等待首家"}`
     : `${trick.winnerName ? `胜者 ${trick.winnerName} · ${trick.points} 分` : "已完成"}`;
   return `
-    <div class="trick ${current ? "current" : ""} ${heldResult ? "held-result" : ""}">
+    <div class="trick ${current ? "current" : ""} ${heldResult ? "held-result" : ""} ${setupTable ? "setup-table" : ""}">
       <div class="trick-title">
-        <span>${current ? (heldResult ? "上一轮结果" : "当前轮") : `第 ${trick.number} 轮`}</span>
+        <span>${current ? (setupTable ? "当前状态" : heldResult ? "上一轮结果" : "当前轮") : `第 ${trick.number} 轮`}</span>
         <span>${escapeHtml(titleMeta)}</span>
       </div>
       <div class="trick-grid ${current ? `table-circle table-seats-${displayPlays.length}` : ""}">
         ${current ? `
           <div class="table-center">
-            <strong>${heldResult ? `第 ${trick.number} 轮结果` : `第 ${trick.number} 轮`}</strong>
+            <strong>${setupTable ? "牌桌" : heldResult ? `第 ${trick.number} 轮结果` : `第 ${trick.number} 轮`}</strong>
             <span>${escapeHtml(titleMeta)}</span>
           </div>
         ` : ""}
         ${displayPlays.map((play, index) => `
           <div class="trick-player ${play.played ? "played" : ""} ${play.winning ? "winning" : ""}" ${current ? `style="${seatStyle(index, displayPlays.length)}"` : ""}>
             <div class="trick-name">
-              <strong>${escapeHtml(play.playerName)}</strong>
-              <span>${escapeHtml(playStatusText(trick, play, index, current, { heldResult }))}</span>
+              <strong>${playerNameWithRole(play)}</strong>
+              <span class="seat-status ${escapeHtml(playStatusTone(trick, play, current, { heldResult, setupTable }))}">${escapeHtml(playStatusText(trick, play, index, current, { heldResult, setupTable }))}</span>
             </div>
-            <div class="tags">
-              ${play.role ? `<span class="tag ${play.role === "主" || play.role === "狗腿" ? "accent" : ""}">${escapeHtml(play.role)}</span>` : ""}
-            </div>
-            ${play.played ? renderMiniCards(play.cards) : `<div class="meta">等待出牌</div>`}
+            ${play.played ? renderMiniCards(play.cards) : `<div class="meta">${setupTable && Number.isFinite(play.cardCount) ? `${play.cardCount} 张` : "等待出牌"}</div>`}
           </div>
         `).join("")}
       </div>
@@ -1302,13 +1392,8 @@ function renderTrick(trick, current, options = {}) {
   `;
 }
 
-function orderedTrickPlays(trick, plays) {
-  if (!plays.length) return plays;
-  const leaderIndex = Math.max(0, plays.findIndex((play) => play.playerId === trick.leaderId));
-  return [...plays.slice(leaderIndex), ...plays.slice(0, leaderIndex)];
-}
-
 function playStatusText(trick, play, index, current, options = {}) {
+  if (options.setupTable) return play.statusText || "等待";
   if (!current) {
     if (play.winning) return "本轮最大";
     return play.played ? fmtTime(play.at) : "未出牌";
@@ -1320,6 +1405,34 @@ function playStatusText(trick, play, index, current, options = {}) {
   if (trick.currentTurnPlayerId === play.playerId) return "当前出牌";
   if (play.played) return `第${index + 1}手已出`;
   return `第${index + 1}手`;
+}
+
+function playStatusTone(trick, play, current, options = {}) {
+  if (options.setupTable) return play.statusTone || "";
+  if (options.heldResult && play.winning) return "accent";
+  if (current && trick.currentTurnPlayerId === play.playerId) return "good";
+  if (play.winning) return "accent";
+  return "";
+}
+
+function roleMark(role) {
+  if (!role) return "";
+  const text = role === "狗腿" ? "狗" : role === "主" ? "主" : "闲";
+  const tone = role === "主" || role === "狗腿" ? "accent" : "idle";
+  return `<span class="role-mark ${tone}" title="${escapeHtml(role)}">${escapeHtml(text)}</span>`;
+}
+
+function nameWithRole(name, role, suffix = "") {
+  return `
+    <span class="name-with-role">
+      ${roleMark(role)}
+      <span class="name-text">${escapeHtml(`${name}${suffix}`)}</span>
+    </span>
+  `;
+}
+
+function playerNameWithRole(play) {
+  return nameWithRole(play.playerName, play.role);
 }
 
 function seatStyle(index, total) {
@@ -1363,11 +1476,10 @@ function renderPlayer(player) {
   return `
     <div class="player">
       <div>
-        <strong>${escapeHtml(player.name)}${isMe ? "（我）" : ""}</strong>
+        <strong class="player-name-line">${nameWithRole(player.name, player.role, isMe ? "（我）" : "")}</strong>
         <div class="tags">
           ${player.host ? `<span class="tag accent">房主</span>` : ""}
           ${player.test ? `<span class="tag">测试</span>` : ""}
-          ${player.role ? `<span class="tag ${player.role === "主" || player.role === "狗腿" ? "accent" : ""}">${escapeHtml(player.role)}</span>` : ""}
           ${isTurn ? `<span class="tag good">出牌</span>` : ""}
           ${isSetupTurn || isBankerAction ? `<span class="tag good">操作</span>` : ""}
           <span class="tag ${player.connected ? "good" : ""}">${player.connected ? "在线" : "未连接"}</span>
