@@ -1113,6 +1113,7 @@ function detectPlayPattern(cards, trumpSuit) {
 
   if (suitsInCards.length !== 1) return null;
   const width = groups[0].count;
+  if (width < 2) return null;
   if (!groups.every((group) => group.count === width)) return null;
   if (groups.some((group) => group.value >= 99)) return null;
 
