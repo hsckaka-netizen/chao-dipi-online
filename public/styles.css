@@ -686,6 +686,38 @@ label {
   gap: 8px;
 }
 
+.trick-grid.table-circle {
+  position: relative;
+  display: block;
+  min-height: 430px;
+  border: 1px solid #d7e3dc;
+  border-radius: 999px;
+  background:
+    radial-gradient(circle at center, rgba(17, 106, 85, 0.1) 0 31%, transparent 32%),
+    radial-gradient(circle at center, rgba(255, 255, 255, 0.92) 0 58%, rgba(232, 238, 233, 0.78) 59% 100%);
+  overflow: hidden;
+}
+
+.table-center {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  z-index: 1;
+  display: grid;
+  gap: 4px;
+  min-width: 120px;
+  max-width: 180px;
+  transform: translate(-50%, -50%);
+  color: var(--muted);
+  text-align: center;
+  font-size: 12px;
+}
+
+.table-center strong {
+  color: var(--text);
+  font-size: 18px;
+}
+
 .trick-player {
   min-height: 88px;
   display: grid;
@@ -695,6 +727,17 @@ label {
   border-radius: 8px;
   padding: 10px;
   background: #fff;
+}
+
+.table-circle .trick-player {
+  position: absolute;
+  left: var(--seat-x);
+  top: var(--seat-y);
+  z-index: 2;
+  width: min(178px, 25vw);
+  min-height: 104px;
+  transform: translate(-50%, -50%);
+  box-shadow: 0 8px 22px rgba(31, 45, 38, 0.11);
 }
 
 .trick-player.played {
@@ -760,6 +803,10 @@ label {
   overflow: auto;
 }
 
+.history-modal {
+  width: min(860px, 100%);
+}
+
 .events {
   display: grid;
   gap: 8px;
@@ -819,6 +866,27 @@ label {
 
   .dogleg-panel {
     grid-template-columns: 1fr;
+  }
+
+  .trick-grid.table-circle {
+    display: grid;
+    grid-template-columns: 1fr;
+    min-height: 0;
+    border-radius: 8px;
+    background: transparent;
+    overflow: visible;
+  }
+
+  .table-center {
+    display: none;
+  }
+
+  .table-circle .trick-player {
+    position: static;
+    width: auto;
+    min-height: 88px;
+    transform: none;
+    box-shadow: none;
   }
 
   .result-row b {

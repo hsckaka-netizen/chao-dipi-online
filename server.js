@@ -1036,12 +1036,20 @@ function playPower(cards, trumpSuit) {
   return groups[0]?.value ?? 99;
 }
 
-function comparableWithLead(info, cards, trumpSuit) {
+function playComparisonAgainstLead(info, cards, trumpSuit) {
   const pattern = detectPlayPattern(cards, trumpSuit);
-  if (!samePattern(info.pattern, pattern)) return false;
-  if (!info.suit) return true;
+  if (!samePattern(info.pattern, pattern)) return null;
+  if (!info.suit) return { level: 1, power: playPower(cards, trumpSuit) };
   const suitsInCards = uniquePlaySuits(cards, trumpSuit);
-  return suitsInCards.length === 1 && suitsInCards[0] === info.suit;
+  if (suitsInCards.length !== 1) return null;
+  const playSuitId = suitsInCards[0];
+  if (playSuitId === info.suit) {
+    return { level: 1, power: playPower(cards, trumpSuit) };
+  }
+  if (info.suit !== "TRUMP" && playSuitId === "TRUMP") {
+    return { level: 2, power: playPower(cards, trumpSuit) };
+  }
+  return null;
 }
 
 function settleTrick(room, trick) {
@@ -1056,12 +1064,19 @@ function settleTrick(room, trick) {
   }
 
   let winningPlayIndex = 0;
-  let winningPower = playPower(trick.plays[0].cards, room.trumpSuit);
+  let winningComparison = playComparisonAgainstLead(info, trick.plays[0].cards, room.trumpSuit) || {
+    level: 1,
+    power: playPower(trick.plays[0].cards, room.trumpSuit)
+  };
   trick.plays.forEach((play, index) => {
-    if (index === 0 || !comparableWithLead(info, play.cards, room.trumpSuit)) return;
-    const power = playPower(play.cards, room.trumpSuit);
-    if (power < winningPower) {
-      winningPower = power;
+    if (index === 0) return;
+    const comparison = playComparisonAgainstLead(info, play.cards, room.trumpSuit);
+    if (!comparison) return;
+    if (
+      comparison.level > winningComparison.level ||
+      (comparison.level === winningComparison.level && comparison.power < winningComparison.power)
+    ) {
+      winningComparison = comparison;
       winningPlayIndex = index;
     }
   });

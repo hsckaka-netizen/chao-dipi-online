@@ -1052,6 +1052,7 @@ function renderActiveDialog() {
   if (activeDialog === "bid" && viewerCanBid()) return renderBidFryDialog("bid");
   if (activeDialog === "fry" && viewerCanFry()) return renderBidFryDialog("fry");
   if (activeDialog === "kitty" && state.canViewKitty) return renderKittyDialog();
+  if (activeDialog === "history") return renderHistoryDialog();
   return "";
 }
 
@@ -1223,13 +1224,12 @@ function renderPlayTable() {
       <section class="panel stack">
         <div class="section-head">
           <h2>出牌记录</h2>
-          <span class="tag">${state.trickHistory.length} 轮</span>
-        </div>
-        ${state.trickHistory.length ? `
-          <div class="history">
-            ${[...state.trickHistory].reverse().map((trick) => renderTrick(trick, false)).join("")}
+          <div class="tags">
+            <span class="tag">${state.trickHistory.length} 轮</span>
+            <button type="button" class="secondary compact-button" data-action="open-history">查看历史出牌</button>
           </div>
-        ` : `<div class="empty">本局还没有完成的历史轮。</div>`}
+        </div>
+        <div class="empty">本局已结束，可查看历史出牌回放。</div>
       </section>
     `;
   }
@@ -1243,24 +1243,17 @@ function renderPlayTable() {
         <div class="tags">
           <span class="tag accent">当前第 ${state.currentTrick?.number || 1} 轮</span>
           <span class="tag good">${escapeHtml(turnText)}</span>
+          <button type="button" class="secondary compact-button" data-action="open-history">历史出牌 ${state.trickHistory.length}</button>
         </div>
       </div>
       ${renderTrick(state.currentTrick, true)}
-      <div class="section-head compact">
-        <h3>历史出牌</h3>
-        <span class="tag">${state.trickHistory.length} 轮</span>
-      </div>
-      ${state.trickHistory.length ? `
-        <div class="history">
-          ${[...state.trickHistory].reverse().map((trick) => renderTrick(trick, false)).join("")}
-        </div>
-      ` : `<div class="empty">本局还没有完成的历史轮。</div>`}
     </section>
   `;
 }
 
 function renderTrick(trick, current) {
   if (!trick) return `<div class="empty">等待发牌。</div>`;
+  const plays = trick.plays || [];
   const titleMeta = current
     ? `${trick.leaderName ? `首家 ${trick.leaderName}` : "等待首家"}`
     : `${trick.winnerName ? `胜者 ${trick.winnerName} · ${trick.points} 分` : "已完成"}`;
@@ -1270,9 +1263,15 @@ function renderTrick(trick, current) {
         <span>${current ? "当前轮" : `第 ${trick.number} 轮`}</span>
         <span>${escapeHtml(titleMeta)}</span>
       </div>
-      <div class="trick-grid">
-        ${trick.plays.map((play) => `
-          <div class="trick-player ${play.played ? "played" : ""} ${play.winning ? "winning" : ""}">
+      <div class="trick-grid ${current ? "table-circle" : ""}">
+        ${current ? `
+          <div class="table-center">
+            <strong>第 ${trick.number} 轮</strong>
+            <span>${escapeHtml(titleMeta)}</span>
+          </div>
+        ` : ""}
+        ${plays.map((play, index) => `
+          <div class="trick-player ${play.played ? "played" : ""} ${play.winning ? "winning" : ""}" ${current ? `style="${seatStyle(index, plays.length)}"` : ""}>
             <div class="trick-name">
               <strong>${escapeHtml(play.playerName)}</strong>
               <span>${play.winning ? "本轮最大" : play.played ? fmtTime(play.at) : "未出牌"}</span>
@@ -1285,6 +1284,37 @@ function renderTrick(trick, current) {
           </div>
         `).join("")}
       </div>
+    </div>
+  `;
+}
+
+function seatStyle(index, total) {
+  const safeTotal = Math.max(1, total);
+  const angle = -90 + (360 / safeTotal) * index;
+  const radian = (angle * Math.PI) / 180;
+  const x = 50 + 40 * Math.cos(radian);
+  const y = 50 + 40 * Math.sin(radian);
+  return `--seat-x:${x.toFixed(2)}%;--seat-y:${y.toFixed(2)}%;`;
+}
+
+function renderHistoryDialog() {
+  const history = [...(state.trickHistory || [])].reverse();
+  return `
+    <div class="modal-backdrop">
+      <section class="modal-card history-modal" role="dialog" aria-modal="true" aria-label="历史出牌">
+        <div class="section-head">
+          <div>
+            <h2>历史出牌</h2>
+            <div class="meta">${history.length} 轮</div>
+          </div>
+          <button type="button" class="secondary compact-button" data-action="close-dialog">关闭</button>
+        </div>
+        ${history.length ? `
+          <div class="history">
+            ${history.map((trick) => renderTrick(trick, false)).join("")}
+          </div>
+        ` : `<div class="empty">本局还没有完成的历史轮。</div>`}
+      </section>
     </div>
   `;
 }
@@ -1333,10 +1363,11 @@ function isCounselor(card, trumpSuit) {
 
 function isFixedRankCard(card) {
   const trumpSuit = currentTrumpSuit();
+  const isPlaying = state?.stage === "playing";
   if (card.type === "joker") return true;
   if (card.rank === "2") return true;
-  if (state?.stage === "playing" && isCounselor(card, trumpSuit)) return true;
-  if (state?.stage === "playing" && trumpSuit && card.suit === trumpSuit) return true;
+  if (isPlaying && isCounselor(card, trumpSuit)) return true;
+  if (isPlaying && trumpSuit && card.suit === trumpSuit) return true;
   return (card.suit === "H" && card.rank === "5") || (card.suit === "D" && card.rank === "5");
 }
 
@@ -1366,10 +1397,20 @@ function fixedRankSort(card) {
 function sortCardsForGroup(groupId, cards) {
   return [...cards].sort((a, b) => {
     if (groupId === "rank") {
-      return fixedRankSort(a) - fixedRankSort(b) || a.deck - b.deck || a.id.localeCompare(b.id);
+      return fixedRankSort(a) - fixedRankSort(b) || fixedRankTieSort(a, b) || a.deck - b.deck || a.id.localeCompare(b.id);
     }
     return (rankSort[a.rank] ?? 99) - (rankSort[b.rank] ?? 99) || a.deck - b.deck || a.id.localeCompare(b.id);
   });
+}
+
+function fixedRankTieSort(a, b) {
+  const trumpSuit = currentTrumpSuit();
+  if (a.rank === "2" && b.rank === "2") {
+    const aMain = a.suit === trumpSuit ? 0 : 1;
+    const bMain = b.suit === trumpSuit ? 0 : 1;
+    return aMain - bMain || (suitSort[a.suit] ?? 99) - (suitSort[b.suit] ?? 99);
+  }
+  return 0;
 }
 
 function handGroups(hand) {
@@ -1560,6 +1601,10 @@ document.addEventListener("click", (event) => {
   if (action === "reset") resetRoom();
   if (action === "open-kitty") {
     activeDialog = "kitty";
+    render();
+  }
+  if (action === "open-history") {
+    activeDialog = "history";
     render();
   }
   if (action === "close-dialog") {
