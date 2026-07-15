@@ -118,6 +118,7 @@ function createPlayer(profileOrName, host = false, test = false) {
     host,
     test,
     connected: false,
+    ready: Boolean(test),
     score: 0,
     draggedRedFives: 0,
     draggedDiamondFives: 0,
@@ -221,6 +222,7 @@ function deal(room) {
     player.score = 0;
     player.draggedRedFives = 0;
     player.draggedDiamondFives = 0;
+    player.ready = false;
   });
   room.kitty = deck.slice(count * HAND_SIZE, count * HAND_SIZE + count);
   room.status = "dealt";
@@ -242,6 +244,41 @@ function deal(room) {
   };
   room.currentTrick = null;
   room.trickHistory = [];
+}
+
+function readyPlayerCount(room) {
+  return room.players.filter((player) => player.ready).length;
+}
+
+function allPlayersReady(room) {
+  return room.players.length > 0 && room.players.every((player) => player.ready);
+}
+
+function resetRoomToLobby(room, options = {}) {
+  const readyPlayerId = options.readyPlayerId || null;
+  const previousReady = new Map(room.players.map((player) => [player.id, Boolean(player.ready)]));
+  room.status = "lobby";
+  room.stage = "lobby";
+  room.phase = "等待玩家加入";
+  room.startedAt = null;
+  room.kitty = [];
+  room.kittySize = room.players.length;
+  room.bankerId = null;
+  room.trumpSuit = null;
+  room.doglegCard = null;
+  room.doglegPlayerIds = [];
+  room.doglegNeeded = room.players.length >= 7 ? 2 : 1;
+  room.result = null;
+  room.setup = { bid: null, biddingTurnPlayerId: null, passIds: [], fry: null };
+  room.currentTrick = null;
+  room.trickHistory = [];
+  room.players.forEach((player) => {
+    player.hand = [];
+    player.score = 0;
+    player.draggedRedFives = 0;
+    player.draggedDiamondFives = 0;
+    player.ready = player.test || player.id === readyPlayerId || (options.preserveReady && previousReady.get(player.id));
+  });
 }
 
 function publicCard(card) {
@@ -335,6 +372,7 @@ function playerRole(room, playerId) {
 function trickSnapshot(room, trick) {
   if (!trick) return null;
   const currentTurnPlayerId = trick === room.currentTrick ? expectedPlayerId(room) : null;
+  const turnIndexByPlayerId = new Map(playOrder(room, trick.leaderId || room.hostId).map((player, index) => [player.id, index]));
   return {
     number: trick.number,
     leaderId: trick.leaderId,
@@ -355,6 +393,7 @@ function trickSnapshot(room, trick) {
         role: playerRole(room, player.id),
         played: Boolean(play),
         winning: rawPlayIndex >= 0 && rawPlayIndex === trick.winningPlayIndex,
+        turnIndex: turnIndexByPlayerId.get(player.id) ?? null,
         at: play?.at || null,
         cards: play ? play.cards.map(publicCard) : []
       };
@@ -365,6 +404,8 @@ function trickSnapshot(room, trick) {
 function roomSnapshot(room, viewer = null) {
   const canViewKitty = Boolean(viewer && room.kitty.length && room.setup?.fry?.lastFryerId === viewer.id);
   const kittyViewerId = room.setup?.fry?.lastFryerId || null;
+  const readyCount = readyPlayerCount(room);
+  const allReady = allPlayersReady(room);
   return {
     roomId: room.id,
     status: room.status,
@@ -381,9 +422,11 @@ function roomSnapshot(room, viewer = null) {
     kitty: canViewKitty ? room.kitty.map(publicCard) : [],
     createdAt: room.createdAt,
     startedAt: room.startedAt,
+    readyCount,
+    allReady,
     hostId: room.hostId,
     setup: setupSnapshot(room),
-    viewer: viewer ? { id: viewer.id, name: viewer.name, avatarUrl: viewer.avatarUrl || "", host: viewer.host } : null,
+    viewer: viewer ? { id: viewer.id, name: viewer.name, avatarUrl: viewer.avatarUrl || "", host: viewer.host, ready: Boolean(viewer.ready) } : null,
     players: room.players.map((player) => ({
       id: player.id,
       profileId: player.profileId || null,
@@ -393,6 +436,7 @@ function roomSnapshot(room, viewer = null) {
       test: player.test,
       role: playerRole(room, player.id),
       connected: player.connected,
+      ready: Boolean(player.ready),
       score: player.score || 0,
       draggedRedFives: player.draggedRedFives || 0,
       draggedDiamondFives: player.draggedDiamondFives || 0,
@@ -509,6 +553,9 @@ function finishGame(room, completedTrick) {
   room.stage = "finished";
   room.phase = `本局结束：${teamName(winnerTeam)}获胜`;
   room.currentTrick = null;
+  room.players.forEach((player) => {
+    player.ready = Boolean(player.test);
+  });
   room.result = {
     finishedAt: now(),
     playerCount: room.players.length,
@@ -1452,6 +1499,24 @@ async function handleApi(req, res, pathParts, url) {
       return writeJson(res, 200, roomSnapshot(room, viewer));
     }
 
+    if (req.method === "POST" && pathParts[3] === "ready") {
+      const body = await readJson(req);
+      const viewer = requirePlayer(res, room, body.playerId, body.token);
+      if (!viewer) return;
+      if (room.status !== "lobby" && room.status !== "finished") return writeJson(res, 409, { error: "只有等待开局或本局结束后可以准备" });
+      const nextReady = Boolean(body.ready);
+      if (viewer.ready !== nextReady) {
+        viewer.ready = nextReady;
+        addEvent(room, `${viewer.name} ${nextReady ? "已准备" : "取消准备"}`);
+      }
+      if (room.status === "finished" && allPlayersReady(room)) {
+        resetRoomToLobby(room, { preserveReady: true });
+        addEvent(room, "所有玩家已确认再来一局，等待房主开局");
+      }
+      broadcast(room);
+      return writeJson(res, 200, roomSnapshot(room, viewer));
+    }
+
     if (req.method === "POST" && pathParts[3] === "start") {
       const body = await readJson(req);
       const viewer = playerFor(room, body.playerId, body.token);
@@ -1460,6 +1525,9 @@ async function handleApi(req, res, pathParts, url) {
       if (room.status !== "lobby") return writeJson(res, 409, { error: "牌局已经开始" });
       if (room.players.length < MIN_PLAYERS || room.players.length > MAX_PLAYERS) {
         return writeJson(res, 400, { error: `需要 ${MIN_PLAYERS}-${MAX_PLAYERS} 人才能开始` });
+      }
+      if (!allPlayersReady(room)) {
+        return writeJson(res, 409, { error: `还有玩家未准备：${readyPlayerCount(room)}/${room.players.length}` });
       }
 
       deal(room);
@@ -1606,28 +1674,31 @@ async function handleApi(req, res, pathParts, url) {
       const viewer = playerFor(room, body.playerId, body.token);
       if (!viewer) return writeJson(res, 401, { error: "玩家身份已失效" });
       if (!viewer.host) return writeJson(res, 403, { error: "只有房主可以重开" });
-      room.status = "lobby";
-      room.stage = "lobby";
-      room.phase = "等待玩家加入";
-      room.startedAt = null;
-      room.kitty = [];
-      room.kittySize = room.players.length;
-      room.bankerId = null;
-      room.trumpSuit = null;
-      room.doglegCard = null;
-      room.doglegPlayerIds = [];
-      room.doglegNeeded = room.players.length >= 7 ? 2 : 1;
-      room.result = null;
-      room.setup = { bid: null, biddingTurnPlayerId: null, passIds: [], fry: null };
-      room.currentTrick = null;
-      room.trickHistory = [];
-      room.players.forEach((player) => {
-        player.hand = [];
-        player.score = 0;
-        player.draggedRedFives = 0;
-        player.draggedDiamondFives = 0;
-      });
+      resetRoomToLobby(room);
       addEvent(room, "房主把房间重置到等待状态");
+      broadcast(room);
+      return writeJson(res, 200, roomSnapshot(room, viewer));
+    }
+
+    if (req.method === "POST" && pathParts[3] === "again") {
+      const body = await readJson(req);
+      const viewer = requirePlayer(res, room, body.playerId, body.token);
+      if (!viewer) return;
+      if (room.status === "finished") {
+        if (!viewer.ready) {
+          viewer.ready = true;
+          addEvent(room, `${viewer.name} 选择再来一局，并已自动准备`);
+        }
+        if (allPlayersReady(room)) {
+          resetRoomToLobby(room, { preserveReady: true });
+          addEvent(room, "所有玩家已确认再来一局，等待房主开局");
+        }
+      } else if (room.status === "lobby") {
+        viewer.ready = true;
+        addEvent(room, `${viewer.name} 已准备再来一局`);
+      } else {
+        return writeJson(res, 409, { error: "本局还未结束，暂不能再来一局" });
+      }
       broadcast(room);
       return writeJson(res, 200, roomSnapshot(room, viewer));
     }

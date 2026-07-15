@@ -951,13 +951,15 @@ label {
 .table-circle .mini-cards {
   max-height: 62px;
   overflow: auto;
-  gap: 4px;
+  gap: 4px 0;
   align-content: flex-start;
+  padding-left: 10px;
 }
 
 .table-circle .mini-card {
-  min-width: 30px;
+  min-width: 34px;
   min-height: 22px;
+  margin-left: -10px;
   padding: 0 5px;
   font-size: 12px;
 }
@@ -1002,21 +1004,31 @@ label {
 .mini-cards {
   display: flex;
   flex-wrap: wrap;
-  gap: 5px;
+  gap: 5px 0;
+  align-content: flex-start;
+  padding-left: 12px;
+  overflow: visible;
 }
 
 .mini-card {
+  position: relative;
+  z-index: var(--i);
   display: inline-flex;
   align-items: center;
-  justify-content: center;
+  justify-content: flex-start;
   min-height: 28px;
-  min-width: 38px;
-  padding: 0 8px;
+  min-width: 40px;
+  margin-left: -12px;
+  padding: 0 6px;
   border: 1px solid #ccd8d1;
   border-radius: 6px;
   background: #fff;
   font-size: 13px;
   font-weight: 800;
+}
+
+.mini-card:first-child {
+  margin-left: 0;
 }
 
 .mini-card.red {
@@ -1036,6 +1048,10 @@ label {
 
 .history-modal {
   width: min(860px, 100%);
+}
+
+.result-modal {
+  width: min(920px, 100%);
 }
 
 .events {

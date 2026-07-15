@@ -10,6 +10,7 @@ let dragSelect = null;
 let suppressCardClickUntil = 0;
 let activeDialog = null;
 let dismissedActionDialogKey = null;
+let dismissedResultRoomId = null;
 let messageTimer = null;
 let homeView = "rooms";
 let profiles = [];
@@ -65,6 +66,12 @@ function applyState(nextState, options = {}) {
   const previousState = state;
   const previousHandIds = new Set((state?.hand || []).map((card) => card.id));
   state = nextState;
+  if (previousState?.roomId !== nextState.roomId || nextState.status !== "finished") {
+    dismissedResultRoomId = null;
+  }
+  if (previousState?.status !== "finished" && nextState.status === "finished") {
+    dismissedResultRoomId = null;
+  }
   const notice = transitionNotice(previousState, nextState);
   if (notice && options.showTransitionNotice !== false) setMessage(notice);
   if (options.highlightNewKitty === false || !shouldHighlightNewKitty(nextState)) return false;
@@ -418,6 +425,38 @@ async function testSetupProgress() {
   }
 }
 
+async function setReady(ready) {
+  if (!session) return;
+  try {
+    applyState(await api(`/api/rooms/${session.roomId}/ready`, {
+      method: "POST",
+      body: JSON.stringify({ playerId: session.playerId, token: session.token, ready })
+    }), { highlightNewKitty: false });
+    if (state?.status === "finished") {
+      dismissedResultRoomId = ready ? state.roomId : null;
+      activeDialog = null;
+    }
+    setMessage(ready ? "已准备。" : "已取消准备。");
+  } catch (error) {
+    setMessage(error.message, true);
+  }
+}
+
+async function playAgain() {
+  if (!session) return;
+  try {
+    applyState(await api(`/api/rooms/${session.roomId}/again`, {
+      method: "POST",
+      body: JSON.stringify({ playerId: session.playerId, token: session.token })
+    }), { highlightNewKitty: false });
+    activeDialog = null;
+    dismissedResultRoomId = state?.roomId || null;
+    setMessage("已准备下一局，等待其他玩家确认。");
+  } catch (error) {
+    setMessage(error.message, true);
+  }
+}
+
 async function resetRoom() {
   if (!session) return;
   try {
@@ -447,11 +486,25 @@ function fmtTime(value) {
 }
 
 function canStart() {
-  return state?.viewer?.host && state.status === "lobby" && state.players.length >= state.minPlayers && state.players.length <= state.maxPlayers;
+  return state?.viewer?.host
+    && state.status === "lobby"
+    && state.players.length >= state.minPlayers
+    && state.players.length <= state.maxPlayers
+    && state.players.every((player) => player.ready);
 }
 
 function isViewer(playerId) {
   return state?.viewer?.id === playerId;
+}
+
+function viewerPlayer() {
+  return state?.players?.find((player) => player.id === state.viewer?.id) || null;
+}
+
+function readyStatusText() {
+  if (!state) return "";
+  const readyCount = state.readyCount ?? state.players.filter((player) => player.ready).length;
+  return `已准备 ${readyCount}/${state.players.length}`;
 }
 
 function viewerPlayedCurrent() {
@@ -734,6 +787,19 @@ function renderHandControls(action) {
   return `<div class="turn-waiting">${escapeHtml(text)}</div>`;
 }
 
+function renderReadyControls({ waitingNextRound = false } = {}) {
+  const viewer = viewerPlayer();
+  if (!viewer) return "";
+  const ready = Boolean(viewer.ready);
+  const label = ready ? (waitingNextRound ? "取消下一局准备" : "取消准备") : "准备";
+  return `<button type="button" class="${ready ? "secondary" : ""}" data-action="${ready ? "ready-off" : "ready-on"}">${escapeHtml(label)}</button>`;
+}
+
+function lobbyEmptyText(waitingNextRound) {
+  if (waitingNextRound) return `你已准备下一局，等待其他玩家确认。${readyStatusText()}。`;
+  return "房主开始后，这里会显示你的 53 张手牌。";
+}
+
 function renderShell(content) {
   app.innerHTML = `
     <div class="page">
@@ -828,13 +894,18 @@ function renderProfileRow(profile) {
 }
 
 function renderRoom() {
-  const started = state.status !== "lobby";
+  const viewer = viewerPlayer();
+  const waitingNextRound = state.status === "finished" && Boolean(viewer?.ready);
+  const inLobbyView = state.status === "lobby" || waitingNextRound;
+  const started = state.status !== "lobby" && !waitingNextRound;
   selectedCardIds = new Set([...selectedCardIds].filter((cardId) => state.hand.some((card) => card.id === cardId)));
   const action = selectionAction();
   maybeAutoOpenActionDialog();
   const waitingText = state.players.length < state.minPlayers
     ? `还差 ${state.minPlayers - state.players.length} 人才能开始`
-    : "人数已满足，可以开始";
+    : state.players.every((player) => player.ready)
+      ? "所有玩家已准备，房主可以开始"
+      : "人数已满足，等待所有玩家准备";
 
   renderShell(`
     <div class="grid room-grid">
@@ -847,7 +918,8 @@ function renderRoom() {
             </div>
             <div class="tags">
               <span class="tag accent">${state.players.length}/${state.maxPlayers} 人</span>
-              <span class="tag">${escapeHtml(state.phase)}</span>
+              <span class="tag">${escapeHtml(waitingNextRound ? "等待下一局" : state.phase)}</span>
+              ${inLobbyView ? `<span class="tag good">${escapeHtml(readyStatusText())}</span>` : ""}
               ${started ? `<span class="tag good">底牌 ${state.kittyCount} 张</span>` : ""}
               ${state.setup?.bankerName ? `<span class="tag accent">主 ${escapeHtml(state.setup.bankerName)}</span>` : ""}
               ${state.setup?.currentTrumpSuitName ? `<span class="tag good">当前主牌 ${escapeHtml(state.setup.currentTrumpSuitName)}</span>` : ""}
@@ -858,18 +930,18 @@ function renderRoom() {
             <code>${escapeHtml(shareUrl(state.roomId))}</code>
             <div class="row">
               <button type="button" data-action="copy">复制链接</button>
-              ${state.viewer.host && !started ? `<button type="button" class="secondary" data-action="add-test-players">补齐5人测试</button>` : ""}
-              ${state.viewer.host && !started ? `<button type="button" data-action="start" ${canStart() ? "" : "disabled"}>开始并发牌</button>` : ""}
+              ${inLobbyView ? renderReadyControls({ waitingNextRound }) : ""}
+              ${state.viewer.host && state.status === "lobby" ? `<button type="button" class="secondary" data-action="add-test-players">补齐5人测试</button>` : ""}
+              ${state.viewer.host && state.status === "lobby" ? `<button type="button" data-action="start" ${canStart() ? "" : "disabled"}>开始并发牌</button>` : ""}
               ${state.canViewKitty ? `<button type="button" class="secondary" data-action="open-kitty">查看底牌</button>` : ""}
               ${state.viewer.host && state.stage === "playing" ? `<button type="button" data-action="test-play-round">测试玩家自动出牌</button>` : ""}
               ${state.viewer.host && started ? `<button type="button" class="secondary" data-action="reset">重开房间</button>` : ""}
             </div>
-            ${!started ? `<div class="meta">${escapeHtml(waitingText)}。第一版支持 5-7 人。</div>` : ""}
+            ${inLobbyView ? `<div class="meta">${escapeHtml(waitingNextRound ? `你已准备下一局，等待其他玩家确认。${readyStatusText()}` : `${waitingText}。${readyStatusText()}。第一版支持 5-7 人。`)}</div>` : ""}
           </div>
         </section>
 
         ${started && state.setup?.doglegCard ? renderDoglegPanel() : ""}
-        ${started && state.stage === "finished" ? renderResultPanel() : ""}
         ${started && state.stage !== "playing" && state.stage !== "finished" ? renderSetupPanel() : ""}
         ${started ? renderPlayTable() : ""}
 
@@ -878,7 +950,7 @@ function renderRoom() {
             <h2>我的手牌 ${started ? `(${state.hand.length})` : ""}</h2>
             ${started ? renderHandControls(action) : ""}
           </div>
-          ${started ? renderHand(state.hand) : `<div class="empty">房主开始后，这里会显示你的 53 张手牌。</div>`}
+          ${started ? renderHand(state.hand) : `<div class="empty">${escapeHtml(lobbyEmptyText(waitingNextRound))}</div>`}
         </section>
       </div>
 
@@ -1134,6 +1206,8 @@ function renderActiveDialog() {
   if (activeDialog === "fry" && viewerCanFry()) return renderBidFryDialog("fry");
   if (activeDialog === "kitty" && state.canViewKitty) return renderKittyDialog();
   if (activeDialog === "history") return renderHistoryDialog();
+  if (activeDialog === "result" && state.status === "finished" && !viewerPlayer()?.ready) return renderResultPanel();
+  if (!activeDialog && state.status === "finished" && !viewerPlayer()?.ready && dismissedResultRoomId !== state.roomId) return renderResultPanel();
   return "";
 }
 
@@ -1146,55 +1220,72 @@ function signedScore(valueText, value) {
 
 function renderResultPanel() {
   const result = state.result;
-  if (!result) return `<section class="panel"><div class="empty">本局已结束，暂无结算数据。</div></section>`;
+  if (!result) return `
+    <div class="modal-backdrop">
+      <section class="modal-card result-modal" role="dialog" aria-modal="true" aria-label="总结看板">
+        <div class="empty">本局已结束，暂无结算数据。</div>
+      </section>
+    </div>
+  `;
   return `
-    <section class="panel stack result-panel">
-      <div class="section-head">
-        <h2>本局结算</h2>
+    <div class="modal-backdrop">
+      <section class="modal-card result-modal stack" role="dialog" aria-modal="true" aria-label="总结看板">
+        <div class="section-head">
+          <div>
+            <h2>总结看板</h2>
+            <div class="meta">${escapeHtml(readyStatusText())}，点击再来一局只会让你自己进入下一局准备。</div>
+          </div>
+          <div class="row">
+            <button type="button" data-action="play-again">再来一局</button>
+            <button type="button" class="secondary" data-action="leave">退出房间</button>
+            <button type="button" class="secondary compact-button" data-action="close-dialog">查看房间</button>
+          </div>
+        </div>
         <div class="tags">
           <span class="tag accent">${escapeHtml(result.winnerTeamName)}获胜</span>
           <span class="tag good">闲家 ${result.idleScore}/${result.threshold} 分</span>
+          <span class="tag">${state.trickHistory.length} 轮</span>
         </div>
-      </div>
-      <div class="result-grid">
-        <div>
-          <div class="meta">庄家队</div>
-          <strong>${escapeHtml(result.bankerTeamNames.join("、") || "无")}</strong>
-        </div>
-        <div>
-          <div class="meta">闲家队</div>
-          <strong>${escapeHtml(result.idleTeamNames.join("、") || "无")}</strong>
-        </div>
-        <div>
-          <div class="meta">保底</div>
-          <strong>${escapeHtml(result.bottomWinnerName)}（${escapeHtml(result.bottomWinnerTeamName)}）</strong>
-          <span>${result.bottomPoints} 底分${result.bottomScoreAddedToIdle ? `，闲家加 ${result.bottomScoreAddedToIdle}` : ""}</span>
-        </div>
-        <div>
-          <div class="meta">每人积分</div>
-          <strong>闲家 ${signedScore(result.idleEachScoreText, result.idleEachScore)} / 庄家 ${signedScore(result.bankerEachScoreText, result.bankerEachScore)}</strong>
-        </div>
-      </div>
-      <div class="score-breakdown">
-        <span class="tag">胜负 ${signedScore(null, result.baseScore)}</span>
-        <span class="tag">上下台阶 ${signedScore(null, result.scoreStep)}</span>
-        <span class="tag">保底 ${signedScore(null, result.bottomDelta)}</span>
-        <span class="tag">拖五 ${signedScore(null, result.draggedDelta)}</span>
-        ${result.bottomDraggedRedFives || result.bottomDraggedDiamondFives ? `<span class="tag accent">底牌拖主：红五 ${result.bottomDraggedRedFives}，方五 ${result.bottomDraggedDiamondFives}</span>` : ""}
-      </div>
-      <div class="result-table">
-        ${result.playerResults.map((player) => `
-          <div class="result-row">
-            <strong>${escapeHtml(player.name)}</strong>
-            <span>${escapeHtml(player.role || player.teamName)}</span>
-            <span>牌分 ${player.trickScore}</span>
-            <span>红五 ${player.draggedRedFives}</span>
-            <span>方五 ${player.draggedDiamondFives}</span>
-            <b>${signedScore(player.gameScoreText, player.gameScore)}</b>
+        <div class="result-grid">
+          <div>
+            <div class="meta">庄家队</div>
+            <strong>${escapeHtml(result.bankerTeamNames.join("、") || "无")}</strong>
           </div>
-        `).join("")}
-      </div>
-    </section>
+          <div>
+            <div class="meta">闲家队</div>
+            <strong>${escapeHtml(result.idleTeamNames.join("、") || "无")}</strong>
+          </div>
+          <div>
+            <div class="meta">保底</div>
+            <strong>${escapeHtml(result.bottomWinnerName)}（${escapeHtml(result.bottomWinnerTeamName)}）</strong>
+            <span>${result.bottomPoints} 底分${result.bottomScoreAddedToIdle ? `，闲家加 ${result.bottomScoreAddedToIdle}` : ""}</span>
+          </div>
+          <div>
+            <div class="meta">每人积分</div>
+            <strong>闲家 ${signedScore(result.idleEachScoreText, result.idleEachScore)} / 庄家 ${signedScore(result.bankerEachScoreText, result.bankerEachScore)}</strong>
+          </div>
+        </div>
+        <div class="score-breakdown">
+          <span class="tag">胜负 ${signedScore(null, result.baseScore)}</span>
+          <span class="tag">上下台阶 ${signedScore(null, result.scoreStep)}</span>
+          <span class="tag">保底 ${signedScore(null, result.bottomDelta)}</span>
+          <span class="tag">拖五 ${signedScore(null, result.draggedDelta)}</span>
+          ${result.bottomDraggedRedFives || result.bottomDraggedDiamondFives ? `<span class="tag accent">底牌拖主：红五 ${result.bottomDraggedRedFives}，方五 ${result.bottomDraggedDiamondFives}</span>` : ""}
+        </div>
+        <div class="result-table">
+          ${result.playerResults.map((player) => `
+            <div class="result-row">
+              <strong>${escapeHtml(player.name)}</strong>
+              <span>${escapeHtml(player.role || player.teamName)}</span>
+              <span>牌分 ${player.trickScore}</span>
+              <span>红五 ${player.draggedRedFives}</span>
+              <span>方五 ${player.draggedDiamondFives}</span>
+              <b>${signedScore(player.gameScoreText, player.gameScore)}</b>
+            </div>
+          `).join("")}
+        </div>
+      </section>
+    </div>
   `;
 }
 
@@ -1307,6 +1398,7 @@ function renderPlayTable() {
           <h2>出牌记录</h2>
           <div class="tags">
             <span class="tag">${state.trickHistory.length} 轮</span>
+            ${!viewerPlayer()?.ready ? `<button type="button" class="secondary compact-button" data-action="open-result">查看总结</button>` : ""}
             <button type="button" class="secondary compact-button" data-action="open-history">查看历史出牌</button>
           </div>
         </div>
@@ -1466,7 +1558,7 @@ function renderTrick(trick, current, options = {}) {
           <div class="trick-player ${play.played ? "played" : ""} ${play.winning ? "winning" : ""}" ${current ? `style="${seatStyle(index, displayPlays.length)}"` : ""}>
             <div class="trick-name">
               <strong>${playerNameWithRole(play)}</strong>
-              <span class="seat-status ${escapeHtml(playStatusTone(trick, play, current, { heldResult, setupTable }))}">${escapeHtml(playStatusText(trick, play, index, current, { heldResult, setupTable }))}</span>
+              <span class="seat-status ${escapeHtml(playStatusTone(trick, play, current, { heldResult, setupTable }))}">${escapeHtml(playStatusText(trick, play, play.turnIndex ?? index, current, { heldResult, setupTable }))}</span>
             </div>
             ${play.played ? renderMiniCards(play.cards) : `<div class="meta">${setupTable && Number.isFinite(play.cardCount) ? `${play.cardCount} 张` : "等待出牌"}</div>`}
           </div>
@@ -1581,6 +1673,7 @@ function renderPlayer(player) {
         <div class="tags">
           ${player.host ? `<span class="tag accent">房主</span>` : ""}
           ${player.test ? `<span class="tag">测试</span>` : ""}
+          ${state.status === "lobby" || state.status === "finished" ? `<span class="tag ${player.ready ? "good" : ""}">${player.ready ? "已准备" : "未准备"}</span>` : ""}
           ${isTurn ? `<span class="tag good">出牌</span>` : ""}
           ${isSetupTurn || isBankerAction ? `<span class="tag good">操作</span>` : ""}
           <span class="tag ${player.connected ? "good" : ""}">${player.connected ? "在线" : "未连接"}</span>
@@ -1734,8 +1827,8 @@ function renderMiniCards(cards) {
   if (!cards.length) return `<div class="meta">未出牌</div>`;
   return `
     <div class="mini-cards">
-      ${cards.map((card) => `
-        <span class="mini-card ${card.color}">${escapeHtml(card.label)}</span>
+      ${cards.map((card, index) => `
+        <span class="mini-card ${card.color}" style="--i:${index}">${escapeHtml(card.label)}</span>
       `).join("")}
     </div>
   `;
@@ -1866,6 +1959,8 @@ document.addEventListener("click", (event) => {
   if (action === "copy") copyShare();
   if (action === "add-test-players") addTestPlayers();
   if (action === "start") startGame();
+  if (action === "ready-on") setReady(true);
+  if (action === "ready-off") setReady(false);
   if (action === "bid-selected") bidSelectedCards();
   if (action === "bid-pass") passBid();
   if (action === "random-bid") randomBid();
@@ -1885,6 +1980,7 @@ document.addEventListener("click", (event) => {
   if (action === "test-play-round") testPlayRound();
   if (action === "test-setup") testSetupProgress();
   if (action === "reset") resetRoom();
+  if (action === "play-again") playAgain();
   if (action === "open-kitty") {
     activeDialog = "kitty";
     render();
@@ -1893,8 +1989,14 @@ document.addEventListener("click", (event) => {
     activeDialog = "history";
     render();
   }
+  if (action === "open-result") {
+    activeDialog = "result";
+    dismissedResultRoomId = null;
+    render();
+  }
   if (action === "close-dialog") {
     if (activeDialog === "bid" || activeDialog === "fry") dismissedActionDialogKey = actionDialogKey();
+    if (activeDialog === "result" || (!activeDialog && state?.status === "finished")) dismissedResultRoomId = state?.roomId || null;
     activeDialog = null;
     render();
   }
