@@ -1,0 +1,1606 @@
+const app = document.querySelector("#app");
+const storageKey = "chaoDipiOnlineSession";
+let session = loadSession();
+let source = null;
+let state = null;
+let message = "";
+let messageBad = false;
+let selectedCardIds = new Set();
+let dragSelect = null;
+let suppressNextCardClick = null;
+let activeDialog = null;
+let dismissedActionDialogKey = null;
+let messageTimer = null;
+
+function loadSession() {
+  try {
+    return JSON.parse(localStorage.getItem(storageKey)) || null;
+  } catch {
+    return null;
+  }
+}
+
+function saveSession(next) {
+  session = next;
+  localStorage.setItem(storageKey, JSON.stringify(next));
+}
+
+function clearSession() {
+  session = null;
+  localStorage.removeItem(storageKey);
+  if (source) source.close();
+  source = null;
+  state = null;
+  render();
+}
+
+function setMessage(text, bad = false) {
+  if (messageTimer) window.clearTimeout(messageTimer);
+  message = text;
+  messageBad = bad;
+  render();
+  if (text && !bad) {
+    messageTimer = window.setTimeout(() => {
+      if (message === text) {
+        message = "";
+        render();
+      }
+    }, 4500);
+  }
+}
+
+function shouldHighlightNewKitty(nextState) {
+  const viewerId = nextState?.viewer?.id;
+  if (!viewerId) return false;
+  if (nextState.stage === "burying") return nextState.setup?.bankerId === viewerId;
+  if (nextState.stage === "fry-burying") return nextState.setup?.fry?.currentPlayerId === viewerId;
+  return false;
+}
+
+function applyState(nextState, options = {}) {
+  const previousState = state;
+  const previousHandIds = new Set((state?.hand || []).map((card) => card.id));
+  state = nextState;
+  const notice = transitionNotice(previousState, nextState);
+  if (notice && options.showTransitionNotice !== false) setMessage(notice);
+  if (options.highlightNewKitty === false || !shouldHighlightNewKitty(nextState)) return false;
+  const newCardIds = (nextState.hand || [])
+    .filter((card) => !previousHandIds.has(card.id))
+    .map((card) => card.id);
+  if (!newCardIds.length) return false;
+  selectedCardIds = new Set(newCardIds);
+  return true;
+}
+
+function transitionNotice(previousState, nextState) {
+  if (!previousState || !nextState || previousState.roomId !== nextState.roomId) return "";
+  const previousDoglegs = new Set(previousState.setup?.doglegPlayerIds || []);
+  const newDoglegIds = (nextState.setup?.doglegPlayerIds || []).filter((playerId) => !previousDoglegs.has(playerId));
+  if (newDoglegIds.length) {
+    const names = newDoglegIds
+      .map((playerId) => nextState.players?.find((player) => player.id === playerId)?.name)
+      .filter(Boolean);
+    if (names.length) return `${names.join("、")} 打出狗腿牌，成为狗腿。`;
+  }
+  if (previousState.stage === nextState.stage) return "";
+  if (previousState.stage === "bidding" && nextState.stage === "burying") {
+    return `叫主成功：${nextState.setup?.bankerName || "主"} 成为主，已拿底等待贴底。`;
+  }
+  if ((previousState.stage === "frying" || previousState.stage === "fry-burying") && nextState.stage === "dogleg") {
+    const trump = nextState.setup?.currentTrumpSuitName || nextState.setup?.trumpSuitName || "随机花色";
+    return `炒底结束：主牌确定为${trump}，等待主选择狗腿牌。`;
+  }
+  if (previousState.stage === "dogleg" && nextState.stage === "playing") {
+    const trump = nextState.setup?.currentTrumpSuitName || nextState.setup?.trumpSuitName || "主牌";
+    return `开始出牌：主牌为${trump}。`;
+  }
+  if (previousState.stage === "playing" && nextState.stage === "finished") {
+    return `本局结束：${nextState.result?.winnerTeamName || "胜方"}获胜，闲家每人 ${nextState.result?.idleEachScoreText || 0} 分。`;
+  }
+  return "";
+}
+
+function hasCompleteKittySelection() {
+  if (!shouldHighlightNewKitty(state)) return false;
+  if (selectedCardIds.size !== state.kittySize) return false;
+  const handIds = new Set((state.hand || []).map((card) => card.id));
+  return [...selectedCardIds].every((cardId) => handIds.has(cardId));
+}
+
+function clearSelectionUnlessKitty(highlighted) {
+  if (!highlighted && !hasCompleteKittySelection()) selectedCardIds = new Set();
+}
+
+function roomFromUrl() {
+  const params = new URLSearchParams(location.search);
+  return (params.get("room") || "").toUpperCase();
+}
+
+function shareUrl(roomId) {
+  const url = new URL(location.href);
+  url.search = "";
+  url.searchParams.set("room", roomId);
+  return url.toString();
+}
+
+async function api(path, options = {}) {
+  const res = await fetch(path, {
+    ...options,
+    headers: {
+      "content-type": "application/json",
+      ...(options.headers || {})
+    }
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || "请求失败");
+  return data;
+}
+
+function connectEvents() {
+  if (!session || source) return;
+  const params = new URLSearchParams({
+    roomId: session.roomId,
+    playerId: session.playerId,
+    token: session.token
+  });
+  source = new EventSource(`/events?${params.toString()}`);
+  source.addEventListener("state", (event) => {
+    applyState(JSON.parse(event.data));
+    render();
+  });
+  source.onerror = () => {
+    setMessage("连接中断，正在等待浏览器自动重连", true);
+  };
+}
+
+async function createRoom(event) {
+  event.preventDefault();
+  const formEl = event.target.closest("form");
+  const form = new FormData(formEl);
+  try {
+    const data = await api("/api/rooms", {
+      method: "POST",
+      body: JSON.stringify({ name: form.get("name") })
+    });
+    saveSession({ roomId: data.roomId, playerId: data.playerId, token: data.token });
+    history.replaceState(null, "", `?room=${data.roomId}`);
+    applyState(data.snapshot, { highlightNewKitty: false });
+    message = "";
+    connectEvents();
+    render();
+  } catch (error) {
+    setMessage(error.message, true);
+  }
+}
+
+async function joinRoom(event) {
+  event.preventDefault();
+  const formEl = event.target.closest("form");
+  const form = new FormData(formEl);
+  const roomId = String(form.get("roomId") || "").trim().toUpperCase();
+  try {
+    const data = await api(`/api/rooms/${encodeURIComponent(roomId)}/join`, {
+      method: "POST",
+      body: JSON.stringify({ name: form.get("name") })
+    });
+    saveSession({ roomId: data.roomId, playerId: data.playerId, token: data.token });
+    history.replaceState(null, "", `?room=${data.roomId}`);
+    applyState(data.snapshot, { highlightNewKitty: false });
+    message = "";
+    connectEvents();
+    render();
+  } catch (error) {
+    setMessage(error.message, true);
+  }
+}
+
+async function startGame() {
+  if (!session) return;
+  try {
+    applyState(await api(`/api/rooms/${session.roomId}/start`, {
+      method: "POST",
+      body: JSON.stringify({ playerId: session.playerId, token: session.token })
+    }), { highlightNewKitty: false });
+    setMessage("已发牌。每个玩家现在只会看到自己的手牌。");
+  } catch (error) {
+    setMessage(error.message, true);
+  }
+}
+
+async function addTestPlayers() {
+  if (!session) return;
+  try {
+    applyState(await api(`/api/rooms/${session.roomId}/test-players`, {
+      method: "POST",
+      body: JSON.stringify({ playerId: session.playerId, token: session.token, targetCount: 5 })
+    }), { highlightNewKitty: false });
+    setMessage("已补齐到 5 人，可以本地验证发牌。");
+  } catch (error) {
+    setMessage(error.message, true);
+  }
+}
+
+async function bidSelectedCards() {
+  if (!session) return;
+  try {
+    const highlighted = applyState(await api(`/api/rooms/${session.roomId}/bid`, {
+      method: "POST",
+      body: JSON.stringify({ playerId: session.playerId, token: session.token, cardIds: [...selectedCardIds] })
+    }));
+    clearSelectionUnlessKitty(highlighted);
+    activeDialog = null;
+    setMessage(state.stage === "burying"
+      ? `叫主成功：${state.setup?.bankerName || "主"} 成为主，已拿底等待贴底。`
+      : "已亮 2 叫/抢主。");
+  } catch (error) {
+    setMessage(error.message, true);
+  }
+}
+
+async function passBid() {
+  if (!session) return;
+  try {
+    const highlighted = applyState(await api(`/api/rooms/${session.roomId}/bid-pass`, {
+      method: "POST",
+      body: JSON.stringify({ playerId: session.playerId, token: session.token })
+    }));
+    clearSelectionUnlessKitty(highlighted);
+    activeDialog = null;
+    setMessage(state.stage === "burying"
+      ? `叫主成功：${state.setup?.bankerName || "主"} 成为主，已拿底等待贴底。`
+      : "已过。");
+  } catch (error) {
+    setMessage(error.message, true);
+  }
+}
+
+async function randomBid() {
+  if (!session) return;
+  try {
+    const highlighted = applyState(await api(`/api/rooms/${session.roomId}/random-bid`, {
+      method: "POST",
+      body: JSON.stringify({ playerId: session.playerId, token: session.token })
+    }));
+    clearSelectionUnlessKitty(highlighted);
+    activeDialog = null;
+    setMessage(state.stage === "burying"
+      ? `叫主成功：${state.setup?.bankerName || "主"} 成为主，已拿底等待贴底。`
+      : "已随机指定主。");
+  } catch (error) {
+    setMessage(error.message, true);
+  }
+}
+
+async function burySelectedCards() {
+  if (!session) return;
+  try {
+    applyState(await api(`/api/rooms/${session.roomId}/bury`, {
+      method: "POST",
+      body: JSON.stringify({ playerId: session.playerId, token: session.token, cardIds: [...selectedCardIds] })
+    }));
+    selectedCardIds = new Set();
+    setMessage(state.stage === "frying" ? "已贴底，进入炒底阶段。" : "已贴底。");
+  } catch (error) {
+    setMessage(error.message, true);
+  }
+}
+
+async function frySelectedCards() {
+  if (!session) return;
+  try {
+    const highlighted = applyState(await api(`/api/rooms/${session.roomId}/fry`, {
+      method: "POST",
+      body: JSON.stringify({ playerId: session.playerId, token: session.token, cardIds: [...selectedCardIds] })
+    }));
+    clearSelectionUnlessKitty(highlighted);
+    activeDialog = null;
+    setMessage("已炒底，请选择同数量牌贴底。");
+  } catch (error) {
+    setMessage(error.message, true);
+  }
+}
+
+async function passFry() {
+  if (!session) return;
+  try {
+    const highlighted = applyState(await api(`/api/rooms/${session.roomId}/fry-pass`, {
+      method: "POST",
+      body: JSON.stringify({ playerId: session.playerId, token: session.token })
+    }));
+    clearSelectionUnlessKitty(highlighted);
+    activeDialog = null;
+    setMessage(state.stage === "dogleg"
+      ? `炒底结束：主牌确定为${state.setup?.currentTrumpSuitName || state.setup?.trumpSuitName || "主牌"}，等待主选择狗腿牌。`
+      : "已选择不炒。");
+  } catch (error) {
+    setMessage(error.message, true);
+  }
+}
+
+async function chooseDoglegSelectedCard() {
+  if (!session) return;
+  try {
+    const doglegSelection = new Set(selectedCardIds);
+    applyState(await api(`/api/rooms/${session.roomId}/dogleg`, {
+      method: "POST",
+      body: JSON.stringify({ playerId: session.playerId, token: session.token, cardIds: [...selectedCardIds] })
+    }), { highlightNewKitty: false });
+    if (viewerCanPlayCurrent()) {
+      const handIds = new Set((state.hand || []).map((card) => card.id));
+      selectedCardIds = new Set([...doglegSelection].filter((cardId) => handIds.has(cardId)));
+    } else {
+      selectedCardIds = new Set();
+    }
+    setMessage(`开始出牌：主牌为${state.setup?.currentTrumpSuitName || state.setup?.trumpSuitName || "主牌"}。`);
+  } catch (error) {
+    setMessage(error.message, true);
+  }
+}
+
+async function playSelectedCards() {
+  if (!session) return;
+  try {
+    const cardIds = [...selectedCardIds];
+    applyState(await api(`/api/rooms/${session.roomId}/play`, {
+      method: "POST",
+      body: JSON.stringify({ playerId: session.playerId, token: session.token, cardIds })
+    }), { highlightNewKitty: false });
+    selectedCardIds = new Set();
+    setMessage("已出牌，其他玩家会在当前轮看到。");
+  } catch (error) {
+    setMessage(error.message, true);
+  }
+}
+
+async function testPlayRound() {
+  if (!session) return;
+  try {
+    applyState(await api(`/api/rooms/${session.roomId}/test-play-round`, {
+      method: "POST",
+      body: JSON.stringify({ playerId: session.playerId, token: session.token })
+    }), { highlightNewKitty: false });
+    selectedCardIds = new Set();
+    setMessage("已让测试玩家自动出牌；轮到真人时会停下。");
+  } catch (error) {
+    setMessage(error.message, true);
+  }
+}
+
+async function testSetupProgress() {
+  if (!session) return;
+  try {
+    applyState(await api(`/api/rooms/${session.roomId}/test-setup`, {
+      method: "POST",
+      body: JSON.stringify({ playerId: session.playerId, token: session.token })
+    }));
+    selectedCardIds = new Set();
+    setMessage("已推进测试玩家的准备流程。");
+  } catch (error) {
+    setMessage(error.message, true);
+  }
+}
+
+async function resetRoom() {
+  if (!session) return;
+  try {
+    applyState(await api(`/api/rooms/${session.roomId}/reset`, {
+      method: "POST",
+      body: JSON.stringify({ playerId: session.playerId, token: session.token })
+    }), { highlightNewKitty: false });
+    setMessage("房间已重置，可以重新开始。");
+  } catch (error) {
+    setMessage(error.message, true);
+  }
+}
+
+function copyShare() {
+  if (!state) return;
+  navigator.clipboard?.writeText(shareUrl(state.roomId));
+  setMessage("房间链接已复制。");
+}
+
+function fmtTime(value) {
+  if (!value) return "";
+  return new Intl.DateTimeFormat("zh-CN", {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit"
+  }).format(new Date(value));
+}
+
+function canStart() {
+  return state?.viewer?.host && state.status === "lobby" && state.players.length >= state.minPlayers && state.players.length <= state.maxPlayers;
+}
+
+function isViewer(playerId) {
+  return state?.viewer?.id === playerId;
+}
+
+function viewerPlayedCurrent() {
+  return Boolean(state?.currentTrick?.plays?.find((play) => play.playerId === state.viewer?.id && play.played));
+}
+
+function viewerCanPlayCurrent() {
+  return state?.currentTrick?.currentTurnPlayerId === state.viewer?.id && !viewerPlayedCurrent();
+}
+
+function viewerCanBid() {
+  if (state?.stage !== "bidding") return false;
+  return !state.setup?.bid || state.setup?.biddingTurnPlayerId === state.viewer?.id;
+}
+
+function viewerCanPassBid() {
+  return state?.stage === "bidding" && state.setup?.bid && state.setup?.biddingTurnPlayerId === state.viewer?.id;
+}
+
+function viewerCanBury() {
+  if (state?.stage === "burying") return isViewer(state.setup?.bankerId);
+  if (state?.stage === "fry-burying") return isViewer(state.setup?.fry?.currentPlayerId);
+  return false;
+}
+
+function viewerCanFry() {
+  return state?.stage === "frying" && isViewer(state.setup?.fry?.currentPlayerId);
+}
+
+function viewerCanChooseDogleg() {
+  return state?.stage === "dogleg" && isViewer(state.setup?.bankerId);
+}
+
+function viewerCanSelectCards() {
+  return viewerCanPlayCurrent() || viewerCanBid() || viewerCanBury() || viewerCanFry() || viewerCanChooseDogleg();
+}
+
+function selectedCards() {
+  const ids = new Set(selectedCardIds);
+  return (state?.hand || []).filter((card) => ids.has(card.id));
+}
+
+function isTwoCard(card) {
+  return card?.type === "normal" && card.rank === "2";
+}
+
+function followSuit(card) {
+  return card?.type === "joker" ? "JOKER" : card?.suit;
+}
+
+function followSuitName(suit) {
+  if (suit === "TRUMP") return "主牌";
+  if (suit === "JOKER") return "王";
+  return { S: "黑桃", H: "红桃", C: "草花", D: "方块" }[suit] || "该花色";
+}
+
+function uniqueFollowSuits(cards) {
+  return [...new Set(cards.map(followSuit).filter(Boolean))];
+}
+
+function isMainPlayCard(card, trumpSuit = currentTrumpSuit()) {
+  if (!card) return false;
+  if (card.type === "joker") return true;
+  if (card.rank === "2") return true;
+  if ((card.suit === "H" || card.suit === "D") && card.rank === "5") return true;
+  if (card.rank === "3" && trumpSuit && suitColor(card.suit) === suitColor(trumpSuit)) return true;
+  return card.type === "normal" && trumpSuit && card.suit === trumpSuit;
+}
+
+function playSuit(card, trumpSuit = currentTrumpSuit()) {
+  if (isMainPlayCard(card, trumpSuit)) return "TRUMP";
+  return followSuit(card);
+}
+
+function uniquePlaySuits(cards, trumpSuit = currentTrumpSuit()) {
+  return [...new Set(cards.map((card) => playSuit(card, trumpSuit)).filter(Boolean))];
+}
+
+function mainCardPower(card, trumpSuit = currentTrumpSuit()) {
+  if (card.type === "normal" && card.suit === "H" && card.rank === "5") return 0;
+  if (card.type === "normal" && card.suit === "D" && card.rank === "5") return 1;
+  if (card.joker === "big") return 2;
+  if (card.joker === "small") return 3;
+  if (card.type === "normal" && card.rank === "3" && trumpSuit) {
+    if (card.suit === trumpSuit) return 4;
+    if (suitColor(card.suit) === suitColor(trumpSuit)) return 5;
+  }
+  if (card.type === "normal" && card.rank === "2") {
+    if (card.suit === trumpSuit) return 6;
+    return 7;
+  }
+  if (card.type === "normal" && trumpSuit && card.suit === trumpSuit) {
+    return 8 + (rankSort[card.rank] ?? 99);
+  }
+  return 99;
+}
+
+function patternValue(card, trumpSuit = currentTrumpSuit()) {
+  if (isMainPlayCard(card, trumpSuit)) return mainCardPower(card, trumpSuit);
+  return rankSort[card.rank] ?? 99;
+}
+
+function patternKey(card, trumpSuit = currentTrumpSuit()) {
+  return `${playSuit(card, trumpSuit)}:${patternValue(card, trumpSuit)}`;
+}
+
+function bidBeats(current, next) {
+  const suitStrength = { D: 0, C: 1, H: 2, S: 3 };
+  if (!current) return next.count >= 1;
+  if (current.count === 1) return next.count >= 2;
+  if (next.count > current.count) return true;
+  if (next.count < current.count) return false;
+  return (suitStrength[next.suit] ?? -1) > (suitStrength[current.suit] ?? -1);
+}
+
+function validateBidLikeSelection(type) {
+  if (type === "bid" && !viewerCanBid()) return { ok: false, reason: "还没轮到你叫主/抢主" };
+  if (type === "fry" && !viewerCanFry()) return { ok: false, reason: "还没轮到你炒底" };
+
+  const cards = selectedCards();
+  if (!cards.length) return { ok: false, reason: "请选择同一花色的 2" };
+  if (!cards.every(isTwoCard)) return { ok: false, reason: "只能选择 2" };
+  const suits = uniqueFollowSuits(cards);
+  if (suits.length !== 1) return { ok: false, reason: "必须选择同一花色的 2" };
+
+  const bid = { count: cards.length, suit: suits[0] };
+  const current = type === "bid" ? state.setup?.bid : state.setup?.fry?.lastBid;
+  if (!bidBeats(current, bid)) {
+    if (current?.count === 1) return { ok: false, reason: "当前是 1 张叫主，至少 2 张 2 才能抢" };
+    return { ok: false, reason: `需要比 ${bidText(current)} 更大` };
+  }
+  return { ok: true, reason: "" };
+}
+
+function rankValue(card, trumpSuit = currentTrumpSuit()) {
+  return patternValue(card, trumpSuit);
+}
+
+function rankKey(card, trumpSuit = currentTrumpSuit()) {
+  return patternKey(card, trumpSuit);
+}
+
+function cardsByRank(cards, trumpSuit = currentTrumpSuit()) {
+  const map = new Map();
+  cards.forEach((card) => {
+    const key = rankKey(card, trumpSuit);
+    if (!map.has(key)) map.set(key, []);
+    map.get(key).push(card);
+  });
+  return [...map.entries()].map(([rank, rankCards]) => ({
+    rank,
+    cards: rankCards,
+    count: rankCards.length,
+    value: rankValue(rankCards[0], trumpSuit)
+  }));
+}
+
+function detectPlayPattern(cards, trumpSuit = currentTrumpSuit()) {
+  if (!cards.length) return null;
+  if (cards.length === 1) return { type: "single", count: 1 };
+
+  const suits = uniquePlaySuits(cards, trumpSuit);
+  const groups = cardsByRank(cards, trumpSuit).sort((a, b) => a.value - b.value);
+  if (groups.length === 1) {
+    if (suits.length !== 1) return null;
+    return { type: "multi", count: cards.length, width: cards.length, ranks: [groups[0].rank] };
+  }
+
+  if (suits.length !== 1) return null;
+  const width = groups[0].count;
+  if (!groups.every((group) => group.count === width)) return null;
+  if (groups.some((group) => group.value >= 99)) return null;
+  for (let i = 1; i < groups.length; i += 1) {
+    if (groups[i].value !== groups[i - 1].value + 1) return null;
+  }
+  return {
+    type: "tractor",
+    count: cards.length,
+    width,
+    length: groups.length,
+    ranks: groups.map((group) => group.rank)
+  };
+}
+
+function leadInfoFromSnapshot(trick) {
+  const lead = (trick?.plays || []).find((play) => play.played && play.cards?.length);
+  if (!lead) return null;
+  const suits = uniquePlaySuits(lead.cards);
+  return {
+    count: lead.cards.length,
+    suit: suits.length === 1 ? suits[0] : null,
+    pattern: detectPlayPattern(lead.cards)
+  };
+}
+
+function validatePlaySelection() {
+  if (!viewerCanPlayCurrent()) return { ok: false, reason: "还没轮到你出牌" };
+  const cards = selectedCards();
+  if (!cards.length) return { ok: false, reason: "请选择要出的牌" };
+
+  const lead = leadInfoFromSnapshot(state.currentTrick);
+  if (!lead) {
+    if (!detectPlayPattern(cards)) {
+      return { ok: false, reason: "首家只能出单张、同牌力多张，或连续牌力拖拉机" };
+    }
+    if (uniquePlaySuits(cards).length > 1) {
+      return { ok: false, reason: "首家暂时必须出同一花色或同一主牌牌组" };
+    }
+    return { ok: true, reason: "" };
+  }
+
+  if (cards.length !== lead.count) {
+    return { ok: false, reason: `本轮首家出了 ${lead.count} 张，必须跟 ${lead.count} 张` };
+  }
+  if (!lead.suit) return { ok: true, reason: "" };
+
+  const sameSuitInHand = (state.hand || []).filter((card) => playSuit(card) === lead.suit).length;
+  const sameSuitSelected = cards.filter((card) => playSuit(card) === lead.suit).length;
+  const requiredSameSuit = Math.min(lead.count, sameSuitInHand);
+  if (sameSuitSelected < requiredSameSuit) {
+    if (sameSuitInHand >= lead.count) {
+      return { ok: false, reason: `你有足够的${followSuitName(lead.suit)}，必须优先跟该花色` };
+    }
+    return { ok: false, reason: `你还有 ${sameSuitInHand} 张${followSuitName(lead.suit)}，必须先跟完` };
+  }
+  return { ok: true, reason: "" };
+}
+
+function selectionAction() {
+  if (viewerCanBid()) {
+    const validation = validateBidLikeSelection("bid");
+    return { action: "bid-selected", label: "亮选中的2叫/抢主", enabled: validation.ok, reason: validation.reason };
+  }
+  if (viewerCanBury()) {
+    return {
+      action: "bury-selected",
+      label: `贴底选中的牌`,
+      enabled: selectedCardIds.size === state.kittySize,
+      reason: selectedCardIds.size === state.kittySize ? "" : `需要选择 ${state.kittySize} 张牌`
+    };
+  }
+  if (viewerCanFry()) {
+    const validation = validateBidLikeSelection("fry");
+    return { action: "fry-selected", label: "用选中的2炒底", enabled: validation.ok, reason: validation.reason };
+  }
+  if (viewerCanChooseDogleg()) {
+    return {
+      action: "dogleg-selected",
+      label: "选为狗腿牌",
+      enabled: selectedCardIds.size === 1,
+      reason: selectedCardIds.size === 1 ? "" : "请选择 1 张非比牌"
+    };
+  }
+  if (viewerCanPlayCurrent()) {
+    const validation = validatePlaySelection();
+    return { action: "play-selected", label: "出选中的牌", enabled: validation.ok, reason: validation.reason };
+  }
+  return null;
+}
+
+function renderHandControls(action) {
+  if (action) {
+    return `
+      <div class="row hand-controls">
+        <span class="tag">${selectedCardIds.size} 张已选</span>
+        <button type="button" data-action="${action.action}" ${action.enabled ? "" : "disabled"}>${escapeHtml(action.label)}</button>
+        ${!action.enabled && action.reason ? `<span class="action-reason">${escapeHtml(action.reason)}</span>` : ""}
+      </div>
+    `;
+  }
+  if (state?.stage !== "playing") return "";
+
+  const turnName = state.currentTrick?.currentTurnPlayerName || "";
+  const played = viewerPlayedCurrent();
+  const text = played
+    ? `你本轮已出，等待${turnName ? ` ${turnName} ` : "其他玩家"}出牌`
+    : turnName
+      ? `等待 ${turnName} 出牌`
+      : "等待下一轮";
+  return `<div class="turn-waiting">${escapeHtml(text)}</div>`;
+}
+
+function renderShell(content) {
+  app.innerHTML = `
+    <div class="page">
+      <header class="topbar">
+        <div class="brand">
+          <h1>炒地皮在线房间</h1>
+          <p>第二阶段：本地可补测试玩家，发牌后可查看当前轮和历史出牌。</p>
+        </div>
+        ${session ? `<button class="secondary" data-action="leave">退出本机身份</button>` : ""}
+      </header>
+      ${message ? `<div class="status toast ${messageBad ? "bad" : ""}" role="status">${escapeHtml(message)}</div>` : ""}
+      ${content}
+    </div>
+  `;
+}
+
+function renderHome() {
+  const hintedRoom = roomFromUrl();
+  renderShell(`
+    <div class="grid">
+      <section class="panel">
+        <h2>创建房间</h2>
+        <form class="form" data-form="create">
+          <label>
+            你的名字
+            <input name="name" maxlength="16" required placeholder="例如：南局">
+          </label>
+          <button type="submit">创建房间</button>
+        </form>
+      </section>
+      <section class="panel">
+        <h2>加入房间</h2>
+        <form class="form" data-form="join">
+          <label>
+            房间号
+            <input name="roomId" maxlength="6" required value="${escapeHtml(hintedRoom)}" placeholder="例如：A7K2QD">
+          </label>
+          <label>
+            你的名字
+            <input name="name" maxlength="16" required placeholder="例如：铁牛">
+          </label>
+          <button type="submit">加入房间</button>
+        </form>
+      </section>
+    </div>
+  `);
+}
+
+function renderRoom() {
+  const started = state.status !== "lobby";
+  selectedCardIds = new Set([...selectedCardIds].filter((cardId) => state.hand.some((card) => card.id === cardId)));
+  const action = selectionAction();
+  maybeAutoOpenActionDialog();
+  const waitingText = state.players.length < state.minPlayers
+    ? `还差 ${state.minPlayers - state.players.length} 人才能开始`
+    : "人数已满足，可以开始";
+
+  renderShell(`
+    <div class="grid">
+      <div class="stack">
+        <section class="panel stack">
+          <div class="row" style="justify-content:space-between">
+            <div>
+              <div class="meta">房间号</div>
+              <div class="room-code">${escapeHtml(state.roomId)}</div>
+            </div>
+            <div class="tags">
+              <span class="tag accent">${state.players.length}/${state.maxPlayers} 人</span>
+              <span class="tag">${escapeHtml(state.phase)}</span>
+              ${started ? `<span class="tag good">底牌 ${state.kittyCount} 张</span>` : ""}
+              ${state.setup?.bankerName ? `<span class="tag accent">主 ${escapeHtml(state.setup.bankerName)}</span>` : ""}
+              ${state.setup?.currentTrumpSuitName ? `<span class="tag good">当前主牌 ${escapeHtml(state.setup.currentTrumpSuitName)}</span>` : ""}
+            </div>
+          </div>
+          <div class="share">
+            <div class="meta">邀请链接</div>
+            <code>${escapeHtml(shareUrl(state.roomId))}</code>
+            <div class="row">
+              <button type="button" data-action="copy">复制链接</button>
+              ${state.viewer.host && !started ? `<button type="button" class="secondary" data-action="add-test-players">补齐5人测试</button>` : ""}
+              ${state.viewer.host && !started ? `<button type="button" data-action="start" ${canStart() ? "" : "disabled"}>开始并发牌</button>` : ""}
+              ${state.canViewKitty ? `<button type="button" class="secondary" data-action="open-kitty">查看底牌</button>` : ""}
+              ${state.viewer.host && state.stage === "playing" ? `<button type="button" data-action="test-play-round">测试玩家自动出牌</button>` : ""}
+              ${state.viewer.host && started ? `<button type="button" class="secondary" data-action="reset">重开房间</button>` : ""}
+            </div>
+            ${!started ? `<div class="meta">${escapeHtml(waitingText)}。第一版支持 5-7 人。</div>` : ""}
+          </div>
+        </section>
+
+        ${started && state.setup?.doglegCard ? renderDoglegPanel() : ""}
+        ${started && state.stage === "finished" ? renderResultPanel() : ""}
+        ${started && state.stage !== "playing" && state.stage !== "finished" ? renderSetupPanel() : ""}
+        ${started && (state.stage === "playing" || state.stage === "finished") ? renderPlayTable() : ""}
+
+        <section class="panel">
+          <div class="section-head">
+            <h2>我的手牌 ${started ? `(${state.hand.length})` : ""}</h2>
+            ${started ? renderHandControls(action) : ""}
+          </div>
+          ${started ? renderHand(state.hand) : `<div class="empty">房主开始后，这里会显示你的 53 张手牌。</div>`}
+        </section>
+      </div>
+
+      <aside class="stack">
+        <section class="panel">
+          <h3>玩家</h3>
+          <div class="players">
+            ${state.players.map(renderPlayer).join("")}
+          </div>
+        </section>
+        <section class="panel">
+          <h3>房间记录</h3>
+          <div class="events">
+            ${state.events.length ? state.events.map(renderEvent).join("") : `<div class="empty">暂无记录</div>`}
+          </div>
+        </section>
+      </aside>
+    </div>
+    ${renderActiveDialog()}
+  `);
+}
+
+function bidText(bid) {
+  if (!bid) return "暂无";
+  return `${bid.playerName}：${bid.count} 张${bid.suitName}2${bid.random ? "（随机）" : ""}`;
+}
+
+function doglegCardText(card) {
+  if (!card) return "未确定";
+  return card.label || `${card.symbol || ""}${card.rank || ""}`;
+}
+
+function renderDoglegPanel() {
+  const card = state.setup?.doglegCard;
+  const names = state.setup?.doglegPlayerNames || [];
+  return `
+    <section class="panel dogleg-panel">
+      <div>
+        <div class="meta">狗腿牌</div>
+        <strong class="${card?.color || (card?.suit === "H" || card?.suit === "D" ? "red" : "black")}">${escapeHtml(doglegCardText(card))}</strong>
+      </div>
+      <div>
+        <div class="meta">已暴露狗腿</div>
+        <strong>${names.length ? escapeHtml(names.join("、")) : "等待玩家打出"}</strong>
+      </div>
+      <span class="tag accent">${names.length}/${state.setup?.doglegNeeded || 0}</span>
+    </section>
+  `;
+}
+
+function renderSetupPlayers(type) {
+  const setup = state.setup || {};
+  const fry = setup.fry || {};
+  return `
+    <div class="setup-players">
+      ${state.players.map((player) => {
+        let label = "等待";
+        let tone = "";
+        if (type === "bid") {
+          if (!setup.bid) {
+            label = "等待叫主";
+          } else if (setup.biddingTurnPlayerId === player.id) {
+            label = "抢主/过";
+            tone = "good";
+          } else if (setup.bid?.playerId === player.id) {
+            label = setup.bid.random ? "随机主" : "当前叫主";
+            tone = "accent";
+          } else if ((setup.bidPassIds || []).includes(player.id)) {
+            label = "已过";
+          } else {
+            label = "等待抢主";
+          }
+        }
+        if (type === "fry") {
+          if (fry.currentPlayerId === player.id) {
+            label = "炒底/过";
+            tone = "good";
+          } else if (fry.lastFryerId === player.id) {
+            label = "当前底牌";
+            tone = "accent";
+          } else if ((fry.passIds || []).includes(player.id)) {
+            label = "已过";
+          } else {
+            label = "等待炒底";
+          }
+        }
+        return `
+          <div class="setup-player">
+            <strong>${escapeHtml(player.name)}</strong>
+            <span class="tag ${tone}">${escapeHtml(label)}</span>
+          </div>
+        `;
+      }).join("")}
+    </div>
+  `;
+}
+
+function renderSetupPanel() {
+  const setup = state.setup || {};
+  const stage = state.stage;
+  let body = "";
+  const currentTrumpBlock = setup.currentTrumpSuitName
+    ? `
+      <div>
+        <div class="meta">当前主牌</div>
+        <strong>${escapeHtml(setup.currentTrumpSuitName)}</strong>
+      </div>
+    `
+    : "";
+
+  if (stage === "bidding") {
+    const turnText = setup.bid
+      ? `轮到 ${setup.biddingTurnPlayerName} 抢主或过`
+      : "任意玩家可先亮 2 叫主";
+    body = `
+      <div class="setup-grid">
+        <div>
+          <div class="meta">当前叫主</div>
+          <strong>${escapeHtml(bidText(setup.bid))}</strong>
+        </div>
+        <div>
+          <div class="meta">当前动作</div>
+          <strong>${escapeHtml(turnText)}</strong>
+        </div>
+        ${currentTrumpBlock}
+      </div>
+      <div class="row">
+        ${viewerCanBid() ? `<button type="button" data-action="open-bid-dialog">${setup.bid ? "选择2抢主" : "选择2叫主"}</button>` : ""}
+        ${viewerCanPassBid() ? `<button type="button" class="secondary" data-action="bid-pass">过</button>` : ""}
+        ${state.viewer.host && !setup.bid ? `<button type="button" class="secondary" data-action="random-bid">无人叫主，随机指定</button>` : ""}
+      </div>
+      ${renderSetupPlayers("bid")}
+    `;
+  }
+
+  if (stage === "burying") {
+    body = `
+      <div class="setup-grid">
+        <div>
+          <div class="meta">主</div>
+          <strong>${escapeHtml(setup.bankerName)}</strong>
+        </div>
+        <div>
+          <div class="meta">贴底要求</div>
+          <strong>选择 ${state.kittySize} 张牌放入底牌</strong>
+        </div>
+        ${currentTrumpBlock}
+      </div>
+    `;
+  }
+
+  if (stage === "frying") {
+    const fry = setup.fry || {};
+    body = `
+      <div class="setup-grid">
+        <div>
+          <div class="meta">当前底牌控制</div>
+          <strong>${escapeHtml(fry.lastFryerName || setup.bankerName)}</strong>
+        </div>
+        <div>
+          <div class="meta">当前炒底门槛</div>
+          <strong>${escapeHtml(bidText(fry.lastBid))}</strong>
+        </div>
+        <div>
+          <div class="meta">当前动作</div>
+          <strong>轮到 ${escapeHtml(fry.currentPlayerName)} 炒底或不炒</strong>
+        </div>
+        ${currentTrumpBlock}
+      </div>
+      <div class="row">
+        ${viewerCanFry() ? `<button type="button" data-action="open-fry-dialog">选择2炒底</button>` : ""}
+        ${viewerCanFry() ? `<button type="button" class="secondary" data-action="fry-pass">不炒</button>` : ""}
+      </div>
+      ${renderSetupPlayers("fry")}
+    `;
+  }
+
+  if (stage === "fry-burying") {
+    const fry = setup.fry || {};
+    body = `
+      <div class="setup-grid">
+        <div>
+          <div class="meta">炒底玩家</div>
+          <strong>${escapeHtml(fry.currentPlayerName)}</strong>
+        </div>
+        <div>
+          <div class="meta">贴底要求</div>
+          <strong>选择 ${state.kittySize} 张牌放入底牌</strong>
+        </div>
+        ${currentTrumpBlock}
+      </div>
+    `;
+  }
+
+  if (stage === "dogleg") {
+    body = `
+      <div class="setup-grid">
+        <div>
+          <div class="meta">主</div>
+          <strong>${escapeHtml(setup.bankerName)}</strong>
+        </div>
+        <div>
+          <div class="meta">主牌</div>
+          <strong>${escapeHtml(setup.currentTrumpSuitName || setup.trumpSuitName)}</strong>
+        </div>
+        <div>
+          <div class="meta">狗腿数量</div>
+          <strong>${setup.doglegNeeded} 个</strong>
+        </div>
+      </div>
+      <div class="meta">主需要选择 1 张非比牌作为狗腿牌；打牌中最先打出该牌的玩家成为狗腿。</div>
+    `;
+  }
+
+  return `
+    <section class="panel stack">
+      <div class="section-head">
+        <h2>牌桌状态</h2>
+        <div class="tags">
+          <span class="tag accent">${escapeHtml(state.phase)}</span>
+          ${state.viewer.host ? `<button type="button" class="secondary compact-button" data-action="test-setup">测试玩家自动推进</button>` : ""}
+        </div>
+      </div>
+      ${body}
+    </section>
+  `;
+}
+
+function actionDialogKey() {
+  if (viewerCanBid()) {
+    const bid = state.setup?.bid;
+    return `bid:${state.roomId}:${bid?.count || 0}:${bid?.suit || "none"}:${state.setup?.biddingTurnPlayerId || "open"}`;
+  }
+  if (viewerCanFry()) {
+    const bid = state.setup?.fry?.lastBid;
+    return `fry:${state.roomId}:${state.setup?.fry?.currentPlayerId || "none"}:${bid?.count || 0}:${bid?.suit || "none"}`;
+  }
+  return "";
+}
+
+function maybeAutoOpenActionDialog() {
+  const key = actionDialogKey();
+  if (!key) {
+    if (activeDialog === "bid" || activeDialog === "fry") activeDialog = null;
+    dismissedActionDialogKey = null;
+    return;
+  }
+  if (activeDialog) return;
+  if (dismissedActionDialogKey === key) return;
+  activeDialog = key.startsWith("bid:") ? "bid" : "fry";
+}
+
+function renderActiveDialog() {
+  if (activeDialog === "bid" && viewerCanBid()) return renderBidFryDialog("bid");
+  if (activeDialog === "fry" && viewerCanFry()) return renderBidFryDialog("fry");
+  if (activeDialog === "kitty" && state.canViewKitty) return renderKittyDialog();
+  return "";
+}
+
+function signedScore(valueText, value) {
+  const numeric = Number(value);
+  const text = valueText ?? String(value ?? 0);
+  if (numeric > 0) return `+${text}`;
+  return text;
+}
+
+function renderResultPanel() {
+  const result = state.result;
+  if (!result) return `<section class="panel"><div class="empty">本局已结束，暂无结算数据。</div></section>`;
+  return `
+    <section class="panel stack result-panel">
+      <div class="section-head">
+        <h2>本局结算</h2>
+        <div class="tags">
+          <span class="tag accent">${escapeHtml(result.winnerTeamName)}获胜</span>
+          <span class="tag good">闲家 ${result.idleScore}/${result.threshold} 分</span>
+        </div>
+      </div>
+      <div class="result-grid">
+        <div>
+          <div class="meta">庄家队</div>
+          <strong>${escapeHtml(result.bankerTeamNames.join("、") || "无")}</strong>
+        </div>
+        <div>
+          <div class="meta">闲家队</div>
+          <strong>${escapeHtml(result.idleTeamNames.join("、") || "无")}</strong>
+        </div>
+        <div>
+          <div class="meta">保底</div>
+          <strong>${escapeHtml(result.bottomWinnerName)}（${escapeHtml(result.bottomWinnerTeamName)}）</strong>
+          <span>${result.bottomPoints} 底分${result.bottomScoreAddedToIdle ? `，闲家加 ${result.bottomScoreAddedToIdle}` : ""}</span>
+        </div>
+        <div>
+          <div class="meta">每人积分</div>
+          <strong>闲家 ${signedScore(result.idleEachScoreText, result.idleEachScore)} / 庄家 ${signedScore(result.bankerEachScoreText, result.bankerEachScore)}</strong>
+        </div>
+      </div>
+      <div class="score-breakdown">
+        <span class="tag">胜负 ${signedScore(null, result.baseScore)}</span>
+        <span class="tag">上下台阶 ${signedScore(null, result.scoreStep)}</span>
+        <span class="tag">保底 ${signedScore(null, result.bottomDelta)}</span>
+        <span class="tag">拖五 ${signedScore(null, result.draggedDelta)}</span>
+        ${result.bottomDraggedRedFives || result.bottomDraggedDiamondFives ? `<span class="tag accent">底牌拖主：红五 ${result.bottomDraggedRedFives}，方五 ${result.bottomDraggedDiamondFives}</span>` : ""}
+      </div>
+      <div class="result-table">
+        ${result.playerResults.map((player) => `
+          <div class="result-row">
+            <strong>${escapeHtml(player.name)}</strong>
+            <span>${escapeHtml(player.role || player.teamName)}</span>
+            <span>牌分 ${player.trickScore}</span>
+            <span>红五 ${player.draggedRedFives}</span>
+            <span>方五 ${player.draggedDiamondFives}</span>
+            <b>${signedScore(player.gameScoreText, player.gameScore)}</b>
+          </div>
+        `).join("")}
+      </div>
+    </section>
+  `;
+}
+
+function renderBidFryDialog(type) {
+  const isBid = type === "bid";
+  const title = isBid ? (state.setup?.bid ? "抢主" : "叫主") : "炒底";
+  const validation = validateBidLikeSelection(type);
+  const currentBid = isBid ? state.setup?.bid : state.setup?.fry?.lastBid;
+  const twoCards = sortCardsForGroup("rank", (state.hand || []).filter(isTwoCard));
+  const passAction = isBid ? "bid-pass" : "fry-pass";
+  const passLabel = isBid ? "过" : "不炒";
+  const canPass = isBid ? viewerCanPassBid() : viewerCanFry();
+  return `
+    <div class="modal-backdrop">
+      <section class="modal-card" role="dialog" aria-modal="true" aria-label="${escapeHtml(title)}">
+        <div class="section-head">
+          <div>
+            <h2>${escapeHtml(title)}</h2>
+            <div class="meta">当前门槛：${escapeHtml(bidText(currentBid))}</div>
+          </div>
+          <button type="button" class="secondary compact-button" data-action="close-dialog">关闭</button>
+        </div>
+        <div class="choice-panel">
+          <div class="choice-title">
+            <strong>我的 2</strong>
+            <span class="tag">${twoCards.length} 张</span>
+          </div>
+          ${twoCards.length ? renderTwoCardChoices(twoCards) : `<div class="empty">手里没有可用于${escapeHtml(title)}的 2。</div>`}
+        </div>
+        <div class="dialog-actions">
+          ${canPass ? `<button type="button" class="secondary" data-action="${passAction}">${passLabel}</button>` : `<button type="button" class="secondary" data-action="close-dialog">过</button>`}
+          <button type="button" data-action="${isBid ? "bid-selected" : "fry-selected"}" ${validation.ok ? "" : "disabled"}>${escapeHtml(title)}</button>
+          ${!validation.ok && validation.reason ? `<span class="action-reason">${escapeHtml(validation.reason)}</span>` : ""}
+        </div>
+      </section>
+    </div>
+  `;
+}
+
+function renderTwoCardChoices(cards) {
+  const groups = ["S", "H", "C", "D"].map((suit) => ({
+    suit,
+    label: { S: "黑桃", H: "红桃", C: "草花", D: "方块" }[suit],
+    cards: cards.filter((card) => card.suit === suit)
+  })).filter((group) => group.cards.length);
+  return `
+    <div class="two-card-groups">
+      ${groups.map((group) => `
+        <div class="two-card-group">
+          <div class="hand-group-title">
+            <strong>${escapeHtml(group.label)}</strong>
+            <span>${group.cards.length} 张</span>
+          </div>
+          <div class="choice-cards">
+            ${group.cards.map((card, index) => `
+              <button
+                type="button"
+                class="card choice-card ${card.color} ${selectedCardIds.has(card.id) ? "selected" : ""}"
+                style="--i:${index}"
+                title="${escapeHtml(card.label)}"
+                aria-pressed="${selectedCardIds.has(card.id) ? "true" : "false"}"
+                data-action="toggle-card"
+                data-card-id="${escapeHtml(card.id)}"
+              >
+                ${cardCorner(card)}
+              </button>
+            `).join("")}
+          </div>
+        </div>
+      `).join("")}
+    </div>
+  `;
+}
+
+function renderStaticCard(card) {
+  return `
+    <div class="card static ${card.color}" title="${escapeHtml(card.label)}">
+      ${cardCorner(card)}
+    </div>
+  `;
+}
+
+function renderKittyDialog() {
+  const cards = sortCardsForGroup("rank", state.kitty || []);
+  return `
+    <div class="modal-backdrop">
+      <section class="modal-card" role="dialog" aria-modal="true" aria-label="查看底牌">
+        <div class="section-head">
+          <div>
+            <h2>底牌</h2>
+            <div class="meta">当前只有最后贴底的人可查看。</div>
+          </div>
+          <button type="button" class="secondary compact-button" data-action="close-dialog">关闭</button>
+        </div>
+        ${cards.length ? `
+          <div class="kitty-cards">
+            ${cards.map(renderStaticCard).join("")}
+          </div>
+        ` : `<div class="empty">当前没有可查看的底牌。</div>`}
+      </section>
+    </div>
+  `;
+}
+
+function renderPlayTable() {
+  if (state.stage === "finished") {
+    return `
+      <section class="panel stack">
+        <div class="section-head">
+          <h2>出牌记录</h2>
+          <span class="tag">${state.trickHistory.length} 轮</span>
+        </div>
+        ${state.trickHistory.length ? `
+          <div class="history">
+            ${[...state.trickHistory].reverse().map((trick) => renderTrick(trick, false)).join("")}
+          </div>
+        ` : `<div class="empty">本局还没有完成的历史轮。</div>`}
+      </section>
+    `;
+  }
+  const turnText = state.currentTrick?.currentTurnPlayerName
+    ? `轮到 ${state.currentTrick.currentTurnPlayerName}`
+    : "等待下一轮";
+  return `
+    <section class="panel stack">
+      <div class="section-head">
+        <h2>打牌桌面</h2>
+        <div class="tags">
+          <span class="tag accent">当前第 ${state.currentTrick?.number || 1} 轮</span>
+          <span class="tag good">${escapeHtml(turnText)}</span>
+        </div>
+      </div>
+      ${renderTrick(state.currentTrick, true)}
+      <div class="section-head compact">
+        <h3>历史出牌</h3>
+        <span class="tag">${state.trickHistory.length} 轮</span>
+      </div>
+      ${state.trickHistory.length ? `
+        <div class="history">
+          ${[...state.trickHistory].reverse().map((trick) => renderTrick(trick, false)).join("")}
+        </div>
+      ` : `<div class="empty">本局还没有完成的历史轮。</div>`}
+    </section>
+  `;
+}
+
+function renderTrick(trick, current) {
+  if (!trick) return `<div class="empty">等待发牌。</div>`;
+  const titleMeta = current
+    ? `${trick.leaderName ? `首家 ${trick.leaderName}` : "等待首家"}`
+    : `${trick.winnerName ? `胜者 ${trick.winnerName} · ${trick.points} 分` : "已完成"}`;
+  return `
+    <div class="trick ${current ? "current" : ""}">
+      <div class="trick-title">
+        <span>${current ? "当前轮" : `第 ${trick.number} 轮`}</span>
+        <span>${escapeHtml(titleMeta)}</span>
+      </div>
+      <div class="trick-grid">
+        ${trick.plays.map((play) => `
+          <div class="trick-player ${play.played ? "played" : ""} ${play.winning ? "winning" : ""}">
+            <div class="trick-name">
+              <strong>${escapeHtml(play.playerName)}</strong>
+              <span>${play.winning ? "本轮最大" : play.played ? fmtTime(play.at) : "未出牌"}</span>
+            </div>
+            <div class="tags">
+              ${play.role ? `<span class="tag ${play.role === "主" || play.role === "狗腿" ? "accent" : ""}">${escapeHtml(play.role)}</span>` : ""}
+              ${current && state.currentTrick?.currentTurnPlayerId === play.playerId ? `<span class="tag good">出牌</span>` : ""}
+            </div>
+            ${play.played ? renderMiniCards(play.cards) : `<div class="meta">等待出牌</div>`}
+          </div>
+        `).join("")}
+      </div>
+    </div>
+  `;
+}
+
+function renderPlayer(player) {
+  const isMe = state.viewer?.id === player.id;
+  const isTurn = state.currentTrick?.currentTurnPlayerId === player.id;
+  const isSetupTurn = state.setup?.biddingTurnPlayerId === player.id || state.setup?.fry?.currentPlayerId === player.id;
+  const isBankerAction = (state.stage === "burying" || state.stage === "dogleg") && state.setup?.bankerId === player.id;
+  return `
+    <div class="player">
+      <div>
+        <strong>${escapeHtml(player.name)}${isMe ? "（我）" : ""}</strong>
+        <div class="tags">
+          ${player.host ? `<span class="tag accent">房主</span>` : ""}
+          ${player.test ? `<span class="tag">测试</span>` : ""}
+          ${player.role ? `<span class="tag ${player.role === "主" || player.role === "狗腿" ? "accent" : ""}">${escapeHtml(player.role)}</span>` : ""}
+          ${isTurn ? `<span class="tag good">出牌</span>` : ""}
+          ${isSetupTurn || isBankerAction ? `<span class="tag good">操作</span>` : ""}
+          <span class="tag ${player.connected ? "good" : ""}">${player.connected ? "在线" : "未连接"}</span>
+        </div>
+        ${state.status !== "lobby" ? `
+          <div class="player-stats">
+            <span>得分 <strong>${player.score || 0}</strong></span>
+            <span>被拖红五 <strong>${player.draggedRedFives || 0}</strong></span>
+            <span>被拖方五 <strong>${player.draggedDiamondFives || 0}</strong></span>
+          </div>
+        ` : ""}
+      </div>
+      <div class="meta">${player.cardCount ? `${player.cardCount} 张` : ""}</div>
+    </div>
+  `;
+}
+
+function suitColor(suit) {
+  return suit === "H" || suit === "D" ? "red" : "black";
+}
+
+function currentTrumpSuit() {
+  return state?.setup?.currentTrumpSuit || state?.setup?.trumpSuit || null;
+}
+
+function isCounselor(card, trumpSuit) {
+  return card.type === "normal" && card.rank === "3" && trumpSuit && suitColor(card.suit) === suitColor(trumpSuit);
+}
+
+function isFixedRankCard(card) {
+  const trumpSuit = currentTrumpSuit();
+  if (card.type === "joker") return true;
+  if (card.rank === "2") return true;
+  if (state?.stage === "playing" && isCounselor(card, trumpSuit)) return true;
+  if (state?.stage === "playing" && trumpSuit && card.suit === trumpSuit) return true;
+  return (card.suit === "H" && card.rank === "5") || (card.suit === "D" && card.rank === "5");
+}
+
+const suitSort = { S: 0, H: 1, C: 2, D: 3 };
+const rankSort = {
+  A: 0,
+  K: 1,
+  Q: 2,
+  J: 3,
+  "10": 4,
+  "9": 5,
+  "8": 6,
+  "7": 7,
+  "6": 8,
+  "5": 9,
+  "4": 10,
+  "3": 11,
+  "2": 12
+};
+
+function fixedRankSort(card) {
+  const trumpSuit = currentTrumpSuit();
+  if (isMainPlayCard(card, trumpSuit)) return mainCardPower(card, trumpSuit);
+  return 99;
+}
+
+function sortCardsForGroup(groupId, cards) {
+  return [...cards].sort((a, b) => {
+    if (groupId === "rank") {
+      return fixedRankSort(a) - fixedRankSort(b) || a.deck - b.deck || a.id.localeCompare(b.id);
+    }
+    return (rankSort[a.rank] ?? 99) - (rankSort[b.rank] ?? 99) || a.deck - b.deck || a.id.localeCompare(b.id);
+  });
+}
+
+function handGroups(hand) {
+  const trumpSuit = currentTrumpSuit();
+  const rankGroupLabel = state?.stage === "playing" && trumpSuit ? "主牌/比牌" : "比牌";
+  const groups = [
+    { id: "rank", label: rankGroupLabel, cards: [] },
+    { id: "S", label: trumpSuit === "S" ? "主牌（黑桃）" : "黑桃", cards: [] },
+    { id: "H", label: trumpSuit === "H" ? "主牌（红桃）" : "红桃", cards: [] },
+    { id: "C", label: trumpSuit === "C" ? "主牌（草花）" : "草花", cards: [] },
+    { id: "D", label: trumpSuit === "D" ? "主牌（方块）" : "方块", cards: [] }
+  ];
+  const byId = new Map(groups.map((group) => [group.id, group]));
+  hand.forEach((card) => {
+    if (isFixedRankCard(card)) byId.get("rank").cards.push(card);
+    else if (byId.has(card.suit)) byId.get(card.suit).cards.push(card);
+  });
+  return groups
+    .filter((group) => group.cards.length)
+    .map((group) => ({ ...group, cards: sortCardsForGroup(group.id, group.cards) }));
+}
+
+function cardCorner(card) {
+  if (card.type === "joker") {
+    return `
+      <span class="card-joker-face ${card.joker === "small" ? "small" : "big"}" aria-hidden="true"></span>
+      <span class="card-corner joker ${card.joker === "small" ? "small" : "big"}">
+        <span>JOKER</span>
+      </span>
+    `;
+  }
+  return `
+    <span class="card-corner">
+      <span class="card-rank">${escapeHtml(card.rank)}</span>
+      <span class="card-suit">${escapeHtml(card.symbol)}</span>
+    </span>
+  `;
+}
+
+function renderHand(hand) {
+  if (!hand.length) return `<div class="empty">暂无手牌</div>`;
+  return `
+    <div class="hand">
+      ${handGroups(hand).map((group) => `
+        <div class="hand-group">
+          <div class="hand-group-title">
+            <strong>${escapeHtml(group.label)}</strong>
+            <span>${group.cards.length} 张</span>
+          </div>
+          <div class="hand-row" data-action="clear-selection">
+            ${group.cards.map((card, index) => `
+              <button
+                type="button"
+                class="card ${card.color} ${selectedCardIds.has(card.id) ? "selected" : ""}"
+                style="--i:${index}"
+                title="${escapeHtml(card.label)}"
+                aria-pressed="${selectedCardIds.has(card.id) ? "true" : "false"}"
+                data-action="toggle-card"
+                data-card-id="${escapeHtml(card.id)}"
+              >
+                ${cardCorner(card)}
+              </button>
+            `).join("")}
+          </div>
+        </div>
+      `).join("")}
+    </div>
+  `;
+}
+
+function renderMiniCards(cards) {
+  if (!cards.length) return `<div class="meta">未出牌</div>`;
+  return `
+    <div class="mini-cards">
+      ${cards.map((card) => `
+        <span class="mini-card ${card.color}">${escapeHtml(card.label)}</span>
+      `).join("")}
+    </div>
+  `;
+}
+
+function renderEvent(event) {
+  return `
+    <div class="event">
+      <time>${fmtTime(event.at)}</time>
+      <div>${escapeHtml(event.text)}</div>
+    </div>
+  `;
+}
+
+function render() {
+  if (!session || !state) return renderHome();
+  renderRoom();
+}
+
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
+}
+
+function cardIdFromEvent(event) {
+  return event.target.closest("[data-card-id]")?.dataset.cardId || null;
+}
+
+function setCardSelected(cardId, selected) {
+  if (!cardId) return;
+  if (selected) selectedCardIds.add(cardId);
+  else selectedCardIds.delete(cardId);
+}
+
+function toggleCard(cardId) {
+  if (!cardId || !viewerCanSelectCards()) return;
+  if (selectedCardIds.has(cardId)) selectedCardIds.delete(cardId);
+  else selectedCardIds.add(cardId);
+  render();
+}
+
+function beginDragSelect(event) {
+  const cardId = cardIdFromEvent(event);
+  if (!cardId || !viewerCanSelectCards() || event.button !== 0) return;
+  suppressNextCardClick = cardId;
+  dragSelect = {
+    pointerId: event.pointerId,
+    add: !selectedCardIds.has(cardId),
+    moved: false,
+    startCardId: cardId
+  };
+  setCardSelected(cardId, dragSelect.add);
+  event.target.closest("[data-card-id]")?.setPointerCapture?.(event.pointerId);
+  event.preventDefault();
+  render();
+}
+
+function continueDragSelect(event) {
+  if (!dragSelect || event.pointerId !== dragSelect.pointerId) return;
+  const target = document.elementFromPoint(event.clientX, event.clientY)?.closest("[data-card-id]");
+  const cardId = target?.dataset.cardId;
+  if (!cardId || !viewerCanSelectCards()) return;
+  if (cardId !== dragSelect.startCardId) dragSelect.moved = true;
+  setCardSelected(cardId, dragSelect.add);
+  render();
+}
+
+function endDragSelect(event) {
+  if (!dragSelect || event.pointerId !== dragSelect.pointerId) return;
+  dragSelect = null;
+  window.setTimeout(() => {
+    suppressNextCardClick = null;
+  }, 0);
+}
+
+document.addEventListener("submit", (event) => {
+  const form = event.target.closest("form");
+  if (!form) return;
+  if (form.dataset.form === "create") return createRoom(event);
+  if (form.dataset.form === "join") return joinRoom(event);
+});
+
+document.addEventListener("click", (event) => {
+  const action = event.target.closest("[data-action]")?.dataset.action;
+  if (!action) return;
+  if (action === "leave") clearSession();
+  if (action === "copy") copyShare();
+  if (action === "add-test-players") addTestPlayers();
+  if (action === "start") startGame();
+  if (action === "bid-selected") bidSelectedCards();
+  if (action === "bid-pass") passBid();
+  if (action === "random-bid") randomBid();
+  if (action === "open-bid-dialog") {
+    activeDialog = "bid";
+    render();
+  }
+  if (action === "bury-selected") burySelectedCards();
+  if (action === "fry-selected") frySelectedCards();
+  if (action === "fry-pass") passFry();
+  if (action === "open-fry-dialog") {
+    activeDialog = "fry";
+    render();
+  }
+  if (action === "dogleg-selected") chooseDoglegSelectedCard();
+  if (action === "play-selected") playSelectedCards();
+  if (action === "test-play-round") testPlayRound();
+  if (action === "test-setup") testSetupProgress();
+  if (action === "reset") resetRoom();
+  if (action === "open-kitty") {
+    activeDialog = "kitty";
+    render();
+  }
+  if (action === "close-dialog") {
+    if (activeDialog === "bid" || activeDialog === "fry") dismissedActionDialogKey = actionDialogKey();
+    activeDialog = null;
+    render();
+  }
+  if (action === "toggle-card") {
+    const cardId = cardIdFromEvent(event);
+    if (suppressNextCardClick === cardId) {
+      suppressNextCardClick = null;
+      return;
+    }
+    toggleCard(cardId);
+  }
+  if (action === "clear-selection") {
+    if (event.target.closest("[data-card-id]")) return;
+    selectedCardIds = new Set();
+    render();
+  }
+});
+
+document.addEventListener("pointerdown", (event) => {
+  if (event.target.closest("[data-card-id]")) beginDragSelect(event);
+});
+
+document.addEventListener("pointermove", continueDragSelect);
+document.addEventListener("pointerup", endDragSelect);
+document.addEventListener("pointercancel", endDragSelect);
+
+async function resume() {
+  if (!session) return render();
+  try {
+    const params = new URLSearchParams({ playerId: session.playerId, token: session.token });
+    applyState(await api(`/api/rooms/${session.roomId}/state?${params.toString()}`));
+    connectEvents();
+  } catch {
+    clearSession();
+    setMessage("本机没有可恢复的房间身份，请重新创建或加入。", true);
+  }
+  render();
+}
+
+resume();
