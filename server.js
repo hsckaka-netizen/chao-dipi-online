@@ -372,7 +372,7 @@ function playerRole(room, playerId) {
 function trickSnapshot(room, trick) {
   if (!trick) return null;
   const currentTurnPlayerId = trick === room.currentTrick ? expectedPlayerId(room) : null;
-  const turnIndexByPlayerId = new Map(playOrder(room, trick.leaderId || room.hostId).map((player, index) => [player.id, index]));
+  const turnIndexByPlayerId = new Map(orderedPlayersFrom(room, trick.leaderId || room.hostId).map((player, index) => [player.id, index]));
   return {
     number: trick.number,
     leaderId: trick.leaderId,
