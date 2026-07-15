@@ -1,0 +1,14 @@
+{
+  "name": "chao-dipi-online",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Online multiplayer Chao Dipi room prototype.",
+  "type": "module",
+  "scripts": {
+    "start": "node server.js",
+    "check": "node --check server.js"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
