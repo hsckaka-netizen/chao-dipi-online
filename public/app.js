@@ -1263,7 +1263,7 @@ function renderTrick(trick, current) {
         <span>${current ? "当前轮" : `第 ${trick.number} 轮`}</span>
         <span>${escapeHtml(titleMeta)}</span>
       </div>
-      <div class="trick-grid ${current ? "table-circle" : ""}">
+      <div class="trick-grid ${current ? `table-circle table-seats-${plays.length}` : ""}">
         ${current ? `
           <div class="table-center">
             <strong>第 ${trick.number} 轮</strong>
@@ -1292,8 +1292,10 @@ function seatStyle(index, total) {
   const safeTotal = Math.max(1, total);
   const angle = -90 + (360 / safeTotal) * index;
   const radian = (angle * Math.PI) / 180;
-  const x = 50 + 40 * Math.cos(radian);
-  const y = 50 + 40 * Math.sin(radian);
+  const xRadius = safeTotal >= 7 ? 39 : 37;
+  const yRadius = safeTotal >= 7 ? 34 : 35;
+  const x = 50 + xRadius * Math.cos(radian);
+  const y = 50 + yRadius * Math.sin(radian);
   return `--seat-x:${x.toFixed(2)}%;--seat-y:${y.toFixed(2)}%;`;
 }
 
