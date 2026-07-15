@@ -29,7 +29,8 @@ body {
 }
 
 button,
-input {
+input,
+select {
   font: inherit;
 }
 
@@ -68,7 +69,8 @@ button.compact-button {
   font-size: 12px;
 }
 
-input {
+input,
+select {
   width: 100%;
   min-height: 44px;
   border: 1px solid var(--line);
@@ -404,7 +406,7 @@ label {
   min-width: 0;
 }
 
-.name-with-role {
+.player-identity {
   display: inline-flex;
   align-items: center;
   gap: 4px;
@@ -418,6 +420,35 @@ label {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.avatar {
+  flex: 0 0 auto;
+  display: inline-grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  overflow: hidden;
+  border: 1px solid #cbd8d0;
+  border-radius: 50%;
+  background: #e8eee9;
+  color: var(--primary);
+  font-size: 14px;
+  font-weight: 900;
+  line-height: 1;
+}
+
+.avatar.small {
+  width: 24px;
+  height: 24px;
+  font-size: 12px;
+}
+
+.avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
 }
 
 .role-mark {
@@ -462,6 +493,22 @@ label {
 .player-stats strong {
   color: var(--text);
   font-size: 12px;
+}
+
+.profile-list {
+  display: grid;
+  gap: 10px;
+}
+
+.profile-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: end;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfcfb;
 }
 
 .tags {
@@ -996,6 +1043,14 @@ label {
   .table-circle .mini-cards {
     max-height: none;
     overflow: visible;
+  }
+
+  .profile-row {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .profile-row button {
+    grid-column: 1 / -1;
   }
 
   .result-row b {

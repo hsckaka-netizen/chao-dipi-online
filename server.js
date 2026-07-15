@@ -30,6 +30,33 @@ const suitStrength = new Map([
   ["S", 3]
 ]);
 const rooms = new Map();
+const initialPlayerProfiles = [
+  { id: "player-benlei", name: "奔雷" },
+  { id: "player-biesan", name: "瘪三" },
+  { id: "player-denghuang", name: "登黄" },
+  { id: "player-diaonan", name: "吊男" },
+  { id: "player-gelu", name: "格鲁" },
+  { id: "player-hanya", name: "寒鸭" },
+  { id: "player-haohao", name: "浩浩" },
+  { id: "player-jiangmen", name: "姜门" },
+  { id: "player-jiangzha", name: "蒋渣" },
+  { id: "player-lafang", name: "拉芳" },
+  { id: "player-nanju", name: "楠局" },
+  { id: "player-shuainan", name: "耍男" },
+  { id: "player-tieniu", name: "铁牛" },
+  { id: "player-zhengwei", name: "政委" },
+  { id: "player-chenran", name: "陈然" }
+];
+const playerProfiles = new Map(initialPlayerProfiles.map((profile) => [
+  profile.id,
+  {
+    id: profile.id,
+    name: profile.name,
+    avatarUrl: profile.avatarUrl || "",
+    builtIn: true,
+    updatedAt: now()
+  }
+]));
 
 function id(size = 8) {
   return randomBytes(size).toString("base64url");
@@ -55,11 +82,39 @@ function addEvent(room, text) {
   room.events = room.events.slice(0, 30);
 }
 
-function createPlayer(name, host = false, test = false) {
+function publicProfile(profile) {
+  return {
+    id: profile.id,
+    name: profile.name,
+    avatarUrl: profile.avatarUrl || "",
+    builtIn: Boolean(profile.builtIn),
+    updatedAt: profile.updatedAt
+  };
+}
+
+function profileNameTaken(name, exceptId = "") {
+  return [...playerProfiles.values()].some((profile) => profile.id !== exceptId && profile.name === name);
+}
+
+function profilesList() {
+  return [...playerProfiles.values()]
+    .map(publicProfile)
+    .sort((a, b) => a.name.localeCompare(b.name, "zh-Hans-CN"));
+}
+
+function profileForId(profileId) {
+  return playerProfiles.get(String(profileId || ""));
+}
+
+function createPlayer(profileOrName, host = false, test = false) {
+  const profile = typeof profileOrName === "object" ? profileOrName : null;
+  const name = profile ? profile.name : profileOrName;
   return {
     id: id(9),
     token: id(18),
     name,
+    profileId: profile?.id || null,
+    avatarUrl: profile?.avatarUrl || "",
     host,
     test,
     connected: false,
@@ -68,6 +123,25 @@ function createPlayer(name, host = false, test = false) {
     draggedDiamondFives: 0,
     hand: []
   };
+}
+
+function syncProfileToRooms(profile) {
+  for (const room of rooms.values()) {
+    let changed = false;
+    room.players.forEach((player) => {
+      if (player.profileId !== profile.id) return;
+      player.name = profile.name;
+      player.avatarUrl = profile.avatarUrl || "";
+      changed = true;
+    });
+    if (changed) broadcast(room);
+  }
+}
+
+function playerProfileFromBody(body) {
+  const profile = profileForId(body.profileId);
+  if (!profile) return { error: "请选择玩家列表里的玩家", status: 400 };
+  return { profile };
 }
 
 function createEmptyTrick(number = 1, leaderId = null) {
@@ -277,6 +351,7 @@ function trickSnapshot(room, trick) {
       return {
         playerId: player.id,
         playerName: player.name,
+        avatarUrl: player.avatarUrl || "",
         role: playerRole(room, player.id),
         played: Boolean(play),
         winning: rawPlayIndex >= 0 && rawPlayIndex === trick.winningPlayIndex,
@@ -308,10 +383,12 @@ function roomSnapshot(room, viewer = null) {
     startedAt: room.startedAt,
     hostId: room.hostId,
     setup: setupSnapshot(room),
-    viewer: viewer ? { id: viewer.id, name: viewer.name, host: viewer.host } : null,
+    viewer: viewer ? { id: viewer.id, name: viewer.name, avatarUrl: viewer.avatarUrl || "", host: viewer.host } : null,
     players: room.players.map((player) => ({
       id: player.id,
+      profileId: player.profileId || null,
       name: player.name,
+      avatarUrl: player.avatarUrl || "",
       host: player.host,
       test: player.test,
       role: playerRole(room, player.id),
@@ -1255,15 +1332,38 @@ function updateConnection(room, playerId, connected) {
 }
 
 async function handleApi(req, res, pathParts, url) {
+  if (pathParts[1] === "players") {
+    if (req.method === "GET" && pathParts.length === 2) {
+      return writeJson(res, 200, { players: profilesList() });
+    }
+
+    if (req.method === "PUT" && pathParts[2]) {
+      const profile = profileForId(pathParts[2]);
+      if (!profile) return writeJson(res, 404, { error: "玩家不存在" });
+      const body = await readJson(req);
+      const name = cleanName(body.name);
+      if (!name) return writeJson(res, 400, { error: "请输入玩家名称" });
+      if (profileNameTaken(name, profile.id)) return writeJson(res, 409, { error: "这个玩家名称已经存在" });
+      profile.name = name;
+      profile.updatedAt = now();
+      playerProfiles.set(profile.id, profile);
+      syncProfileToRooms(profile);
+      return writeJson(res, 200, { player: publicProfile(profile), players: profilesList() });
+    }
+
+    return writeJson(res, 404, { error: "接口不存在" });
+  }
+
   if (req.method === "POST" && pathParts[1] === "rooms" && pathParts.length === 2) {
     const body = await readJson(req);
-    const name = cleanName(body.name);
-    if (!name) return writeJson(res, 400, { error: "请输入玩家名字" });
+    const selectedProfile = playerProfileFromBody(body);
+    if (selectedProfile.error) return writeJson(res, selectedProfile.status, { error: selectedProfile.error });
+    const profile = selectedProfile.profile;
 
     let nextRoomId = roomId();
     while (rooms.has(nextRoomId)) nextRoomId = roomId();
 
-    const host = createPlayer(name, true);
+    const host = createPlayer(profile, true);
     const room = {
       id: nextRoomId,
       status: "lobby",
@@ -1288,7 +1388,7 @@ async function handleApi(req, res, pathParts, url) {
       clients: new Set()
     };
     rooms.set(room.id, room);
-    addEvent(room, `${name} 创建了房间`);
+    addEvent(room, `${profile.name} 创建了房间`);
     return writeJson(res, 201, {
       roomId: room.id,
       playerId: host.id,
@@ -1311,17 +1411,18 @@ async function handleApi(req, res, pathParts, url) {
 
     if (req.method === "POST" && pathParts[3] === "join") {
       const body = await readJson(req);
-      const name = cleanName(body.name);
-      if (!name) return writeJson(res, 400, { error: "请输入玩家名字" });
+      const selectedProfile = playerProfileFromBody(body);
+      if (selectedProfile.error) return writeJson(res, selectedProfile.status, { error: selectedProfile.error });
+      const profile = selectedProfile.profile;
       if (room.status !== "lobby") return writeJson(res, 409, { error: "牌局已经开始，暂不能加入" });
       if (room.players.length >= MAX_PLAYERS) return writeJson(res, 409, { error: "房间已满" });
-      if (room.players.some((player) => player.name === name)) {
-        return writeJson(res, 409, { error: "这个名字已经有人用了" });
+      if (room.players.some((player) => player.profileId === profile.id)) {
+        return writeJson(res, 409, { error: "这个玩家已经在房间里" });
       }
 
-      const player = createPlayer(name, false);
+      const player = createPlayer(profile, false);
       room.players.push(player);
-      addEvent(room, `${name} 加入了房间`);
+      addEvent(room, `${profile.name} 加入了房间`);
       broadcast(room);
       return writeJson(res, 201, {
         roomId: room.id,

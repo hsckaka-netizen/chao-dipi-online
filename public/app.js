@@ -11,6 +11,10 @@ let suppressNextCardClick = null;
 let activeDialog = null;
 let dismissedActionDialogKey = null;
 let messageTimer = null;
+let homeView = "rooms";
+let profiles = [];
+let profilesLoaded = false;
+let profilesLoading = false;
 
 function loadSession() {
   try {
@@ -136,6 +140,22 @@ async function api(path, options = {}) {
   return data;
 }
 
+function ensureProfiles() {
+  if (profilesLoaded || profilesLoading) return;
+  profilesLoading = true;
+  api("/api/players")
+    .then((data) => {
+      profiles = data.players || [];
+      profilesLoaded = true;
+      profilesLoading = false;
+      render();
+    })
+    .catch((error) => {
+      profilesLoading = false;
+      setMessage(error.message || "玩家列表加载失败", true);
+    });
+}
+
 function connectEvents() {
   if (!session || source) return;
   const params = new URLSearchParams({
@@ -160,7 +180,7 @@ async function createRoom(event) {
   try {
     const data = await api("/api/rooms", {
       method: "POST",
-      body: JSON.stringify({ name: form.get("name") })
+      body: JSON.stringify({ profileId: form.get("profileId") })
     });
     saveSession({ roomId: data.roomId, playerId: data.playerId, token: data.token });
     history.replaceState(null, "", `?room=${data.roomId}`);
@@ -181,7 +201,7 @@ async function joinRoom(event) {
   try {
     const data = await api(`/api/rooms/${encodeURIComponent(roomId)}/join`, {
       method: "POST",
-      body: JSON.stringify({ name: form.get("name") })
+      body: JSON.stringify({ profileId: form.get("profileId") })
     });
     saveSession({ roomId: data.roomId, playerId: data.playerId, token: data.token });
     history.replaceState(null, "", `?room=${data.roomId}`);
@@ -189,6 +209,24 @@ async function joinRoom(event) {
     message = "";
     connectEvents();
     render();
+  } catch (error) {
+    setMessage(error.message, true);
+  }
+}
+
+async function updateProfile(event) {
+  event.preventDefault();
+  const formEl = event.target.closest("form");
+  const profileId = formEl?.dataset.profileId;
+  const form = new FormData(formEl);
+  try {
+    const data = await api(`/api/players/${encodeURIComponent(profileId)}`, {
+      method: "PUT",
+      body: JSON.stringify({ name: form.get("name") })
+    });
+    profiles = data.players || [];
+    profilesLoaded = true;
+    setMessage("玩家资料已保存。");
   } catch (error) {
     setMessage(error.message, true);
   }
@@ -713,15 +751,20 @@ function renderShell(content) {
 }
 
 function renderHome() {
+  ensureProfiles();
+  if (homeView === "players") return renderProfileManager();
   const hintedRoom = roomFromUrl();
   renderShell(`
+    <div class="row" style="justify-content:flex-end;margin-bottom:14px">
+      <button type="button" class="secondary" data-action="show-profiles">玩家列表</button>
+    </div>
     <div class="grid">
       <section class="panel">
         <h2>创建房间</h2>
         <form class="form" data-form="create">
           <label>
-            你的名字
-            <input name="name" maxlength="16" required placeholder="例如：南局">
+            选择玩家
+            ${renderProfileSelect("profileId")}
           </label>
           <button type="submit">创建房间</button>
         </form>
@@ -734,14 +777,54 @@ function renderHome() {
             <input name="roomId" maxlength="6" required value="${escapeHtml(hintedRoom)}" placeholder="例如：A7K2QD">
           </label>
           <label>
-            你的名字
-            <input name="name" maxlength="16" required placeholder="例如：铁牛">
+            选择玩家
+            ${renderProfileSelect("profileId")}
           </label>
           <button type="submit">加入房间</button>
         </form>
       </section>
     </div>
   `);
+}
+
+function renderProfileSelect(name) {
+  if (profilesLoading && !profilesLoaded) return `<select name="${name}" required disabled><option>玩家列表加载中</option></select>`;
+  if (!profiles.length) return `<select name="${name}" required disabled><option>暂无预置玩家</option></select>`;
+  return `
+    <select name="${name}" required>
+      <option value="">请选择玩家</option>
+      ${profiles.map((profile) => `<option value="${escapeHtml(profile.id)}">${escapeHtml(profile.name)}</option>`).join("")}
+    </select>
+  `;
+}
+
+function renderProfileManager() {
+  ensureProfiles();
+  renderShell(`
+    <section class="panel stack">
+      <div class="section-head">
+        <h2>玩家列表</h2>
+        <button type="button" class="secondary compact-button" data-action="show-rooms">返回房间</button>
+      </div>
+      <div class="meta">玩家列表由后台预置；这里先支持修改现有玩家名称。头像后续会直接写入基础素材。</div>
+      <div class="profile-list">
+        ${profiles.length ? profiles.map(renderProfileRow).join("") : `<div class="empty">暂无玩家。</div>`}
+      </div>
+    </section>
+  `);
+}
+
+function renderProfileRow(profile) {
+  return `
+    <form class="profile-row" data-form="update-profile" data-profile-id="${escapeHtml(profile.id)}">
+      ${avatarHtml(profile.name, profile.avatarUrl)}
+      <label>
+        玩家名称
+        <input name="name" maxlength="16" required value="${escapeHtml(profile.name)}">
+      </label>
+      <button type="submit" class="secondary">保存</button>
+    </form>
+  `;
 }
 
 function renderRoom() {
@@ -1268,6 +1351,7 @@ function renderSetupTable() {
       playerId: player.id,
       playerName: player.name,
       role: player.role,
+      avatarUrl: player.avatarUrl || "",
       played: false,
       winning: false,
       cards: [],
@@ -1355,7 +1439,7 @@ function visibleTableTrick() {
 function renderTrick(trick, current, options = {}) {
   if (!trick) return `<div class="empty">等待发牌。</div>`;
   const plays = trick.plays || [];
-  const displayPlays = plays;
+  const displayPlays = current ? orientPlaysForViewer(plays) : plays;
   const heldResult = Boolean(options.heldResult);
   const setupTable = Boolean(options.setupTable);
   const titleMeta = current
@@ -1415,6 +1499,14 @@ function playStatusTone(trick, play, current, options = {}) {
   return "";
 }
 
+function orientPlaysForViewer(plays) {
+  const viewerId = state?.viewer?.id;
+  if (!viewerId || !plays.length) return plays;
+  const index = plays.findIndex((play) => play.playerId === viewerId);
+  if (index < 0) return plays;
+  return [...plays.slice(index), ...plays.slice(0, index)];
+}
+
 function roleMark(role) {
   if (!role) return "";
   const text = role === "狗腿" ? "狗" : role === "主" ? "主" : "闲";
@@ -1422,9 +1514,18 @@ function roleMark(role) {
   return `<span class="role-mark ${tone}" title="${escapeHtml(role)}">${escapeHtml(text)}</span>`;
 }
 
-function nameWithRole(name, role, suffix = "") {
+function avatarHtml(name, avatarUrl = "", size = "normal") {
+  const initial = String(name || "玩").trim().slice(0, 1) || "玩";
+  if (avatarUrl) {
+    return `<span class="avatar ${size}" title="${escapeHtml(name)}"><img src="${escapeHtml(avatarUrl)}" alt=""></span>`;
+  }
+  return `<span class="avatar ${size}" title="${escapeHtml(name)}">${escapeHtml(initial)}</span>`;
+}
+
+function playerIdentity(name, role, avatarUrl = "", suffix = "") {
   return `
-    <span class="name-with-role">
+    <span class="player-identity">
+      ${avatarHtml(name, avatarUrl, "small")}
       ${roleMark(role)}
       <span class="name-text">${escapeHtml(`${name}${suffix}`)}</span>
     </span>
@@ -1432,12 +1533,12 @@ function nameWithRole(name, role, suffix = "") {
 }
 
 function playerNameWithRole(play) {
-  return nameWithRole(play.playerName, play.role);
+  return playerIdentity(play.playerName, play.role, play.avatarUrl);
 }
 
 function seatStyle(index, total) {
   const safeTotal = Math.max(1, total);
-  const angle = -90 + (360 / safeTotal) * index;
+  const angle = 90 - (360 / safeTotal) * index;
   const radian = (angle * Math.PI) / 180;
   const xRadius = safeTotal >= 7 ? 39 : 37;
   const yRadius = safeTotal >= 7 ? 34 : 35;
@@ -1476,7 +1577,7 @@ function renderPlayer(player) {
   return `
     <div class="player">
       <div>
-        <strong class="player-name-line">${nameWithRole(player.name, player.role, isMe ? "（我）" : "")}</strong>
+        <strong class="player-name-line">${playerIdentity(player.name, player.role, player.avatarUrl, isMe ? "（我）" : "")}</strong>
         <div class="tags">
           ${player.host ? `<span class="tag accent">房主</span>` : ""}
           ${player.test ? `<span class="tag">测试</span>` : ""}
@@ -1719,12 +1820,21 @@ document.addEventListener("submit", (event) => {
   if (!form) return;
   if (form.dataset.form === "create") return createRoom(event);
   if (form.dataset.form === "join") return joinRoom(event);
+  if (form.dataset.form === "update-profile") return updateProfile(event);
 });
 
 document.addEventListener("click", (event) => {
   const action = event.target.closest("[data-action]")?.dataset.action;
   if (!action) return;
   if (action === "leave") clearSession();
+  if (action === "show-profiles") {
+    homeView = "players";
+    render();
+  }
+  if (action === "show-rooms") {
+    homeView = "rooms";
+    render();
+  }
   if (action === "copy") copyShare();
   if (action === "add-test-players") addTestPlayers();
   if (action === "start") startGame();
