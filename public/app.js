@@ -1236,38 +1236,52 @@ function renderPlayTable() {
   const turnText = state.currentTrick?.currentTurnPlayerName
     ? `轮到 ${state.currentTrick.currentTurnPlayerName}`
     : "等待下一轮";
+  const tableTrick = visibleTableTrick();
+  const holdingPreviousResult = tableTrick && tableTrick !== state.currentTrick;
   return `
     <section class="panel stack">
       <div class="section-head">
         <h2>打牌桌面</h2>
         <div class="tags">
-          <span class="tag accent">当前第 ${state.currentTrick?.number || 1} 轮</span>
-          <span class="tag good">${escapeHtml(turnText)}</span>
+          <span class="tag accent">${holdingPreviousResult ? `第 ${tableTrick.number} 轮结果` : `当前第 ${state.currentTrick?.number || 1} 轮`}</span>
+          <span class="tag good">${escapeHtml(holdingPreviousResult ? `${turnText}，上一轮结果暂留` : turnText)}</span>
           <button type="button" class="secondary compact-button" data-action="open-history">历史出牌 ${state.trickHistory.length}</button>
         </div>
       </div>
-      ${renderTrick(state.currentTrick, true)}
+      ${renderTrick(tableTrick, true, { heldResult: holdingPreviousResult })}
     </section>
   `;
 }
 
-function renderTrick(trick, current) {
+function visibleTableTrick() {
+  const currentTrick = state.currentTrick;
+  if (!currentTrick) return null;
+  const hasCurrentPlay = (currentTrick.plays || []).some((play) => play.played && play.cards?.length);
+  const latestCompleted = state.trickHistory?.[state.trickHistory.length - 1] || null;
+  if (!hasCurrentPlay && latestCompleted) return latestCompleted;
+  return currentTrick;
+}
+
+function renderTrick(trick, current, options = {}) {
   if (!trick) return `<div class="empty">等待发牌。</div>`;
   const plays = trick.plays || [];
   const displayPlays = current ? orderedTrickPlays(trick, plays) : plays;
+  const heldResult = Boolean(options.heldResult);
   const titleMeta = current
-    ? `${trick.leaderName ? `首家 ${trick.leaderName}` : "等待首家"}`
+    ? heldResult
+      ? `${trick.winnerName ? `胜者 ${trick.winnerName} · ${trick.points} 分` : "上一轮结果"}`
+      : `${trick.leaderName ? `首家 ${trick.leaderName}` : "等待首家"}`
     : `${trick.winnerName ? `胜者 ${trick.winnerName} · ${trick.points} 分` : "已完成"}`;
   return `
-    <div class="trick ${current ? "current" : ""}">
+    <div class="trick ${current ? "current" : ""} ${heldResult ? "held-result" : ""}">
       <div class="trick-title">
-        <span>${current ? "当前轮" : `第 ${trick.number} 轮`}</span>
+        <span>${current ? (heldResult ? "上一轮结果" : "当前轮") : `第 ${trick.number} 轮`}</span>
         <span>${escapeHtml(titleMeta)}</span>
       </div>
       <div class="trick-grid ${current ? `table-circle table-seats-${displayPlays.length}` : ""}">
         ${current ? `
           <div class="table-center">
-            <strong>第 ${trick.number} 轮</strong>
+            <strong>${heldResult ? `第 ${trick.number} 轮结果` : `第 ${trick.number} 轮`}</strong>
             <span>${escapeHtml(titleMeta)}</span>
           </div>
         ` : ""}
@@ -1275,7 +1289,7 @@ function renderTrick(trick, current) {
           <div class="trick-player ${play.played ? "played" : ""} ${play.winning ? "winning" : ""}" ${current ? `style="${seatStyle(index, displayPlays.length)}"` : ""}>
             <div class="trick-name">
               <strong>${escapeHtml(play.playerName)}</strong>
-              <span>${escapeHtml(playStatusText(trick, play, index, current))}</span>
+              <span>${escapeHtml(playStatusText(trick, play, index, current, { heldResult }))}</span>
             </div>
             <div class="tags">
               ${play.role ? `<span class="tag ${play.role === "主" || play.role === "狗腿" ? "accent" : ""}">${escapeHtml(play.role)}</span>` : ""}
@@ -1294,10 +1308,14 @@ function orderedTrickPlays(trick, plays) {
   return [...plays.slice(leaderIndex), ...plays.slice(0, leaderIndex)];
 }
 
-function playStatusText(trick, play, index, current) {
+function playStatusText(trick, play, index, current, options = {}) {
   if (!current) {
     if (play.winning) return "本轮最大";
     return play.played ? fmtTime(play.at) : "未出牌";
+  }
+  if (options.heldResult) {
+    if (play.winning) return "本轮最大";
+    return play.played ? "已出" : "未出牌";
   }
   if (trick.currentTurnPlayerId === play.playerId) return "当前出牌";
   if (play.played) return `第${index + 1}手已出`;

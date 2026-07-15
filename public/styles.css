@@ -670,6 +670,11 @@ label {
   background: #f4faf6;
 }
 
+.trick.current.held-result {
+  border-color: #d8ab65;
+  background: #fffaf2;
+}
+
 .trick-title {
   display: flex;
   align-items: center;
