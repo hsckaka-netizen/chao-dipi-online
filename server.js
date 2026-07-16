@@ -40,10 +40,13 @@ const initialPlayerProfiles = [
   { id: "player-haohao", name: "浩浩" },
   { id: "player-jiangmen", name: "姜门" },
   { id: "player-jiangzha", name: "蒋渣" },
+  { id: "player-kaxiang", name: "卡翔" },
   { id: "player-lafang", name: "拉芳" },
   { id: "player-nanju", name: "楠局" },
   { id: "player-shuainan", name: "耍男" },
+  { id: "player-tianhua", name: "天花" },
   { id: "player-tieniu", name: "铁牛" },
+  { id: "player-xiaoxu", name: "小旭" },
   { id: "player-zhengwei", name: "政委" },
   { id: "player-chenran", name: "陈然" }
 ];
