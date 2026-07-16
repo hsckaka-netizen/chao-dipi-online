@@ -1141,14 +1141,105 @@ function setupControlScore(cards, trumpSuit) {
   }, 0);
 }
 
+function minimumBidCountToBeat(currentBid, suit) {
+  if (!currentBid) return 1;
+  const currentCount = currentBid.count || 1;
+  if (currentCount === 1) return 2;
+  if ((suitStrength.get(suit) ?? -1) > (suitStrength.get(currentBid.suit) ?? -1)) return currentCount;
+  return currentCount + 1;
+}
+
+function highMainCount(cards, trumpSuit, maxPower = 8) {
+  return cards.filter((card) => isMainPlayCard(card, trumpSuit) && patternValue(card, trumpSuit) <= maxPower).length;
+}
+
+function protectedFiveCount(cards) {
+  return cards.filter(isProtectedFive).length;
+}
+
+function twoCountForSuit(player, suit) {
+  return player.hand.filter((card) => card.type === "normal" && card.rank === "2" && card.suit === suit).length;
+}
+
+function bidStrengthValue(bid) {
+  if (!bid) return 0;
+  return (bid.count || 0) * 10 + (suitStrength.get(bid.suit) ?? 0);
+}
+
+function bestPossibleBidStrength(player) {
+  return suits.reduce((best, suit) => {
+    const count = twoCountForSuit(player, suit.id);
+    if (!count) return best;
+    return Math.max(best, bidStrengthValue({ count, suit: suit.id }));
+  }, 0);
+}
+
+function bidLockValue(room, player, suit, count) {
+  const ownedTwos = twoCountForSuit(player, suit);
+  const totalCopies = Math.max(1, room.players.length);
+  const outsideCopies = Math.max(0, totalCopies - ownedTwos);
+  const countPressure = Math.max(0, count - 1) * 12 + Math.max(0, count - 2) * 10;
+  const scarcity = count > outsideCopies ? 26 : count === outsideCopies ? 12 : 0;
+  const suitTieBreak = (suitStrength.get(suit) ?? 0) * 2;
+  return countPressure + scarcity + suitTieBreak;
+}
+
+function futureFryFlexValue(player, bid) {
+  return Math.max(0, bestPossibleBidStrength(player) - bidStrengthValue(bid));
+}
+
+function setupBottomControlScore(room, player, trumpSuit) {
+  const control = setupControlScore(player.hand, trumpSuit);
+  const topControls = highMainCount(player.hand, trumpSuit, 7);
+  const mainCount = player.hand.filter((card) => isMainPlayCard(card, trumpSuit)).length;
+  return control + topControls * 12 + mainCount * 1.5;
+}
+
+function setupIdleProbability(room, player) {
+  if (player.id === room.bankerId) return 0;
+  const nonBankers = Math.max(1, room.players.length - 1);
+  return Math.max(0, (nonBankers - (room.doglegNeeded || 0)) / nonBankers);
+}
+
+function shouldAimForBottom(room, player, trumpSuit) {
+  const bottomControl = setupBottomControlScore(room, player, trumpSuit);
+  if (player.id === room.bankerId) return bottomControl >= 155;
+  return setupIdleProbability(room, player) >= 0.6 && bottomControl >= 125;
+}
+
 function bidPowerScore(room, player, suit, count, { includeKitty = false } = {}) {
+  const currentBid = includeKitty ? room.setup.fry?.lastBid : room.setup.bid;
   const cards = includeKitty ? [...player.hand, ...room.kitty] : player.hand;
-  const twoCount = player.hand.filter((card) => card.type === "normal" && card.rank === "2" && card.suit === suit).length;
+  const twoCount = twoCountForSuit(player, suit);
+  const minimumCount = minimumBidCountToBeat(currentBid, suit);
   const trumpNormalCount = cards.filter((card) => card.type === "normal" && card.suit === suit && !isCompareCard(card, suit)).length;
   const mainCount = cards.filter((card) => isMainPlayCard(card, suit)).length;
-  const highMainCount = cards.filter((card) => isMainPlayCard(card, suit) && patternValue(card, suit) <= 8).length;
+  const topMainCount = highMainCount(cards, suit, 8);
   const pointLoad = cardsPoint(cards.filter((card) => isMainPlayCard(card, suit)));
-  return count * 24 + twoCount * 7 + mainCount * 2.5 + highMainCount * 8 + trumpNormalCount * 1.4 + pointLoad * 0.7;
+  const protectedFives = protectedFiveCount(cards);
+  const control = setupControlScore(cards, suit);
+  const kittyPointLoad = includeKitty ? cardsPoint(room.kitty) : 0;
+  const kittyProtectedFives = includeKitty ? protectedFiveCount(room.kitty) : 0;
+  const suitUpgrade = currentBid?.suit && currentBid.suit !== suit
+    ? Math.max(-24, Math.min(36, setupControlScore(cards, suit) - setupControlScore(cards, currentBid.suit)))
+    : 0;
+  const extraCount = Math.max(0, count - minimumCount);
+  const base = control * 0.72
+    + mainCount * 2.2
+    + topMainCount * 8
+    + trumpNormalCount * 1.4
+    + protectedFives * 14
+    + pointLoad * 0.45
+    + twoCount * 2.5;
+  const bid = { count, suit };
+  const lockValue = bidLockValue(room, player, suit, count);
+  const lockBonus = includeKitty
+    ? lockValue * (base >= 105 ? 0.9 : 0.35)
+    : lockValue * (base >= 145 ? 0.7 : base >= 120 ? 0.35 : 0.05);
+  const flexBonus = includeKitty ? 0 : futureFryFlexValue(player, bid) * (base >= 100 ? 2.4 : 1.2);
+  const overbidPenalty = extraCount * (includeKitty ? 7 : 18);
+  const bottomSwing = includeKitty ? kittyPointLoad * 1.2 + kittyProtectedFives * 28 + suitUpgrade * 0.55 : 0;
+  return base + bottomSwing + count * 2.5 + lockBonus + flexBonus - overbidPenalty;
 }
 
 function bidCardIdsForSuit(player, suit, count) {
@@ -1170,36 +1261,157 @@ function bestAutoBid(room, player, currentBid, options = {}) {
     }
   }
   if (!choices.length) return null;
-  const best = choices.sort((a, b) => b.score - a.score || b.bid.count - a.bid.count || (suitStrength.get(b.bid.suit) ?? 0) - (suitStrength.get(a.bid.suit) ?? 0))[0];
+  const best = choices.sort((a, b) => {
+    return b.score - a.score
+      || a.bid.count - b.bid.count
+      || (suitStrength.get(b.bid.suit) ?? 0) - (suitStrength.get(a.bid.suit) ?? 0);
+  })[0];
+  const kittyPressure = options.includeKitty
+    ? Math.min(34, cardsPoint(room.kitty) * 0.7 + protectedFiveCount(room.kitty) * 12)
+    : 0;
   const threshold = currentBid
-    ? 72 + (currentBid.count || 1) * 14
-    : 58;
+    ? (options.includeKitty ? 96 : 108) + (currentBid.count || 1) * 15 - kittyPressure
+    : 82;
   return best.score >= threshold ? best : null;
 }
 
-function autoBuryCardScore(room, player, card, aimForBottom) {
+function buryContext(room, player) {
   const trumpSuit = aiTrumpSuit(room);
+  const banker = player.id === room.bankerId;
+  const idleProbability = banker ? 0 : setupIdleProbability(room, player);
+  const aimForBottom = shouldAimForBottom(room, player, trumpSuit);
+  return { trumpSuit, banker, idleProbability, aimForBottom };
+}
+
+function sideBurySuit(card, trumpSuit) {
+  const suit = playSuit(card, trumpSuit);
+  return suit === "TRUMP" ? null : suit;
+}
+
+function autoBuryCardScore(room, player, card, context = buryContext(room, player)) {
+  const trumpSuit = context.trumpSuit;
   const isMain = isMainPlayCard(card, trumpSuit);
   const protectedFive = isProtectedFive(card);
   const points = cardPoint(card);
   const power = patternValue(card, trumpSuit);
-  if (aimForBottom) {
-    return points * 10 + (protectedFive ? 90 : 0) - (isMain ? 35 : 0) - Math.max(0, 20 - power);
+  let score = 0;
+
+  score += Math.max(0, power - 8) * 0.7;
+  if (!isMain && !points) score += 12;
+  if (isMain) score -= 36 + Math.max(0, 18 - power) * 1.2;
+
+  if (context.banker) {
+    score -= points * (context.aimForBottom ? 5 : 13);
+    if (protectedFive) score -= card.suit === "D" ? 220 : 260;
+  } else {
+    const idle = context.idleProbability;
+    score += points * (context.aimForBottom ? 8 * idle - 1.5 * (1 - idle) : 1.8 * idle - 7 * (1 - idle));
+    if (protectedFive && card.suit === "D") {
+      score += context.aimForBottom ? 88 * idle - 12 * (1 - idle) : 42 * idle - 12 * (1 - idle);
+    } else if (protectedFive && card.suit === "H") {
+      score += context.aimForBottom ? 58 * idle - 28 * (1 - idle) : 10 * idle - 42 * (1 - idle);
+    }
   }
-  return (isMain ? -40 : 0) - points * 14 - (protectedFive ? 120 : 0) + power * 0.6;
+
+  return score;
+}
+
+function buryVoidBonus(room, player, cards, context) {
+  const selectedIds = new Set(cards.map((card) => card.id));
+  let bonus = 0;
+  suits.forEach((suit) => {
+    const suitCards = player.hand.filter((card) => sideBurySuit(card, context.trumpSuit) === suit.id);
+    if (!suitCards.length) return;
+    const buried = suitCards.filter((card) => selectedIds.has(card.id));
+    if (!buried.length) return;
+    const remaining = suitCards.length - buried.length;
+    const suitPoints = cardsPoint(suitCards);
+    const buriedPoints = cardsPoint(buried);
+    if (remaining === 0) {
+      bonus += 24 + Math.min(5, suitCards.length) * 5;
+      if (suitCards.length <= 3) bonus += 16;
+      bonus -= suitPoints * (context.aimForBottom ? 0.4 : 1.8);
+    } else if (remaining <= 2 && buried.length >= 2) {
+      const remainingCards = suitCards.filter((card) => !selectedIds.has(card.id));
+      const strongRemainder = remainingCards.length
+        && remainingCards.every((card) => patternValue(card, context.trumpSuit) <= 3);
+      bonus += 8 + buried.length * 2;
+      if (strongRemainder) bonus += 18 + remainingCards.length * 5;
+    }
+    if (context.banker && buriedPoints) bonus -= buriedPoints * (remaining === 0 ? 0.8 : 2.2);
+  });
+  return bonus;
+}
+
+function buryComboScore(room, player, cards, context) {
+  let score = cards.reduce((total, card) => total + autoBuryCardScore(room, player, card, context), 0);
+  score += buryVoidBonus(room, player, cards, context);
+  const mainCount = cards.filter((card) => isMainPlayCard(card, context.trumpSuit)).length;
+  if (!context.aimForBottom && mainCount >= Math.ceil(cards.length / 2)) score -= mainCount * 10;
+  if (context.aimForBottom && !context.banker) score += cardsPoint(cards) * 0.8 + protectedFiveCount(cards) * 12;
+  if (context.banker) score -= cardsPoint(cards) * (context.aimForBottom ? 1.2 : 2.6);
+  if (context.banker) score -= cards.filter(isProtectedFive).length * 120;
+  return score;
+}
+
+function buryCandidateCards(room, player, count, context) {
+  const scored = player.hand
+    .map((card) => ({ card, score: autoBuryCardScore(room, player, card, context) }))
+    .sort((a, b) => b.score - a.score || b.card.id.localeCompare(a.card.id));
+  const candidateIds = new Set(scored.slice(0, Math.min(18, scored.length)).map((item) => item.card.id));
+
+  suits.forEach((suit) => {
+    const suitCards = player.hand.filter((card) => sideBurySuit(card, context.trumpSuit) === suit.id);
+    if (suitCards.length && suitCards.length <= Math.max(4, count)) {
+      suitCards.forEach((card) => candidateIds.add(card.id));
+    }
+  });
+
+  if (!context.banker && (context.aimForBottom || context.idleProbability >= 0.55)) {
+    player.hand.forEach((card) => {
+      if (cardPoint(card) || isProtectedFive(card)) candidateIds.add(card.id);
+    });
+  }
+
+  const candidates = player.hand
+    .filter((card) => candidateIds.has(card.id))
+    .sort((a, b) => autoBuryCardScore(room, player, b, context) - autoBuryCardScore(room, player, a, context) || b.id.localeCompare(a.id));
+  if (candidates.length >= count) return candidates.slice(0, 18);
+  scored.forEach((item) => candidateIds.add(item.card.id));
+  return player.hand.filter((card) => candidateIds.has(card.id)).slice(0, Math.max(count, 18));
+}
+
+function bestBuryCombination(room, player, candidates, count, context) {
+  let bestCards = candidates.slice(0, count);
+  let bestScore = -Infinity;
+  const current = [];
+
+  function walk(start) {
+    if (current.length === count) {
+      const score = buryComboScore(room, player, current, context);
+      if (score > bestScore) {
+        bestScore = score;
+        bestCards = [...current];
+      }
+      return;
+    }
+    const remainingNeeded = count - current.length;
+    for (let index = start; index <= candidates.length - remainingNeeded; index += 1) {
+      current.push(candidates[index]);
+      walk(index + 1);
+      current.pop();
+    }
+  }
+
+  walk(0);
+  return bestCards;
 }
 
 function autoBuryCardIds(player, count, room = null) {
   if (!room) return sortHand(player.hand).slice(-count).map((card) => card.id);
-  const trumpSuit = aiTrumpSuit(room);
-  const ownTeam = aiOwnTeam(room, player);
-  const control = setupControlScore(player.hand, trumpSuit);
-  const aimForBottom = ownTeam === "idle" && control >= 95;
-  return [...player.hand]
-    .map((card) => ({ card, score: autoBuryCardScore(room, player, card, aimForBottom) }))
-    .sort((a, b) => b.score - a.score || b.card.id.localeCompare(a.card.id))
-    .slice(0, count)
-    .map((item) => item.card.id);
+  const context = buryContext(room, player);
+  const candidates = buryCandidateCards(room, player, count, context);
+  return bestBuryCombination(room, player, candidates, count, context).map((card) => card.id);
 }
 
 function autoProgressTestSetup(room) {
@@ -1518,7 +1730,6 @@ function cardIsHiddenDogleg(room, player, card) {
 function aiOwnTeam(room, player) {
   if (player.id === room.bankerId) return "banker";
   if ((room.doglegPlayerIds || []).includes(player.id)) return "banker";
-  if (hiddenDoglegInHand(room, player)) return "banker";
   return "idle";
 }
 
@@ -1706,6 +1917,60 @@ function protectedFivesInTrickByRelation(room, player, relation) {
   }, 0);
 }
 
+function canRevealDoglegWithCards(room, player, cards) {
+  if (!hiddenDoglegInHand(room, player)) return false;
+  if ((room.doglegPlayerIds || []).length >= (room.doglegNeeded || 0)) return false;
+  return cards.some((card) => sameDoglegCard(card, room.doglegCard));
+}
+
+function doglegCopiesInHand(room, player) {
+  if (!room.doglegCard) return 0;
+  return player.hand.filter((card) => sameDoglegCard(card, room.doglegCard)).length;
+}
+
+function doglegRevealProbability(room, player) {
+  if (!hiddenDoglegInHand(room, player)) return 0;
+  const copies = doglegCopiesInHand(room, player);
+  const doglegSuit = playSuit(room.doglegCard, room.trumpSuit);
+  const sameSuitCount = player.hand.filter((card) => playSuit(card, room.trumpSuit) === doglegSuit).length;
+  const remainingDoglegs = Math.max(1, (room.doglegNeeded || 0) - (room.doglegPlayerIds || []).length);
+  const copyPressure = Math.min(0.38, copies * 0.17);
+  const suitPressure = sameSuitCount <= copies
+    ? 0.34
+    : sameSuitCount <= copies + 2
+      ? 0.23
+      : sameSuitCount <= 6
+        ? 0.1
+        : 0;
+  const lateHandPressure = player.hand.length <= 14 ? 0.16 : player.hand.length <= 28 ? 0.08 : 0;
+  const multiDoglegPressure = remainingDoglegs > 1 ? 0.08 : 0;
+  return Math.max(0.05, Math.min(0.9, 0.08 + copyPressure + suitPressure + lateHandPressure + multiDoglegPressure));
+}
+
+function bankerSupportForDogleg(room) {
+  const banker = playerById(room, room.bankerId);
+  if (!banker) return 0;
+  const control = setupControlScore(banker.hand, room.trumpSuit);
+  const mainCount = banker.hand.filter((card) => isMainPlayCard(card, room.trumpSuit)).length;
+  if (control >= 165 || mainCount >= 18) return 34;
+  if (control >= 135 || mainCount >= 14) return 20;
+  if (control >= 105 || mainCount >= 10) return 8;
+  return -24;
+}
+
+function doglegRevealValue(room, player, cards, { beats = false, pointsAtStake = 0, leading = false } = {}) {
+  if (!canRevealDoglegWithCards(room, player, cards)) return 0;
+  const control = setupControlScore(player.hand, room.trumpSuit);
+  const revealProbability = doglegRevealProbability(room, player);
+  let value = -58 + revealProbability * 78 + bankerSupportForDogleg(room) * 0.75;
+  if (pointsAtStake >= 20) value += pointsAtStake * 1.8;
+  else if (pointsAtStake <= 5 && !beats) value -= 18;
+  if (beats) value += 24;
+  if (leading) value += control >= 120 ? 18 : -16;
+  value += Math.max(-22, Math.min(34, (control - 95) * 0.35));
+  return value;
+}
+
 function legalFollowCandidates(room, player, info) {
   const candidates = [];
   const sameSuit = player.hand.filter((card) => playSuit(card, room.trumpSuit) === info.suit);
@@ -1739,7 +2004,6 @@ function leadCandidateScore(room, player, cards) {
   const points = cardsPoint(cards);
   const power = playPower(cards, room.trumpSuit);
   const protectedFiveCount = cards.filter(isProtectedFive).length;
-  const hiddenDoglegPlayed = cards.some((card) => cardIsHiddenDogleg(room, player, card));
   const endgame = player.hand.length <= 10;
   let score = 0;
   score += cards.length * 8;
@@ -1748,7 +2012,7 @@ function leadCandidateScore(room, player, cards) {
   score += Math.max(0, 35 - power * 2);
   score += points * (power <= 8 ? 1.8 : -0.8);
   if (protectedFiveCount && power > 2) score -= protectedFiveCount * 45;
-  if (hiddenDoglegPlayed) score += power <= 8 || points ? 28 : -25;
+  score += doglegRevealValue(room, player, cards, { pointsAtStake: points, leading: true });
   if (endgame) score += Math.max(0, 30 - power) + cards.length * 4;
   score -= cardsAssetCost(room, player, cards) * 0.12;
   return score;
@@ -1768,14 +2032,13 @@ function followCandidateScore(room, player, cards, info, winning) {
   const pointsOnTable = cardsPoint((room.currentTrick?.plays || []).flatMap((play) => play.cards)) + pointsInCandidate;
   const opponentProtectedFives = protectedFivesInTrickByRelation(room, player, "opponent");
   const selfProtectedFives = cards.filter(isProtectedFive).length;
-  const hiddenDoglegPlayed = cards.some((card) => cardIsHiddenDogleg(room, player, card));
   const { beats, comparison } = candidateBeatsCurrent(room, info, cards, winning);
   const endgame = player.hand.length <= info.count * 2 + 2;
   const cost = cardsAssetCost(room, player, cards);
   let score = 0;
 
   if (relation === "opponent") {
-    if (beats) score += 120 + pointsOnTable * 3 + opponentProtectedFives * 80;
+    if (beats) score += (pointsOnTable >= 10 || opponentProtectedFives || endgame ? 120 : 72) + pointsOnTable * 3 + opponentProtectedFives * 80;
     else score -= pointsInCandidate * 3 + selfProtectedFives * 90;
   } else if (relation === "ally" || relation === "self") {
     if (beats) score -= 55 + cost * 0.4;
@@ -1786,7 +2049,7 @@ function followCandidateScore(room, player, cards, info, winning) {
   }
 
   if (beats && comparison) score += Math.max(0, 35 - comparison.power);
-  if (hiddenDoglegPlayed) score += beats ? 20 : -45;
+  score += doglegRevealValue(room, player, cards, { beats, pointsAtStake: pointsOnTable });
   if (endgame && beats) score += 35 + pointsOnTable;
   score -= cost * (beats ? 0.25 : 0.55);
   return score;
