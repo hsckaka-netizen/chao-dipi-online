@@ -644,7 +644,8 @@ function rankValue(card, trumpSuit = currentTrumpSuit()) {
 }
 
 function rankKey(card, trumpSuit = currentTrumpSuit()) {
-  return patternKey(card, trumpSuit);
+  if (card.type === "joker") return `${playSuit(card, trumpSuit)}:JOKER:${card.joker}`;
+  return `${playSuit(card, trumpSuit)}:${card.suit}:${card.rank}`;
 }
 
 function cardsByRank(cards, trumpSuit = currentTrumpSuit()) {
@@ -691,7 +692,13 @@ function detectPlayPattern(cards, trumpSuit = currentTrumpSuit()) {
 }
 
 function leadInfoFromSnapshot(trick) {
-  const lead = (trick?.plays || []).find((play) => play.played && play.cards?.length);
+  const lead = (trick?.plays || [])
+    .filter((play) => play.played && play.cards?.length)
+    .sort((a, b) => {
+      const aIndex = Number.isFinite(a.turnIndex) ? a.turnIndex : Number.MAX_SAFE_INTEGER;
+      const bIndex = Number.isFinite(b.turnIndex) ? b.turnIndex : Number.MAX_SAFE_INTEGER;
+      return aIndex - bIndex;
+    })[0];
   if (!lead) return null;
   const suits = uniquePlaySuits(lead.cards);
   return {

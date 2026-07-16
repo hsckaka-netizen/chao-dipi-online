@@ -1077,7 +1077,8 @@ function rankValue(card, trumpSuit) {
 }
 
 function rankKey(card, trumpSuit) {
-  return patternKey(card, trumpSuit);
+  if (card.type === "joker") return `${playSuit(card, trumpSuit)}:JOKER:${card.joker}`;
+  return `${playSuit(card, trumpSuit)}:${card.suit}:${card.rank}`;
 }
 
 function cardsByRank(cards, trumpSuit) {
