@@ -1645,14 +1645,24 @@ function renderSetupActionTrail(actions) {
   `;
 }
 
-function renderSeatHand(action) {
+function renderSeatHand(action, play, trick, index, options = {}) {
   if (!state?.viewer?.id || !Array.isArray(state.hand)) return "";
+  const statusText = playStatusText(trick, play, index, true, options);
+  const statusTone = playStatusTone(trick, play, true, options);
   return `
     <div class="seat-hand">
       <div class="seat-hand-head">
-        <div class="seat-hand-title">
-          <strong>我的手牌</strong>
-          <span>${state.hand.length} 张</span>
+        <div class="seat-hand-player">
+          <div class="seat-hand-player-line">
+            <strong>${playerNameWithRole(play)}</strong>
+            <span class="seat-status ${escapeHtml(statusTone)}">${escapeHtml(statusText)}</span>
+          </div>
+          <div class="seat-hand-stats">
+            <span>牌分 <b>${play.score || 0}</b></span>
+            <span>红五 <b>${play.draggedRedFives || 0}</b></span>
+            <span>方五 <b>${play.draggedDiamondFives || 0}</b></span>
+            <span>手牌 <b>${state.hand.length}</b></span>
+          </div>
         </div>
         ${renderHandControls(action)}
       </div>
@@ -1700,12 +1710,15 @@ function renderTrick(trick, current, options = {}) {
         ${displayPlays.map((play, index) => {
           const playContent = setupTable ? renderSetupActionTrail(play.setupActions) : (play.played ? renderMiniCards(play.cards) : "");
           const isViewerSeat = current && play.playerId === state.viewer?.id;
-          const seatHand = isViewerSeat ? renderSeatHand(viewerAction) : "";
+          const playIndex = play.turnIndex ?? index;
+          const statusText = playStatusText(trick, play, playIndex, current, { heldResult, setupTable });
+          const statusTone = playStatusTone(trick, play, current, { heldResult, setupTable });
+          const seatHand = isViewerSeat ? renderSeatHand(viewerAction, play, trick, playIndex, { heldResult, setupTable }) : "";
           const playerCard = `
             <div class="trick-player ${play.played ? "played" : ""} ${play.lead ? "lead" : ""} ${play.currentTurn ? "current-turn" : ""} ${play.winning ? "winning" : ""}">
               <div class="trick-name">
                 <strong>${playerNameWithRole(play)}</strong>
-                <span class="seat-status ${escapeHtml(playStatusTone(trick, play, current, { heldResult, setupTable }))}">${escapeHtml(playStatusText(trick, play, play.turnIndex ?? index, current, { heldResult, setupTable }))}</span>
+                <span class="seat-status ${escapeHtml(statusTone)}">${escapeHtml(statusText)}</span>
               </div>
               <div class="trick-player-stats">
                 <span>牌分 <b>${play.score || 0}</b></span>
@@ -1719,7 +1732,7 @@ function renderTrick(trick, current, options = {}) {
           if (!current) return playerCard;
           return `
             <div class="trick-seat ${seatZone(index, displayPlays.length)} ${isViewerSeat ? "viewer-seat" : ""}" style="${seatStyle(index, displayPlays.length)}">
-              ${playerCard}
+              ${isViewerSeat ? "" : playerCard}
               ${playContent ? `<div class="seat-play">${playContent}</div>` : ""}
               ${seatHand}
             </div>

@@ -873,7 +873,7 @@ label {
 .trick-grid.table-circle {
   position: relative;
   display: block;
-  min-height: clamp(920px, 74vw, 1120px);
+  min-height: clamp(800px, 66vw, 980px);
   margin: 8px 0 4px;
   border: 0;
   background: transparent;
@@ -958,11 +958,6 @@ label {
   width: min(1120px, 96%);
   min-height: 0;
   transform: translateX(-50%);
-}
-
-.table-circle .trick-seat.viewer-seat .trick-player {
-  width: var(--seat-width, 232px);
-  max-width: 100%;
 }
 
 .table-circle .trick-name {
@@ -1063,7 +1058,7 @@ label {
 .seat-hand {
   box-sizing: border-box;
   width: 100%;
-  max-height: min(34vh, 330px);
+  max-height: min(31vh, 280px);
   overflow: auto;
   border: 1px solid rgba(203, 216, 208, 0.96);
   border-radius: 8px;
@@ -1073,29 +1068,46 @@ label {
 }
 
 .seat-hand-head {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  flex-wrap: wrap;
-  margin-bottom: 8px;
+  gap: 8px 12px;
+  margin-bottom: 6px;
 }
 
-.seat-hand-title {
-  display: flex;
-  align-items: baseline;
+.seat-hand-player {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.seat-hand-player-line {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
   gap: 8px;
-  min-width: 120px;
 }
 
-.seat-hand-title strong {
-  font-size: 15px;
+.seat-hand-player-line strong {
+  min-width: 0;
+  overflow: hidden;
 }
 
-.seat-hand-title span {
+.seat-hand-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
   color: var(--muted);
-  font-size: 12px;
-  font-weight: 800;
+  font-size: 11px;
+  line-height: 1.15;
+}
+
+.seat-hand-stats span {
+  white-space: nowrap;
+}
+
+.seat-hand-stats b {
+  color: var(--text);
 }
 
 .seat-hand .hand {
@@ -1184,6 +1196,7 @@ label {
 
 .seat-hand .hand-controls {
   justify-content: flex-end;
+  align-self: center;
 }
 
 .seat-hand .hand-controls button {
@@ -1458,11 +1471,6 @@ label {
     box-shadow: none;
   }
 
-  .table-circle .trick-seat.viewer-seat .trick-player {
-    width: auto;
-    max-width: none;
-  }
-
   .seat-play,
   .seat-bottom .seat-play,
   .seat-top .seat-play,
@@ -1490,6 +1498,7 @@ label {
   }
 
   .seat-hand-head {
+    grid-template-columns: 1fr;
     align-items: stretch;
   }
 
