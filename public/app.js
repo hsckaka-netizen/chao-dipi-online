@@ -599,11 +599,17 @@ function uniqueFollowSuits(cards) {
 
 function isMainPlayCard(card, trumpSuit = currentTrumpSuit()) {
   if (!card) return false;
+  if (isComparePlayCard(card, trumpSuit)) return true;
+  return card.type === "normal" && trumpSuit && card.suit === trumpSuit;
+}
+
+function isComparePlayCard(card, trumpSuit = currentTrumpSuit()) {
+  if (!card) return false;
   if (card.type === "joker") return true;
   if (card.rank === "2") return true;
   if ((card.suit === "H" || card.suit === "D") && card.rank === "5") return true;
   if (card.rank === "3" && trumpSuit && suitColor(card.suit) === suitColor(trumpSuit)) return true;
-  return card.type === "normal" && trumpSuit && card.suit === trumpSuit;
+  return false;
 }
 
 function playSuit(card, trumpSuit = currentTrumpSuit()) {
@@ -675,6 +681,44 @@ function rankValue(card, trumpSuit = currentTrumpSuit()) {
   return patternValue(card, trumpSuit);
 }
 
+function nonMainRankOrderValue(card, trumpSuit = currentTrumpSuit()) {
+  if (!card || card.type !== "normal") return 99;
+  const availableRanks = rankOrder.filter((rank) => {
+    const sample = { type: "normal", suit: card.suit, rank };
+    return !isMainPlayCard(sample, trumpSuit);
+  });
+  const index = availableRanks.indexOf(card.rank);
+  return index >= 0 ? index : 99;
+}
+
+function mainTractorOrderValue(card, trumpSuit = currentTrumpSuit()) {
+  if (!card) return 99;
+  if (card.type === "normal" && trumpSuit && card.suit === trumpSuit && !isComparePlayCard(card, trumpSuit)) {
+    const availableRanks = rankOrder.filter((rank) => {
+      const sample = { type: "normal", suit: trumpSuit, rank };
+      return !isComparePlayCard(sample, trumpSuit);
+    });
+    const index = availableRanks.indexOf(card.rank);
+    return index >= 0 ? 8 + index : 99;
+  }
+  return patternValue(card, trumpSuit);
+}
+
+function tractorOrderValue(group, trumpSuit = currentTrumpSuit()) {
+  const card = group.cards[0];
+  if (!card) return 99;
+  if (playSuit(card, trumpSuit) === "TRUMP") return mainTractorOrderValue(card, trumpSuit);
+  return nonMainRankOrderValue(card, trumpSuit);
+}
+
+function consecutiveTractorGroups(previous, next, trumpSuit = currentTrumpSuit()) {
+  const previousCard = previous.cards[0];
+  const nextCard = next.cards[0];
+  if (!previousCard || !nextCard) return false;
+  if (playSuit(previousCard, trumpSuit) !== playSuit(nextCard, trumpSuit)) return false;
+  return tractorOrderValue(next, trumpSuit) === tractorOrderValue(previous, trumpSuit) + 1;
+}
+
 function rankKey(card, trumpSuit = currentTrumpSuit()) {
   if (card.type === "joker") return `${playSuit(card, trumpSuit)}:JOKER:${card.joker}`;
   return `${playSuit(card, trumpSuit)}:${card.suit}:${card.rank}`;
@@ -700,7 +744,7 @@ function detectPlayPattern(cards, trumpSuit = currentTrumpSuit()) {
   if (cards.length === 1) return { type: "single", count: 1 };
 
   const suits = uniquePlaySuits(cards, trumpSuit);
-  const groups = cardsByRank(cards, trumpSuit).sort((a, b) => a.value - b.value);
+  const groups = cardsByRank(cards, trumpSuit).sort((a, b) => tractorOrderValue(a, trumpSuit) - tractorOrderValue(b, trumpSuit) || a.value - b.value);
   if (groups.length === 1) {
     if (suits.length !== 1) return null;
     return { type: "multi", count: cards.length, width: cards.length, ranks: [groups[0].rank] };
@@ -710,9 +754,9 @@ function detectPlayPattern(cards, trumpSuit = currentTrumpSuit()) {
   const width = groups[0].count;
   if (width < 2) return null;
   if (!groups.every((group) => group.count === width)) return null;
-  if (groups.some((group) => group.value >= 99)) return null;
+  if (groups.some((group) => tractorOrderValue(group, trumpSuit) >= 99)) return null;
   for (let i = 1; i < groups.length; i += 1) {
-    if (groups[i].value !== groups[i - 1].value + 1) return null;
+    if (!consecutiveTractorGroups(groups[i - 1], groups[i], trumpSuit)) return null;
   }
   return {
     type: "tractor",
@@ -1906,6 +1950,7 @@ function isFixedRankCard(card) {
 }
 
 const suitSort = { S: 0, H: 1, C: 2, D: 3 };
+const rankOrder = ["A", "K", "Q", "J", "10", "9", "8", "7", "6", "5", "4", "3", "2"];
 const rankSort = {
   A: 0,
   K: 1,

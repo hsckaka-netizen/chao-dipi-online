@@ -1061,13 +1061,118 @@ function selectDogleg(room, player, cardIds) {
   return { ok: true };
 }
 
-function autoBuryCardIds(player, count) {
-  return sortHand(player.hand).slice(-count).map((card) => card.id);
+function autoDoglegCardId(room, player) {
+  const candidates = sortHand(player.hand).filter((item) => !isCompareCard(item, room.trumpSuit));
+  if (!candidates.length) return player.hand[0]?.id || null;
+  const totalDeckCopies = room.players.length;
+  const keyFor = (card) => `${card.suit}:${card.rank}`;
+  const handCounts = new Map();
+  player.hand.forEach((card) => {
+    if (card.type !== "normal") return;
+    const key = keyFor(card);
+    handCounts.set(key, (handCounts.get(key) || 0) + 1);
+  });
+  const kittyCounts = new Map();
+  room.kitty.forEach((card) => {
+    if (card.type !== "normal") return;
+    const key = keyFor(card);
+    kittyCounts.set(key, (kittyCounts.get(key) || 0) + 1);
+  });
+  return candidates
+    .map((card) => {
+      const key = keyFor(card);
+      const heldByBanker = handCounts.get(key) || 0;
+      const buried = kittyCounts.get(key) || 0;
+      const outsideCopies = Math.max(0, totalDeckCopies - heldByBanker - buried);
+      const pointPenalty = cardPoint(card) * 12;
+      const rankIndex = rankSort.get(card.rank) ?? 99;
+      return {
+        card,
+        score: outsideCopies * 45 + rankIndex * 2 - heldByBanker * 10 - buried * 35 - pointPenalty
+      };
+    })
+    .sort((a, b) => b.score - a.score || a.card.id.localeCompare(b.card.id))[0].card.id;
 }
 
-function autoDoglegCardId(room, player) {
-  const card = sortHand(player.hand).find((item) => !isCompareCard(item, room.trumpSuit));
-  return card?.id || player.hand[0]?.id || null;
+function aiTrumpSuit(room) {
+  return room.trumpSuit || currentTrumpSuit(room);
+}
+
+function setupControlScore(cards, trumpSuit) {
+  if (!trumpSuit) return 0;
+  return cards.reduce((score, card) => {
+    let next = score;
+    if (isMainPlayCard(card, trumpSuit)) {
+      next += 5;
+      const power = patternValue(card, trumpSuit);
+      if (power <= 8) next += Math.max(0, 18 - power * 2);
+    }
+    if (card.type === "normal" && card.suit === trumpSuit && !isCompareCard(card, trumpSuit)) next += 2;
+    if (isProtectedFive(card)) next += 8;
+    next += cardPoint(card) * 0.8;
+    return next;
+  }, 0);
+}
+
+function bidPowerScore(room, player, suit, count, { includeKitty = false } = {}) {
+  const cards = includeKitty ? [...player.hand, ...room.kitty] : player.hand;
+  const twoCount = player.hand.filter((card) => card.type === "normal" && card.rank === "2" && card.suit === suit).length;
+  const trumpNormalCount = cards.filter((card) => card.type === "normal" && card.suit === suit && !isCompareCard(card, suit)).length;
+  const mainCount = cards.filter((card) => isMainPlayCard(card, suit)).length;
+  const highMainCount = cards.filter((card) => isMainPlayCard(card, suit) && patternValue(card, suit) <= 8).length;
+  const pointLoad = cardsPoint(cards.filter((card) => isMainPlayCard(card, suit)));
+  return count * 24 + twoCount * 7 + mainCount * 2.5 + highMainCount * 8 + trumpNormalCount * 1.4 + pointLoad * 0.7;
+}
+
+function bidCardIdsForSuit(player, suit, count) {
+  return player.hand
+    .filter((card) => card.type === "normal" && card.rank === "2" && card.suit === suit)
+    .slice(0, count)
+    .map((card) => card.id);
+}
+
+function bestAutoBid(room, player, currentBid, options = {}) {
+  const choices = [];
+  for (const suit of suits.map((item) => item.id)) {
+    const count = player.hand.filter((card) => card.type === "normal" && card.rank === "2" && card.suit === suit).length;
+    for (let bidCount = 1; bidCount <= count; bidCount += 1) {
+      const bid = { count: bidCount, suit };
+      if (!bidBeats(currentBid, bid)) continue;
+      const score = bidPowerScore(room, player, suit, bidCount, options);
+      choices.push({ bid, score, cardIds: bidCardIdsForSuit(player, suit, bidCount) });
+    }
+  }
+  if (!choices.length) return null;
+  const best = choices.sort((a, b) => b.score - a.score || b.bid.count - a.bid.count || (suitStrength.get(b.bid.suit) ?? 0) - (suitStrength.get(a.bid.suit) ?? 0))[0];
+  const threshold = currentBid
+    ? 72 + (currentBid.count || 1) * 14
+    : 58;
+  return best.score >= threshold ? best : null;
+}
+
+function autoBuryCardScore(room, player, card, aimForBottom) {
+  const trumpSuit = aiTrumpSuit(room);
+  const isMain = isMainPlayCard(card, trumpSuit);
+  const protectedFive = isProtectedFive(card);
+  const points = cardPoint(card);
+  const power = patternValue(card, trumpSuit);
+  if (aimForBottom) {
+    return points * 10 + (protectedFive ? 90 : 0) - (isMain ? 35 : 0) - Math.max(0, 20 - power);
+  }
+  return (isMain ? -40 : 0) - points * 14 - (protectedFive ? 120 : 0) + power * 0.6;
+}
+
+function autoBuryCardIds(player, count, room = null) {
+  if (!room) return sortHand(player.hand).slice(-count).map((card) => card.id);
+  const trumpSuit = aiTrumpSuit(room);
+  const ownTeam = aiOwnTeam(room, player);
+  const control = setupControlScore(player.hand, trumpSuit);
+  const aimForBottom = ownTeam === "idle" && control >= 95;
+  return [...player.hand]
+    .map((card) => ({ card, score: autoBuryCardScore(room, player, card, aimForBottom) }))
+    .sort((a, b) => b.score - a.score || b.card.id.localeCompare(a.card.id))
+    .slice(0, count)
+    .map((item) => item.card.id);
 }
 
 function autoProgressTestSetup(room) {
@@ -1075,10 +1180,24 @@ function autoProgressTestSetup(room) {
   let safety = room.players.length * 8;
   while (safety > 0) {
     safety -= 1;
+    if (room.stage === "bidding" && !room.setup.bid) {
+      const best = room.players
+        .filter((player) => player.test)
+        .map((player) => ({ player, choice: bestAutoBid(room, player, null) }))
+        .filter((item) => item.choice)
+        .sort((a, b) => b.choice.score - a.choice.score)[0];
+      if (!best) break;
+      const result = submitBid(room, best.player, best.choice.cardIds);
+      if (result.error) break;
+      actions += 1;
+      continue;
+    }
+
     if (room.stage === "bidding" && room.setup.bid) {
       const player = playerById(room, room.setup.biddingTurnPlayerId);
       if (!player?.test) break;
-      const result = passBid(room, player);
+      const bidChoice = bestAutoBid(room, player, room.setup.bid);
+      const result = bidChoice ? submitBid(room, player, bidChoice.cardIds) : passBid(room, player);
       if (result.error) break;
       actions += 1;
       continue;
@@ -1087,7 +1206,7 @@ function autoProgressTestSetup(room) {
     if (room.stage === "burying") {
       const player = playerById(room, room.bankerId);
       if (!player?.test) break;
-      const result = buryCards(room, player, autoBuryCardIds(player, room.kittySize));
+      const result = buryCards(room, player, autoBuryCardIds(player, room.kittySize, room));
       if (result.error) break;
       actions += 1;
       continue;
@@ -1096,7 +1215,8 @@ function autoProgressTestSetup(room) {
     if (room.stage === "frying") {
       const player = playerById(room, room.setup.fry?.currentPlayerId);
       if (!player?.test) break;
-      const result = passFry(room, player);
+      const fryChoice = bestAutoBid(room, player, room.setup.fry?.lastBid, { includeKitty: true });
+      const result = fryChoice ? submitFry(room, player, fryChoice.cardIds) : passFry(room, player);
       if (result.error) break;
       actions += 1;
       continue;
@@ -1105,7 +1225,7 @@ function autoProgressTestSetup(room) {
     if (room.stage === "fry-burying") {
       const player = playerById(room, room.setup.fry?.currentPlayerId);
       if (!player?.test) break;
-      const result = buryCards(room, player, autoBuryCardIds(player, room.kittySize));
+      const result = buryCards(room, player, autoBuryCardIds(player, room.kittySize, room));
       if (result.error) break;
       actions += 1;
       continue;
@@ -1134,6 +1254,44 @@ function rankValue(card, trumpSuit) {
   return patternValue(card, trumpSuit);
 }
 
+function nonMainRankOrderValue(card, trumpSuit) {
+  if (!card || card.type !== "normal") return 99;
+  const availableRanks = rankOrder.filter((rank) => {
+    const sample = { type: "normal", suit: card.suit, rank };
+    return !isMainPlayCard(sample, trumpSuit);
+  });
+  const index = availableRanks.indexOf(card.rank);
+  return index >= 0 ? index : 99;
+}
+
+function mainTractorOrderValue(card, trumpSuit) {
+  if (!card) return 99;
+  if (card.type === "normal" && trumpSuit && card.suit === trumpSuit && !isCompareCard(card, trumpSuit)) {
+    const availableRanks = rankOrder.filter((rank) => {
+      const sample = { type: "normal", suit: trumpSuit, rank };
+      return !isCompareCard(sample, trumpSuit);
+    });
+    const index = availableRanks.indexOf(card.rank);
+    return index >= 0 ? 8 + index : 99;
+  }
+  return patternValue(card, trumpSuit);
+}
+
+function tractorOrderValue(group, trumpSuit) {
+  const card = group.cards[0];
+  if (!card) return 99;
+  if (playSuit(card, trumpSuit) === "TRUMP") return mainTractorOrderValue(card, trumpSuit);
+  return nonMainRankOrderValue(card, trumpSuit);
+}
+
+function consecutiveTractorGroups(previous, next, trumpSuit) {
+  const previousCard = previous.cards[0];
+  const nextCard = next.cards[0];
+  if (!previousCard || !nextCard) return false;
+  if (playSuit(previousCard, trumpSuit) !== playSuit(nextCard, trumpSuit)) return false;
+  return tractorOrderValue(next, trumpSuit) === tractorOrderValue(previous, trumpSuit) + 1;
+}
+
 function rankKey(card, trumpSuit) {
   if (card.type === "joker") return `${playSuit(card, trumpSuit)}:JOKER:${card.joker}`;
   return `${playSuit(card, trumpSuit)}:${card.suit}:${card.rank}`;
@@ -1159,7 +1317,7 @@ function detectPlayPattern(cards, trumpSuit) {
   if (cards.length === 1) return { type: "single", count: 1 };
 
   const suitsInCards = uniquePlaySuits(cards, trumpSuit);
-  const groups = cardsByRank(cards, trumpSuit).sort((a, b) => a.value - b.value);
+  const groups = cardsByRank(cards, trumpSuit).sort((a, b) => tractorOrderValue(a, trumpSuit) - tractorOrderValue(b, trumpSuit) || a.value - b.value);
   if (groups.length === 1) {
     if (suitsInCards.length !== 1) return null;
     return {
@@ -1174,10 +1332,10 @@ function detectPlayPattern(cards, trumpSuit) {
   const width = groups[0].count;
   if (width < 2) return null;
   if (!groups.every((group) => group.count === width)) return null;
-  if (groups.some((group) => group.value >= 99)) return null;
+  if (groups.some((group) => tractorOrderValue(group, trumpSuit) >= 99)) return null;
 
   for (let i = 1; i < groups.length; i += 1) {
-    if (groups[i].value !== groups[i - 1].value + 1) return null;
+    if (!consecutiveTractorGroups(groups[i - 1], groups[i], trumpSuit)) return null;
   }
   return {
     type: "tractor",
@@ -1313,14 +1471,314 @@ function validatePlay(room, player, selected) {
   return null;
 }
 
+function cardIdsKey(cards) {
+  return cards.map((card) => card.id).sort().join("|");
+}
+
+function isProtectedFive(card) {
+  return card?.type === "normal" && card.rank === "5" && (card.suit === "H" || card.suit === "D");
+}
+
+function hiddenDoglegInHand(room, player) {
+  return Boolean(room.doglegCard && player.id !== room.bankerId && !(room.doglegPlayerIds || []).includes(player.id)
+    && player.hand.some((card) => sameDoglegCard(card, room.doglegCard)));
+}
+
+function cardIsHiddenDogleg(room, player, card) {
+  return Boolean(hiddenDoglegInHand(room, player) && sameDoglegCard(card, room.doglegCard));
+}
+
+function aiOwnTeam(room, player) {
+  if (player.id === room.bankerId) return "banker";
+  if ((room.doglegPlayerIds || []).includes(player.id)) return "banker";
+  if (hiddenDoglegInHand(room, player)) return "banker";
+  return "idle";
+}
+
+function aiVisibleTeam(room, perspectivePlayer, targetPlayerId) {
+  if (targetPlayerId === room.bankerId) return "banker";
+  if ((room.doglegPlayerIds || []).includes(targetPlayerId)) return "banker";
+  if (targetPlayerId === perspectivePlayer.id) return aiOwnTeam(room, perspectivePlayer);
+  if ((room.doglegPlayerIds || []).length >= (room.doglegNeeded || 0)) return "idle";
+  return "unknown";
+}
+
+function aiTeamRelation(room, perspectivePlayer, targetPlayerId) {
+  if (targetPlayerId === perspectivePlayer.id) return "self";
+  const ownTeam = aiOwnTeam(room, perspectivePlayer);
+  const targetTeam = aiVisibleTeam(room, perspectivePlayer, targetPlayerId);
+  if (targetTeam === "unknown") return "unknown";
+  return ownTeam === targetTeam ? "ally" : "opponent";
+}
+
+function cardAssetCost(room, player, card) {
+  let cost = 0;
+  if (isProtectedFive(card)) cost += card.suit === "H" ? 90 : 65;
+  if (cardIsHiddenDogleg(room, player, card)) cost += 30;
+  if (playSuit(card, room.trumpSuit) === "TRUMP") cost += 10;
+  cost += cardPoint(card) * 2;
+  const strength = patternValue(card, room.trumpSuit);
+  if (strength < 20) cost += Math.max(0, 20 - strength);
+  return cost;
+}
+
+function cardsAssetCost(room, player, cards) {
+  return cards.reduce((total, card) => total + cardAssetCost(room, player, card), 0);
+}
+
+function sortForDiscard(room, player, cards) {
+  return [...cards].sort((a, b) => {
+    return (isProtectedFive(a) ? 1 : 0) - (isProtectedFive(b) ? 1 : 0)
+      || (cardIsHiddenDogleg(room, player, a) ? 1 : 0) - (cardIsHiddenDogleg(room, player, b) ? 1 : 0)
+      || cardPoint(a) - cardPoint(b)
+      || (playSuit(a, room.trumpSuit) === "TRUMP" ? 1 : 0) - (playSuit(b, room.trumpSuit) === "TRUMP" ? 1 : 0)
+      || patternValue(b, room.trumpSuit) - patternValue(a, room.trumpSuit)
+      || a.id.localeCompare(b.id);
+  });
+}
+
+function sortForFeed(room, player, cards) {
+  return [...cards].sort((a, b) => {
+    return (isProtectedFive(a) ? 1 : 0) - (isProtectedFive(b) ? 1 : 0)
+      || cardPoint(b) - cardPoint(a)
+      || (playSuit(a, room.trumpSuit) === "TRUMP" ? 1 : 0) - (playSuit(b, room.trumpSuit) === "TRUMP" ? 1 : 0)
+      || patternValue(b, room.trumpSuit) - patternValue(a, room.trumpSuit)
+      || a.id.localeCompare(b.id);
+  });
+}
+
+function sortForStrength(room, cards) {
+  return [...cards].sort((a, b) => {
+    return patternValue(a, room.trumpSuit) - patternValue(b, room.trumpSuit)
+      || cardPoint(a) - cardPoint(b)
+      || a.id.localeCompare(b.id);
+  });
+}
+
+function takeCards(cards, count) {
+  return cards.slice(0, Math.max(0, count));
+}
+
+function addCandidate(candidates, cards) {
+  if (!cards.length) return;
+  const key = cardIdsKey(cards);
+  if (candidates.some((candidate) => candidate.key === key)) return;
+  candidates.push({ key, cards });
+}
+
+function exactPatternCandidates(cards, pattern, trumpSuit) {
+  if (!pattern) return [];
+  if (pattern.type === "single") return cards.map((card) => [card]);
+
+  const candidates = [];
+  const groups = cardsByRank(cards, trumpSuit)
+    .filter((group) => group.count >= (pattern.width || 1))
+    .sort((a, b) => tractorOrderValue(a, trumpSuit) - tractorOrderValue(b, trumpSuit) || a.value - b.value);
+
+  if (pattern.type === "multi") {
+    groups.forEach((group) => addCandidate(candidates, group.cards.slice(0, pattern.width)));
+    return candidates.map((candidate) => candidate.cards);
+  }
+
+  if (pattern.type !== "tractor") return [];
+  const bySuit = new Map();
+  groups.forEach((group) => {
+    const suit = playSuit(group.cards[0], trumpSuit);
+    if (!bySuit.has(suit)) bySuit.set(suit, []);
+    bySuit.get(suit).push(group);
+  });
+
+  for (const suitGroups of bySuit.values()) {
+    for (let start = 0; start < suitGroups.length; start += 1) {
+      const chain = [suitGroups[start]];
+      for (let next = start + 1; next < suitGroups.length; next += 1) {
+        if (!consecutiveTractorGroups(chain[chain.length - 1], suitGroups[next], trumpSuit)) break;
+        chain.push(suitGroups[next]);
+        if (chain.length === pattern.length) {
+          addCandidate(candidates, chain.flatMap((group) => group.cards.slice(0, pattern.width)));
+          break;
+        }
+      }
+    }
+  }
+  return candidates.map((candidate) => candidate.cards);
+}
+
+function leadPatternCandidates(room, player) {
+  const candidates = [];
+  const groups = cardsByRank(player.hand, room.trumpSuit)
+    .sort((a, b) => tractorOrderValue(a, room.trumpSuit) - tractorOrderValue(b, room.trumpSuit) || a.value - b.value);
+
+  player.hand.forEach((card) => addCandidate(candidates, [card]));
+  groups.forEach((group) => {
+    if (group.count < 2) return;
+    addCandidate(candidates, group.cards.slice(0, group.count));
+    addCandidate(candidates, group.cards.slice(0, 2));
+    if (group.count >= 3) addCandidate(candidates, group.cards.slice(0, 3));
+  });
+
+  const bySuit = new Map();
+  groups.filter((group) => group.count >= 2 && tractorOrderValue(group, room.trumpSuit) < 99).forEach((group) => {
+    const suit = playSuit(group.cards[0], room.trumpSuit);
+    if (!bySuit.has(suit)) bySuit.set(suit, []);
+    bySuit.get(suit).push(group);
+  });
+
+  for (const suitGroups of bySuit.values()) {
+    for (let start = 0; start < suitGroups.length; start += 1) {
+      const chain = [suitGroups[start]];
+      for (let next = start + 1; next < suitGroups.length; next += 1) {
+        if (!consecutiveTractorGroups(chain[chain.length - 1], suitGroups[next], room.trumpSuit)) break;
+        chain.push(suitGroups[next]);
+        for (let length = 2; length <= chain.length; length += 1) {
+          const sequence = chain.slice(chain.length - length);
+          const maxWidth = Math.min(...sequence.map((group) => group.count));
+          for (let width = 2; width <= maxWidth; width += 1) {
+            addCandidate(candidates, sequence.flatMap((group) => group.cards.slice(0, width)));
+          }
+        }
+      }
+    }
+  }
+
+  return candidates.map((candidate) => candidate.cards).filter((cards) => detectPlayPattern(cards, room.trumpSuit));
+}
+
+function currentWinningState(room) {
+  const trick = room.currentTrick;
+  const info = leadInfo(trick, room.trumpSuit);
+  if (!info || !trick.plays.length) return null;
+  const outcome = settleTrick(room, trick);
+  const play = Number.isFinite(outcome.winningPlayIndex) ? trick.plays[outcome.winningPlayIndex] : trick.plays[0];
+  if (!play) return null;
+  return {
+    playerId: play.playerId,
+    play,
+    comparison: playComparisonAgainstLead(info, play.cards, room.trumpSuit) || {
+      level: 1,
+      power: playPower(play.cards, room.trumpSuit)
+    }
+  };
+}
+
+function comparisonBeats(a, b) {
+  if (!a || !b) return Boolean(a);
+  return a.level > b.level || (a.level === b.level && a.power < b.power);
+}
+
+function candidateBeatsCurrent(room, info, candidate, winning) {
+  const comparison = playComparisonAgainstLead(info, candidate, room.trumpSuit);
+  if (!comparison) return { beats: false, comparison: null };
+  return { beats: comparisonBeats(comparison, winning?.comparison), comparison };
+}
+
+function protectedFivesInTrickByRelation(room, player, relation) {
+  return (room.currentTrick?.plays || []).reduce((total, play) => {
+    if (aiTeamRelation(room, player, play.playerId) !== relation) return total;
+    return total + play.cards.filter(isProtectedFive).length;
+  }, 0);
+}
+
+function legalFollowCandidates(room, player, info) {
+  const candidates = [];
+  const sameSuit = player.hand.filter((card) => playSuit(card, room.trumpSuit) === info.suit);
+  const others = player.hand.filter((card) => playSuit(card, room.trumpSuit) !== info.suit);
+
+  if (sameSuit.length >= info.count) {
+    addCandidate(candidates, takeCards(sortForDiscard(room, player, sameSuit), info.count));
+    addCandidate(candidates, takeCards(sortForFeed(room, player, sameSuit), info.count));
+    addCandidate(candidates, takeCards(sortForStrength(room, sameSuit), info.count));
+    exactPatternCandidates(sameSuit, info.pattern, room.trumpSuit).forEach((cards) => addCandidate(candidates, cards));
+  } else {
+    const base = sortForDiscard(room, player, sameSuit);
+    const shortage = info.count - base.length;
+    addCandidate(candidates, [...base, ...takeCards(sortForDiscard(room, player, others), shortage)]);
+    addCandidate(candidates, [...base, ...takeCards(sortForFeed(room, player, others), shortage)]);
+    addCandidate(candidates, [...base, ...takeCards(sortForStrength(room, others), shortage)]);
+    if (sameSuit.length === 0 && info.suit !== "TRUMP") {
+      const trumpCards = player.hand.filter((card) => playSuit(card, room.trumpSuit) === "TRUMP");
+      exactPatternCandidates(trumpCards, info.pattern, room.trumpSuit).forEach((cards) => addCandidate(candidates, cards));
+    }
+  }
+
+  return candidates
+    .map((candidate) => candidate.cards)
+    .filter((cards) => cards.length === info.count && !validatePlay(room, player, cards));
+}
+
+function leadCandidateScore(room, player, cards) {
+  const pattern = detectPlayPattern(cards, room.trumpSuit);
+  if (!pattern) return -Infinity;
+  const points = cardsPoint(cards);
+  const power = playPower(cards, room.trumpSuit);
+  const protectedFiveCount = cards.filter(isProtectedFive).length;
+  const hiddenDoglegPlayed = cards.some((card) => cardIsHiddenDogleg(room, player, card));
+  const endgame = player.hand.length <= 10;
+  let score = 0;
+  score += cards.length * 8;
+  if (pattern.type === "tractor") score += 32 + pattern.length * 10 + pattern.width * 6;
+  if (pattern.type === "multi") score += 14 + pattern.width * 5;
+  score += Math.max(0, 35 - power * 2);
+  score += points * (power <= 8 ? 1.8 : -0.8);
+  if (protectedFiveCount && power > 2) score -= protectedFiveCount * 45;
+  if (hiddenDoglegPlayed) score += power <= 8 || points ? 28 : -25;
+  if (endgame) score += Math.max(0, 30 - power) + cards.length * 4;
+  score -= cardsAssetCost(room, player, cards) * 0.12;
+  return score;
+}
+
+function chooseLeadAutoCards(room, player) {
+  const candidates = leadPatternCandidates(room, player);
+  if (!candidates.length) return [sortForDiscard(room, player, player.hand)[0]].filter(Boolean);
+  return candidates
+    .map((cards) => ({ cards, score: leadCandidateScore(room, player, cards) }))
+    .sort((a, b) => b.score - a.score || b.cards.length - a.cards.length)[0].cards;
+}
+
+function followCandidateScore(room, player, cards, info, winning) {
+  const relation = winning ? aiTeamRelation(room, player, winning.playerId) : "opponent";
+  const pointsInCandidate = cardsPoint(cards);
+  const pointsOnTable = cardsPoint((room.currentTrick?.plays || []).flatMap((play) => play.cards)) + pointsInCandidate;
+  const opponentProtectedFives = protectedFivesInTrickByRelation(room, player, "opponent");
+  const selfProtectedFives = cards.filter(isProtectedFive).length;
+  const hiddenDoglegPlayed = cards.some((card) => cardIsHiddenDogleg(room, player, card));
+  const { beats, comparison } = candidateBeatsCurrent(room, info, cards, winning);
+  const endgame = player.hand.length <= info.count * 2 + 2;
+  const cost = cardsAssetCost(room, player, cards);
+  let score = 0;
+
+  if (relation === "opponent") {
+    if (beats) score += 120 + pointsOnTable * 3 + opponentProtectedFives * 80;
+    else score -= pointsInCandidate * 3 + selfProtectedFives * 90;
+  } else if (relation === "ally" || relation === "self") {
+    if (beats) score -= 55 + cost * 0.4;
+    else score += pointsInCandidate * 4 - selfProtectedFives * 75;
+  } else {
+    if (beats && (pointsOnTable >= 20 || opponentProtectedFives)) score += 70 + pointsOnTable * 1.5;
+    else score -= pointsInCandidate + selfProtectedFives * 75;
+  }
+
+  if (beats && comparison) score += Math.max(0, 35 - comparison.power);
+  if (hiddenDoglegPlayed) score += beats ? 20 : -45;
+  if (endgame && beats) score += 35 + pointsOnTable;
+  score -= cost * (beats ? 0.25 : 0.55);
+  return score;
+}
+
+function chooseFollowAutoCards(room, player, info) {
+  const candidates = legalFollowCandidates(room, player, info);
+  if (!candidates.length) return [];
+  const winning = currentWinningState(room);
+  return candidates
+    .map((cards) => ({ cards, score: followCandidateScore(room, player, cards, info, winning) }))
+    .sort((a, b) => b.score - a.score || cardsPoint(b.cards) - cardsPoint(a.cards))[0].cards;
+}
+
 function legalAutoCards(room, player) {
   if (!player.hand.length) return [];
   const info = leadInfo(room.currentTrick, room.trumpSuit);
-  if (!info) return [player.hand[0]];
-
-  const sameSuit = player.hand.filter((card) => playSuit(card, room.trumpSuit) === info.suit);
-  const others = player.hand.filter((card) => playSuit(card, room.trumpSuit) !== info.suit);
-  return [...sameSuit.slice(0, info.count), ...others].slice(0, info.count);
+  if (!info) return chooseLeadAutoCards(room, player);
+  return chooseFollowAutoCards(room, player, info);
 }
 
 function autoPlayTestPlayersUntilHuman(room) {
