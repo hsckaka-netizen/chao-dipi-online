@@ -16,6 +16,10 @@ let homeView = "rooms";
 let profiles = [];
 let profilesLoaded = false;
 let profilesLoading = false;
+let joinableRooms = [];
+let joinableRoomsLoaded = false;
+let joinableRoomsLoading = false;
+const dragSelectThreshold = 8;
 
 function loadSession() {
   try {
@@ -161,6 +165,26 @@ function ensureProfiles() {
       profilesLoading = false;
       setMessage(error.message || "玩家列表加载失败", true);
     });
+}
+
+function ensureJoinableRooms(force = false) {
+  if (!force && (joinableRoomsLoaded || joinableRoomsLoading)) return;
+  joinableRoomsLoading = true;
+  api("/api/rooms")
+    .then((data) => {
+      joinableRooms = data.rooms || [];
+      joinableRoomsLoaded = true;
+      joinableRoomsLoading = false;
+      render();
+    })
+    .catch((error) => {
+      joinableRoomsLoading = false;
+      setMessage(error.message || "可加入房间加载失败", true);
+    });
+}
+
+function refreshJoinableRooms() {
+  ensureJoinableRooms(true);
 }
 
 function connectEvents() {
@@ -902,12 +926,14 @@ function renderShell(content) {
 
 function renderHome() {
   ensureProfiles();
+  ensureJoinableRooms();
   if (homeView === "players") return renderProfileManager();
   const hintedRoom = roomFromUrl();
   renderShell(`
     <div class="row" style="justify-content:flex-end;margin-bottom:14px">
       <button type="button" class="secondary" data-action="show-profiles">玩家列表</button>
     </div>
+    ${renderJoinableRooms()}
     <div class="grid">
       <section class="panel">
         <h2>创建房间</h2>
@@ -935,6 +961,65 @@ function renderHome() {
       </section>
     </div>
   `);
+}
+
+function renderJoinableRooms() {
+  const content = joinableRoomsLoading && !joinableRoomsLoaded
+    ? `<div class="empty">正在查找可加入房间...</div>`
+    : joinableRooms.length
+      ? `<div class="joinable-room-list">${joinableRooms.map(renderJoinableRoom).join("")}</div>`
+      : `<div class="empty">暂无可加入房间。可以先创建一个房间，再让朋友从这里加入。</div>`;
+
+  return `
+    <section class="panel stack joinable-rooms-panel">
+      <div class="section-head">
+        <div>
+          <h2>当前可加入房间</h2>
+          <div class="meta">只显示未开局且未满员的房间。</div>
+        </div>
+        <button type="button" class="secondary compact-button" data-action="refresh-rooms" ${joinableRoomsLoading ? "disabled" : ""}>
+          ${joinableRoomsLoading ? "刷新中" : "刷新"}
+        </button>
+      </div>
+      ${content}
+    </section>
+  `;
+}
+
+function renderJoinableRoom(room) {
+  const players = room.players || [];
+  return `
+    <form class="joinable-room-card" data-form="join">
+      <input type="hidden" name="roomId" value="${escapeHtml(room.roomId)}">
+      <div class="joinable-room-main">
+        <div>
+          <div class="meta">房间号</div>
+          <div class="joinable-room-code">${escapeHtml(room.roomId)}</div>
+        </div>
+        <div class="tags">
+          <span class="tag accent">${escapeHtml(room.playerCount)}/${escapeHtml(room.maxPlayers)} 人</span>
+          <span class="tag good">准备 ${escapeHtml(room.readyCount)}/${escapeHtml(room.playerCount)}</span>
+          <span class="tag">房主 ${escapeHtml(room.hostName || "未知")}</span>
+          <span class="tag">${escapeHtml(fmtTime(room.createdAt))}</span>
+        </div>
+      </div>
+      <div class="joinable-room-players">
+        ${players.map((player) => `
+          <span class="joinable-room-player ${player.ready ? "ready" : ""}">
+            ${avatarHtml(player.name, player.avatarUrl)}
+            <span class="joinable-room-player-name">${escapeHtml(player.name)}</span>
+          </span>
+        `).join("")}
+      </div>
+      <div class="joinable-room-actions">
+        <label>
+          选择玩家
+          ${renderProfileSelect("profileId")}
+        </label>
+        <button type="submit">加入此房间</button>
+      </div>
+    </form>
+  `;
 }
 
 function renderProfileSelect(name) {
@@ -2200,8 +2285,11 @@ function beginDragSelect(event) {
     pointerId: event.pointerId,
     add: !selectedCardIds.has(cardId),
     moved: false,
+    active: false,
     startCardId: cardId,
-    lastCardId: cardId
+    lastCardId: cardId,
+    startX: event.clientX,
+    startY: event.clientY
   };
   setCardSelected(cardId, dragSelect.add, true);
   cardElement.setPointerCapture?.(event.pointerId);
@@ -2213,6 +2301,12 @@ function continueDragSelect(event) {
   const target = document.elementFromPoint(event.clientX, event.clientY)?.closest("[data-card-id]");
   const cardId = target?.dataset.cardId;
   if (!cardId || !viewerCanSelectCards()) return;
+  if (!dragSelect.active) {
+    const dx = event.clientX - dragSelect.startX;
+    const dy = event.clientY - dragSelect.startY;
+    if (Math.hypot(dx, dy) < dragSelectThreshold) return;
+    dragSelect.active = true;
+  }
   if (cardId === dragSelect.lastCardId) return;
   if (cardId !== dragSelect.startCardId) dragSelect.moved = true;
   dragSelect.lastCardId = cardId;
@@ -2247,6 +2341,7 @@ document.addEventListener("click", (event) => {
     homeView = "rooms";
     render();
   }
+  if (action === "refresh-rooms") refreshJoinableRooms();
   if (action === "copy") copyShare();
   if (action === "add-test-players") addTestPlayers();
   if (action === "start") startGame();

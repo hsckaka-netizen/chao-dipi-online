@@ -105,6 +105,30 @@ function profilesList() {
     .sort((a, b) => a.name.localeCompare(b.name, "zh-Hans-CN"));
 }
 
+function joinableRoomsList() {
+  return [...rooms.values()]
+    .filter((room) => room.status === "lobby" && room.players.length < MAX_PLAYERS)
+    .map((room) => ({
+      roomId: room.id,
+      hostName: playerName(room, room.hostId),
+      playerCount: room.players.length,
+      readyCount: readyPlayerCount(room),
+      minPlayers: MIN_PLAYERS,
+      maxPlayers: MAX_PLAYERS,
+      phase: room.phase,
+      createdAt: room.createdAt,
+      players: room.players.map((player) => ({
+        id: player.id,
+        profileId: player.profileId || null,
+        name: player.name,
+        avatarUrl: player.avatarUrl || "",
+        host: player.host,
+        ready: Boolean(player.ready)
+      }))
+    }))
+    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+}
+
 function profileForId(profileId) {
   return playerProfiles.get(String(profileId || ""));
 }
@@ -1920,6 +1944,10 @@ async function handleApi(req, res, pathParts, url) {
     }
 
     return writeJson(res, 404, { error: "接口不存在" });
+  }
+
+  if (pathParts[1] === "rooms" && req.method === "GET" && pathParts.length === 2) {
+    return writeJson(res, 200, { rooms: joinableRoomsList() });
   }
 
   if (req.method === "POST" && pathParts[1] === "rooms" && pathParts.length === 2) {

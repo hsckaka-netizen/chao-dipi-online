@@ -405,6 +405,79 @@ label {
   color: #23332d;
 }
 
+.joinable-rooms-panel {
+  margin-bottom: 18px;
+}
+
+.joinable-room-list {
+  display: grid;
+  gap: 10px;
+}
+
+.joinable-room-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr) minmax(220px, 280px);
+  gap: 12px;
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfcfb;
+  padding: 12px;
+}
+
+.joinable-room-main {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.joinable-room-code {
+  font-size: 26px;
+  line-height: 1;
+  font-weight: 900;
+  letter-spacing: 2px;
+}
+
+.joinable-room-players {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+}
+
+.joinable-room-player {
+  min-width: 0;
+  max-width: 140px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: #fff;
+  padding: 3px 8px 3px 4px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.joinable-room-player.ready {
+  border-color: #cde4d8;
+  background: #f5fbf7;
+  color: var(--good);
+}
+
+.joinable-room-player-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.joinable-room-actions {
+  display: grid;
+  gap: 8px;
+}
+
 .players {
   display: grid;
   gap: 8px;
@@ -1425,6 +1498,15 @@ label {
   .section-head {
     align-items: stretch;
     display: grid;
+  }
+
+  .joinable-room-card {
+    grid-template-columns: 1fr;
+    align-items: stretch;
+  }
+
+  .joinable-room-actions {
+    grid-template-columns: 1fr;
   }
 
   .result-row {
