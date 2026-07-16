@@ -873,7 +873,7 @@ label {
 .trick-grid.table-circle {
   position: relative;
   display: block;
-  min-height: clamp(680px, 58vw, 840px);
+  min-height: clamp(920px, 74vw, 1120px);
   margin: 8px 0 4px;
   border: 0;
   background: transparent;
@@ -945,6 +945,24 @@ label {
   overflow: hidden;
   box-shadow: 0 8px 22px rgba(31, 45, 38, 0.11);
   padding: 9px 10px;
+}
+
+.table-circle .trick-seat.viewer-seat {
+  left: 50%;
+  top: auto;
+  bottom: 0;
+  z-index: 5;
+  display: grid;
+  justify-items: center;
+  gap: 8px;
+  width: min(1120px, 96%);
+  min-height: 0;
+  transform: translateX(-50%);
+}
+
+.table-circle .trick-seat.viewer-seat .trick-player {
+  width: var(--seat-width, 232px);
+  max-width: 100%;
 }
 
 .table-circle .trick-name {
@@ -1027,10 +1045,154 @@ label {
   transform: translateY(-50%);
 }
 
+.table-circle .viewer-seat .seat-play {
+  left: 50%;
+  top: -78px;
+  right: auto;
+  bottom: auto;
+  width: min(380px, 92%);
+  transform: translateX(-50%);
+}
+
 .table-circle .seat-play .mini-cards {
   justify-content: center;
   max-height: 112px;
   overflow: visible;
+}
+
+.seat-hand {
+  box-sizing: border-box;
+  width: 100%;
+  max-height: min(34vh, 330px);
+  overflow: auto;
+  border: 1px solid rgba(203, 216, 208, 0.96);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.97);
+  box-shadow: 0 12px 28px rgba(31, 45, 38, 0.14);
+  padding: 10px;
+}
+
+.seat-hand-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+
+.seat-hand-title {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 120px;
+}
+
+.seat-hand-title strong {
+  font-size: 15px;
+}
+
+.seat-hand-title span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.seat-hand .hand {
+  gap: 8px;
+}
+
+.seat-hand .hand-compact {
+  display: block;
+}
+
+.seat-hand .hand-group {
+  gap: 5px;
+}
+
+.seat-hand .hand-group-title {
+  font-size: 12px;
+}
+
+.seat-hand .hand-group-title strong {
+  font-size: 13px;
+}
+
+.seat-hand .hand-row {
+  min-height: 56px;
+  gap: 6px 0;
+  padding: 6px 6px 9px 16px;
+}
+
+.seat-hand .hand-row-compact {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  align-content: flex-start;
+  gap: 6px 0;
+  min-height: 56px;
+  padding: 6px 6px 9px;
+}
+
+.hand-count-badge {
+  flex: 0 0 auto;
+  min-width: 36px;
+  height: 30px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  margin: 9px 5px 0 10px;
+  border: 1px solid #d8e2dc;
+  border-radius: 7px;
+  background: #f4f8f5;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 900;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.hand-count-badge:first-child {
+  margin-left: 0;
+}
+
+.hand-count-badge strong {
+  color: var(--text);
+  font-size: 13px;
+}
+
+.hand-count-badge + .card {
+  margin-left: 0;
+}
+
+.seat-hand .card {
+  flex-basis: 42px;
+  width: 42px;
+  min-height: 52px;
+  margin-left: -16px;
+  padding: 5px 3px 0 5px;
+}
+
+.seat-hand .card-rank {
+  font-size: 12px;
+}
+
+.seat-hand .card-suit {
+  font-size: 13px;
+}
+
+.seat-hand .hand-controls {
+  justify-content: flex-end;
+}
+
+.seat-hand .hand-controls button {
+  min-height: 34px;
+  padding: 0 12px;
+}
+
+.seat-hand .turn-waiting {
+  min-height: 32px;
 }
 
 .trick-player.played {
@@ -1282,6 +1444,11 @@ label {
     transform: none;
   }
 
+  .table-circle .trick-seat.viewer-seat {
+    width: auto;
+    transform: none;
+  }
+
   .table-circle .trick-player {
     position: static;
     width: auto;
@@ -1289,6 +1456,11 @@ label {
     min-height: 88px;
     overflow: visible;
     box-shadow: none;
+  }
+
+  .table-circle .trick-seat.viewer-seat .trick-player {
+    width: auto;
+    max-width: none;
   }
 
   .seat-play,
@@ -1302,8 +1474,23 @@ label {
     transform: none;
   }
 
+  .table-circle .viewer-seat .seat-play {
+    position: static;
+    width: auto;
+    transform: none;
+  }
+
   .table-circle .seat-play .mini-cards {
     justify-content: flex-start;
+  }
+
+  .seat-hand {
+    max-height: none;
+    overflow: visible;
+  }
+
+  .seat-hand-head {
+    align-items: stretch;
   }
 
   .profile-row {

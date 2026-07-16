@@ -939,7 +939,6 @@ function renderRoom() {
   const inLobbyView = state.status === "lobby" || waitingNextRound;
   const started = state.status !== "lobby" && !waitingNextRound;
   selectedCardIds = new Set([...selectedCardIds].filter((cardId) => state.hand.some((card) => card.id === cardId)));
-  const action = selectionAction();
   maybeAutoOpenActionDialog();
   const waitingText = state.players.length < state.minPlayers
     ? `还差 ${state.minPlayers - state.players.length} 人才能开始`
@@ -988,14 +987,7 @@ function renderRoom() {
         ${started && state.setup?.doglegCard ? renderDoglegPanel() : ""}
         ${started && state.stage !== "playing" && state.stage !== "finished" ? renderSetupPanel() : ""}
         ${started ? renderPlayTable() : ""}
-
-        <section class="panel">
-          <div class="section-head">
-            <h2>我的手牌 ${started ? `(${state.hand.length})` : ""}</h2>
-            ${started ? renderHandControls(action) : ""}
-          </div>
-          ${started ? renderHand(state.hand) : `<div class="empty">${escapeHtml(lobbyEmptyText(waitingNextRound))}</div>`}
-        </section>
+        ${!started ? `<section class="panel"><div class="empty">${escapeHtml(lobbyEmptyText(waitingNextRound))}</div></section>` : ""}
       </div>
     </div>
     ${renderActiveDialog()}
@@ -1653,6 +1645,22 @@ function renderSetupActionTrail(actions) {
   `;
 }
 
+function renderSeatHand(action) {
+  if (!state?.viewer?.id || !Array.isArray(state.hand)) return "";
+  return `
+    <div class="seat-hand">
+      <div class="seat-hand-head">
+        <div class="seat-hand-title">
+          <strong>我的手牌</strong>
+          <span>${state.hand.length} 张</span>
+        </div>
+        ${renderHandControls(action)}
+      </div>
+      ${renderHand(state.hand, { compact: true })}
+    </div>
+  `;
+}
+
 function visibleTableTrick() {
   const currentTrick = state.currentTrick;
   if (!currentTrick) return null;
@@ -1668,6 +1676,7 @@ function renderTrick(trick, current, options = {}) {
   const displayPlays = current ? orientPlaysForViewer(plays) : plays;
   const heldResult = Boolean(options.heldResult);
   const setupTable = Boolean(options.setupTable);
+  const viewerAction = current ? selectionAction() : null;
   const titleMeta = current
     ? setupTable
       ? state.phase
@@ -1690,6 +1699,8 @@ function renderTrick(trick, current, options = {}) {
         ` : ""}
         ${displayPlays.map((play, index) => {
           const playContent = setupTable ? renderSetupActionTrail(play.setupActions) : (play.played ? renderMiniCards(play.cards) : "");
+          const isViewerSeat = current && play.playerId === state.viewer?.id;
+          const seatHand = isViewerSeat ? renderSeatHand(viewerAction) : "";
           const playerCard = `
             <div class="trick-player ${play.played ? "played" : ""} ${play.lead ? "lead" : ""} ${play.currentTurn ? "current-turn" : ""} ${play.winning ? "winning" : ""}">
               <div class="trick-name">
@@ -1707,9 +1718,10 @@ function renderTrick(trick, current, options = {}) {
           `;
           if (!current) return playerCard;
           return `
-            <div class="trick-seat ${seatZone(index, displayPlays.length)}" style="${seatStyle(index, displayPlays.length)}">
+            <div class="trick-seat ${seatZone(index, displayPlays.length)} ${isViewerSeat ? "viewer-seat" : ""}" style="${seatStyle(index, displayPlays.length)}">
               ${playerCard}
               ${playContent ? `<div class="seat-play">${playContent}</div>` : ""}
+              ${seatHand}
             </div>
           `;
         }).join("")}
@@ -1975,11 +1987,44 @@ function cardCorner(card) {
   `;
 }
 
-function renderHand(hand) {
+function compactHandGroupLabel(group) {
+  if (group.id === "rank") return state?.stage === "playing" ? "主" : "比";
+  return ({ S: "♠", H: "♥", C: "♣", D: "♦" })[group.id] || group.label;
+}
+
+function renderHand(hand, options = {}) {
   if (!hand.length) return `<div class="empty">暂无手牌</div>`;
+  const groups = handGroups(hand);
+  if (options.compact) {
+    return `
+      <div class="hand hand-compact">
+        <div class="hand-row hand-row-compact" data-action="clear-selection">
+          ${groups.map((group) => `
+            <span class="hand-count-badge" title="${escapeHtml(group.label)}">
+              <span>${escapeHtml(compactHandGroupLabel(group))}</span>
+              <strong>${group.cards.length}</strong>
+            </span>
+            ${group.cards.map((card, index) => `
+              <button
+                type="button"
+                class="card ${card.color} ${selectedCardIds.has(card.id) ? "selected" : ""}"
+                style="--i:${index}"
+                title="${escapeHtml(card.label)}"
+                aria-pressed="${selectedCardIds.has(card.id) ? "true" : "false"}"
+                data-action="toggle-card"
+                data-card-id="${escapeHtml(card.id)}"
+              >
+                ${cardCorner(card)}
+              </button>
+            `).join("")}
+          `).join("")}
+        </div>
+      </div>
+    `;
+  }
   return `
     <div class="hand">
-      ${handGroups(hand).map((group) => `
+      ${groups.map((group) => `
         <div class="hand-group">
           <div class="hand-group-title">
             <strong>${escapeHtml(group.label)}</strong>
