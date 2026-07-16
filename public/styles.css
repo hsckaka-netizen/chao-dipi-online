@@ -1103,7 +1103,8 @@ label {
 }
 
 .seat-hand .hand-compact {
-  display: block;
+  display: grid;
+  gap: 5px;
 }
 
 .seat-hand .hand-group {
@@ -1131,18 +1132,25 @@ label {
   align-content: flex-start;
   gap: 6px 0;
   min-height: 56px;
-  padding: 6px 6px 9px;
+  padding: 5px 6px 9px 18px;
+}
+
+.hand-counts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  padding: 0 4px 1px;
 }
 
 .hand-count-badge {
   flex: 0 0 auto;
-  min-width: 36px;
-  height: 30px;
+  min-width: 34px;
+  height: 24px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 3px;
-  margin: 9px 5px 0 10px;
+  margin: 0;
   border: 1px solid #d8e2dc;
   border-radius: 7px;
   background: #f4f8f5;
@@ -1153,17 +1161,9 @@ label {
   white-space: nowrap;
 }
 
-.hand-count-badge:first-child {
-  margin-left: 0;
-}
-
 .hand-count-badge strong {
   color: var(--text);
   font-size: 13px;
-}
-
-.hand-count-badge + .card {
-  margin-left: 0;
 }
 
 .seat-hand .card {

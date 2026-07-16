@@ -1996,27 +1996,30 @@ function renderHand(hand, options = {}) {
   if (!hand.length) return `<div class="empty">暂无手牌</div>`;
   const groups = handGroups(hand);
   if (options.compact) {
+    const compactCards = groups.flatMap((group) => group.cards);
     return `
       <div class="hand hand-compact">
-        <div class="hand-row hand-row-compact" data-action="clear-selection">
+        <div class="hand-counts">
           ${groups.map((group) => `
             <span class="hand-count-badge" title="${escapeHtml(group.label)}">
               <span>${escapeHtml(compactHandGroupLabel(group))}</span>
               <strong>${group.cards.length}</strong>
             </span>
-            ${group.cards.map((card, index) => `
-              <button
-                type="button"
-                class="card ${card.color} ${selectedCardIds.has(card.id) ? "selected" : ""}"
-                style="--i:${index}"
-                title="${escapeHtml(card.label)}"
-                aria-pressed="${selectedCardIds.has(card.id) ? "true" : "false"}"
-                data-action="toggle-card"
-                data-card-id="${escapeHtml(card.id)}"
-              >
-                ${cardCorner(card)}
-              </button>
-            `).join("")}
+          `).join("")}
+        </div>
+        <div class="hand-row hand-row-compact" data-action="clear-selection">
+          ${compactCards.map((card, index) => `
+            <button
+              type="button"
+              class="card ${card.color} ${selectedCardIds.has(card.id) ? "selected" : ""}"
+              style="--i:${index}"
+              title="${escapeHtml(card.label)}"
+              aria-pressed="${selectedCardIds.has(card.id) ? "true" : "false"}"
+              data-action="toggle-card"
+              data-card-id="${escapeHtml(card.id)}"
+            >
+              ${cardCorner(card)}
+            </button>
           `).join("")}
         </div>
       </div>
