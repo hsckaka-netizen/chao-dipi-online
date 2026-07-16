@@ -584,6 +584,21 @@ async function leaveRoom() {
   }
 }
 
+async function dissolveRoom() {
+  if (!session) return clearSession();
+  if (!window.confirm("确定要解散这个房间吗？房间内所有玩家都会离开。")) return;
+  try {
+    await api(`/api/rooms/${session.roomId}/dissolve`, {
+      method: "POST",
+      body: JSON.stringify({ playerId: session.playerId, token: session.token })
+    });
+    clearSession();
+    setMessage("房间已解散。");
+  } catch (error) {
+    setMessage(error.message, true);
+  }
+}
+
 async function kickPlayer(targetPlayerId) {
   if (!session || !targetPlayerId) return;
   try {
@@ -1236,6 +1251,7 @@ function renderRoom() {
               ${state.canViewKitty ? `<button type="button" class="secondary" data-action="open-kitty">查看底牌</button>` : ""}
               ${state.viewer.host && state.stage === "playing" ? `<button type="button" data-action="test-play-round">测试玩家自动出牌</button>` : ""}
               ${state.viewer.host && started ? `<button type="button" class="secondary" data-action="reset">重开房间</button>` : ""}
+              ${state.viewer.host ? `<button type="button" class="secondary danger" data-action="dissolve-room">解散房间</button>` : ""}
               ${state.status === "lobby" || state.status === "finished" ? `<button type="button" class="secondary" data-action="room-leave">退出房间</button>` : ""}
             </div>
             ${inLobbyView ? `<div class="meta">${escapeHtml(waitingNextRound ? `你已准备下一局，等待其他玩家确认。${readyStatusText()}` : `${waitingText}。${readyStatusText()}。第一版支持 5-7 人。`)}</div>` : ""}
@@ -2576,6 +2592,7 @@ document.addEventListener("click", (event) => {
   if (!action) return;
   if (action === "leave") clearSession();
   if (action === "room-leave") leaveRoom();
+  if (action === "dissolve-room") dissolveRoom();
   if (action === "show-profiles") {
     homeView = "players";
     render();

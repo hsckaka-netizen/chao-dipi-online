@@ -640,21 +640,39 @@ function disconnectPlayerClients(room, playerId, messageText) {
   }
 }
 
+function disconnectAllRoomClients(room, messageText) {
+  for (const client of [...room.clients]) {
+    client.res.write(`event: kicked\ndata: ${JSON.stringify({ message: messageText })}\n\n`);
+    client.res.end();
+    room.clients.delete(client);
+  }
+}
+
+function hasHumanPlayer(room) {
+  return room.players.some((player) => !player.test);
+}
+
+function dissolveRoom(room, messageText) {
+  disconnectAllRoomClients(room, messageText);
+  rooms.delete(room.id);
+}
+
 function removePlayerFromRoom(room, playerId, messageText) {
   const playerIndex = room.players.findIndex((player) => player.id === playerId);
   if (playerIndex < 0) return null;
   const [removed] = room.players.splice(playerIndex, 1);
   disconnectPlayerClients(room, playerId, messageText);
 
-  if (removed.host && room.players.length) {
-    room.players[0].host = true;
-    room.hostId = room.players[0].id;
-    addEvent(room, `${room.players[0].name} 成为新的房主`);
+  if (!room.players.length || !hasHumanPlayer(room)) {
+    dissolveRoom(room, "房间只剩 AI，已自动解散");
+    return removed;
   }
 
-  if (!room.players.length) {
-    rooms.delete(room.id);
-    return removed;
+  if (removed.host && room.players.length) {
+    const nextHost = room.players.find((player) => !player.test) || room.players[0];
+    nextHost.host = true;
+    room.hostId = nextHost.id;
+    addEvent(room, `${nextHost.name} 成为新的房主`);
   }
 
   room.kittySize = room.status === "lobby" ? room.players.length : room.kittySize;
@@ -2800,9 +2818,21 @@ async function handleApi(req, res, pathParts, url) {
         return writeJson(res, 409, { error: "牌局进行中暂不能退出房间，可以关闭页面或本机退出身份" });
       }
       const removed = removePlayerFromRoom(room, viewer.id, "你已退出房间");
+      if (removed && !rooms.has(room.id)) {
+        return writeJson(res, 200, { ok: true, dissolved: true });
+      }
       if (removed) addEvent(room, `${removed.name} 退出了房间`);
       broadcast(room);
       return writeJson(res, 200, { ok: true });
+    }
+
+    if (req.method === "POST" && pathParts[3] === "dissolve") {
+      const body = await readJson(req);
+      const viewer = requirePlayer(res, room, body.playerId, body.token);
+      if (!viewer) return;
+      if (!viewer.host) return writeJson(res, 403, { error: "只有房主可以解散房间" });
+      dissolveRoom(room, "房主已解散房间");
+      return writeJson(res, 200, { ok: true, dissolved: true });
     }
 
     if (req.method === "POST" && pathParts[3] === "kick") {
@@ -2815,6 +2845,9 @@ async function handleApi(req, res, pathParts, url) {
       if (!target) return writeJson(res, 404, { error: "玩家不存在" });
       if (target.id === viewer.id) return writeJson(res, 400, { error: "不能踢出自己，请使用退出房间" });
       const removed = removePlayerFromRoom(room, target.id, "你已被房主移出房间");
+      if (removed && !rooms.has(room.id)) {
+        return writeJson(res, 200, { ok: true, dissolved: true });
+      }
       if (removed) addEvent(room, `房主将 ${removed.name} 移出了房间`);
       broadcast(room);
       return writeJson(res, 200, roomSnapshot(room, viewer));

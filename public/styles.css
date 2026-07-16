@@ -63,6 +63,15 @@ button.secondary:hover {
   background: #dbe5df;
 }
 
+button.danger {
+  background: #fff0ee;
+  color: var(--bad);
+}
+
+button.danger:hover {
+  background: #f7deda;
+}
+
 button.compact-button {
   min-height: 30px;
   padding: 0 10px;
