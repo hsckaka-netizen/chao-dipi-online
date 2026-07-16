@@ -130,6 +130,12 @@ label {
   gap: 14px;
 }
 
+.room-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 14px;
+}
+
 .room-main {
   min-width: 0;
 }
@@ -414,6 +420,12 @@ label {
   border: 1px solid var(--line);
   border-radius: 8px;
   background: #fbfcfb;
+}
+
+.player-side {
+  display: grid;
+  gap: 6px;
+  justify-items: end;
 }
 
 .player strong {
@@ -809,6 +821,20 @@ label {
   margin-left: 0;
 }
 
+.setup-detail-bidding,
+.setup-stage-bidding {
+  border-color: #bfd7e8;
+  background: #f5fbff;
+}
+
+.setup-detail-frying,
+.setup-detail-fry-burying,
+.setup-stage-frying,
+.setup-stage-fry-burying {
+  border-color: #d8ab65;
+  background: #fff8ec;
+}
+
 .trick {
   display: grid;
   gap: 10px;
@@ -847,7 +873,7 @@ label {
 .trick-grid.table-circle {
   position: relative;
   display: block;
-  min-height: clamp(560px, 48vw, 700px);
+  min-height: clamp(680px, 58vw, 840px);
   margin: 8px 0 4px;
   border: 0;
   background: transparent;
@@ -855,18 +881,18 @@ label {
 }
 
 .table-seats-5 {
-  --seat-width: 230px;
-  --seat-height: 150px;
+  --seat-width: 232px;
+  --seat-height: 116px;
 }
 
 .table-seats-6 {
-  --seat-width: 215px;
-  --seat-height: 148px;
+  --seat-width: 220px;
+  --seat-height: 114px;
 }
 
 .table-seats-7 {
-  --seat-width: 198px;
-  --seat-height: 140px;
+  --seat-width: 204px;
+  --seat-height: 112px;
 }
 
 .table-center {
@@ -900,19 +926,25 @@ label {
   background: #fff;
 }
 
-.table-circle .trick-player {
+.table-circle .trick-seat {
   position: absolute;
   left: var(--seat-x);
   top: var(--seat-y);
   z-index: 2;
   width: var(--seat-width, 180px);
-  height: var(--seat-height, 124px);
-  min-height: 0;
-  grid-template-rows: auto minmax(54px, 1fr);
-  overflow: hidden;
+  min-height: var(--seat-height, 112px);
   transform: translate(-50%, -50%);
+  overflow: visible;
+}
+
+.table-circle .trick-player {
+  width: 100%;
+  height: var(--seat-height, 112px);
+  min-height: 0;
+  grid-template-rows: auto 1fr;
+  overflow: hidden;
   box-shadow: 0 8px 22px rgba(31, 45, 38, 0.11);
-  padding: 10px 12px;
+  padding: 9px 10px;
 }
 
 .table-circle .trick-name {
@@ -942,35 +974,84 @@ label {
   line-height: 1.1;
 }
 
-.table-circle .tags {
-  max-height: 30px;
+.trick-player-stats {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px 8px;
+  align-content: end;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.15;
+}
+
+.trick-player-stats span {
+  min-width: 0;
   overflow: hidden;
-  gap: 4px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
-.table-circle .mini-cards {
-  max-height: 62px;
-  overflow: auto;
-  gap: 4px 0;
-  align-content: flex-start;
-  padding-left: 10px;
+.trick-player-stats b {
+  color: var(--text);
 }
 
-.table-circle .mini-card {
-  min-width: 34px;
-  min-height: 22px;
-  margin-left: -10px;
-  padding: 0 5px;
-  font-size: 12px;
+.seat-play {
+  position: absolute;
+  z-index: 3;
+  width: min(250px, 120%);
+  min-height: 64px;
+  pointer-events: none;
+}
+
+.seat-bottom .seat-play {
+  left: 50%;
+  top: calc(-100% + 6px);
+  transform: translateX(-50%);
+}
+
+.seat-top .seat-play {
+  left: 50%;
+  bottom: calc(-100% + 6px);
+  transform: translateX(-50%);
+}
+
+.seat-left .seat-play {
+  left: calc(100% + 8px);
+  top: 50%;
+  transform: translateY(-50%);
+}
+
+.seat-right .seat-play {
+  right: calc(100% + 8px);
+  top: 50%;
+  transform: translateY(-50%);
+}
+
+.table-circle .seat-play .mini-cards {
+  justify-content: center;
+  max-height: 112px;
+  overflow: visible;
 }
 
 .trick-player.played {
   border-color: #cbded3;
 }
 
+.trick-player.lead {
+  border-color: #8db9d7;
+  box-shadow: 0 0 0 2px rgba(77, 143, 186, 0.15), 0 8px 22px rgba(31, 45, 38, 0.11);
+}
+
+.trick-player.current-turn {
+  border-color: #67aa86;
+  background: #f4fbf7;
+  box-shadow: 0 0 0 3px rgba(22, 116, 76, 0.16), 0 8px 22px rgba(31, 45, 38, 0.11);
+}
+
 .trick-player.winning {
   border-color: #d8ab65;
   background: #fffaf2;
+  box-shadow: 0 0 0 3px rgba(184, 107, 34, 0.16), 0 8px 22px rgba(31, 45, 38, 0.11);
 }
 
 .trick-name {
@@ -1001,34 +1082,97 @@ label {
   font-weight: 900;
 }
 
+.seat-status.lead {
+  color: #2b6e9a;
+  font-weight: 900;
+}
+
 .mini-cards {
   display: flex;
   flex-wrap: wrap;
-  gap: 5px 0;
+  gap: 8px 0;
   align-content: flex-start;
-  padding-left: 12px;
+  padding-left: 18px;
   overflow: visible;
 }
 
 .mini-card {
   position: relative;
   z-index: var(--i);
-  display: inline-flex;
-  align-items: center;
-  justify-content: flex-start;
-  min-height: 28px;
-  min-width: 40px;
-  margin-left: -12px;
-  padding: 0 6px;
+  flex: 0 0 48px;
+  width: 48px;
+  min-height: 58px;
+  margin-left: -18px;
   border: 1px solid #ccd8d1;
   border-radius: 6px;
   background: #fff;
-  font-size: 13px;
+  padding: 5px 4px 0 5px;
+  font-size: 14px;
   font-weight: 800;
+  box-shadow: 0 4px 12px rgba(26, 38, 32, 0.09);
 }
 
 .mini-card:first-child {
   margin-left: 0;
+}
+
+.mini-card .card-joker-face {
+  inset: 1px 1px 1px 16px;
+}
+
+.setup-action-trail {
+  display: grid;
+  gap: 6px;
+}
+
+.setup-action {
+  display: grid;
+  gap: 4px;
+  border: 1px solid #dfe5de;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.92);
+  padding: 6px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.setup-action.current {
+  border-color: #d8ab65;
+  background: #fff5e6;
+  color: #8a4b12;
+}
+
+.setup-action:not(.current) {
+  transform: scale(0.88);
+  transform-origin: center;
+  opacity: 0.78;
+}
+
+.setup-action .mini-cards {
+  padding-left: 14px;
+}
+
+.setup-action .mini-card {
+  flex-basis: 40px;
+  width: 40px;
+  min-height: 48px;
+  margin-left: -14px;
+  font-size: 12px;
+}
+
+.setup-action:not(.current) .mini-card {
+  flex-basis: 34px;
+  width: 34px;
+  min-height: 42px;
+}
+
+.setup-action:not(.current) .card-rank {
+  font-size: 11px;
+}
+
+.setup-action:not(.current) .card-suit {
+  font-size: 12px;
 }
 
 .mini-card.red {
@@ -1129,20 +1273,37 @@ label {
     display: none;
   }
 
+  .table-circle .trick-seat {
+    position: static;
+    width: auto;
+    min-height: 0;
+    display: grid;
+    gap: 8px;
+    transform: none;
+  }
+
   .table-circle .trick-player {
     position: static;
     width: auto;
     height: auto;
     min-height: 88px;
     overflow: visible;
-    transform: none;
     box-shadow: none;
   }
 
-  .table-circle .tags,
-  .table-circle .mini-cards {
-    max-height: none;
-    overflow: visible;
+  .seat-play,
+  .seat-bottom .seat-play,
+  .seat-top .seat-play,
+  .seat-left .seat-play,
+  .seat-right .seat-play {
+    position: static;
+    width: auto;
+    min-height: 0;
+    transform: none;
+  }
+
+  .table-circle .seat-play .mini-cards {
+    justify-content: flex-start;
   }
 
   .profile-row {
@@ -1181,5 +1342,12 @@ label {
 
   .card-suit {
     font-size: 14px;
+  }
+
+  .mini-card {
+    flex-basis: 44px;
+    width: 44px;
+    min-height: 54px;
+    margin-left: -16px;
   }
 }

@@ -175,6 +175,11 @@ function connectEvents() {
     applyState(JSON.parse(event.data));
     render();
   });
+  source.addEventListener("kicked", (event) => {
+    const data = JSON.parse(event.data || "{}");
+    clearSession();
+    setMessage(data.message || "你已离开房间。", true);
+  });
   source.onerror = () => {
     setMessage("连接中断，正在等待浏览器自动重连", true);
   };
@@ -465,6 +470,33 @@ async function resetRoom() {
       body: JSON.stringify({ playerId: session.playerId, token: session.token })
     }), { highlightNewKitty: false });
     setMessage("房间已重置，可以重新开始。");
+  } catch (error) {
+    setMessage(error.message, true);
+  }
+}
+
+async function leaveRoom() {
+  if (!session) return clearSession();
+  try {
+    await api(`/api/rooms/${session.roomId}/leave-room`, {
+      method: "POST",
+      body: JSON.stringify({ playerId: session.playerId, token: session.token })
+    });
+    clearSession();
+    setMessage("已退出房间。");
+  } catch (error) {
+    setMessage(error.message, true);
+  }
+}
+
+async function kickPlayer(targetPlayerId) {
+  if (!session || !targetPlayerId) return;
+  try {
+    applyState(await api(`/api/rooms/${session.roomId}/kick`, {
+      method: "POST",
+      body: JSON.stringify({ playerId: session.playerId, token: session.token, targetPlayerId })
+    }), { highlightNewKitty: false });
+    setMessage("已移出玩家。");
   } catch (error) {
     setMessage(error.message, true);
   }
@@ -916,7 +948,7 @@ function renderRoom() {
       : "人数已满足，等待所有玩家准备";
 
   renderShell(`
-    <div class="grid room-grid">
+    <div class="room-layout">
       <div class="stack room-main">
         <section class="panel stack">
           <div class="row" style="justify-content:space-between">
@@ -938,17 +970,21 @@ function renderRoom() {
             <code>${escapeHtml(shareUrl(state.roomId))}</code>
             <div class="row">
               <button type="button" data-action="copy">复制链接</button>
+              <button type="button" class="secondary" data-action="open-players">玩家</button>
+              <button type="button" class="secondary" data-action="open-events">日志</button>
               ${inLobbyView ? renderReadyControls({ waitingNextRound }) : ""}
               ${state.viewer.host && state.status === "lobby" ? `<button type="button" class="secondary" data-action="add-test-players">补齐5人测试</button>` : ""}
               ${state.viewer.host && state.status === "lobby" ? `<button type="button" data-action="start" ${canStart() ? "" : "disabled"}>开始并发牌</button>` : ""}
               ${state.canViewKitty ? `<button type="button" class="secondary" data-action="open-kitty">查看底牌</button>` : ""}
               ${state.viewer.host && state.stage === "playing" ? `<button type="button" data-action="test-play-round">测试玩家自动出牌</button>` : ""}
               ${state.viewer.host && started ? `<button type="button" class="secondary" data-action="reset">重开房间</button>` : ""}
+              ${state.status === "lobby" || state.status === "finished" ? `<button type="button" class="secondary" data-action="room-leave">退出房间</button>` : ""}
             </div>
             ${inLobbyView ? `<div class="meta">${escapeHtml(waitingNextRound ? `你已准备下一局，等待其他玩家确认。${readyStatusText()}` : `${waitingText}。${readyStatusText()}。第一版支持 5-7 人。`)}</div>` : ""}
           </div>
         </section>
 
+        ${!started ? renderLobbyPlayersPanel() : ""}
         ${started && state.setup?.doglegCard ? renderDoglegPanel() : ""}
         ${started && state.stage !== "playing" && state.stage !== "finished" ? renderSetupPanel() : ""}
         ${started ? renderPlayTable() : ""}
@@ -961,21 +997,6 @@ function renderRoom() {
           ${started ? renderHand(state.hand) : `<div class="empty">${escapeHtml(lobbyEmptyText(waitingNextRound))}</div>`}
         </section>
       </div>
-
-      <aside class="stack room-sidebar">
-        <section class="panel">
-          <h3>玩家</h3>
-          <div class="players">
-            ${state.players.map(renderPlayer).join("")}
-          </div>
-        </section>
-        <section class="panel">
-          <h3>房间记录</h3>
-          <div class="events">
-            ${state.events.length ? state.events.map(renderEvent).join("") : `<div class="empty">暂无记录</div>`}
-          </div>
-        </section>
-      </aside>
     </div>
     ${renderActiveDialog()}
   `);
@@ -1172,7 +1193,7 @@ function renderSetupPanel() {
   }
 
   return `
-    <section class="panel stack">
+    <section class="panel stack setup-detail setup-detail-${escapeHtml(state.stage)}">
       <div class="section-head">
         <h2>牌桌状态</h2>
         <div class="tags">
@@ -1214,9 +1235,63 @@ function renderActiveDialog() {
   if (activeDialog === "fry" && viewerCanFry()) return renderBidFryDialog("fry");
   if (activeDialog === "kitty" && state.canViewKitty) return renderKittyDialog();
   if (activeDialog === "history") return renderHistoryDialog();
+  if (activeDialog === "players") return renderPlayersDialog();
+  if (activeDialog === "events") return renderEventsDialog();
   if (activeDialog === "result" && state.status === "finished" && !viewerPlayer()?.ready) return renderResultPanel();
   if (!activeDialog && state.status === "finished" && !viewerPlayer()?.ready && dismissedResultRoomId !== state.roomId) return renderResultPanel();
   return "";
+}
+
+function renderLobbyPlayersPanel() {
+  return `
+    <section class="panel">
+      <div class="section-head">
+        <h2>玩家</h2>
+        <span class="tag">${state.players.length}/${state.maxPlayers}</span>
+      </div>
+      <div class="players lobby-players">
+        ${state.players.map(renderPlayer).join("")}
+      </div>
+    </section>
+  `;
+}
+
+function renderPlayersDialog() {
+  return `
+    <div class="modal-backdrop">
+      <section class="modal-card players-modal" role="dialog" aria-modal="true" aria-label="玩家">
+        <div class="section-head">
+          <div>
+            <h2>玩家</h2>
+            <div class="meta">${state.players.length}/${state.maxPlayers} 人</div>
+          </div>
+          <button type="button" class="secondary compact-button" data-action="close-dialog">关闭</button>
+        </div>
+        <div class="players">
+          ${state.players.map(renderPlayer).join("")}
+        </div>
+      </section>
+    </div>
+  `;
+}
+
+function renderEventsDialog() {
+  return `
+    <div class="modal-backdrop">
+      <section class="modal-card events-modal" role="dialog" aria-modal="true" aria-label="房间日志">
+        <div class="section-head">
+          <div>
+            <h2>房间日志</h2>
+            <div class="meta">${state.events.length} 条最近记录</div>
+          </div>
+          <button type="button" class="secondary compact-button" data-action="close-dialog">关闭</button>
+        </div>
+        <div class="events">
+          ${state.events.length ? state.events.map(renderEvent).join("") : `<div class="empty">暂无记录</div>`}
+        </div>
+      </section>
+    </div>
+  `;
 }
 
 function signedScore(valueText, value) {
@@ -1245,7 +1320,7 @@ function renderResultPanel() {
           </div>
           <div class="row">
             <button type="button" data-action="play-again">再来一局</button>
-            <button type="button" class="secondary" data-action="leave">退出房间</button>
+            <button type="button" class="secondary" data-action="room-leave">退出房间</button>
             <button type="button" class="secondary compact-button" data-action="close-dialog">查看房间</button>
           </div>
         </div>
@@ -1279,6 +1354,15 @@ function renderResultPanel() {
           <span class="tag">保底 ${signedScore(null, result.bottomDelta)}</span>
           <span class="tag">拖五 ${signedScore(null, result.draggedDelta)}</span>
           ${result.bottomDraggedRedFives || result.bottomDraggedDiamondFives ? `<span class="tag accent">底牌拖主：红五 ${result.bottomDraggedRedFives}，方五 ${result.bottomDraggedDiamondFives}</span>` : ""}
+        </div>
+        <div class="result-bottom">
+          <div class="section-head compact">
+            <h3>底牌</h3>
+            <span class="tag">${result.bottomCards?.length || 0} 张</span>
+          </div>
+          <div class="kitty-cards">
+            ${(result.bottomCards || []).length ? sortCardsForPlay(result.bottomCards).map(renderStaticCard).join("") : `<div class="empty">无底牌记录</div>`}
+          </div>
         </div>
         <div class="result-table">
           ${result.playerResults.map((player) => `
@@ -1454,8 +1538,14 @@ function renderSetupTable() {
       avatarUrl: player.avatarUrl || "",
       played: false,
       winning: false,
+      lead: false,
+      currentTurn: false,
       cards: [],
       cardCount: player.cardCount,
+      score: player.score || 0,
+      draggedRedFives: player.draggedRedFives || 0,
+      draggedDiamondFives: player.draggedDiamondFives || 0,
+      setupActions: setupActionsForPlayer(player.id),
       statusText: status.text,
       statusTone: status.tone
     };
@@ -1468,7 +1558,7 @@ function renderSetupTable() {
     plays: seats
   };
   return `
-    <section class="panel stack">
+    <section class="panel stack setup-stage setup-stage-${escapeHtml(state.stage)}">
       <div class="section-head">
         <h2>${escapeHtml(titleByStage[state.stage] || "牌桌")}</h2>
         <div class="tags">
@@ -1527,6 +1617,42 @@ function setupSeatStatus(player) {
   return { text: "等待", tone: "" };
 }
 
+function currentSetupActionId() {
+  const setup = state.setup || {};
+  if (state.stage === "bidding") return setup.bid?.actionId || "";
+  if (state.stage === "fry-burying") return setup.fry?.pendingBid?.actionId || "";
+  if (state.stage === "frying") return setup.fry?.lastBid?.actionId || "";
+  return "";
+}
+
+function setupActionsForPlayer(playerId) {
+  const setup = state.setup || {};
+  const currentId = currentSetupActionId();
+  const source = state.stage === "bidding"
+    ? (setup.bidHistory || [])
+    : (setup.fry?.history || []);
+  return source
+    .filter((action) => action.playerId === playerId)
+    .map((action) => ({
+      ...action,
+      current: Boolean(action.actionId && action.actionId === currentId)
+    }));
+}
+
+function renderSetupActionTrail(actions) {
+  if (!actions?.length) return "";
+  return `
+    <div class="setup-action-trail">
+      ${actions.map((action) => `
+        <div class="setup-action ${action.current ? "current" : ""}">
+          <span>${escapeHtml(`${action.count}张${action.suitName}2${action.random ? " 随机" : ""}`)}</span>
+          ${action.cards?.length ? renderMiniCards(action.cards) : ""}
+        </div>
+      `).join("")}
+    </div>
+  `;
+}
+
 function visibleTableTrick() {
   const currentTrick = state.currentTrick;
   if (!currentTrick) return null;
@@ -1562,15 +1688,31 @@ function renderTrick(trick, current, options = {}) {
             <span>${escapeHtml(titleMeta)}</span>
           </div>
         ` : ""}
-        ${displayPlays.map((play, index) => `
-          <div class="trick-player ${play.played ? "played" : ""} ${play.winning ? "winning" : ""}" ${current ? `style="${seatStyle(index, displayPlays.length)}"` : ""}>
-            <div class="trick-name">
-              <strong>${playerNameWithRole(play)}</strong>
-              <span class="seat-status ${escapeHtml(playStatusTone(trick, play, current, { heldResult, setupTable }))}">${escapeHtml(playStatusText(trick, play, play.turnIndex ?? index, current, { heldResult, setupTable }))}</span>
+        ${displayPlays.map((play, index) => {
+          const playContent = setupTable ? renderSetupActionTrail(play.setupActions) : (play.played ? renderMiniCards(play.cards) : "");
+          const playerCard = `
+            <div class="trick-player ${play.played ? "played" : ""} ${play.lead ? "lead" : ""} ${play.currentTurn ? "current-turn" : ""} ${play.winning ? "winning" : ""}">
+              <div class="trick-name">
+                <strong>${playerNameWithRole(play)}</strong>
+                <span class="seat-status ${escapeHtml(playStatusTone(trick, play, current, { heldResult, setupTable }))}">${escapeHtml(playStatusText(trick, play, play.turnIndex ?? index, current, { heldResult, setupTable }))}</span>
+              </div>
+              <div class="trick-player-stats">
+                <span>牌分 <b>${play.score || 0}</b></span>
+                <span>红五 <b>${play.draggedRedFives || 0}</b></span>
+                <span>方五 <b>${play.draggedDiamondFives || 0}</b></span>
+                <span>${Number.isFinite(play.cardCount) ? `${play.cardCount} 张` : ""}</span>
+              </div>
+              ${!current && play.played ? renderMiniCards(play.cards) : ""}
             </div>
-            ${play.played ? renderMiniCards(play.cards) : `<div class="meta">${setupTable && Number.isFinite(play.cardCount) ? `${play.cardCount} 张` : "等待出牌"}</div>`}
-          </div>
-        `).join("")}
+          `;
+          if (!current) return playerCard;
+          return `
+            <div class="trick-seat ${seatZone(index, displayPlays.length)}" style="${seatStyle(index, displayPlays.length)}">
+              ${playerCard}
+              ${playContent ? `<div class="seat-play">${playContent}</div>` : ""}
+            </div>
+          `;
+        }).join("")}
       </div>
     </div>
   `;
@@ -1587,6 +1729,8 @@ function playStatusText(trick, play, index, current, options = {}) {
     return play.played ? "已出" : "未出牌";
   }
   if (trick.currentTurnPlayerId === play.playerId) return "当前";
+  if (play.winning && play.played) return "当前最大";
+  if (play.lead) return play.played ? "首家已出" : "首家";
   if (play.played) return `${index + 1}手已出`;
   return `${index + 1}手`;
 }
@@ -1596,6 +1740,7 @@ function playStatusTone(trick, play, current, options = {}) {
   if (options.heldResult && play.winning) return "accent";
   if (current && trick.currentTurnPlayerId === play.playerId) return "good";
   if (play.winning) return "accent";
+  if (play.lead) return "lead";
   return "";
 }
 
@@ -1609,7 +1754,7 @@ function orientPlaysForViewer(plays) {
 
 function roleMark(role) {
   if (!role) return "";
-  const text = role === "狗腿" ? "狗" : role === "主" ? "主" : "闲";
+  const text = role === "狗腿" ? "腿" : role === "主" ? "主" : "闲";
   const tone = role === "主" || role === "狗腿" ? "accent" : "idle";
   return `<span class="role-mark ${tone}" title="${escapeHtml(role)}">${escapeHtml(text)}</span>`;
 }
@@ -1647,6 +1792,16 @@ function seatStyle(index, total) {
   return `--seat-x:${x.toFixed(2)}%;--seat-y:${y.toFixed(2)}%;`;
 }
 
+function seatZone(index, total) {
+  const safeTotal = Math.max(1, total);
+  const angle = 90 - (360 / safeTotal) * index;
+  const normalized = (angle + 360) % 360;
+  if (normalized >= 45 && normalized < 135) return "seat-bottom";
+  if (normalized >= 135 && normalized < 225) return "seat-left";
+  if (normalized >= 225 && normalized < 315) return "seat-top";
+  return "seat-right";
+}
+
 function renderHistoryDialog() {
   const history = [...(state.trickHistory || [])].reverse();
   return `
@@ -1674,8 +1829,9 @@ function renderPlayer(player) {
   const isTurn = state.currentTrick?.currentTurnPlayerId === player.id;
   const isSetupTurn = state.setup?.biddingTurnPlayerId === player.id || state.setup?.fry?.currentPlayerId === player.id;
   const isBankerAction = (state.stage === "burying" || state.stage === "dogleg") && state.setup?.bankerId === player.id;
+  const canKick = state.viewer?.host && !isMe && (state.status === "lobby" || state.status === "finished");
   return `
-    <div class="player">
+    <div class="player" data-player-id="${escapeHtml(player.id)}">
       <div>
         <strong class="player-name-line">${playerIdentity(player.name, player.role, player.avatarUrl, isMe ? "（我）" : "")}</strong>
         <div class="tags">
@@ -1694,7 +1850,10 @@ function renderPlayer(player) {
           </div>
         ` : ""}
       </div>
-      <div class="meta">${player.cardCount ? `${player.cardCount} 张` : ""}</div>
+      <div class="player-side">
+        <div class="meta">${player.cardCount ? `${player.cardCount} 张` : ""}</div>
+        ${canKick ? `<button type="button" class="secondary compact-button" data-action="kick-player">踢出</button>` : ""}
+      </div>
     </div>
   `;
 }
@@ -1750,6 +1909,22 @@ function sortCardsForGroup(groupId, cards) {
       return fixedRankSort(a) - fixedRankSort(b) || fixedRankTieSort(a, b) || a.deck - b.deck || a.id.localeCompare(b.id);
     }
     return (rankSort[a.rank] ?? 99) - (rankSort[b.rank] ?? 99) || a.deck - b.deck || a.id.localeCompare(b.id);
+  });
+}
+
+function sortCardsForPlay(cards) {
+  const trumpSuit = currentTrumpSuit();
+  const suitOrder = { TRUMP: 0, S: 1, H: 2, C: 3, D: 4, JOKER: 5 };
+  return [...cards].sort((a, b) => {
+    const aSuit = playSuit(a, trumpSuit);
+    const bSuit = playSuit(b, trumpSuit);
+    return (suitOrder[aSuit] ?? 9) - (suitOrder[bSuit] ?? 9)
+      || patternValue(a, trumpSuit) - patternValue(b, trumpSuit)
+      || fixedRankTieSort(a, b)
+      || (rankSort[a.rank] ?? 99) - (rankSort[b.rank] ?? 99)
+      || (suitSort[a.suit] ?? 99) - (suitSort[b.suit] ?? 99)
+      || a.deck - b.deck
+      || a.id.localeCompare(b.id);
   });
 }
 
@@ -1833,10 +2008,11 @@ function renderHand(hand) {
 
 function renderMiniCards(cards) {
   if (!cards.length) return `<div class="meta">未出牌</div>`;
+  const sortedCards = sortCardsForPlay(cards);
   return `
     <div class="mini-cards">
-      ${cards.map((card, index) => `
-        <span class="mini-card ${card.color}" style="--i:${index}">${escapeHtml(card.label)}</span>
+      ${sortedCards.map((card, index) => `
+        <span class="mini-card ${card.color}" style="--i:${index}" title="${escapeHtml(card.label)}">${cardCorner(card)}</span>
       `).join("")}
     </div>
   `;
@@ -1956,6 +2132,7 @@ document.addEventListener("click", (event) => {
   const action = event.target.closest("[data-action]")?.dataset.action;
   if (!action) return;
   if (action === "leave") clearSession();
+  if (action === "room-leave") leaveRoom();
   if (action === "show-profiles") {
     homeView = "players";
     render();
@@ -1997,10 +2174,21 @@ document.addEventListener("click", (event) => {
     activeDialog = "history";
     render();
   }
+  if (action === "open-players") {
+    activeDialog = "players";
+    render();
+  }
+  if (action === "open-events") {
+    activeDialog = "events";
+    render();
+  }
   if (action === "open-result") {
     activeDialog = "result";
     dismissedResultRoomId = null;
     render();
+  }
+  if (action === "kick-player") {
+    kickPlayer(event.target.closest("[data-player-id]")?.dataset.playerId || "");
   }
   if (action === "close-dialog") {
     if (activeDialog === "bid" || activeDialog === "fry") dismissedActionDialogKey = actionDialogKey();

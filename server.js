@@ -238,6 +238,7 @@ function deal(room) {
   room.result = null;
   room.setup = {
     bid: null,
+    bidHistory: [],
     biddingTurnPlayerId: null,
     passIds: [],
     fry: null
@@ -269,7 +270,7 @@ function resetRoomToLobby(room, options = {}) {
   room.doglegPlayerIds = [];
   room.doglegNeeded = room.players.length >= 7 ? 2 : 1;
   room.result = null;
-  room.setup = { bid: null, biddingTurnPlayerId: null, passIds: [], fry: null };
+  room.setup = { bid: null, bidHistory: [], biddingTurnPlayerId: null, passIds: [], fry: null };
   room.currentTrick = null;
   room.trickHistory = [];
   room.players.forEach((player) => {
@@ -311,11 +312,13 @@ function suitName(suitId) {
 function publicBid(room, bid) {
   if (!bid) return null;
   return {
+    actionId: bid.actionId || "",
     playerId: bid.playerId,
     playerName: playerName(room, bid.playerId),
     count: bid.count,
     suit: bid.suit,
     suitName: suitName(bid.suit),
+    cards: (bid.cards || []).map(publicCard),
     random: Boolean(bid.random)
   };
 }
@@ -344,6 +347,7 @@ function setupSnapshot(room) {
     doglegPlayerNames: (room.doglegPlayerIds || []).map((playerId) => playerName(room, playerId)),
     doglegNeeded: room.doglegNeeded || 0,
     bid: publicBid(room, room.setup?.bid),
+    bidHistory: (room.setup?.bidHistory || []).map((bid) => publicBid(room, bid)),
     bidPassIds: room.setup?.passIds || [],
     biddingTurnPlayerId: room.setup?.biddingTurnPlayerId || null,
     biddingTurnPlayerName: room.setup?.biddingTurnPlayerId ? playerName(room, room.setup.biddingTurnPlayerId) : "",
@@ -355,6 +359,7 @@ function setupSnapshot(room) {
           lastFryerName: fry.lastFryerId ? playerName(room, fry.lastFryerId) : "",
           lastBid: publicBid(room, fry.lastBid),
           pendingBid: publicBid(room, fry.pendingBid),
+          history: (fry.history || []).map((bid) => publicBid(room, bid)),
           passesSinceLast: fry.passesSinceLast,
           passIds: fry.passIds || []
         }
@@ -373,6 +378,8 @@ function trickSnapshot(room, trick) {
   if (!trick) return null;
   const currentTurnPlayerId = trick === room.currentTrick ? expectedPlayerId(room) : null;
   const turnIndexByPlayerId = new Map(orderedPlayersFrom(room, trick.leaderId || room.hostId).map((player, index) => [player.id, index]));
+  const provisionalOutcome = trick.plays.length ? settleTrick(room, trick) : null;
+  const winningPlayIndex = trick.winningPlayIndex ?? provisionalOutcome?.winningPlayIndex ?? null;
   return {
     number: trick.number,
     leaderId: trick.leaderId,
@@ -382,7 +389,7 @@ function trickSnapshot(room, trick) {
     winnerId: trick.winnerId,
     winnerName: trick.winnerName,
     points: trick.points || 0,
-    winningPlayIndex: trick.winningPlayIndex,
+    winningPlayIndex,
     plays: room.players.map((player) => {
       const rawPlayIndex = trick.plays.findIndex((item) => item.playerId === player.id);
       const play = rawPlayIndex >= 0 ? trick.plays[rawPlayIndex] : null;
@@ -392,8 +399,14 @@ function trickSnapshot(room, trick) {
         avatarUrl: player.avatarUrl || "",
         role: playerRole(room, player.id),
         played: Boolean(play),
-        winning: rawPlayIndex >= 0 && rawPlayIndex === trick.winningPlayIndex,
+        lead: trick.leaderId === player.id,
+        currentTurn: currentTurnPlayerId === player.id,
+        winning: rawPlayIndex >= 0 && rawPlayIndex === winningPlayIndex,
         turnIndex: turnIndexByPlayerId.get(player.id) ?? null,
+        score: player.score || 0,
+        draggedRedFives: player.draggedRedFives || 0,
+        draggedDiamondFives: player.draggedDiamondFives || 0,
+        cardCount: player.hand.length,
         at: play?.at || null,
         cards: play ? play.cards.map(publicCard) : []
       };
@@ -454,6 +467,40 @@ function requirePlayer(res, room, playerId, token) {
   const viewer = playerFor(room, playerId, token);
   if (!viewer) writeJson(res, 401, { error: "玩家身份已失效" });
   return viewer;
+}
+
+function canChangeRoomPlayers(room) {
+  return room.status === "lobby" || room.status === "finished";
+}
+
+function disconnectPlayerClients(room, playerId, messageText) {
+  for (const client of [...room.clients]) {
+    if (client.playerId !== playerId) continue;
+    client.res.write(`event: kicked\ndata: ${JSON.stringify({ message: messageText })}\n\n`);
+    client.res.end();
+    room.clients.delete(client);
+  }
+}
+
+function removePlayerFromRoom(room, playerId, messageText) {
+  const playerIndex = room.players.findIndex((player) => player.id === playerId);
+  if (playerIndex < 0) return null;
+  const [removed] = room.players.splice(playerIndex, 1);
+  disconnectPlayerClients(room, playerId, messageText);
+
+  if (removed.host && room.players.length) {
+    room.players[0].host = true;
+    room.hostId = room.players[0].id;
+    addEvent(room, `${room.players[0].name} 成为新的房主`);
+  }
+
+  if (!room.players.length) {
+    rooms.delete(room.id);
+    return removed;
+  }
+
+  room.kittySize = room.status === "lobby" ? room.players.length : room.kittySize;
+  return removed;
 }
 
 function updateDraggedFiveStats(room, trick, winnerId) {
@@ -753,9 +800,11 @@ function bidFromCards(room, player, cardIds) {
     return { error: "叫主/炒底需要选择同一花色的 2", status: 400 };
   }
   return {
+    actionId: id(6),
     playerId: player.id,
     count: selected.cards.length,
     suit: suitsInBid[0],
+    cards: selected.cards,
     random: false,
     at: now()
   };
@@ -810,6 +859,8 @@ function submitBid(room, player, cardIds) {
   }
 
   room.setup.bid = bid;
+  if (!room.setup.bidHistory) room.setup.bidHistory = [];
+  room.setup.bidHistory.push(bid);
   room.setup.passIds = [];
   room.setup.biddingTurnPlayerId = nextPlayerId(room, player.id);
   room.phase = `${player.name} 亮 ${bid.count} 张${suitName(bid.suit)}2，等待抢主`;
@@ -840,12 +891,16 @@ function randomDeclare(room) {
   const player = randomPlayer(room);
   const suit = randomSuitId();
   room.setup.bid = {
+    actionId: id(6),
     playerId: player.id,
     count: 1,
     suit,
+    cards: [],
     random: true,
     at: now()
   };
+  if (!room.setup.bidHistory) room.setup.bidHistory = [];
+  room.setup.bidHistory.push(room.setup.bid);
   addEvent(room, `无人叫主，系统随机指定 ${player.name} 为主，临时花色为${suitName(suit)}`);
   return finishBidding(room);
 }
@@ -858,6 +913,7 @@ function startFrying(room) {
     lastFryerId: room.bankerId,
     lastBid: room.setup.bid,
     pendingBid: null,
+    history: [],
     passesSinceLast: 0,
     passIds: []
   };
@@ -943,6 +999,8 @@ function submitFry(room, player, cardIds) {
   player.hand = sortHand([...player.hand, ...room.kitty]);
   room.kitty = [];
   fry.pendingBid = bid;
+  if (!fry.history) fry.history = [];
+  fry.history.push(bid);
   room.stage = "fry-burying";
   room.phase = `${player.name} 炒底，等待贴底`;
   addEvent(room, `${player.name} 用 ${bid.count} 张${suitName(bid.suit)}2 炒底并拿入底牌`);
@@ -1430,7 +1488,7 @@ async function handleApi(req, res, pathParts, url) {
       doglegPlayerIds: [],
       doglegNeeded: 0,
       result: null,
-      setup: { bid: null, biddingTurnPlayerId: null, passIds: [], fry: null },
+      setup: { bid: null, bidHistory: [], biddingTurnPlayerId: null, passIds: [], fry: null },
       currentTrick: null,
       trickHistory: [],
       events: [],
@@ -1479,6 +1537,34 @@ async function handleApi(req, res, pathParts, url) {
         token: player.token,
         snapshot: roomSnapshot(room, player)
       });
+    }
+
+    if (req.method === "POST" && pathParts[3] === "leave-room") {
+      const body = await readJson(req);
+      const viewer = requirePlayer(res, room, body.playerId, body.token);
+      if (!viewer) return;
+      if (!canChangeRoomPlayers(room)) {
+        return writeJson(res, 409, { error: "牌局进行中暂不能退出房间，可以关闭页面或本机退出身份" });
+      }
+      const removed = removePlayerFromRoom(room, viewer.id, "你已退出房间");
+      if (removed) addEvent(room, `${removed.name} 退出了房间`);
+      broadcast(room);
+      return writeJson(res, 200, { ok: true });
+    }
+
+    if (req.method === "POST" && pathParts[3] === "kick") {
+      const body = await readJson(req);
+      const viewer = requirePlayer(res, room, body.playerId, body.token);
+      if (!viewer) return;
+      if (!viewer.host) return writeJson(res, 403, { error: "只有房主可以踢出玩家" });
+      if (!canChangeRoomPlayers(room)) return writeJson(res, 409, { error: "牌局进行中暂不能踢出玩家" });
+      const target = playerById(room, body.targetPlayerId);
+      if (!target) return writeJson(res, 404, { error: "玩家不存在" });
+      if (target.id === viewer.id) return writeJson(res, 400, { error: "不能踢出自己，请使用退出房间" });
+      const removed = removePlayerFromRoom(room, target.id, "你已被房主移出房间");
+      if (removed) addEvent(room, `房主将 ${removed.name} 移出了房间`);
+      broadcast(room);
+      return writeJson(res, 200, roomSnapshot(room, viewer));
     }
 
     if (req.method === "POST" && pathParts[3] === "test-players") {
