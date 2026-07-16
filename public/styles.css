@@ -202,6 +202,38 @@ label {
   flex-wrap: wrap;
 }
 
+.segmented {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #f5f8f6;
+  padding: 4px;
+}
+
+.segmented button {
+  min-height: 34px;
+  padding: 0 10px;
+}
+
+.segmented button:disabled {
+  opacity: 1;
+  background: var(--primary);
+  color: #fff;
+}
+
+.score-bid-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.score-bid-actions button {
+  min-width: 58px;
+}
+
 .form {
   display: grid;
   gap: 12px;
@@ -423,6 +455,11 @@ label {
   border-radius: 8px;
   background: #fbfcfb;
   padding: 12px;
+}
+
+.joinable-room-card.disabled {
+  background: #f3f5f3;
+  opacity: 0.86;
 }
 
 .joinable-room-main {
@@ -900,6 +937,18 @@ label {
   background: #f5fbff;
 }
 
+.setup-detail-score-bidding,
+.setup-stage-score-bidding {
+  border-color: #c7b6e8;
+  background: #faf7ff;
+}
+
+.setup-detail-trump-selecting,
+.setup-stage-trump-selecting {
+  border-color: #b9d4c8;
+  background: #f4faf6;
+}
+
 .setup-detail-frying,
 .setup-detail-fry-burying,
 .setup-stage-frying,
@@ -935,6 +984,24 @@ label {
   color: var(--muted);
   font-size: 13px;
   font-weight: 800;
+}
+
+.played-five-stats {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 24px;
+  border: 1px solid #f0d2d2;
+  border-radius: 999px;
+  background: #fff5f5;
+  color: #9b2f2f;
+  padding: 0 9px;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.played-five-stats b {
+  color: #731d1d;
 }
 
 .trick-grid {

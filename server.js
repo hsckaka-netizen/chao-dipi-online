@@ -12,6 +12,9 @@ const port = Number(process.env.PORT || 3000);
 const MIN_PLAYERS = 5;
 const MAX_PLAYERS = 7;
 const HAND_SIZE = 53;
+const CALL_MODE_TWO = "two";
+const CALL_MODE_SCORE = "score";
+const SCORE_BID_SECONDS = 20;
 
 const suits = [
   { id: "S", name: "黑桃", symbol: "♠", color: "black", sort: 0 },
@@ -105,17 +108,32 @@ function profilesList() {
     .sort((a, b) => a.name.localeCompare(b.name, "zh-Hans-CN"));
 }
 
+function roomStatusLabel(room) {
+  if (room.status === "lobby") {
+    if (room.players.length >= MAX_PLAYERS) return "已满";
+    return "可加入";
+  }
+  if (room.status === "finished") return "已结束";
+  return "进行中";
+}
+
 function joinableRoomsList() {
   return [...rooms.values()]
-    .filter((room) => room.status === "lobby" && room.players.length < MAX_PLAYERS)
+    .filter((room) => room.status === "lobby" || room.status === "dealt")
     .map((room) => ({
       roomId: room.id,
+      status: room.status,
+      stage: room.stage,
+      joinable: room.status === "lobby" && room.players.length < MAX_PLAYERS,
+      statusLabel: roomStatusLabel(room),
       hostName: playerName(room, room.hostId),
       playerCount: room.players.length,
       readyCount: readyPlayerCount(room),
       minPlayers: MIN_PLAYERS,
       maxPlayers: MAX_PLAYERS,
       phase: room.phase,
+      callMode: normalizedCallMode(room.callMode),
+      callModeName: callModeName(room.callMode),
       createdAt: room.createdAt,
       players: room.players.map((player) => ({
         id: player.id,
@@ -181,6 +199,61 @@ function createEmptyTrick(number = 1, leaderId = null) {
     points: 0,
     winningPlayIndex: null,
     plays: []
+  };
+}
+
+function normalizedCallMode(value) {
+  return value === CALL_MODE_SCORE ? CALL_MODE_SCORE : CALL_MODE_TWO;
+}
+
+function callModeName(value) {
+  return normalizedCallMode(value) === CALL_MODE_SCORE ? "叫分抢庄" : "亮2叫主";
+}
+
+function emptySetup() {
+  return {
+    bid: null,
+    bidHistory: [],
+    biddingTurnPlayerId: null,
+    passIds: [],
+    scoreBid: null,
+    fry: null
+  };
+}
+
+function totalGamePoints(room) {
+  return room.players.length * 100;
+}
+
+function openingBankerScore(room) {
+  return Math.round(totalGamePoints(room) * 0.4);
+}
+
+function createScoreBidSetup(room) {
+  const minimum = openingBankerScore(room);
+  const firstPlayer = randomPlayer(room) || null;
+  const openedAt = now();
+  const current = firstPlayer
+    ? {
+        playerId: firstPlayer.id,
+        score: minimum,
+        at: openedAt
+      }
+    : null;
+  return {
+    minimum,
+    current,
+    history: firstPlayer
+      ? [{
+          playerId: firstPlayer.id,
+          score: minimum,
+          increment: 0,
+          at: openedAt
+        }]
+      : [],
+    passIds: [],
+    deadlineAt: firstPlayer ? new Date(Date.now() + SCORE_BID_SECONDS * 1000).toISOString() : null,
+    openedAt
   };
 }
 
@@ -253,8 +326,9 @@ function deal(room) {
   });
   room.kitty = deck.slice(count * HAND_SIZE, count * HAND_SIZE + count);
   room.status = "dealt";
-  room.stage = "bidding";
-  room.phase = "叫主/抢主";
+  room.callMode = normalizedCallMode(room.callMode);
+  room.stage = room.callMode === CALL_MODE_SCORE ? "score-bidding" : "bidding";
+  room.phase = room.callMode === CALL_MODE_SCORE ? "叫分抢庄" : "叫主/抢主";
   room.startedAt = now();
   room.kittySize = count;
   room.bankerId = null;
@@ -263,15 +337,15 @@ function deal(room) {
   room.doglegPlayerIds = [];
   room.doglegNeeded = count >= 7 ? 2 : 1;
   room.result = null;
-  room.setup = {
-    bid: null,
-    bidHistory: [],
-    biddingTurnPlayerId: null,
-    passIds: [],
-    fry: null
-  };
+  room.setup = emptySetup();
+  if (room.callMode === CALL_MODE_SCORE) room.setup.scoreBid = createScoreBidSetup(room);
   room.currentTrick = null;
   room.trickHistory = [];
+  if (room.callMode === CALL_MODE_SCORE && room.setup.scoreBid?.current) {
+    const scoreBid = room.setup.scoreBid;
+    room.phase = `${playerName(room, scoreBid.current.playerId)} 以 ${scoreBid.current.score} 分起叫，等待其他玩家加分或过`;
+    addEvent(room, `${playerName(room, scoreBid.current.playerId)} 以 ${scoreBid.current.score} 分起叫抢庄`);
+  }
 }
 
 function readyPlayerCount(room) {
@@ -297,7 +371,7 @@ function resetRoomToLobby(room, options = {}) {
   room.doglegPlayerIds = [];
   room.doglegNeeded = room.players.length >= 7 ? 2 : 1;
   room.result = null;
-  room.setup = { bid: null, bidHistory: [], biddingTurnPlayerId: null, passIds: [], fry: null };
+  room.setup = emptySetup();
   room.currentTrick = null;
   room.trickHistory = [];
   room.players.forEach((player) => {
@@ -350,6 +424,26 @@ function publicBid(room, bid) {
   };
 }
 
+function publicScoreBid(room, scoreBid) {
+  if (!scoreBid) return null;
+  const current = scoreBid.current || null;
+  return {
+    minimum: scoreBid.minimum || openingBankerScore(room),
+    currentScore: current?.score || 0,
+    currentPlayerId: current?.playerId || null,
+    currentPlayerName: current?.playerId ? playerName(room, current.playerId) : "",
+    deadlineAt: scoreBid.deadlineAt || null,
+    passIds: scoreBid.passIds || [],
+    history: (scoreBid.history || []).map((item) => ({
+      playerId: item.playerId,
+      playerName: playerName(room, item.playerId),
+      score: item.score,
+      increment: item.increment || 0,
+      at: item.at
+    }))
+  };
+}
+
 function currentTrumpSuit(room) {
   const fry = room.setup?.fry || null;
   if (room.trumpSuit) return room.trumpSuit;
@@ -363,6 +457,8 @@ function setupSnapshot(room) {
   const currentSuit = currentTrumpSuit(room);
   return {
     stage: room.stage,
+    callMode: normalizedCallMode(room.callMode),
+    callModeName: callModeName(room.callMode),
     bankerId: room.bankerId,
     bankerName: room.bankerId ? playerName(room, room.bankerId) : "",
     trumpSuit: room.trumpSuit,
@@ -376,6 +472,7 @@ function setupSnapshot(room) {
     bid: publicBid(room, room.setup?.bid),
     bidHistory: (room.setup?.bidHistory || []).map((bid) => publicBid(room, bid)),
     bidPassIds: room.setup?.passIds || [],
+    scoreBid: publicScoreBid(room, room.setup?.scoreBid),
     biddingTurnPlayerId: room.setup?.biddingTurnPlayerId || null,
     biddingTurnPlayerName: room.setup?.biddingTurnPlayerId ? playerName(room, room.setup.biddingTurnPlayerId) : "",
     fry: fry
@@ -395,7 +492,7 @@ function setupSnapshot(room) {
 }
 
 function playerRole(room, playerId) {
-  if (room.bankerId === playerId) return "主";
+  if (room.bankerId === playerId) return "庄家";
   if ((room.doglegPlayerIds || []).includes(playerId)) return "狗腿";
   if (room.bankerId) return "闲家";
   return "";
@@ -441,7 +538,24 @@ function trickSnapshot(room, trick) {
   };
 }
 
+function playedProtectedFiveCounts(room) {
+  const counts = { red: 0, diamond: 0 };
+  const tricks = [...(room.trickHistory || [])];
+  if (room.currentTrick) tricks.push(room.currentTrick);
+  tricks.forEach((trick) => {
+    (trick.plays || []).forEach((play) => {
+      (play.cards || []).forEach((card) => {
+        if (card.type !== "normal" || card.rank !== "5") return;
+        if (card.suit === "H") counts.red += 1;
+        if (card.suit === "D") counts.diamond += 1;
+      });
+    });
+  });
+  return counts;
+}
+
 function roomSnapshot(room, viewer = null) {
+  autoAdvanceExpiredScoreBid(room);
   const canViewKitty = Boolean(viewer && room.kitty.length && room.setup?.fry?.lastFryerId === viewer.id);
   const kittyViewerId = room.setup?.fry?.lastFryerId || null;
   const readyCount = readyPlayerCount(room);
@@ -451,6 +565,8 @@ function roomSnapshot(room, viewer = null) {
     status: room.status,
     stage: room.stage,
     phase: room.phase,
+    callMode: normalizedCallMode(room.callMode),
+    callModeName: callModeName(room.callMode),
     minPlayers: MIN_PLAYERS,
     maxPlayers: MAX_PLAYERS,
     handSize: HAND_SIZE,
@@ -485,6 +601,7 @@ function roomSnapshot(room, viewer = null) {
     hand: viewer ? viewer.hand.map(publicCard) : [],
     currentTrick: trickSnapshot(room, room.currentTrick),
     trickHistory: room.trickHistory.map((trick) => trickSnapshot(room, trick)),
+    playedProtectedFives: playedProtectedFiveCounts(room),
     result: room.result,
     events: room.events
   };
@@ -559,6 +676,14 @@ function winThreshold(playerCount) {
   return Math.round(playerCount * 100 * 0.5);
 }
 
+function gameWinThreshold(room) {
+  if (normalizedCallMode(room.callMode) === CALL_MODE_SCORE) {
+    const bidScore = room.setup?.scoreBid?.current?.score;
+    if (Number.isFinite(bidScore) && bidScore > 0) return totalGamePoints(room) - bidScore;
+  }
+  return winThreshold(room.players.length);
+}
+
 function roundGameScore(value) {
   return Math.round(value * 100) / 100;
 }
@@ -602,7 +727,7 @@ function finishGame(room, completedTrick) {
     }
   }
 
-  const threshold = winThreshold(room.players.length);
+  const threshold = gameWinThreshold(room);
   const idleScore = idleIds.reduce((sum, playerId) => sum + (playerById(room, playerId)?.score || 0), 0);
   const scoreDiff = idleScore - threshold;
   const baseScore = idleScore >= threshold ? 2 : -2;
@@ -633,6 +758,10 @@ function finishGame(room, completedTrick) {
   room.result = {
     finishedAt: now(),
     playerCount: room.players.length,
+    callMode: normalizedCallMode(room.callMode),
+    callModeName: callModeName(room.callMode),
+    bankerBidScore: room.setup?.scoreBid?.current?.score || null,
+    totalGamePoints: totalGamePoints(room),
     bankerTeamIds: bankerIds,
     bankerTeamNames: bankerIds.map((playerId) => playerName(room, playerId)),
     idleTeamIds: idleIds,
@@ -860,7 +989,7 @@ function beginBurying(room) {
   room.kitty = [];
   room.stage = "burying";
   room.phase = `${banker.name} 拿底，等待贴底`;
-  addEvent(room, `${banker.name} 成为主，拿入 ${room.kittySize} 张底牌`);
+  addEvent(room, `${banker.name} 成为庄家，拿入 ${room.kittySize} 张底牌`);
 }
 
 function finishBidding(room) {
@@ -928,8 +1057,109 @@ function randomDeclare(room) {
   };
   if (!room.setup.bidHistory) room.setup.bidHistory = [];
   room.setup.bidHistory.push(room.setup.bid);
-  addEvent(room, `无人叫主，系统随机指定 ${player.name} 为主，临时花色为${suitName(suit)}`);
+  addEvent(room, `无人叫主，系统随机指定 ${player.name} 为庄家，临时花色为${suitName(suit)}`);
   return finishBidding(room);
+}
+
+function ensureScoreBidSetup(room) {
+  if (!room.setup.scoreBid) room.setup.scoreBid = createScoreBidSetup(room);
+  return room.setup.scoreBid;
+}
+
+function scoreBidOthersPassed(room) {
+  const scoreBid = room.setup?.scoreBid;
+  const currentId = scoreBid?.current?.playerId;
+  if (!currentId) return false;
+  const passIds = new Set(scoreBid.passIds || []);
+  return room.players.every((player) => player.id === currentId || passIds.has(player.id));
+}
+
+function finishScoreBidding(room) {
+  const scoreBid = ensureScoreBidSetup(room);
+  if (!scoreBid.current) return { error: "还没有玩家叫分抢庄", status: 409 };
+  room.bankerId = scoreBid.current.playerId;
+  room.stage = "trump-selecting";
+  room.phase = `${playerName(room, room.bankerId)} 以 ${scoreBid.current.score} 分成为庄家，等待亮2定主`;
+  scoreBid.passIds = [];
+  scoreBid.deadlineAt = null;
+  addEvent(room, `${playerName(room, room.bankerId)} 以 ${scoreBid.current.score} 分成为庄家，等待亮2确定主牌`);
+  return { ok: true };
+}
+
+function submitScoreBid(room, player, increment) {
+  if (room.stage !== "score-bidding") return { error: "当前不能叫分抢庄", status: 409 };
+  const scoreBid = ensureScoreBidSetup(room);
+  const current = scoreBid.current || null;
+  if (current?.playerId === player.id) return { error: "你已经是当前最高叫分", status: 400 };
+
+  const allowed = new Set([10, 20, 30]);
+  let nextScore = scoreBid.minimum || openingBankerScore(room);
+  let normalizedIncrement = 0;
+  if (current) {
+    normalizedIncrement = Number(increment);
+    if (!allowed.has(normalizedIncrement)) return { error: "每次只能加 10、20 或 30 分", status: 400 };
+    nextScore = current.score + normalizedIncrement;
+  }
+  if (nextScore > totalGamePoints(room)) return { error: "叫分不能超过该局总分", status: 400 };
+
+  scoreBid.current = {
+    playerId: player.id,
+    score: nextScore,
+    at: now()
+  };
+  scoreBid.passIds = [];
+  scoreBid.deadlineAt = new Date(Date.now() + SCORE_BID_SECONDS * 1000).toISOString();
+  if (!scoreBid.history) scoreBid.history = [];
+  scoreBid.history.push({
+    playerId: player.id,
+    score: nextScore,
+    increment: normalizedIncrement,
+    at: scoreBid.current.at
+  });
+  room.phase = `${player.name} 叫 ${nextScore} 分抢庄，等待其他玩家加分或过`;
+  addEvent(room, `${player.name} ${current ? `加 ${normalizedIncrement} 分` : "起叫"}，当前叫分 ${nextScore}`);
+  if (scoreBidOthersPassed(room)) return finishScoreBidding(room);
+  return { ok: true };
+}
+
+function passScoreBid(room, player) {
+  if (room.stage !== "score-bidding") return { error: "当前不能过叫分", status: 409 };
+  const scoreBid = ensureScoreBidSetup(room);
+  if (!scoreBid.current) return { error: "还没有玩家叫分，暂不能过", status: 409 };
+  if (scoreBid.current.playerId === player.id) return { error: "当前最高叫分玩家不需要过", status: 400 };
+  if (!scoreBid.passIds.includes(player.id)) scoreBid.passIds.push(player.id);
+  addEvent(room, `${player.name} 选择不加分`);
+  if (scoreBidOthersPassed(room)) return finishScoreBidding(room);
+  room.phase = `${playerName(room, scoreBid.current.playerId)} 当前 ${scoreBid.current.score} 分，等待其他玩家加分或过`;
+  return { ok: true };
+}
+
+function autoAdvanceExpiredScoreBid(room) {
+  if (room.stage !== "score-bidding") return false;
+  const scoreBid = room.setup?.scoreBid;
+  if (!scoreBid?.current?.playerId || !scoreBid.deadlineAt) return false;
+  if (new Date(scoreBid.deadlineAt).getTime() > Date.now()) return false;
+  room.players.forEach((player) => {
+    if (player.id === scoreBid.current.playerId) return;
+    if (!scoreBid.passIds.includes(player.id)) scoreBid.passIds.push(player.id);
+  });
+  addEvent(room, "叫分倒计时结束，未操作玩家自动过");
+  finishScoreBidding(room);
+  return true;
+}
+
+function revealTrumpCards(room, player, cardIds) {
+  if (room.stage !== "trump-selecting") return { error: "当前不能亮2定主", status: 409 };
+  if (player.id !== room.bankerId) return { error: "只有庄家可以亮2定主", status: 403 };
+  const bid = bidFromCards(room, player, cardIds);
+  if (bid.error) return bid;
+  room.setup.bid = bid;
+  if (!room.setup.bidHistory) room.setup.bidHistory = [];
+  room.setup.bidHistory.push(bid);
+  room.phase = `${player.name} 亮 ${bid.count} 张${suitName(bid.suit)}2 定主，等待贴底`;
+  addEvent(room, `${player.name} 亮 ${bid.count} 张${suitName(bid.suit)}2 定主`);
+  beginBurying(room);
+  return { ok: true };
 }
 
 function startFrying(room) {
@@ -964,7 +1194,7 @@ function finishFrying(room) {
   const lastBid = room.setup.fry?.lastBid || room.setup.bid;
   room.trumpSuit = lastBid?.suit || randomSuitId();
   room.stage = "dogleg";
-  room.phase = `主牌为${suitName(room.trumpSuit)}，等待主选择狗腿牌`;
+  room.phase = `主牌为${suitName(room.trumpSuit)}，等待庄家选择狗腿牌`;
   addEvent(room, `炒底结束，主牌确定为${suitName(room.trumpSuit)}`);
 }
 
@@ -1063,7 +1293,7 @@ function revealDoglegIfNeeded(room, player, selected) {
 
 function selectDogleg(room, player, cardIds) {
   if (room.stage !== "dogleg") return { error: "当前不能选择狗腿牌", status: 409 };
-  if (player.id !== room.bankerId) return { error: "只有主可以选择狗腿牌", status: 403 };
+  if (player.id !== room.bankerId) return { error: "只有庄家可以选择狗腿牌", status: 403 };
   const selected = selectedCardsFromHand(player, cardIds);
   if (selected.error) return selected;
   if (selected.cards.length !== 1) return { error: "请选择 1 张牌作为狗腿牌", status: 400 };
@@ -1414,11 +1644,90 @@ function autoBuryCardIds(player, count, room = null) {
   return bestBuryCombination(room, player, candidates, count, context).map((card) => card.id);
 }
 
+function bestTrumpRevealChoice(room, player) {
+  const choices = [];
+  for (const suit of suits.map((item) => item.id)) {
+    const count = twoCountForSuit(player, suit);
+    for (let bidCount = 1; bidCount <= count; bidCount += 1) {
+      choices.push({
+        suit,
+        count: bidCount,
+        score: bidPowerScore(room, player, suit, bidCount),
+        cardIds: bidCardIdsForSuit(player, suit, bidCount)
+      });
+    }
+  }
+  if (!choices.length) return null;
+  return choices.sort((a, b) => {
+    return b.score - a.score
+      || a.count - b.count
+      || (suitStrength.get(b.suit) ?? 0) - (suitStrength.get(a.suit) ?? 0);
+  })[0];
+}
+
+function bestAutoScoreBid(room, player) {
+  const scoreBid = ensureScoreBidSetup(room);
+  const trumpChoice = bestTrumpRevealChoice(room, player);
+  if (!trumpChoice) return null;
+  const strength = trumpChoice.score + setupControlScore(player.hand, trumpChoice.suit) * 0.18;
+  const minimum = scoreBid.minimum || openingBankerScore(room);
+  const comfortableScore = minimum + Math.max(0, Math.floor((strength - 100) / 14) * 10);
+  const current = scoreBid.current || null;
+  if (!current) {
+    return strength >= 88 ? { increment: 0, score: minimum, strength } : null;
+  }
+  if (current.playerId === player.id) return null;
+  const options = [30, 20, 10]
+    .map((increment) => ({ increment, score: current.score + increment, strength }))
+    .filter((item) => item.score <= totalGamePoints(room) && item.score <= comfortableScore);
+  return options[0] || null;
+}
+
 function autoProgressTestSetup(room) {
   let actions = 0;
   let safety = room.players.length * 8;
   while (safety > 0) {
     safety -= 1;
+    autoAdvanceExpiredScoreBid(room);
+
+    if (room.stage === "score-bidding") {
+      const scoreBid = ensureScoreBidSetup(room);
+      const currentId = scoreBid.current?.playerId || null;
+      const passed = new Set(scoreBid.passIds || []);
+      const candidates = room.players.filter((player) => player.test && player.id !== currentId && !passed.has(player.id));
+      if (!candidates.length) break;
+      if (!currentId) {
+        const best = candidates
+          .map((player) => ({ player, choice: bestAutoScoreBid(room, player) }))
+          .filter((item) => item.choice)
+          .sort((a, b) => b.choice.strength - a.choice.strength)[0];
+        if (!best) break;
+        const result = submitScoreBid(room, best.player, best.choice.increment);
+        if (result.error) break;
+        actions += 1;
+        continue;
+      }
+      const best = candidates
+        .map((player) => ({ player, choice: bestAutoScoreBid(room, player) }))
+        .filter((item) => item.choice)
+        .sort((a, b) => b.choice.score - a.choice.score || b.choice.strength - a.choice.strength)[0];
+      const result = best ? submitScoreBid(room, best.player, best.choice.increment) : passScoreBid(room, candidates[0]);
+      if (result.error) break;
+      actions += 1;
+      continue;
+    }
+
+    if (room.stage === "trump-selecting") {
+      const player = playerById(room, room.bankerId);
+      if (!player?.test) break;
+      const choice = bestTrumpRevealChoice(room, player);
+      if (!choice) break;
+      const result = revealTrumpCards(room, player, choice.cardIds);
+      if (result.error) break;
+      actions += 1;
+      continue;
+    }
+
     if (room.stage === "bidding" && !room.setup.bid) {
       const best = room.players
         .filter((player) => player.test)
@@ -2230,6 +2539,7 @@ async function handleApi(req, res, pathParts, url) {
       phase: "等待玩家加入",
       createdAt: now(),
       startedAt: null,
+      callMode: CALL_MODE_TWO,
       hostId: host.id,
       players: [host],
       kitty: [],
@@ -2240,7 +2550,7 @@ async function handleApi(req, res, pathParts, url) {
       doglegPlayerIds: [],
       doglegNeeded: 0,
       result: null,
-      setup: { bid: null, bidHistory: [], biddingTurnPlayerId: null, passIds: [], fry: null },
+      setup: emptySetup(),
       currentTrick: null,
       trickHistory: [],
       events: [],
@@ -2315,6 +2625,21 @@ async function handleApi(req, res, pathParts, url) {
       if (target.id === viewer.id) return writeJson(res, 400, { error: "不能踢出自己，请使用退出房间" });
       const removed = removePlayerFromRoom(room, target.id, "你已被房主移出房间");
       if (removed) addEvent(room, `房主将 ${removed.name} 移出了房间`);
+      broadcast(room);
+      return writeJson(res, 200, roomSnapshot(room, viewer));
+    }
+
+    if (req.method === "POST" && pathParts[3] === "call-mode") {
+      const body = await readJson(req);
+      const viewer = requirePlayer(res, room, body.playerId, body.token);
+      if (!viewer) return;
+      if (!viewer.host) return writeJson(res, 403, { error: "只有房主可以切换叫庄方式" });
+      if (room.status !== "lobby") return writeJson(res, 409, { error: "只有开局前可以切换叫庄方式" });
+      const nextMode = normalizedCallMode(body.mode);
+      if (room.callMode !== nextMode) {
+        room.callMode = nextMode;
+        addEvent(room, `房主切换叫庄方式为${callModeName(nextMode)}`);
+      }
       broadcast(room);
       return writeJson(res, 200, roomSnapshot(room, viewer));
     }
@@ -2406,6 +2731,42 @@ async function handleApi(req, res, pathParts, url) {
       if (!viewer) return;
       if (!viewer.host) return writeJson(res, 403, { error: "只有房主可以随机指定主" });
       const result = randomDeclare(room);
+      if (result.error) return writeJson(res, result.status, { error: result.error });
+      const autoActions = autoProgressTestSetup(room);
+      if (autoActions) addEvent(room, `测试玩家自动推进准备流程 ${autoActions} 步`);
+      broadcast(room);
+      return writeJson(res, 200, roomSnapshot(room, viewer));
+    }
+
+    if (req.method === "POST" && pathParts[3] === "score-bid") {
+      const body = await readJson(req);
+      const viewer = requirePlayer(res, room, body.playerId, body.token);
+      if (!viewer) return;
+      const result = submitScoreBid(room, viewer, body.increment);
+      if (result.error) return writeJson(res, result.status, { error: result.error });
+      const autoActions = autoProgressTestSetup(room);
+      if (autoActions) addEvent(room, `测试玩家自动推进准备流程 ${autoActions} 步`);
+      broadcast(room);
+      return writeJson(res, 200, roomSnapshot(room, viewer));
+    }
+
+    if (req.method === "POST" && pathParts[3] === "score-pass") {
+      const body = await readJson(req);
+      const viewer = requirePlayer(res, room, body.playerId, body.token);
+      if (!viewer) return;
+      const result = passScoreBid(room, viewer);
+      if (result.error) return writeJson(res, result.status, { error: result.error });
+      const autoActions = autoProgressTestSetup(room);
+      if (autoActions) addEvent(room, `测试玩家自动推进准备流程 ${autoActions} 步`);
+      broadcast(room);
+      return writeJson(res, 200, roomSnapshot(room, viewer));
+    }
+
+    if (req.method === "POST" && pathParts[3] === "trump") {
+      const body = await readJson(req);
+      const viewer = requirePlayer(res, room, body.playerId, body.token);
+      if (!viewer) return;
+      const result = revealTrumpCards(room, viewer, body.cardIds);
       if (result.error) return writeJson(res, result.status, { error: result.error });
       const autoActions = autoProgressTestSetup(room);
       if (autoActions) addEvent(room, `测试玩家自动推进准备流程 ${autoActions} 步`);
