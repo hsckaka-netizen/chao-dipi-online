@@ -912,7 +912,7 @@ label {
 }
 
 .card-joker-face.small {
-  filter: grayscale(1) contrast(1.04);
+  background-image: url("/assets/joker-face-small.png");
 }
 
 .modal-backdrop {
