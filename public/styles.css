@@ -1030,6 +1030,11 @@ label {
   background: #fffaf2;
 }
 
+.trick.current.finished-table {
+  border-color: #c9b27d;
+  background: #fffaf2;
+}
+
 .trick-title {
   display: flex;
   align-items: center;
@@ -1117,6 +1122,22 @@ label {
 .table-center strong {
   color: var(--text);
   font-size: 18px;
+}
+
+.table-center.result-center {
+  z-index: 6;
+  gap: 8px;
+  min-width: 160px;
+  max-width: 220px;
+}
+
+.table-center.result-center button {
+  min-height: 38px;
+  padding: 0 16px;
+}
+
+.finished-result-empty {
+  gap: 12px;
 }
 
 .table-corner-stats {
@@ -1844,6 +1865,16 @@ label {
 
   .table-center {
     display: none;
+  }
+
+  .finished-table .table-center.result-center {
+    position: static;
+    display: grid;
+    width: 100%;
+    max-width: none;
+    transform: none;
+    margin-bottom: 8px;
+    justify-items: center;
   }
 
   .table-circle .trick-seat {

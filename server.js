@@ -16,6 +16,7 @@ const HAND_SIZE = 53;
 const CALL_MODE_TWO = "two";
 const CALL_MODE_SCORE = "score";
 const SCORE_BID_SECONDS = 20;
+const AI_PLAY_DELAY_MS = 1000;
 
 const suits = [
   { id: "S", name: "黑桃", symbol: "♠", color: "black", sort: 0 },
@@ -358,6 +359,7 @@ function sortHand(hand) {
 }
 
 function deal(room) {
+  clearAiPlayTimer(room);
   const count = room.players.length;
   const deck = shuffle(createDeck(count));
   room.players.forEach((player, playerIndex) => {
@@ -404,6 +406,7 @@ function allPlayersReady(room) {
 }
 
 function resetRoomToLobby(room, options = {}) {
+  clearAiPlayTimer(room);
   const readyPlayerId = options.readyPlayerId || null;
   const previousReady = new Map(room.players.map((player) => [player.id, Boolean(player.ready)]));
   room.status = "lobby";
@@ -714,6 +717,7 @@ function hasHumanPlayer(room) {
 }
 
 function dissolveRoom(room, messageText) {
+  clearAiPlayTimer(room);
   disconnectAllRoomClients(room, messageText);
   rooms.delete(room.id);
 }
@@ -800,6 +804,7 @@ function teamName(team) {
 
 function finishGame(room, completedTrick) {
   if (room.result) return;
+  clearAiPlayTimer(room);
 
   const bankerIds = bankerTeamIds(room);
   const bankerIdSet = new Set(bankerIds);
@@ -2098,7 +2103,7 @@ function autoProgressTestSetup(room) {
     }
 
     if (room.stage === "playing") {
-      actions += autoPlayTestPlayersUntilHuman(room);
+      scheduleNextAiPlay(room);
     }
     break;
   }
@@ -2913,24 +2918,35 @@ function legalAutoCards(room, player) {
   return chooseFollowAutoCards(room, player, info);
 }
 
-function autoPlayTestPlayersUntilHuman(room) {
-  if (room.stage !== "playing") return 0;
-  let played = 0;
-  let safety = room.players.length * 4;
-  while (safety > 0) {
-    safety -= 1;
-    const nextPlayerId = expectedPlayerId(room);
-    if (!nextPlayerId) break;
-    const player = room.players.find((item) => item.id === nextPlayerId);
-    if (!player) break;
-    if (!player.test) break;
-    const cards = legalAutoCards(room, player);
-    if (!cards.length) break;
-    const result = playCards(room, player, cards.map((card) => card.id));
-    if (result.error) break;
-    played += 1;
-  }
-  return played;
+function clearAiPlayTimer(room) {
+  if (!room?.aiPlayTimer) return;
+  clearTimeout(room.aiPlayTimer);
+  room.aiPlayTimer = null;
+}
+
+function scheduleNextAiPlay(room, delayMs = AI_PLAY_DELAY_MS) {
+  if (!room || room.aiPlayTimer || room.status !== "dealt" || room.stage !== "playing") return false;
+  const nextPlayerId = expectedPlayerId(room);
+  const nextPlayer = playerById(room, nextPlayerId);
+  if (!nextPlayer?.test) return false;
+
+  room.aiPlayTimer = setTimeout(() => {
+    room.aiPlayTimer = null;
+    if (rooms.get(room.id) !== room || room.status !== "dealt" || room.stage !== "playing") return;
+    const currentPlayer = playerById(room, expectedPlayerId(room));
+    if (!currentPlayer?.test) return;
+    const cards = legalAutoCards(room, currentPlayer);
+    if (!cards.length) return;
+    const result = playCards(room, currentPlayer, cards.map((card) => card.id));
+    if (result.error) {
+      addEvent(room, `${currentPlayer.name} 自动出牌失败：${result.error}`);
+      broadcast(room);
+      return;
+    }
+    broadcast(room);
+    scheduleNextAiPlay(room);
+  }, Math.max(0, delayMs));
+  return true;
 }
 
 function playCards(room, player, cardIds, options = {}) {
@@ -3117,6 +3133,7 @@ async function handleApi(req, res, pathParts, url) {
       currentTrick: null,
       trickHistory: [],
       playPauseUntil: null,
+      aiPlayTimer: null,
       notice: null,
       events: [],
       clients: new Set()
@@ -3486,17 +3503,13 @@ async function handleApi(req, res, pathParts, url) {
           const activeRoom = rooms.get(room.id);
           if (!activeRoom || activeRoom.playPauseUntil !== resumeAt) return;
           activeRoom.playPauseUntil = null;
-          const autoPlayed = autoPlayTestPlayersUntilHuman(activeRoom);
-          if (autoPlayed) addEvent(activeRoom, `机器人自动出牌 ${autoPlayed} 次，已停在下一个真人玩家`);
           broadcast(activeRoom);
+          scheduleNextAiPlay(activeRoom);
         }, Math.max(0, new Date(resumeAt).getTime() - Date.now()) + 20);
         return writeJson(res, 200, roomSnapshot(room, viewer));
       }
-      if (!viewer.test) {
-        const autoPlayed = autoPlayTestPlayersUntilHuman(room);
-        if (autoPlayed) addEvent(room, `机器人自动出牌 ${autoPlayed} 次，已停在下一个真人玩家`);
-      }
       broadcast(room);
+      scheduleNextAiPlay(room);
       return writeJson(res, 200, roomSnapshot(room, viewer));
     }
 
@@ -3514,10 +3527,7 @@ async function handleApi(req, res, pathParts, url) {
         return writeJson(res, 409, { error: `现在轮到 ${playerName(room, nextPlayerId)}（真人），请由该玩家自己出牌` });
       }
 
-      const autoPlayed = autoPlayTestPlayersUntilHuman(room);
-      if (!autoPlayed) return writeJson(res, 409, { error: "机器人没有可出的牌" });
-      addEvent(room, `房主触发机器人自动出牌 ${autoPlayed} 次`);
-      broadcast(room);
+      if (!scheduleNextAiPlay(room)) return writeJson(res, 409, { error: "机器人没有可出的牌" });
       return writeJson(res, 200, roomSnapshot(room, viewer));
     }
 

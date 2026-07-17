@@ -1888,7 +1888,6 @@ function renderActiveDialog() {
   if (activeDialog === "players") return renderPlayersDialog();
   if (activeDialog === "events") return renderEventsDialog();
   if (activeDialog === "result" && state.status === "finished" && !viewerPlayer()?.ready) return renderResultPanel();
-  if (!activeDialog && state.status === "finished" && !viewerPlayer()?.ready && dismissedResultRoomId !== state.roomId) return renderResultPanel();
   return "";
 }
 
@@ -1971,7 +1970,7 @@ function renderResultPanel() {
           <div class="row">
             <button type="button" data-action="play-again">再来一局</button>
             <button type="button" class="secondary" data-action="room-leave">退出房间</button>
-            <button type="button" class="secondary compact-button" data-action="close-dialog">查看房间</button>
+            <button type="button" class="secondary compact-button" data-action="close-dialog">隐藏结算</button>
           </div>
         </div>
         <div class="tags">
@@ -2169,17 +2168,20 @@ function renderGameInfoTags() {
 
 function renderPlayTable() {
   if (state.stage === "finished") {
+    const finalTrick = state.trickHistory?.[state.trickHistory.length - 1] || null;
     return `
       <section class="panel stack">
         <div class="section-head">
-          <h2>出牌记录</h2>
+          <h2>打牌桌面</h2>
           <div class="tags">
-            <span class="tag">${state.trickHistory.length} 轮</span>
-            ${!viewerPlayer()?.ready ? `<button type="button" class="secondary compact-button" data-action="open-result">查看总结</button>` : ""}
-            <button type="button" class="secondary compact-button" data-action="open-history">查看历史出牌</button>
+            ${renderGameInfoTags()}
+            <span class="tag accent">本局结束</span>
+            <button type="button" class="secondary compact-button" data-action="open-history">历史出牌 ${state.trickHistory.length}</button>
           </div>
         </div>
-        <div class="empty">本局已结束，可查看历史出牌回放。</div>
+        ${finalTrick
+          ? renderTrick(finalTrick, true, { heldResult: true, finishedResult: true })
+          : `<div class="empty finished-result-empty"><span>本局已结束</span><button type="button" data-action="open-result">查看结算</button></div>`}
       </section>
     `;
   }
@@ -2412,36 +2414,41 @@ function renderTrick(trick, current, options = {}) {
   const displayPlays = current ? orientPlaysForViewer(plays) : plays;
   const heldResult = Boolean(options.heldResult);
   const setupTable = Boolean(options.setupTable);
-  const viewerAction = current ? selectionAction() : null;
+  const finishedResult = Boolean(options.finishedResult);
+  const viewerAction = current && !finishedResult ? selectionAction() : null;
   const titleMeta = current
-    ? setupTable
+    ? finishedResult
+      ? `${trick.winnerName ? `胜者 ${trick.winnerName} · ${trick.points} 分` : "本局最后一轮"}`
+      : setupTable
       ? state.phase
       : heldResult
       ? `${trick.winnerName ? `胜者 ${trick.winnerName} · ${trick.points} 分` : "上一轮结果"}`
       : `${trick.leaderName ? `首家 ${trick.leaderName}` : "等待首家"}`
     : `${trick.winnerName ? `胜者 ${trick.winnerName} · ${trick.points} 分` : "已完成"}`;
   return `
-    <div class="trick ${current ? "current" : ""} ${heldResult ? "held-result" : ""} ${setupTable ? "setup-table" : ""}">
+    <div class="trick ${current ? "current" : ""} ${heldResult ? "held-result" : ""} ${setupTable ? "setup-table" : ""} ${finishedResult ? "finished-table" : ""}">
       <div class="trick-title">
-        <span>${current ? (setupTable ? "当前状态" : heldResult ? "上一轮结果" : "当前轮") : `第 ${trick.number} 轮`}</span>
+        <span>${current ? (finishedResult ? "最后一轮" : setupTable ? "当前状态" : heldResult ? "上一轮结果" : "当前轮") : `第 ${trick.number} 轮`}</span>
         <span>${escapeHtml(titleMeta)}</span>
       </div>
       <div class="trick-grid ${current ? `table-circle table-seats-${displayPlays.length}` : ""}">
         ${current ? `
           <div class="table-corner-stats">${renderPlayedFiveStats()}</div>
-          <div class="table-center">
-            <strong>${setupTable ? "牌桌" : heldResult ? `第 ${trick.number} 轮结果` : `第 ${trick.number} 轮`}</strong>
-            <span>${escapeHtml(titleMeta)}</span>
+          <div class="table-center ${finishedResult ? "result-center" : ""}">
+            <strong>${finishedResult ? "本局结束" : setupTable ? "牌桌" : heldResult ? `第 ${trick.number} 轮结果` : `第 ${trick.number} 轮`}</strong>
+            <span>${escapeHtml(finishedResult ? `${state.result?.winnerTeamName || "胜方"}获胜` : titleMeta)}</span>
+            ${finishedResult ? `<button type="button" data-action="open-result">查看结算</button>` : ""}
           </div>
         ` : ""}
         ${displayPlays.map((play, index) => {
           const playCards = displayedPlayCards(play);
           const playContent = setupTable ? renderSetupActionTrail(play.setupActions) : (play.played ? renderMiniCards(playCards) : "");
           const isViewerSeat = current && play.playerId === state.viewer?.id;
+          const showViewerHand = isViewerSeat && !finishedResult;
           const playIndex = play.turnIndex ?? index;
           const statusText = playStatusText(trick, play, playIndex, current, { heldResult, setupTable });
           const statusTone = playStatusTone(trick, play, current, { heldResult, setupTable });
-          const seatHand = isViewerSeat ? renderSeatHand(viewerAction, play, trick, playIndex, { heldResult, setupTable }) : "";
+          const seatHand = showViewerHand ? renderSeatHand(viewerAction, play, trick, playIndex, { heldResult, setupTable }) : "";
           const playerCard = `
             <div class="trick-player ${roleClass(play.role)} ${play.played ? "played" : ""} ${play.lead ? "lead" : ""} ${play.currentTurn ? "current-turn" : ""} ${play.winning ? "winning" : ""}">
               <div class="trick-name">
@@ -2460,7 +2467,7 @@ function renderTrick(trick, current, options = {}) {
           if (!current) return playerCard;
           return `
             <div class="trick-seat ${seatZone(index, displayPlays.length)} ${isViewerSeat ? "viewer-seat" : ""}" style="${seatStyle(index, displayPlays.length)}">
-              ${isViewerSeat ? "" : playerCard}
+              ${showViewerHand ? "" : playerCard}
               ${playContent ? `<div class="seat-play">${playContent}</div>` : ""}
               ${seatHand}
             </div>
