@@ -20,7 +20,7 @@ const SCORE_BID_SECONDS = 20;
 const suits = [
   { id: "S", name: "黑桃", symbol: "♠", color: "black", sort: 0 },
   { id: "H", name: "红桃", symbol: "♥", color: "red", sort: 1 },
-  { id: "C", name: "草花", symbol: "♣", color: "green", sort: 2 },
+  { id: "C", name: "草花", symbol: "♣", color: "black", sort: 2 },
   { id: "D", name: "方块", symbol: "♦", color: "red", sort: 3 }
 ];
 
@@ -3494,7 +3494,10 @@ async function serveStatic(req, res, url) {
 
   try {
     await readFile(target);
-    res.writeHead(200, { "content-type": type });
+    res.writeHead(200, {
+      "content-type": type,
+      "cache-control": "no-store"
+    });
     createReadStream(target).pipe(res);
   } catch {
     res.writeHead(404, { "content-type": "text/plain; charset=utf-8" });

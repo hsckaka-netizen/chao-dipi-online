@@ -1831,7 +1831,7 @@ function renderTwoCardChoices(cards) {
             ${group.cards.map((card, index) => `
               <button
                 type="button"
-                class="card choice-card ${card.color} ${selectedCardIds.has(card.id) ? "selected" : ""}"
+                class="card choice-card ${card.color} ${cardSuitClass(card)} ${selectedCardIds.has(card.id) ? "selected" : ""}"
                 style="--i:${index}"
                 title="${escapeHtml(card.label)}"
                 aria-pressed="${selectedCardIds.has(card.id) ? "true" : "false"}"
@@ -1850,7 +1850,7 @@ function renderTwoCardChoices(cards) {
 
 function renderStaticCard(card) {
   return `
-    <div class="card static ${card.color}" title="${escapeHtml(card.label)}">
+    <div class="card static ${card.color} ${cardSuitClass(card)}" title="${escapeHtml(card.label)}">
       ${cardCorner(card)}
     </div>
   `;
@@ -2499,6 +2499,10 @@ function cardCorner(card) {
   `;
 }
 
+function cardSuitClass(card) {
+  return card?.type === "normal" && card.suit ? `suit-${card.suit}` : "";
+}
+
 function compactHandGroupLabel(group) {
   if (group.id === "rank") return state?.stage === "playing" ? "主" : "比";
   return ({ S: "♠", H: "♥", C: "♣", D: "♦" })[group.id] || group.label;
@@ -2523,7 +2527,7 @@ function renderHand(hand, options = {}) {
           ${compactCards.map((card, index) => `
             <button
               type="button"
-              class="card ${card.color} ${selectedCardIds.has(card.id) ? "selected" : ""}"
+              class="card ${card.color} ${cardSuitClass(card)} ${selectedCardIds.has(card.id) ? "selected" : ""}"
               style="--i:${index}"
               title="${escapeHtml(card.label)}"
               aria-pressed="${selectedCardIds.has(card.id) ? "true" : "false"}"
@@ -2549,7 +2553,7 @@ function renderHand(hand, options = {}) {
             ${group.cards.map((card, index) => `
               <button
                 type="button"
-                class="card ${card.color} ${selectedCardIds.has(card.id) ? "selected" : ""}"
+                class="card ${card.color} ${cardSuitClass(card)} ${selectedCardIds.has(card.id) ? "selected" : ""}"
                 style="--i:${index}"
                 title="${escapeHtml(card.label)}"
                 aria-pressed="${selectedCardIds.has(card.id) ? "true" : "false"}"
@@ -2572,7 +2576,7 @@ function renderMiniCards(cards) {
   return `
     <div class="mini-cards">
       ${sortedCards.map((card, index) => `
-        <span class="mini-card ${card.color}" style="--i:${index}" title="${escapeHtml(card.label)}">${cardCorner(card)}</span>
+        <span class="mini-card ${card.color} ${cardSuitClass(card)}" style="--i:${index}" title="${escapeHtml(card.label)}">${cardCorner(card)}</span>
       `).join("")}
     </div>
   `;

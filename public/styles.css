@@ -858,7 +858,8 @@ label {
   color: #1e2925;
 }
 
-.card.green {
+.card.green,
+.card.suit-C {
   color: #3f6f58;
 }
 
@@ -1432,20 +1433,37 @@ label {
   color: #3f6f58;
 }
 
+.hand-count-badge.suit-rank > span {
+  color: #8a4b12;
+}
+
+.hand-count-badge.suit-S > span {
+  color: #1e2925;
+}
+
+.hand-count-badge.suit-H > span,
+.hand-count-badge.suit-D > span {
+  color: #b92929;
+}
+
+.hand-count-badge.suit-C > span {
+  color: #3f6f58;
+}
+
 .seat-hand .card {
-  flex-basis: 50px;
-  width: 50px;
-  min-height: 62px;
-  margin-left: -20px;
-  padding: 5px 3px 0 5px;
+  flex-basis: 62px;
+  width: 62px;
+  min-height: 78px;
+  margin-left: -28px;
+  padding: 6px 4px 0 6px;
 }
 
 .seat-hand .card-rank {
-  font-size: 14px;
+  font-size: 17px;
 }
 
 .seat-hand .card-suit {
-  font-size: 16px;
+  font-size: 21px;
 }
 
 .seat-hand .hand-controls {
@@ -1612,7 +1630,8 @@ label {
   color: #1e2925;
 }
 
-.mini-card.green {
+.mini-card.green,
+.mini-card.suit-C {
   color: #3f6f58;
 }
 
