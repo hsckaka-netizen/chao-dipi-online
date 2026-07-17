@@ -2016,9 +2016,11 @@ function renderResultPanel() {
           </div>
         </div>
         <div class="result-table">
-          ${result.playerResults.map((player) => `
-            <div class="result-row">
-              <strong>${escapeHtml(player.name)}</strong>
+          ${result.playerResults.map((player) => {
+            const won = player.team === result.winnerTeam;
+            return `
+            <div class="result-row ${won ? "winner" : "loser"}">
+              <strong class="result-player-name">${escapeHtml(player.name)}<span class="result-outcome">${won ? "赢家" : "输家"}</span></strong>
               <span>${escapeHtml(player.role || player.teamName)}</span>
               <span>牌分 ${player.trickScore}</span>
               <span>红五 ${player.draggedRedFives}</span>
@@ -2026,7 +2028,8 @@ function renderResultPanel() {
               <span>甩失 ${player.throwFailures || 0}</span>
               <b>${signedScore(player.gameScoreText, player.gameScore)}</b>
             </div>
-          `).join("")}
+          `;
+          }).join("")}
         </div>
       </section>
     </div>
