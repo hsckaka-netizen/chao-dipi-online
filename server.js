@@ -11,6 +11,7 @@ const port = Number(process.env.PORT || 3000);
 
 const MIN_PLAYERS = 5;
 const MAX_PLAYERS = 9;
+let snapshotSequence = 0;
 const HAND_SIZE = 53;
 const CALL_MODE_TWO = "two";
 const CALL_MODE_SCORE = "score";
@@ -610,6 +611,7 @@ function roomSnapshot(room, viewer = null) {
   const readyCount = readyPlayerCount(room);
   const allReady = allPlayersReady(room);
   return {
+    snapshotVersion: ++snapshotSequence,
     roomId: room.id,
     status: room.status,
     stage: room.stage,

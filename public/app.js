@@ -71,6 +71,10 @@ function shouldHighlightNewKitty(nextState) {
 
 function applyState(nextState, options = {}) {
   const previousState = state;
+  const sameRoom = previousState?.roomId && previousState.roomId === nextState?.roomId;
+  const previousVersion = Number(previousState?.snapshotVersion || 0);
+  const nextVersion = Number(nextState?.snapshotVersion || 0);
+  if (sameRoom && previousVersion && nextVersion && nextVersion < previousVersion) return false;
   const previousHandIds = new Set((state?.hand || []).map((card) => card.id));
   state = nextState;
   if (previousState?.roomId !== nextState.roomId || nextState.status !== "finished") {
@@ -518,7 +522,9 @@ async function playSelectedCards(throwPlay = false) {
       method: "POST",
       body: JSON.stringify({ playerId: session.playerId, token: session.token, cardIds, throwPlay })
     }), { highlightNewKitty: false });
-    selectedCardIds = new Set();
+    const playedIds = new Set(cardIds);
+    const handIds = new Set((state.hand || []).map((card) => card.id));
+    selectedCardIds = new Set([...selectedCardIds].filter((cardId) => !playedIds.has(cardId) && handIds.has(cardId)));
     setMessage(throwPlay ? "已尝试甩牌，结果以桌面和日志为准。" : "已出牌，其他玩家会在当前轮看到。");
   } catch (error) {
     setMessage(error.message, true);
@@ -715,7 +721,7 @@ function viewerCanRevealTrump() {
 }
 
 function viewerCanSelectCards() {
-  return viewerCanPlayCurrent() || viewerCanBid() || viewerCanRevealTrump() || viewerCanBury() || viewerCanFry() || viewerCanChooseDogleg();
+  return state?.stage === "playing" || viewerCanBid() || viewerCanRevealTrump() || viewerCanBury() || viewerCanFry() || viewerCanChooseDogleg();
 }
 
 function selectedCards() {
@@ -1044,7 +1050,12 @@ function renderHandControls(action) {
     : turnName
       ? `等待 ${turnName} 出牌`
       : "等待下一轮";
-  return `<div class="turn-waiting">${escapeHtml(text)}</div>`;
+  return `
+    <div class="hand-waiting-controls">
+      <span class="tag">${selectedCardIds.size} 张已选</span>
+      <div class="turn-waiting">${escapeHtml(text)}</div>
+    </div>
+  `;
 }
 
 function renderReadyControls({ waitingNextRound = false } = {}) {
@@ -2283,7 +2294,7 @@ function seatStyle(index, total) {
     return `--seat-x:88%;--seat-y:${y.toFixed(2)}%;`;
   }
   if (side.name === "top") {
-    const x = 82 - ((side.slot + 1) * 64) / (counts.top + 1);
+    const x = 94 - ((side.slot + 0.5) * 88) / counts.top;
     return `--seat-x:${x.toFixed(2)}%;--seat-y:9%;`;
   }
   const y = 22 + ((side.slot + 1) * 56) / (counts.left + 1);

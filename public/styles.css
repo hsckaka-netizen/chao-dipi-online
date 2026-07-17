@@ -316,7 +316,7 @@ label {
 }
 
 .dogleg-panel .green {
-  color: #116d40;
+  color: #3f6f58;
 }
 
 .result-panel {
@@ -413,6 +413,14 @@ label {
 
 .hand-controls {
   justify-content: flex-end;
+}
+
+.hand-waiting-controls {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 6px;
 }
 
 .turn-waiting {
@@ -851,7 +859,7 @@ label {
 }
 
 .card.green {
-  color: #116d40;
+  color: #3f6f58;
 }
 
 .card-corner {
@@ -1054,7 +1062,7 @@ label {
 .trick-grid.table-circle {
   position: relative;
   display: block;
-  min-height: clamp(660px, 58vw, 820px);
+  min-height: clamp(700px, 58vw, 820px);
   margin: 8px 0 4px;
   border: 0;
   background: transparent;
@@ -1253,6 +1261,29 @@ label {
   overflow: visible;
 }
 
+.table-circle .seat-left .seat-play,
+.table-circle .seat-right .seat-play {
+  width: clamp(180px, 21vw, 230px);
+}
+
+.table-circle .seat-left .mini-card:not(:first-child),
+.table-circle .seat-right .mini-card:not(:first-child) {
+  margin-left: -28px;
+}
+
+.table-seats-6 .seat-top .seat-play,
+.table-seats-8 .seat-top .seat-play {
+  width: clamp(210px, 25vw, 280px);
+}
+
+.table-seats-9 .seat-top .seat-play {
+  width: clamp(188px, 19vw, 230px);
+}
+
+.table-seats-9 .seat-top .mini-card:not(:first-child) {
+  margin-left: -30px;
+}
+
 .seat-hand {
   box-sizing: border-box;
   width: 100%;
@@ -1396,9 +1427,9 @@ label {
 }
 
 .hand-count-badge.suit-C {
-  border-color: #c7dfcf;
-  background: #f1faf4;
-  color: #116d40;
+  border-color: #cbd9d1;
+  background: #f3f7f4;
+  color: #3f6f58;
 }
 
 .seat-hand .card {
@@ -1582,7 +1613,7 @@ label {
 }
 
 .mini-card.green {
-  color: #116d40;
+  color: #3f6f58;
 }
 
 .history {
@@ -1716,6 +1747,14 @@ label {
     width: auto;
     min-height: 0;
     transform: none;
+  }
+
+  .trick-grid.table-circle .trick-seat .seat-play {
+    width: auto;
+  }
+
+  .trick-grid.table-circle .trick-seat .mini-card:not(:first-child) {
+    margin-left: -20px;
   }
 
   .table-circle .viewer-seat .seat-play {
