@@ -10,7 +10,7 @@ const publicDir = join(__dirname, "public");
 const port = Number(process.env.PORT || 3000);
 
 const MIN_PLAYERS = 5;
-const MAX_PLAYERS = 7;
+const MAX_PLAYERS = 9;
 const HAND_SIZE = 53;
 const CALL_MODE_TWO = "two";
 const CALL_MODE_SCORE = "score";
@@ -19,7 +19,7 @@ const SCORE_BID_SECONDS = 20;
 const suits = [
   { id: "S", name: "黑桃", symbol: "♠", color: "black", sort: 0 },
   { id: "H", name: "红桃", symbol: "♥", color: "red", sort: 1 },
-  { id: "C", name: "草花", symbol: "♣", color: "black", sort: 2 },
+  { id: "C", name: "草花", symbol: "♣", color: "green", sort: 2 },
   { id: "D", name: "方块", symbol: "♦", color: "red", sort: 3 }
 ];
 
@@ -117,6 +117,32 @@ function roomStatusLabel(room) {
   return "进行中";
 }
 
+function defaultDoglegCount(playerCount) {
+  if (playerCount >= 7) return 2;
+  if (playerCount >= 5) return 1;
+  return 0;
+}
+
+function maxDoglegCount(playerCount) {
+  return Math.max(0, playerCount - 3);
+}
+
+function clampDoglegCount(value, playerCount) {
+  const parsed = Number(value);
+  const fallback = defaultDoglegCount(playerCount);
+  const count = Number.isFinite(parsed) ? Math.round(parsed) : fallback;
+  return Math.max(0, Math.min(maxDoglegCount(playerCount), count));
+}
+
+function syncLobbyDoglegCount(room) {
+  if (room.status !== "lobby" && room.status !== "finished") return;
+  if (room.doglegConfigured) {
+    room.doglegNeeded = clampDoglegCount(room.doglegNeeded, room.players.length);
+  } else {
+    room.doglegNeeded = clampDoglegCount(defaultDoglegCount(room.players.length), room.players.length);
+  }
+}
+
 function joinableRoomsList() {
   return [...rooms.values()]
     .filter((room) => room.status === "lobby" || room.status === "dealt")
@@ -134,6 +160,8 @@ function joinableRoomsList() {
       phase: room.phase,
       callMode: normalizedCallMode(room.callMode),
       callModeName: callModeName(room.callMode),
+      doglegNeeded: clampDoglegCount(room.doglegNeeded, room.players.length),
+      doglegMax: maxDoglegCount(room.players.length),
       createdAt: room.createdAt,
       players: room.players.map((player) => ({
         id: player.id,
@@ -167,6 +195,7 @@ function createPlayer(profileOrName, host = false, test = false) {
     score: 0,
     draggedRedFives: 0,
     draggedDiamondFives: 0,
+    throwFailures: 0,
     hand: []
   };
 }
@@ -180,7 +209,7 @@ function createAiTestPlayer(room, fallbackIndex) {
   const availableProfiles = [...playerProfiles.values()].filter((profile) => !usedNames.has(profile.name));
   const pool = availableProfiles.length ? availableProfiles : [...playerProfiles.values()];
   const profile = pool.length ? pool[randomInt(pool.length)] : null;
-  const player = createPlayer(`${profile?.name || `测试玩家${fallbackIndex}`}（AI）`, false, true);
+  const player = createPlayer(`${profile?.name || `机器人${fallbackIndex}`}（AI）`, false, true);
   player.avatarUrl = profile?.avatarUrl || "";
   return player;
 }
@@ -336,6 +365,7 @@ function deal(room) {
     player.score = 0;
     player.draggedRedFives = 0;
     player.draggedDiamondFives = 0;
+    player.throwFailures = 0;
     player.ready = false;
   });
   room.kitty = deck.slice(count * HAND_SIZE, count * HAND_SIZE + count);
@@ -349,7 +379,7 @@ function deal(room) {
   room.trumpSuit = null;
   room.doglegCard = null;
   room.doglegPlayerIds = [];
-  room.doglegNeeded = count >= 7 ? 2 : 1;
+  room.doglegNeeded = clampDoglegCount(room.doglegNeeded, count);
   room.result = null;
   room.setup = emptySetup();
   if (room.callMode === CALL_MODE_SCORE) room.setup.scoreBid = createScoreBidSetup(room);
@@ -383,7 +413,7 @@ function resetRoomToLobby(room, options = {}) {
   room.trumpSuit = null;
   room.doglegCard = null;
   room.doglegPlayerIds = [];
-  room.doglegNeeded = room.players.length >= 7 ? 2 : 1;
+  syncLobbyDoglegCount(room);
   room.result = null;
   room.setup = emptySetup();
   room.currentTrick = null;
@@ -393,6 +423,7 @@ function resetRoomToLobby(room, options = {}) {
     player.score = 0;
     player.draggedRedFives = 0;
     player.draggedDiamondFives = 0;
+    player.throwFailures = 0;
     player.ready = player.test || player.id === readyPlayerId || (options.preserveReady && previousReady.get(player.id));
   });
 }
@@ -483,6 +514,7 @@ function setupSnapshot(room) {
     doglegPlayerIds: room.doglegPlayerIds || [],
     doglegPlayerNames: (room.doglegPlayerIds || []).map((playerId) => playerName(room, playerId)),
     doglegNeeded: room.doglegNeeded || 0,
+    doglegMax: maxDoglegCount(room.players.length),
     bid: publicBid(room, room.setup?.bid),
     bidHistory: (room.setup?.bidHistory || []).map((bid) => publicBid(room, bid)),
     bidPassIds: room.setup?.passIds || [],
@@ -544,8 +576,11 @@ function trickSnapshot(room, trick) {
         score: player.score || 0,
         draggedRedFives: player.draggedRedFives || 0,
         draggedDiamondFives: player.draggedDiamondFives || 0,
+        throwFailures: player.throwFailures || 0,
         cardCount: player.hand.length,
         at: play?.at || null,
+        throwPlay: Boolean(play?.throwPlay),
+        throwFailed: Boolean(play?.throwFailed),
         cards: play ? play.cards.map(publicCard) : []
       };
     })
@@ -586,6 +621,7 @@ function roomSnapshot(room, viewer = null) {
     handSize: HAND_SIZE,
     kittyCount: room.kitty.length,
     kittySize: room.kittySize || room.players.length,
+    doglegMax: maxDoglegCount(room.players.length),
     canViewKitty,
     kittyViewerId,
     kittyViewerName: kittyViewerId ? playerName(room, kittyViewerId) : "",
@@ -610,6 +646,7 @@ function roomSnapshot(room, viewer = null) {
       score: player.score || 0,
       draggedRedFives: player.draggedRedFives || 0,
       draggedDiamondFives: player.draggedDiamondFives || 0,
+      throwFailures: player.throwFailures || 0,
       cardCount: player.hand.length
     })),
     hand: viewer ? viewer.hand.map(publicCard) : [],
@@ -676,18 +713,26 @@ function removePlayerFromRoom(room, playerId, messageText) {
   }
 
   room.kittySize = room.status === "lobby" ? room.players.length : room.kittySize;
+  syncLobbyDoglegCount(room);
   return removed;
 }
 
 function updateDraggedFiveStats(room, trick, winnerId) {
+  const winnerName = playerName(room, winnerId);
   trick.plays.forEach((play) => {
     if (play.playerId === winnerId) return;
     const player = playerById(room, play.playerId);
     if (!player) return;
     play.cards.forEach((card) => {
       if (card.type !== "normal" || card.rank !== "5") return;
-      if (card.suit === "H") player.draggedRedFives = (player.draggedRedFives || 0) + 1;
-      if (card.suit === "D") player.draggedDiamondFives = (player.draggedDiamondFives || 0) + 1;
+      if (card.suit === "H") {
+        player.draggedRedFives = (player.draggedRedFives || 0) + 1;
+        addEvent(room, `${player.name} 的红五被 ${winnerName} 拖走`);
+      }
+      if (card.suit === "D") {
+        player.draggedDiamondFives = (player.draggedDiamondFives || 0) + 1;
+        addEvent(room, `${player.name} 的方五被 ${winnerName} 拖走`);
+      }
     });
   });
 }
@@ -775,8 +820,16 @@ function finishGame(room, completedTrick) {
   });
   const bottomDraggedExtra = bottomDraggedRedFives * 2 + bottomDraggedDiamondFives;
   const draggedDelta = bankerDraggedValue - idleDraggedValue + bottomDraggedExtra;
+  let bankerThrowFailures = 0;
+  let idleThrowFailures = 0;
+  room.players.forEach((player) => {
+    const failures = player.throwFailures || 0;
+    if (bankerIdSet.has(player.id)) bankerThrowFailures += failures;
+    else idleThrowFailures += failures;
+  });
+  const throwFailureDelta = bankerThrowFailures - idleThrowFailures;
 
-  const idleEachScore = baseScore + scoreStep + bottomDelta + draggedDelta;
+  const idleEachScore = baseScore + scoreStep + bottomDelta + draggedDelta + throwFailureDelta;
   const bankerEachScore = bankerIds.length ? -idleEachScore * idleIds.length / bankerIds.length : 0;
   const winnerTeam = idleScore >= threshold ? "idle" : "banker";
 
@@ -819,6 +872,9 @@ function finishGame(room, completedTrick) {
     idleDraggedValue,
     bottomDraggedExtra,
     draggedDelta,
+    bankerThrowFailures,
+    idleThrowFailures,
+    throwFailureDelta,
     idleEachScore: roundGameScore(idleEachScore),
     bankerEachScore: roundGameScore(bankerEachScore),
     idleEachScoreText: gameScoreText(idleEachScore),
@@ -834,6 +890,7 @@ function finishGame(room, completedTrick) {
         trickScore: player.score || 0,
         draggedRedFives: player.draggedRedFives || 0,
         draggedDiamondFives: player.draggedDiamondFives || 0,
+        throwFailures: player.throwFailures || 0,
         gameScore: roundGameScore(isBankerTeam ? bankerEachScore : idleEachScore),
         gameScoreText: gameScoreText(isBankerTeam ? bankerEachScore : idleEachScore)
       };
@@ -895,7 +952,7 @@ function mainCardPower(card, trumpSuit) {
   if (card.joker === "small") return 3;
   if (card.type === "normal" && card.rank === "3" && trumpSuit) {
     if (card.suit === trumpSuit) return 4;
-    if (cardColor(card) === suitById.get(trumpSuit)?.color) return 5;
+    if (cardColor(card) === cardColor({ suit: trumpSuit })) return 5;
   }
   if (card.type === "normal" && card.rank === "2") {
     if (card.suit === trumpSuit) return 6;
@@ -924,7 +981,10 @@ function leadInfo(trick, trumpSuit) {
   return {
     count: lead.cards.length,
     suit: suitsInLead.length === 1 ? suitsInLead[0] : null,
-    pattern
+    pattern,
+    throwComponents: lead.throwPlay
+      ? (lead.throwComponents || throwComponentsFromCards(lead.cards, trumpSuit).components || [])
+      : null
   };
 }
 
@@ -1222,12 +1282,26 @@ function continueFryingAfterBury(room, player) {
   addEvent(room, `${player.name} 完成炒底贴底，继续下一家`);
 }
 
+function beginPlaying(room) {
+  room.stage = "playing";
+  room.phase = `打牌中，主牌为${suitName(room.trumpSuit)}`;
+  room.currentTrick = createEmptyTrick(1, room.bankerId);
+  if (!room.doglegPlayerIds) room.doglegPlayerIds = [];
+}
+
 function finishFrying(room) {
   const lastBid = room.setup.fry?.lastBid || room.setup.bid;
   room.trumpSuit = lastBid?.suit || randomSuitId();
+  addEvent(room, `炒底结束，主牌确定为${suitName(room.trumpSuit)}`);
+  if (!room.doglegNeeded) {
+    room.doglegCard = null;
+    room.doglegPlayerIds = [];
+    beginPlaying(room);
+    addEvent(room, "本局不设置狗腿，直接开始打牌");
+    return;
+  }
   room.stage = "dogleg";
   room.phase = `主牌为${suitName(room.trumpSuit)}，等待庄家选择狗腿牌`;
-  addEvent(room, `炒底结束，主牌确定为${suitName(room.trumpSuit)}`);
 }
 
 function buryCards(room, player, cardIds) {
@@ -1297,14 +1371,16 @@ function submitFry(room, player, cardIds) {
 }
 
 function cardColor(card) {
-  return suitById.get(card.suit)?.color || "";
+  if (card.suit === "H" || card.suit === "D") return "red";
+  if (card.suit === "S" || card.suit === "C") return "black";
+  return "";
 }
 
 function isCompareCard(card, trumpSuit) {
   if (card.type === "joker") return true;
   if (card.rank === "2") return true;
   if ((card.suit === "H" || card.suit === "D") && card.rank === "5") return true;
-  if (card.rank === "3" && trumpSuit && cardColor(card) === suitById.get(trumpSuit)?.color) return true;
+  if (card.rank === "3" && trumpSuit && cardColor(card) === cardColor({ suit: trumpSuit })) return true;
   return false;
 }
 
@@ -1342,10 +1418,8 @@ function selectDogleg(room, player, cardIds) {
     rank: card.rank,
     label: card.label
   };
-  room.stage = "playing";
-  room.phase = `打牌中，主牌为${suitName(room.trumpSuit)}`;
-  room.currentTrick = createEmptyTrick(1, room.bankerId);
   room.doglegPlayerIds = [];
+  beginPlaying(room);
   addEvent(room, `${player.name} 选择 ${card.label} 为狗腿牌，开始打牌`);
   return { ok: true };
 }
@@ -1846,7 +1920,7 @@ function estimatedBankerScoreCapacity(room, player, trumpSuit, choice) {
   const mainCount = player.hand.filter((card) => isMainPlayCard(card, trumpSuit)).length;
   const topMainCount = highMainCount(player.hand, trumpSuit, 8);
   const protectedCount = protectedFiveCount(player.hand);
-  const doglegShare = (room.doglegNeeded || 1) * (total / Math.max(1, room.players.length)) * 0.78;
+  const doglegShare = (room.doglegNeeded || 0) * (total / Math.max(1, room.players.length)) * 0.78;
   const certainty = trumpRevealCertainty(room, player, choice);
   let estimate = 0;
   estimate += handPoints * 0.74;
@@ -2135,6 +2209,7 @@ function playPower(cards, trumpSuit) {
 }
 
 function playComparisonAgainstLead(info, cards, trumpSuit) {
+  if (info.throwComponents?.length) return throwPlayComparisonAgainstLead(info, cards, trumpSuit);
   const pattern = detectPlayPattern(cards, trumpSuit);
   if (!samePattern(info.pattern, pattern)) return null;
   if (!info.suit) return { level: 1, power: playPower(cards, trumpSuit) };
@@ -2148,6 +2223,179 @@ function playComparisonAgainstLead(info, cards, trumpSuit) {
     return { level: 2, power: playPower(cards, trumpSuit) };
   }
   return null;
+}
+
+function patternSignature(pattern) {
+  if (!pattern) return "";
+  if (pattern.type === "single") return "single:1:1:1";
+  if (pattern.type === "multi") return `multi:${pattern.width}:1:${pattern.count}`;
+  if (pattern.type === "tractor") return `tractor:${pattern.width}:${pattern.length}:${pattern.count}`;
+  return `${pattern.type}:${pattern.count}`;
+}
+
+function throwComponentFromGroups(groups, trumpSuit) {
+  const cards = groups.flatMap((group) => group.cards);
+  const pattern = detectPlayPattern(cards, trumpSuit);
+  if (!pattern) return null;
+  return {
+    cards,
+    pattern,
+    signature: patternSignature(pattern),
+    count: cards.length,
+    power: playPower(cards, trumpSuit),
+    strongestValue: Math.min(...cards.map((card) => patternValue(card, trumpSuit))),
+    weakestValue: Math.max(...cards.map((card) => patternValue(card, trumpSuit)))
+  };
+}
+
+function throwComponentsFromCards(cards, trumpSuit) {
+  if (!cards.length) return { error: "请选择要甩的牌" };
+  const suitsInCards = uniquePlaySuits(cards, trumpSuit);
+  if (suitsInCards.length !== 1) return { error: "甩牌必须选择同一路牌" };
+
+  const wholePattern = detectPlayPattern(cards, trumpSuit);
+  if (wholePattern) {
+    return {
+      suit: suitsInCards[0],
+      components: [{
+        cards,
+        pattern: wholePattern,
+        signature: patternSignature(wholePattern),
+        count: cards.length,
+        power: playPower(cards, trumpSuit),
+        strongestValue: Math.min(...cards.map((card) => patternValue(card, trumpSuit))),
+        weakestValue: Math.max(...cards.map((card) => patternValue(card, trumpSuit)))
+      }]
+    };
+  }
+
+  const groups = cardsByRank(cards, trumpSuit)
+    .sort((a, b) => tractorOrderValue(a, trumpSuit) - tractorOrderValue(b, trumpSuit) || a.value - b.value || a.rank.localeCompare(b.rank));
+  const components = [];
+  let index = 0;
+  while (index < groups.length) {
+    const group = groups[index];
+    if (group.count >= 2 && tractorOrderValue(group, trumpSuit) < 99) {
+      const chain = [group];
+      let next = index + 1;
+      while (
+        next < groups.length &&
+        groups[next].count === group.count &&
+        tractorOrderValue(groups[next], trumpSuit) < 99 &&
+        consecutiveTractorGroups(chain[chain.length - 1], groups[next], trumpSuit)
+      ) {
+        chain.push(groups[next]);
+        next += 1;
+      }
+      if (chain.length >= 2) {
+        const component = throwComponentFromGroups(chain, trumpSuit);
+        if (!component) return { error: "甩牌中存在无法识别的拖拉机" };
+        components.push(component);
+        index = next;
+        continue;
+      }
+    }
+
+    const component = throwComponentFromGroups([group], trumpSuit);
+    if (!component) return { error: "甩牌中存在不合法的牌型" };
+    components.push(component);
+    index += 1;
+  }
+
+  if (!components.length) return { error: "甩牌中没有可出的牌型" };
+  return { suit: suitsInCards[0], components };
+}
+
+function throwShapeKey(components) {
+  return [...components].map((component) => component.signature).sort().join("|");
+}
+
+function throwPlayComparisonAgainstLead(info, cards, trumpSuit) {
+  if (cards.length !== info.count) return null;
+  const parsed = throwComponentsFromCards(cards, trumpSuit);
+  if (parsed.error || !sameThrowShape(info.throwComponents, parsed.components)) return null;
+  const suitsInCards = uniquePlaySuits(cards, trumpSuit);
+  if (suitsInCards.length !== 1) return null;
+  const playSuitId = suitsInCards[0];
+  let level = null;
+  if (playSuitId === info.suit) level = 1;
+  if (info.suit !== "TRUMP" && playSuitId === "TRUMP") level = 2;
+  if (!level) return null;
+  return {
+    level,
+    power: Math.min(...cards.map((card) => patternValue(card, trumpSuit)))
+  };
+}
+
+function sameThrowShape(a, b) {
+  if (!a?.length || !b?.length || a.length !== b.length) return false;
+  return throwShapeKey(a) === throwShapeKey(b);
+}
+
+function publicThrowComponents(components) {
+  return components.map((component) => ({
+    signature: component.signature,
+    pattern: component.pattern,
+    count: component.count,
+    cards: component.cards.map(publicCard)
+  }));
+}
+
+function componentCanBeBeatenInSameRoute(room, component, routeSuit, defender) {
+  const sameRouteCards = defender.hand.filter((card) => playSuit(card, room.trumpSuit) === routeSuit);
+  if (!sameRouteCards.length) return false;
+  return exactPatternCandidates(sameRouteCards, component.pattern, room.trumpSuit)
+    .some((candidate) => playPower(candidate, room.trumpSuit) < component.power);
+}
+
+function chooseFailedThrowComponent(beatableComponents) {
+  if (!beatableComponents.length) return null;
+  const sorted = [...beatableComponents].sort((a, b) => {
+    return b.weakestValue - a.weakestValue
+      || a.cards.length - b.cards.length
+      || a.signature.localeCompare(b.signature)
+      || a.cards[0].id.localeCompare(b.cards[0].id);
+  });
+  const best = sorted[0];
+  const tied = sorted.filter((item) =>
+    item.weakestValue === best.weakestValue &&
+    item.cards.length === best.cards.length &&
+    item.signature === best.signature
+  );
+  return tied[randomInt(tied.length)];
+}
+
+function prepareThrowLeadPlay(room, player, selected) {
+  if (leadInfo(room.currentTrick, room.trumpSuit)) {
+    return { error: "只有首家出牌时可以甩牌", status: 400 };
+  }
+  const parsed = throwComponentsFromCards(selected, room.trumpSuit);
+  if (parsed.error) return { error: parsed.error, status: 400 };
+
+  const otherPlayers = room.players.filter((item) => item.id !== player.id);
+  const beatableComponents = parsed.components.filter((component) =>
+    otherPlayers.some((defender) => componentCanBeBeatenInSameRoute(room, component, parsed.suit, defender))
+  );
+
+  if (beatableComponents.length) {
+    const failedComponent = chooseFailedThrowComponent(beatableComponents);
+    player.throwFailures = (player.throwFailures || 0) + 1;
+    addEvent(room, `${player.name} 甩牌失败，改出 ${failedComponent.cards.map((card) => card.label).join(" ")}，累计甩牌失败 ${player.throwFailures} 次`);
+    return {
+      ok: true,
+      failed: true,
+      cards: failedComponent.cards,
+      components: [failedComponent]
+    };
+  }
+
+  addEvent(room, `${player.name} 甩牌成功，打出 ${parsed.components.length} 手，共 ${selected.length} 张`);
+  return {
+    ok: true,
+    failed: false,
+    cards: selected,
+    components: parsed.components
+  };
 }
 
 function settleTrick(room, trick) {
@@ -2609,7 +2857,7 @@ function autoPlayTestPlayersUntilHuman(room) {
   return played;
 }
 
-function playCards(room, player, cardIds) {
+function playCards(room, player, cardIds, options = {}) {
   if (room.status !== "dealt" || room.stage !== "playing") {
     return { error: "还没有进入打牌阶段，暂不能出牌", status: 409 };
   }
@@ -2623,25 +2871,40 @@ function playCards(room, player, cardIds) {
   if (room.currentTrick.plays.some((play) => play.playerId === player.id)) {
     return { error: "你本轮已经出过牌", status: 409 };
   }
+  const expected = expectedPlayerId(room);
+  if (expected && player.id !== expected) {
+    return { error: `现在轮到 ${playerName(room, expected)} 出牌`, status: 409 };
+  }
 
   const selected = player.hand.filter((card) => uniqueCardIds.includes(card.id));
   if (selected.length !== uniqueCardIds.length) {
     return { error: "选择的牌不在你的手牌中", status: 400 };
   }
-  const playError = validatePlay(room, player, selected);
-  if (playError) {
-    return { error: playError, status: 400 };
+  let playedCards = selected;
+  let throwMeta = null;
+  if (options.throwPlay) {
+    throwMeta = prepareThrowLeadPlay(room, player, selected);
+    if (throwMeta.error) return { error: throwMeta.error, status: throwMeta.status || 400 };
+    playedCards = throwMeta.cards;
+  } else {
+    const playError = validatePlay(room, player, selected);
+    if (playError) {
+      return { error: playError, status: 400 };
+    }
   }
 
-  const selectedIds = new Set(uniqueCardIds);
+  const selectedIds = new Set(playedCards.map((card) => card.id));
   player.hand = player.hand.filter((card) => !selectedIds.has(card.id));
   room.currentTrick.plays.push({
     playerId: player.id,
     at: now(),
-    cards: selected
+    cards: playedCards,
+    throwPlay: Boolean(throwMeta && !throwMeta.failed),
+    throwFailed: Boolean(throwMeta?.failed),
+    throwComponents: throwMeta?.components ? publicThrowComponents(throwMeta.components) : null
   });
-  addEvent(room, `${player.name} 第 ${room.currentTrick.number} 轮出了 ${selected.map((card) => card.label).join(" ")}`);
-  revealDoglegIfNeeded(room, player, selected);
+  addEvent(room, `${player.name} 第 ${room.currentTrick.number} 轮出了 ${playedCards.map((card) => card.label).join(" ")}`);
+  revealDoglegIfNeeded(room, player, playedCards);
 
   if (room.currentTrick.plays.length === room.players.length) {
     completeCurrentTrick(room);
@@ -2758,6 +3021,7 @@ async function handleApi(req, res, pathParts, url) {
       doglegCard: null,
       doglegPlayerIds: [],
       doglegNeeded: 0,
+      doglegConfigured: false,
       result: null,
       setup: emptySetup(),
       currentTrick: null,
@@ -2800,6 +3064,7 @@ async function handleApi(req, res, pathParts, url) {
 
       const player = createPlayer(profile, false);
       room.players.push(player);
+      syncLobbyDoglegCount(room);
       addEvent(room, `${profile.name} 加入了房间`);
       broadcast(room);
       return writeJson(res, 201, {
@@ -2868,12 +3133,42 @@ async function handleApi(req, res, pathParts, url) {
       return writeJson(res, 200, roomSnapshot(room, viewer));
     }
 
+    if (req.method === "POST" && pathParts[3] === "doglegs") {
+      const body = await readJson(req);
+      const viewer = requirePlayer(res, room, body.playerId, body.token);
+      if (!viewer) return;
+      if (!viewer.host) return writeJson(res, 403, { error: "只有房主可以设置狗腿数量" });
+      if (room.status !== "lobby") return writeJson(res, 409, { error: "只有开局前可以设置狗腿数量" });
+      const nextCount = clampDoglegCount(body.count, room.players.length);
+      room.doglegNeeded = nextCount;
+      room.doglegConfigured = true;
+      addEvent(room, `房主将本局狗腿数量设置为 ${nextCount} 个`);
+      broadcast(room);
+      return writeJson(res, 200, roomSnapshot(room, viewer));
+    }
+
+    if (req.method === "POST" && pathParts[3] === "robot") {
+      const body = await readJson(req);
+      const viewer = requirePlayer(res, room, body.playerId, body.token);
+      if (!viewer) return;
+      if (!viewer.host) return writeJson(res, 403, { error: "只有房主可以添加机器人" });
+      if (room.status !== "lobby") return writeJson(res, 409, { error: "牌局已经开始，不能添加机器人" });
+      if (room.players.length >= MAX_PLAYERS) return writeJson(res, 409, { error: "房间已满" });
+      const nextIndex = room.players.filter((player) => player.test).length + 1;
+      const robot = createAiTestPlayer(room, nextIndex);
+      room.players.push(robot);
+      syncLobbyDoglegCount(room);
+      addEvent(room, `房主添加了机器人 ${robot.name}`);
+      broadcast(room);
+      return writeJson(res, 200, roomSnapshot(room, viewer));
+    }
+
     if (req.method === "POST" && pathParts[3] === "test-players") {
       const body = await readJson(req);
       const viewer = requirePlayer(res, room, body.playerId, body.token);
       if (!viewer) return;
-      if (!viewer.host) return writeJson(res, 403, { error: "只有房主可以补测试玩家" });
-      if (room.status !== "lobby") return writeJson(res, 409, { error: "牌局已经开始，不能补测试玩家" });
+      if (!viewer.host) return writeJson(res, 403, { error: "只有房主可以添加机器人" });
+      if (room.status !== "lobby") return writeJson(res, 409, { error: "牌局已经开始，不能添加机器人" });
 
       const targetCount = Math.max(MIN_PLAYERS, Math.min(MAX_PLAYERS, Number(body.targetCount) || MIN_PLAYERS));
       let added = 0;
@@ -2883,7 +3178,8 @@ async function handleApi(req, res, pathParts, url) {
         room.players.push(player);
         added += 1;
       }
-      if (added) addEvent(room, `房主补入 ${added} 个测试玩家，方便本地验证`);
+      syncLobbyDoglegCount(room);
+      if (added) addEvent(room, `房主添加了 ${added} 个机器人`);
       broadcast(room);
       return writeJson(res, 200, roomSnapshot(room, viewer));
     }
@@ -2921,6 +3217,8 @@ async function handleApi(req, res, pathParts, url) {
 
       deal(room);
       addEvent(room, `房主开始牌局：${room.players.length} 人，每人 ${HAND_SIZE} 张，底牌 ${room.kitty.length} 张`);
+      const autoActions = autoProgressTestSetup(room);
+      if (autoActions) addEvent(room, `机器人自动推进准备流程 ${autoActions} 步`);
       broadcast(room);
       return writeJson(res, 200, roomSnapshot(room, viewer));
     }
@@ -2932,7 +3230,7 @@ async function handleApi(req, res, pathParts, url) {
       const result = submitBid(room, viewer, body.cardIds);
       if (result.error) return writeJson(res, result.status, { error: result.error });
       const autoActions = autoProgressTestSetup(room);
-      if (autoActions) addEvent(room, `测试玩家自动推进准备流程 ${autoActions} 步`);
+      if (autoActions) addEvent(room, `机器人自动推进准备流程 ${autoActions} 步`);
       broadcast(room);
       return writeJson(res, 200, roomSnapshot(room, viewer));
     }
@@ -2944,7 +3242,7 @@ async function handleApi(req, res, pathParts, url) {
       const result = passBid(room, viewer);
       if (result.error) return writeJson(res, result.status, { error: result.error });
       const autoActions = autoProgressTestSetup(room);
-      if (autoActions) addEvent(room, `测试玩家自动推进准备流程 ${autoActions} 步`);
+      if (autoActions) addEvent(room, `机器人自动推进准备流程 ${autoActions} 步`);
       broadcast(room);
       return writeJson(res, 200, roomSnapshot(room, viewer));
     }
@@ -2957,7 +3255,7 @@ async function handleApi(req, res, pathParts, url) {
       const result = randomDeclare(room);
       if (result.error) return writeJson(res, result.status, { error: result.error });
       const autoActions = autoProgressTestSetup(room);
-      if (autoActions) addEvent(room, `测试玩家自动推进准备流程 ${autoActions} 步`);
+      if (autoActions) addEvent(room, `机器人自动推进准备流程 ${autoActions} 步`);
       broadcast(room);
       return writeJson(res, 200, roomSnapshot(room, viewer));
     }
@@ -2969,7 +3267,7 @@ async function handleApi(req, res, pathParts, url) {
       const result = submitScoreBid(room, viewer, body.increment);
       if (result.error) return writeJson(res, result.status, { error: result.error });
       const autoActions = autoProgressTestSetup(room);
-      if (autoActions) addEvent(room, `测试玩家自动推进准备流程 ${autoActions} 步`);
+      if (autoActions) addEvent(room, `机器人自动推进准备流程 ${autoActions} 步`);
       broadcast(room);
       return writeJson(res, 200, roomSnapshot(room, viewer));
     }
@@ -2981,7 +3279,7 @@ async function handleApi(req, res, pathParts, url) {
       const result = passScoreBid(room, viewer);
       if (result.error) return writeJson(res, result.status, { error: result.error });
       const autoActions = autoProgressTestSetup(room);
-      if (autoActions) addEvent(room, `测试玩家自动推进准备流程 ${autoActions} 步`);
+      if (autoActions) addEvent(room, `机器人自动推进准备流程 ${autoActions} 步`);
       broadcast(room);
       return writeJson(res, 200, roomSnapshot(room, viewer));
     }
@@ -2993,7 +3291,7 @@ async function handleApi(req, res, pathParts, url) {
       const result = revealTrumpCards(room, viewer, body.cardIds);
       if (result.error) return writeJson(res, result.status, { error: result.error });
       const autoActions = autoProgressTestSetup(room);
-      if (autoActions) addEvent(room, `测试玩家自动推进准备流程 ${autoActions} 步`);
+      if (autoActions) addEvent(room, `机器人自动推进准备流程 ${autoActions} 步`);
       broadcast(room);
       return writeJson(res, 200, roomSnapshot(room, viewer));
     }
@@ -3004,6 +3302,8 @@ async function handleApi(req, res, pathParts, url) {
       if (!viewer) return;
       const result = buryCards(room, viewer, body.cardIds);
       if (result.error) return writeJson(res, result.status, { error: result.error });
+      const autoActions = autoProgressTestSetup(room);
+      if (autoActions) addEvent(room, `机器人自动推进准备流程 ${autoActions} 步`);
       broadcast(room);
       return writeJson(res, 200, roomSnapshot(room, viewer));
     }
@@ -3012,13 +3312,13 @@ async function handleApi(req, res, pathParts, url) {
       const body = await readJson(req);
       const viewer = requirePlayer(res, room, body.playerId, body.token);
       if (!viewer) return;
-      if (!viewer.host) return writeJson(res, 403, { error: "只有房主可以推进测试玩家准备流程" });
+      if (!viewer.host) return writeJson(res, 403, { error: "只有房主可以推进机器人准备流程" });
       if (room.status !== "dealt" || room.stage === "playing") {
         return writeJson(res, 409, { error: "当前不在准备流程中" });
       }
       const autoActions = autoProgressTestSetup(room);
-      if (!autoActions) return writeJson(res, 409, { error: "当前没有可自动推进的测试玩家" });
-      addEvent(room, `房主触发测试玩家自动推进准备流程 ${autoActions} 步`);
+      if (!autoActions) return writeJson(res, 409, { error: "当前没有可自动推进的机器人" });
+      addEvent(room, `房主触发机器人自动推进准备流程 ${autoActions} 步`);
       broadcast(room);
       return writeJson(res, 200, roomSnapshot(room, viewer));
     }
@@ -3030,7 +3330,7 @@ async function handleApi(req, res, pathParts, url) {
       const result = submitFry(room, viewer, body.cardIds);
       if (result.error) return writeJson(res, result.status, { error: result.error });
       const autoActions = autoProgressTestSetup(room);
-      if (autoActions) addEvent(room, `测试玩家自动推进准备流程 ${autoActions} 步`);
+      if (autoActions) addEvent(room, `机器人自动推进准备流程 ${autoActions} 步`);
       broadcast(room);
       return writeJson(res, 200, roomSnapshot(room, viewer));
     }
@@ -3042,7 +3342,7 @@ async function handleApi(req, res, pathParts, url) {
       const result = passFry(room, viewer);
       if (result.error) return writeJson(res, result.status, { error: result.error });
       const autoActions = autoProgressTestSetup(room);
-      if (autoActions) addEvent(room, `测试玩家自动推进准备流程 ${autoActions} 步`);
+      if (autoActions) addEvent(room, `机器人自动推进准备流程 ${autoActions} 步`);
       broadcast(room);
       return writeJson(res, 200, roomSnapshot(room, viewer));
     }
@@ -3054,7 +3354,7 @@ async function handleApi(req, res, pathParts, url) {
       const result = selectDogleg(room, viewer, body.cardIds);
       if (result.error) return writeJson(res, result.status, { error: result.error });
       const autoActions = autoProgressTestSetup(room);
-      if (autoActions) addEvent(room, `测试玩家自动推进准备流程 ${autoActions} 步`);
+      if (autoActions) addEvent(room, `机器人自动推进准备流程 ${autoActions} 步`);
       broadcast(room);
       return writeJson(res, 200, roomSnapshot(room, viewer));
     }
@@ -3063,11 +3363,11 @@ async function handleApi(req, res, pathParts, url) {
       const body = await readJson(req);
       const viewer = requirePlayer(res, room, body.playerId, body.token);
       if (!viewer) return;
-      const result = playCards(room, viewer, body.cardIds);
+      const result = playCards(room, viewer, body.cardIds, { throwPlay: Boolean(body.throwPlay) });
       if (result.error) return writeJson(res, result.status, { error: result.error });
       if (!viewer.test) {
         const autoPlayed = autoPlayTestPlayersUntilHuman(room);
-        if (autoPlayed) addEvent(room, `测试玩家自动补出 ${autoPlayed} 次，已停在下一个真人玩家`);
+        if (autoPlayed) addEvent(room, `机器人自动出牌 ${autoPlayed} 次，已停在下一个真人玩家`);
       }
       broadcast(room);
       return writeJson(res, 200, roomSnapshot(room, viewer));
@@ -3077,19 +3377,19 @@ async function handleApi(req, res, pathParts, url) {
       const body = await readJson(req);
       const viewer = requirePlayer(res, room, body.playerId, body.token);
       if (!viewer) return;
-      if (!viewer.host) return writeJson(res, 403, { error: "只有房主可以触发测试出牌" });
-      if (room.status !== "dealt" || room.stage !== "playing") return writeJson(res, 409, { error: "还没有进入打牌阶段，不能测试出牌" });
+      if (!viewer.host) return writeJson(res, 403, { error: "只有房主可以触发机器人出牌" });
+      if (room.status !== "dealt" || room.stage !== "playing") return writeJson(res, 409, { error: "还没有进入打牌阶段，不能自动出牌" });
 
       const nextPlayerId = expectedPlayerId(room);
-      if (!nextPlayerId) return writeJson(res, 409, { error: "本轮没有可测试出牌的玩家" });
+      if (!nextPlayerId) return writeJson(res, 409, { error: "本轮没有可自动出牌的玩家" });
       const nextPlayer = room.players.find((player) => player.id === nextPlayerId);
       if (!nextPlayer?.test) {
         return writeJson(res, 409, { error: `现在轮到 ${playerName(room, nextPlayerId)}（真人），请由该玩家自己出牌` });
       }
 
       const autoPlayed = autoPlayTestPlayersUntilHuman(room);
-      if (!autoPlayed) return writeJson(res, 409, { error: "测试玩家没有可出的牌" });
-      addEvent(room, `房主触发测试玩家自动出牌 ${autoPlayed} 次`);
+      if (!autoPlayed) return writeJson(res, 409, { error: "机器人没有可出的牌" });
+      addEvent(room, `房主触发机器人自动出牌 ${autoPlayed} 次`);
       broadcast(room);
       return writeJson(res, 200, roomSnapshot(room, viewer));
     }

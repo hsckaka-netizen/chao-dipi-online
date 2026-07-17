@@ -315,6 +315,10 @@ label {
   color: #1e2925;
 }
 
+.dogleg-panel .green {
+  color: #116d40;
+}
+
 .result-panel {
   border-color: #d8ab65;
 }
@@ -358,7 +362,7 @@ label {
 
 .result-row {
   display: grid;
-  grid-template-columns: minmax(88px, 1.2fr) 72px repeat(3, minmax(62px, 0.8fr)) minmax(54px, 0.6fr);
+  grid-template-columns: minmax(88px, 1.2fr) 72px repeat(4, minmax(58px, 0.75fr)) minmax(54px, 0.6fr);
   gap: 8px;
   align-items: center;
   min-height: 38px;
@@ -539,6 +543,18 @@ label {
   border: 1px solid var(--line);
   border-radius: 8px;
   background: #fbfcfb;
+}
+
+.player.banker-team,
+.trick-player.banker-team {
+  border-color: #e0b36f;
+  background: #fffaf1;
+}
+
+.player.idle-team,
+.trick-player.idle-team {
+  border-color: #bcdcc9;
+  background: #f4fbf7;
 }
 
 .player-side {
@@ -724,6 +740,18 @@ label {
   color: #8a4b12;
 }
 
+.dogleg-count-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 34px;
+}
+
+.dogleg-count-control .segmented button {
+  min-width: 34px;
+  padding: 0 8px;
+}
+
 .meta {
   color: var(--muted);
   font-size: 13px;
@@ -758,19 +786,19 @@ label {
   flex-wrap: wrap;
   align-content: flex-start;
   gap: 8px 0;
-  min-height: 68px;
+  min-height: 80px;
   overflow: visible;
   overflow-y: visible;
-  padding: 8px 8px 12px 18px;
+  padding: 8px 8px 12px 22px;
 }
 
 .card {
   position: relative;
   z-index: var(--i);
-  flex: 0 0 48px;
-  width: 48px;
-  min-height: 58px;
-  margin-left: -18px;
+  flex: 0 0 56px;
+  width: 56px;
+  min-height: 70px;
+  margin-left: -22px;
   border: 1px solid #cfd8d2;
   border-radius: 7px;
   background: #fff;
@@ -779,7 +807,7 @@ label {
   justify-content: flex-start;
   padding: 5px 4px 0 5px;
   text-align: left;
-  font-size: 14px;
+  font-size: 15px;
   font-weight: 800;
   line-height: 1;
   box-shadow: 0 3px 10px rgba(26, 38, 32, 0.08);
@@ -822,6 +850,10 @@ label {
   color: #1e2925;
 }
 
+.card.green {
+  color: #116d40;
+}
+
 .card-corner {
   position: relative;
   z-index: 2;
@@ -836,12 +868,12 @@ label {
 }
 
 .card-rank {
-  font-size: 14px;
+  font-size: 15px;
   letter-spacing: 0;
 }
 
 .card-suit {
-  font-size: 15px;
+  font-size: 18px;
   letter-spacing: 0;
 }
 
@@ -861,7 +893,7 @@ label {
 
 .card-joker-face {
   position: absolute;
-  inset: 1px 1px 1px 16px;
+  inset: 1px 1px 1px 17px;
   border-radius: 0 6px 6px 0;
   background-image: url("/assets/joker-face.png");
   background-size: cover;
@@ -1022,7 +1054,7 @@ label {
 .trick-grid.table-circle {
   position: relative;
   display: block;
-  min-height: clamp(800px, 66vw, 980px);
+  min-height: clamp(660px, 58vw, 820px);
   margin: 8px 0 4px;
   border: 0;
   background: transparent;
@@ -1030,18 +1062,28 @@ label {
 }
 
 .table-seats-5 {
-  --seat-width: 232px;
+  --seat-width: 238px;
   --seat-height: 116px;
 }
 
 .table-seats-6 {
-  --seat-width: 220px;
+  --seat-width: 228px;
   --seat-height: 114px;
 }
 
 .table-seats-7 {
-  --seat-width: 204px;
+  --seat-width: 214px;
   --seat-height: 112px;
+}
+
+.table-seats-8 {
+  --seat-width: 202px;
+  --seat-height: 110px;
+}
+
+.table-seats-9 {
+  --seat-width: 192px;
+  --seat-height: 108px;
 }
 
 .table-center {
@@ -1062,6 +1104,13 @@ label {
 .table-center strong {
   color: var(--text);
   font-size: 18px;
+}
+
+.table-corner-stats {
+  position: absolute;
+  left: 0;
+  top: 0;
+  z-index: 4;
 }
 
 .trick-player {
@@ -1160,8 +1209,8 @@ label {
 .seat-play {
   position: absolute;
   z-index: 3;
-  width: min(250px, 120%);
-  min-height: 64px;
+  width: min(310px, 145%);
+  min-height: 76px;
   pointer-events: none;
 }
 
@@ -1191,23 +1240,23 @@ label {
 
 .table-circle .viewer-seat .seat-play {
   left: 50%;
-  top: -78px;
+  top: -90px;
   right: auto;
   bottom: auto;
-  width: min(380px, 92%);
+  width: min(460px, 92%);
   transform: translateX(-50%);
 }
 
 .table-circle .seat-play .mini-cards {
   justify-content: center;
-  max-height: 112px;
+  max-height: 136px;
   overflow: visible;
 }
 
 .seat-hand {
   box-sizing: border-box;
   width: 100%;
-  max-height: min(31vh, 280px);
+  max-height: min(32vh, 300px);
   overflow: auto;
   border: 1px solid rgba(203, 216, 208, 0.96);
   border-radius: 8px;
@@ -1281,9 +1330,9 @@ label {
 }
 
 .seat-hand .hand-row {
-  min-height: 56px;
+  min-height: 68px;
   gap: 6px 0;
-  padding: 6px 6px 9px 16px;
+  padding: 6px 6px 9px 20px;
 }
 
 .seat-hand .hand-row-compact {
@@ -1292,8 +1341,8 @@ label {
   align-items: flex-start;
   align-content: flex-start;
   gap: 6px 0;
-  min-height: 56px;
-  padding: 5px 6px 9px 18px;
+  min-height: 68px;
+  padding: 5px 6px 9px 22px;
 }
 
 .hand-counts {
@@ -1327,20 +1376,45 @@ label {
   font-size: 13px;
 }
 
+.hand-count-badge.suit-rank {
+  border-color: #d9c99e;
+  background: #fff8e8;
+  color: #8a4b12;
+}
+
+.hand-count-badge.suit-S {
+  border-color: #cfd8d2;
+  background: #f2f5f3;
+  color: #1e2925;
+}
+
+.hand-count-badge.suit-H,
+.hand-count-badge.suit-D {
+  border-color: #efcccc;
+  background: #fff4f4;
+  color: #b92929;
+}
+
+.hand-count-badge.suit-C {
+  border-color: #c7dfcf;
+  background: #f1faf4;
+  color: #116d40;
+}
+
 .seat-hand .card {
-  flex-basis: 42px;
-  width: 42px;
-  min-height: 52px;
-  margin-left: -16px;
+  flex-basis: 50px;
+  width: 50px;
+  min-height: 62px;
+  margin-left: -20px;
   padding: 5px 3px 0 5px;
 }
 
 .seat-hand .card-rank {
-  font-size: 12px;
+  font-size: 14px;
 }
 
 .seat-hand .card-suit {
-  font-size: 13px;
+  font-size: 16px;
 }
 
 .seat-hand .hand-controls {
@@ -1416,22 +1490,22 @@ label {
   flex-wrap: wrap;
   gap: 8px 0;
   align-content: flex-start;
-  padding-left: 18px;
+  padding-left: 22px;
   overflow: visible;
 }
 
 .mini-card {
   position: relative;
   z-index: var(--i);
-  flex: 0 0 48px;
-  width: 48px;
-  min-height: 58px;
-  margin-left: -18px;
+  flex: 0 0 56px;
+  width: 56px;
+  min-height: 70px;
+  margin-left: -22px;
   border: 1px solid #ccd8d1;
   border-radius: 6px;
   background: #fff;
   padding: 5px 4px 0 5px;
-  font-size: 14px;
+  font-size: 15px;
   font-weight: 800;
   box-shadow: 0 4px 12px rgba(26, 38, 32, 0.09);
 }
@@ -1441,7 +1515,7 @@ label {
 }
 
 .mini-card .card-joker-face {
-  inset: 1px 1px 1px 16px;
+  inset: 1px 1px 1px 17px;
 }
 
 .setup-action-trail {
@@ -1505,6 +1579,10 @@ label {
 
 .mini-card.black {
   color: #1e2925;
+}
+
+.mini-card.green {
+  color: #116d40;
 }
 
 .history {
@@ -1677,31 +1755,31 @@ label {
   }
 
   .hand-row {
-    min-height: 62px;
+    min-height: 70px;
     gap: 7px 0;
-    padding: 7px 6px 10px 16px;
+    padding: 7px 6px 10px 20px;
   }
 
   .card {
-    flex-basis: 44px;
-    width: 44px;
-    min-height: 54px;
-    margin-left: -16px;
+    flex-basis: 50px;
+    width: 50px;
+    min-height: 62px;
+    margin-left: -20px;
     padding: 5px 3px 0 5px;
   }
 
   .card-rank {
-    font-size: 13px;
-  }
-
-  .card-suit {
     font-size: 14px;
   }
 
+  .card-suit {
+    font-size: 16px;
+  }
+
   .mini-card {
-    flex-basis: 44px;
-    width: 44px;
-    min-height: 54px;
-    margin-left: -16px;
+    flex-basis: 50px;
+    width: 50px;
+    min-height: 62px;
+    margin-left: -20px;
   }
 }

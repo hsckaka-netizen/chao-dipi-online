@@ -79,6 +79,11 @@ function applyState(nextState, options = {}) {
   if (previousState?.status !== "finished" && nextState.status === "finished") {
     dismissedResultRoomId = null;
   }
+  if (previousState?.status === "finished" && nextState.status === "lobby") {
+    activeDialog = null;
+    dismissedResultRoomId = null;
+    selectedCardIds = new Set();
+  }
   const notice = transitionNotice(previousState, nextState);
   if (notice && options.showTransitionNotice !== false) setMessage(notice);
   scheduleScoreBidAutoPass();
@@ -101,6 +106,16 @@ function transitionNotice(previousState, nextState) {
       .filter(Boolean);
     if (names.length) return `${names.join("、")} 打出狗腿牌，成为狗腿。`;
   }
+  const draggedNotices = [];
+  (nextState.players || []).forEach((player) => {
+    const previous = previousState.players?.find((item) => item.id === player.id);
+    if (!previous) return;
+    const redDelta = (player.draggedRedFives || 0) - (previous.draggedRedFives || 0);
+    const diamondDelta = (player.draggedDiamondFives || 0) - (previous.draggedDiamondFives || 0);
+    if (redDelta > 0) draggedNotices.push(`${player.name} 被拖红五 ${redDelta} 张`);
+    if (diamondDelta > 0) draggedNotices.push(`${player.name} 被拖方五 ${diamondDelta} 张`);
+  });
+  if (draggedNotices.length) return draggedNotices.join("，");
   if (previousState.stage === nextState.stage) return "";
   if (previousState.stage === "bidding" && nextState.stage === "burying") {
     return `叫主成功：${nextState.setup?.bankerName || "庄家"} 成为庄家，已拿底等待贴底。`;
@@ -292,14 +307,27 @@ async function startGame() {
   }
 }
 
-async function addTestPlayers() {
+async function addRobot() {
   if (!session) return;
   try {
-    applyState(await api(`/api/rooms/${session.roomId}/test-players`, {
+    applyState(await api(`/api/rooms/${session.roomId}/robot`, {
       method: "POST",
-      body: JSON.stringify({ playerId: session.playerId, token: session.token, targetCount: 5 })
+      body: JSON.stringify({ playerId: session.playerId, token: session.token })
     }), { highlightNewKitty: false });
-    setMessage("已补齐到 5 人，可以本地验证发牌。");
+    setMessage("已添加 1 个机器人。");
+  } catch (error) {
+    setMessage(error.message, true);
+  }
+}
+
+async function setDoglegCount(count) {
+  if (!session) return;
+  try {
+    applyState(await api(`/api/rooms/${session.roomId}/doglegs`, {
+      method: "POST",
+      body: JSON.stringify({ playerId: session.playerId, token: session.token, count })
+    }), { highlightNewKitty: false });
+    setMessage(`本局狗腿数量已设为 ${state.setup?.doglegNeeded ?? count} 个。`);
   } catch (error) {
     setMessage(error.message, true);
   }
@@ -482,44 +510,16 @@ async function chooseDoglegSelectedCard() {
   }
 }
 
-async function playSelectedCards() {
+async function playSelectedCards(throwPlay = false) {
   if (!session) return;
   try {
     const cardIds = [...selectedCardIds];
     applyState(await api(`/api/rooms/${session.roomId}/play`, {
       method: "POST",
-      body: JSON.stringify({ playerId: session.playerId, token: session.token, cardIds })
+      body: JSON.stringify({ playerId: session.playerId, token: session.token, cardIds, throwPlay })
     }), { highlightNewKitty: false });
     selectedCardIds = new Set();
-    setMessage("已出牌，其他玩家会在当前轮看到。");
-  } catch (error) {
-    setMessage(error.message, true);
-  }
-}
-
-async function testPlayRound() {
-  if (!session) return;
-  try {
-    applyState(await api(`/api/rooms/${session.roomId}/test-play-round`, {
-      method: "POST",
-      body: JSON.stringify({ playerId: session.playerId, token: session.token })
-    }), { highlightNewKitty: false });
-    selectedCardIds = new Set();
-    setMessage("已让测试玩家自动出牌；轮到真人时会停下。");
-  } catch (error) {
-    setMessage(error.message, true);
-  }
-}
-
-async function testSetupProgress() {
-  if (!session) return;
-  try {
-    applyState(await api(`/api/rooms/${session.roomId}/test-setup`, {
-      method: "POST",
-      body: JSON.stringify({ playerId: session.playerId, token: session.token })
-    }));
-    selectedCardIds = new Set();
-    setMessage("已推进测试玩家的准备流程。");
+    setMessage(throwPlay ? "已尝试甩牌，结果以桌面和日志为准。" : "已出牌，其他玩家会在当前轮看到。");
   } catch (error) {
     setMessage(error.message, true);
   }
@@ -550,7 +550,7 @@ async function playAgain() {
       body: JSON.stringify({ playerId: session.playerId, token: session.token })
     }), { highlightNewKitty: false });
     activeDialog = null;
-    dismissedResultRoomId = state?.roomId || null;
+    dismissedResultRoomId = state?.status === "finished" ? state?.roomId || null : null;
     setMessage("已准备下一局，等待其他玩家确认。");
   } catch (error) {
     setMessage(error.message, true);
@@ -962,6 +962,18 @@ function validatePlaySelection() {
   return { ok: true, reason: "" };
 }
 
+function viewerCanThrowLead() {
+  return viewerCanPlayCurrent() && !leadInfoFromSnapshot(state.currentTrick);
+}
+
+function validateThrowSelection() {
+  if (!viewerCanThrowLead()) return { ok: false, reason: "只有首家出牌时可以甩牌" };
+  const cards = selectedCards();
+  if (!cards.length) return { ok: false, reason: "请选择要甩的牌" };
+  if (uniquePlaySuits(cards).length !== 1) return { ok: false, reason: "甩牌必须选择同一路牌" };
+  return { ok: true, reason: "" };
+}
+
 function selectionAction() {
   if (viewerCanBid()) {
     const validation = validateBidLikeSelection("bid");
@@ -993,18 +1005,33 @@ function selectionAction() {
   }
   if (viewerCanPlayCurrent()) {
     const validation = validatePlaySelection();
-    return { action: "play-selected", label: "出选中的牌", enabled: validation.ok, reason: validation.reason };
+    const throwValidation = validateThrowSelection();
+    return {
+      action: "play-selected",
+      label: "出选中的牌",
+      enabled: validation.ok,
+      reason: validation.reason,
+      throwEnabled: throwValidation.ok,
+      throwReason: throwValidation.reason
+    };
   }
   return null;
 }
 
 function renderHandControls(action) {
   if (action) {
+    const throwButton = action.action === "play-selected" && viewerCanThrowLead()
+      ? `<button type="button" class="secondary" data-action="throw-selected" ${action.throwEnabled ? "" : "disabled"}>甩牌</button>`
+      : "";
+    const reason = !action.enabled && action.reason
+      ? action.reason
+      : (throwButton && !action.throwEnabled && action.throwReason ? action.throwReason : "");
     return `
       <div class="row hand-controls">
         <span class="tag">${selectedCardIds.size} 张已选</span>
         <button type="button" data-action="${action.action}" ${action.enabled ? "" : "disabled"}>${escapeHtml(action.label)}</button>
-        ${!action.enabled && action.reason ? `<span class="action-reason">${escapeHtml(action.reason)}</span>` : ""}
+        ${throwButton}
+        ${reason ? `<span class="action-reason">${escapeHtml(reason)}</span>` : ""}
       </div>
     `;
   }
@@ -1038,6 +1065,26 @@ function renderCallModeToggle() {
   `;
 }
 
+function renderDoglegCountControl() {
+  const max = Number.isFinite(state.setup?.doglegMax) ? state.setup.doglegMax : Math.max(0, state.players.length - 3);
+  const current = Math.max(0, Math.min(max, state.setup?.doglegNeeded ?? 0));
+  const buttons = Array.from({ length: max + 1 }, (_, count) => `
+    <button
+      type="button"
+      class="${count === current ? "" : "secondary"}"
+      data-action="dogleg-count"
+      data-count="${count}"
+      ${count === current ? "disabled" : ""}
+    >${count}</button>
+  `).join("");
+  return `
+    <span class="dogleg-count-control">
+      <span class="meta">狗腿</span>
+      <span class="segmented">${buttons}</span>
+    </span>
+  `;
+}
+
 function lobbyEmptyText(waitingNextRound) {
   if (waitingNextRound) return `你已准备下一局，等待其他玩家确认。${readyStatusText()}。`;
   return "房主开始后，这里会显示你的 53 张手牌。";
@@ -1049,7 +1096,7 @@ function renderShell(content) {
       <header class="topbar">
         <div class="brand">
           <h1>炒地皮在线房间</h1>
-          <p>第二阶段：本地可补测试玩家，发牌后可查看当前轮和历史出牌。</p>
+          <p>多人在线牌桌，支持真人和机器人同局参与。</p>
         </div>
         ${session ? `<button class="secondary" data-action="leave">退出本机身份</button>` : ""}
       </header>
@@ -1233,8 +1280,6 @@ function renderRoom() {
               <span class="tag">${escapeHtml(waitingNextRound ? "等待下一局" : state.phase)}</span>
               ${inLobbyView ? `<span class="tag good">${escapeHtml(readyStatusText())}</span>` : ""}
               ${started ? `<span class="tag good">底牌 ${state.kittyCount} 张</span>` : ""}
-              ${state.setup?.bankerName ? `<span class="tag accent">庄家 ${escapeHtml(state.setup.bankerName)}</span>` : ""}
-              ${state.setup?.currentTrumpSuitName ? `<span class="tag good">当前主牌 ${escapeHtml(state.setup.currentTrumpSuitName)}</span>` : ""}
             </div>
           </div>
           <div class="share">
@@ -1245,16 +1290,16 @@ function renderRoom() {
               <button type="button" class="secondary" data-action="open-players">玩家</button>
               <button type="button" class="secondary" data-action="open-events">日志</button>
               ${state.viewer.host && state.status === "lobby" ? renderCallModeToggle() : ""}
+              ${state.viewer.host && state.status === "lobby" ? renderDoglegCountControl() : ""}
               ${inLobbyView ? renderReadyControls({ waitingNextRound }) : ""}
-              ${state.viewer.host && state.status === "lobby" ? `<button type="button" class="secondary" data-action="add-test-players">补齐5人测试</button>` : ""}
+              ${state.viewer.host && state.status === "lobby" ? `<button type="button" class="secondary" data-action="add-robot" ${state.players.length >= state.maxPlayers ? "disabled" : ""}>添加机器人</button>` : ""}
               ${state.viewer.host && state.status === "lobby" ? `<button type="button" data-action="start" ${canStart() ? "" : "disabled"}>开始并发牌</button>` : ""}
               ${state.canViewKitty ? `<button type="button" class="secondary" data-action="open-kitty">查看底牌</button>` : ""}
-              ${state.viewer.host && state.stage === "playing" ? `<button type="button" data-action="test-play-round">测试玩家自动出牌</button>` : ""}
               ${state.viewer.host && started ? `<button type="button" class="secondary" data-action="reset">重开房间</button>` : ""}
               ${state.viewer.host ? `<button type="button" class="secondary danger" data-action="dissolve-room">解散房间</button>` : ""}
               ${state.status === "lobby" || state.status === "finished" ? `<button type="button" class="secondary" data-action="room-leave">退出房间</button>` : ""}
             </div>
-            ${inLobbyView ? `<div class="meta">${escapeHtml(waitingNextRound ? `你已准备下一局，等待其他玩家确认。${readyStatusText()}` : `${waitingText}。${readyStatusText()}。第一版支持 5-7 人。`)}</div>` : ""}
+            ${inLobbyView ? `<div class="meta">${escapeHtml(waitingNextRound ? `你已准备下一局，等待其他玩家确认。${readyStatusText()}` : `${waitingText}。${readyStatusText()}。当前支持 5-9 人。`)}</div>` : ""}
           </div>
         </section>
 
@@ -1536,7 +1581,6 @@ function renderSetupPanel() {
         <h2>牌桌状态</h2>
         <div class="tags">
           <span class="tag accent">${escapeHtml(state.phase)}</span>
-          ${state.viewer.host ? `<button type="button" class="secondary compact-button" data-action="test-setup">测试玩家自动推进</button>` : ""}
         </div>
       </div>
       ${body}
@@ -1692,6 +1736,7 @@ function renderResultPanel() {
           <span class="tag">上下台阶 ${signedScore(null, result.scoreStep)}</span>
           <span class="tag">保底 ${signedScore(null, result.bottomDelta)}</span>
           <span class="tag">拖五 ${signedScore(null, result.draggedDelta)}</span>
+          <span class="tag">甩牌 ${signedScore(null, result.throwFailureDelta || 0)}</span>
           ${result.bottomDraggedRedFives || result.bottomDraggedDiamondFives ? `<span class="tag accent">底牌拖主：红五 ${result.bottomDraggedRedFives}，方五 ${result.bottomDraggedDiamondFives}</span>` : ""}
         </div>
         <div class="result-bottom">
@@ -1711,6 +1756,7 @@ function renderResultPanel() {
               <span>牌分 ${player.trickScore}</span>
               <span>红五 ${player.draggedRedFives}</span>
               <span>方五 ${player.draggedDiamondFives}</span>
+              <span>甩失 ${player.throwFailures || 0}</span>
               <b>${signedScore(player.gameScoreText, player.gameScore)}</b>
             </div>
           `).join("")}
@@ -1831,6 +1877,28 @@ function renderPlayedFiveStats() {
   `;
 }
 
+function idleTargetScore() {
+  if (!state) return "";
+  if (state.callMode === "score" && state.setup?.scoreBid?.currentScore) {
+    return state.players.length * 100 - state.setup.scoreBid.currentScore;
+  }
+  if (state.players.length === 5) return 250;
+  if (state.players.length === 6) return 360;
+  if (state.players.length === 7) return 350;
+  return Math.round(state.players.length * 100 * 0.5);
+}
+
+function renderGameInfoTags() {
+  const setup = state.setup || {};
+  const tags = [];
+  if (setup.currentTrumpSuitName || setup.trumpSuitName) tags.push(`<span class="tag good">主牌 ${escapeHtml(setup.currentTrumpSuitName || setup.trumpSuitName)}</span>`);
+  tags.push(`<span class="tag">闲家线 ${escapeHtml(idleTargetScore())} 分</span>`);
+  tags.push(`<span class="tag">狗腿 ${escapeHtml(setup.doglegNeeded || 0)} 个</span>`);
+  if (setup.doglegCard) tags.push(`<span class="tag accent">狗腿牌 ${escapeHtml(doglegCardText(setup.doglegCard))}</span>`);
+  if (setup.bankerName) tags.push(`<span class="tag accent">庄家 ${escapeHtml(setup.bankerName)}</span>`);
+  return tags.join("");
+}
+
 function renderPlayTable() {
   if (state.stage === "finished") {
     return `
@@ -1858,7 +1926,7 @@ function renderPlayTable() {
       <div class="section-head">
         <h2>打牌桌面</h2>
         <div class="tags">
-          ${renderPlayedFiveStats()}
+          ${renderGameInfoTags()}
           <span class="tag accent">${holdingPreviousResult ? `第 ${tableTrick.number} 轮结果` : `当前第 ${state.currentTrick?.number || 1} 轮`}</span>
           <span class="tag good">${escapeHtml(holdingPreviousResult ? `${turnText}，上一轮结果暂留` : turnText)}</span>
           <button type="button" class="secondary compact-button" data-action="open-history">历史出牌 ${state.trickHistory.length}</button>
@@ -1897,6 +1965,7 @@ function renderSetupTable() {
       score: player.score || 0,
       draggedRedFives: player.draggedRedFives || 0,
       draggedDiamondFives: player.draggedDiamondFives || 0,
+      throwFailures: player.throwFailures || 0,
       setupActions: setupActionsForPlayer(player.id),
       statusText: status.text,
       statusTone: status.tone
@@ -1914,9 +1983,8 @@ function renderSetupTable() {
       <div class="section-head">
         <h2>${escapeHtml(titleByStage[state.stage] || "牌桌")}</h2>
         <div class="tags">
-          ${renderPlayedFiveStats()}
+          ${renderGameInfoTags()}
           <span class="tag accent">${escapeHtml(state.phase)}</span>
-          ${setup.currentTrumpSuitName ? `<span class="tag good">当前主牌 ${escapeHtml(setup.currentTrumpSuitName)}</span>` : ""}
           ${currentAction ? `<span class="tag good">${escapeHtml(currentAction)}</span>` : ""}
         </div>
       </div>
@@ -2049,6 +2117,7 @@ function renderSeatHand(action, play, trick, index, options = {}) {
             <span>牌分 <b>${play.score || 0}</b></span>
             <span>红五 <b>${play.draggedRedFives || 0}</b></span>
             <span>方五 <b>${play.draggedDiamondFives || 0}</b></span>
+            <span>甩失 <b>${play.throwFailures || 0}</b></span>
             <span>手牌 <b>${state.hand.length}</b></span>
           </div>
         </div>
@@ -2090,6 +2159,7 @@ function renderTrick(trick, current, options = {}) {
       </div>
       <div class="trick-grid ${current ? `table-circle table-seats-${displayPlays.length}` : ""}">
         ${current ? `
+          <div class="table-corner-stats">${renderPlayedFiveStats()}</div>
           <div class="table-center">
             <strong>${setupTable ? "牌桌" : heldResult ? `第 ${trick.number} 轮结果` : `第 ${trick.number} 轮`}</strong>
             <span>${escapeHtml(titleMeta)}</span>
@@ -2103,7 +2173,7 @@ function renderTrick(trick, current, options = {}) {
           const statusTone = playStatusTone(trick, play, current, { heldResult, setupTable });
           const seatHand = isViewerSeat ? renderSeatHand(viewerAction, play, trick, playIndex, { heldResult, setupTable }) : "";
           const playerCard = `
-            <div class="trick-player ${play.played ? "played" : ""} ${play.lead ? "lead" : ""} ${play.currentTurn ? "current-turn" : ""} ${play.winning ? "winning" : ""}">
+            <div class="trick-player ${roleClass(play.role)} ${play.played ? "played" : ""} ${play.lead ? "lead" : ""} ${play.currentTurn ? "current-turn" : ""} ${play.winning ? "winning" : ""}">
               <div class="trick-name">
                 <strong>${playerNameWithRole(play)}</strong>
                 <span class="seat-status ${escapeHtml(statusTone)}">${escapeHtml(statusText)}</span>
@@ -2112,7 +2182,7 @@ function renderTrick(trick, current, options = {}) {
                 <span>牌分 <b>${play.score || 0}</b></span>
                 <span>红五 <b>${play.draggedRedFives || 0}</b></span>
                 <span>方五 <b>${play.draggedDiamondFives || 0}</b></span>
-                <span>${Number.isFinite(play.cardCount) ? `${play.cardCount} 张` : ""}</span>
+                <span>甩失 <b>${play.throwFailures || 0}</b></span>
               </div>
               ${!current && play.played ? renderMiniCards(play.cards) : ""}
             </div>
@@ -2139,11 +2209,15 @@ function playStatusText(trick, play, index, current, options = {}) {
   }
   if (options.heldResult) {
     if (play.winning) return "本轮最大";
+    if (play.throwFailed) return "甩牌失败";
+    if (play.throwPlay) return "甩牌成功";
     return play.played ? "已出" : "未出牌";
   }
   if (trick.currentTurnPlayerId === play.playerId) return "当前";
   if (play.winning && play.played) return "当前最大";
   if (play.lead) return play.played ? "首家已出" : "首家";
+  if (play.throwFailed) return "甩牌失败";
+  if (play.throwPlay) return "甩牌成功";
   if (play.played) return `${index + 1}手已出`;
   return `${index + 1}手`;
 }
@@ -2172,6 +2246,12 @@ function roleMark(role) {
   return `<span class="role-mark ${tone}" title="${escapeHtml(role)}">${escapeHtml(text)}</span>`;
 }
 
+function roleClass(role) {
+  if (role === "庄家" || role === "狗腿" || role === "主") return "banker-team";
+  if (role === "闲家") return "idle-team";
+  return "";
+}
+
 function avatarHtml(name, avatarUrl = "", size = "normal") {
   const initial = String(name || "玩").trim().slice(0, 1) || "玩";
   if (avatarUrl) {
@@ -2195,24 +2275,42 @@ function playerNameWithRole(play) {
 }
 
 function seatStyle(index, total) {
-  const safeTotal = Math.max(1, total);
-  const angle = 90 - (360 / safeTotal) * index;
-  const radian = (angle * Math.PI) / 180;
-  const xRadius = safeTotal >= 7 ? 38 : 36;
-  const yRadius = safeTotal >= 7 ? 36 : 35;
-  const x = 50 + xRadius * Math.cos(radian);
-  const y = 50 + yRadius * Math.sin(radian);
-  return `--seat-x:${x.toFixed(2)}%;--seat-y:${y.toFixed(2)}%;`;
+  if (index === 0) return "--seat-x:50%;--seat-y:100%;";
+  const counts = sideSeatCounts(total);
+  const side = sideSeatInfo(index, counts);
+  if (side.name === "right") {
+    const y = 78 - ((side.slot + 1) * 56) / (counts.right + 1);
+    return `--seat-x:88%;--seat-y:${y.toFixed(2)}%;`;
+  }
+  if (side.name === "top") {
+    const x = 82 - ((side.slot + 1) * 64) / (counts.top + 1);
+    return `--seat-x:${x.toFixed(2)}%;--seat-y:9%;`;
+  }
+  const y = 22 + ((side.slot + 1) * 56) / (counts.left + 1);
+  return `--seat-x:12%;--seat-y:${y.toFixed(2)}%;`;
 }
 
 function seatZone(index, total) {
-  const safeTotal = Math.max(1, total);
-  const angle = 90 - (360 / safeTotal) * index;
-  const normalized = (angle + 360) % 360;
-  if (normalized >= 45 && normalized < 135) return "seat-bottom";
-  if (normalized >= 135 && normalized < 225) return "seat-left";
-  if (normalized >= 225 && normalized < 315) return "seat-top";
-  return "seat-right";
+  if (index === 0) return "seat-bottom";
+  return `seat-${sideSeatInfo(index, sideSeatCounts(total)).name}`;
+}
+
+function sideSeatCounts(total) {
+  const others = Math.max(0, total - 1);
+  const side = Math.floor(others / 3);
+  const right = side;
+  const left = side;
+  const top = others - right - left;
+  return { left, top, right };
+}
+
+function sideSeatInfo(index, counts) {
+  let offset = index - 1;
+  if (offset < counts.right) return { name: "right", slot: offset };
+  offset -= counts.right;
+  if (offset < counts.top) return { name: "top", slot: offset };
+  offset -= counts.top;
+  return { name: "left", slot: offset };
 }
 
 function renderHistoryDialog() {
@@ -2244,12 +2342,12 @@ function renderPlayer(player) {
   const isBankerAction = (state.stage === "burying" || state.stage === "dogleg") && state.setup?.bankerId === player.id;
   const canKick = state.viewer?.host && !isMe && (state.status === "lobby" || state.status === "finished");
   return `
-    <div class="player" data-player-id="${escapeHtml(player.id)}">
+    <div class="player ${roleClass(player.role)}" data-player-id="${escapeHtml(player.id)}">
       <div>
         <strong class="player-name-line">${playerIdentity(player.name, player.role, player.avatarUrl, isMe ? "（我）" : "")}</strong>
         <div class="tags">
           ${player.host ? `<span class="tag accent">房主</span>` : ""}
-          ${player.test ? `<span class="tag">测试</span>` : ""}
+          ${player.test ? `<span class="tag">机器人</span>` : ""}
           ${state.status === "lobby" || state.status === "finished" ? `<span class="tag ${player.ready ? "good" : ""}">${player.ready ? "已准备" : "未准备"}</span>` : ""}
           ${isTurn ? `<span class="tag good">出牌</span>` : ""}
           ${isSetupTurn || isBankerAction ? `<span class="tag good">操作</span>` : ""}
@@ -2260,11 +2358,12 @@ function renderPlayer(player) {
             <span>得分 <strong>${player.score || 0}</strong></span>
             <span>被拖红五 <strong>${player.draggedRedFives || 0}</strong></span>
             <span>被拖方五 <strong>${player.draggedDiamondFives || 0}</strong></span>
+            <span>甩牌失败 <strong>${player.throwFailures || 0}</strong></span>
           </div>
         ` : ""}
       </div>
       <div class="player-side">
-        <div class="meta">${player.cardCount ? `${player.cardCount} 张` : ""}</div>
+        <div class="meta">${state.status === "lobby" || isMe ? (player.cardCount ? `${player.cardCount} 张` : "") : ""}</div>
         ${canKick ? `<button type="button" class="secondary compact-button" data-action="kick-player">踢出</button>` : ""}
       </div>
     </div>
@@ -2403,7 +2502,7 @@ function renderHand(hand, options = {}) {
       <div class="hand hand-compact">
         <div class="hand-counts">
           ${groups.map((group) => `
-            <span class="hand-count-badge" title="${escapeHtml(group.label)}">
+            <span class="hand-count-badge suit-${escapeHtml(group.id)}" title="${escapeHtml(group.label)}">
               <span>${escapeHtml(compactHandGroupLabel(group))}</span>
               <strong>${group.cards.length}</strong>
             </span>
@@ -2605,7 +2704,8 @@ document.addEventListener("click", (event) => {
   if (action === "copy") copyShare();
   if (action === "call-mode-two") setCallMode("two");
   if (action === "call-mode-score") setCallMode("score");
-  if (action === "add-test-players") addTestPlayers();
+  if (action === "dogleg-count") setDoglegCount(Number(event.target.closest("[data-count]")?.dataset.count || 0));
+  if (action === "add-robot") addRobot();
   if (action === "start") startGame();
   if (action === "ready-on") setReady(true);
   if (action === "ready-off") setReady(false);
@@ -2630,9 +2730,8 @@ document.addEventListener("click", (event) => {
     render();
   }
   if (action === "dogleg-selected") chooseDoglegSelectedCard();
-  if (action === "play-selected") playSelectedCards();
-  if (action === "test-play-round") testPlayRound();
-  if (action === "test-setup") testSetupProgress();
+  if (action === "play-selected") playSelectedCards(false);
+  if (action === "throw-selected") playSelectedCards(true);
   if (action === "reset") resetRoom();
   if (action === "play-again") playAgain();
   if (action === "open-kitty") {
