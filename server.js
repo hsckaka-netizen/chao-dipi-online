@@ -5,6 +5,8 @@ import { extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomBytes, randomInt } from "node:crypto";
 
+import { buildGameEvaluations } from "./game-evaluations.js";
+
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
 const publicDir = join(__dirname, "public");
 const port = Number(process.env.PORT || 3000);
@@ -36,24 +38,24 @@ const suitStrength = new Map([
 ]);
 const rooms = new Map();
 const initialPlayerProfiles = [
-  { id: "player-benlei", name: "奔雷" },
-  { id: "player-biesan", name: "瘪三" },
-  { id: "player-denghuang", name: "登黄" },
-  { id: "player-diaonan", name: "吊男" },
-  { id: "player-gelu", name: "格鲁" },
+  { id: "player-benlei", name: "奔雷", avatarUrl: "/assets/avatars/benlei.png" },
+  { id: "player-biesan", name: "瘪三", avatarUrl: "/assets/avatars/biesan.png" },
+  { id: "player-denghuang", name: "登黄", avatarUrl: "/assets/joker-face.png" },
+  { id: "player-diaonan", name: "吊男", avatarUrl: "/assets/avatars/diaonan.png" },
+  { id: "player-gelu", name: "格鲁", avatarUrl: "/assets/avatars/gelu.png" },
   { id: "player-hanya", name: "寒鸭" },
-  { id: "player-haohao", name: "浩浩" },
-  { id: "player-jiangmen", name: "姜门" },
-  { id: "player-jiangzha", name: "蒋渣" },
-  { id: "player-kaxiang", name: "卡翔" },
-  { id: "player-lafang", name: "拉芳" },
+  { id: "player-haohao", name: "浩浩", avatarUrl: "/assets/joker-face-small.png" },
+  { id: "player-jiangmen", name: "姜门", avatarUrl: "/assets/avatars/jiangmen.png" },
+  { id: "player-jiangzha", name: "蒋渣", avatarUrl: "/assets/avatars/jiangzha.png" },
+  { id: "player-kaxiang", name: "卡翔", avatarUrl: "/assets/avatars/kaxiang.png" },
+  { id: "player-lafang", name: "拉芳", avatarUrl: "/assets/avatars/lafang.png" },
   { id: "player-nanju", name: "楠局" },
-  { id: "player-shuainan", name: "耍男" },
+  { id: "player-shuainan", name: "耍男", avatarUrl: "/assets/avatars/shuainan.png" },
   { id: "player-tianhua", name: "天花" },
-  { id: "player-tieniu", name: "铁牛" },
-  { id: "player-xiaoxu", name: "小旭" },
+  { id: "player-tieniu", name: "铁牛", avatarUrl: "/assets/avatars/tieniu.png" },
+  { id: "player-xiaoxu", name: "小旭", avatarUrl: "/assets/avatars/xiaoxu.png" },
   { id: "player-zhengwei", name: "政委" },
-  { id: "player-chenran", name: "陈然" }
+  { id: "player-chenran", name: "陈然", avatarUrl: "/assets/avatars/chenran.png" }
 ];
 const playerProfiles = new Map(initialPlayerProfiles.map((profile) => [
   profile.id,
@@ -799,7 +801,7 @@ function gameScoreText(value) {
 }
 
 function teamName(team) {
-  return team === "idle" ? "闲家" : "庄家";
+  return team === "idle" ? "闲家" : "庄队";
 }
 
 function finishGame(room, completedTrick) {
@@ -861,6 +863,19 @@ function finishGame(room, completedTrick) {
   const idleEachScore = baseScore + scoreStep + bottomDelta + draggedDelta + throwFailureDelta;
   const bankerEachScore = bankerIds.length ? -idleEachScore * idleIds.length / bankerIds.length : 0;
   const winnerTeam = idleScore >= threshold ? "idle" : "banker";
+  const evaluations = buildGameEvaluations({
+    players: room.players,
+    tricks: room.trickHistory,
+    bankerTeamIds: bankerIds,
+    winnerTeam,
+    bottom: {
+      winnerId: bottomWinnerId,
+      winnerTeam: bottomWinnerTeam,
+      bankerId: room.bankerId,
+      draggedRedFives: bottomDraggedRedFives,
+      draggedDiamondFives: bottomDraggedDiamondFives
+    }
+  });
 
   room.status = "finished";
   room.stage = "finished";
@@ -904,29 +919,33 @@ function finishGame(room, completedTrick) {
     bankerThrowFailures,
     idleThrowFailures,
     throwFailureDelta,
+    evaluations: evaluations.awards,
     idleEachScore: roundGameScore(idleEachScore),
     bankerEachScore: roundGameScore(bankerEachScore),
     idleEachScoreText: gameScoreText(idleEachScore),
     bankerEachScoreText: gameScoreText(bankerEachScore),
     playerResults: room.players.map((player) => {
       const isBankerTeam = bankerIdSet.has(player.id);
+      const evaluation = evaluations.byPlayerId[player.id] || null;
       return {
         playerId: player.id,
         name: player.name,
         role: playerRole(room, player.id),
         team: isBankerTeam ? "banker" : "idle",
-        teamName: isBankerTeam ? "庄家" : "闲家",
+        teamName: isBankerTeam ? "庄队" : "闲家",
         trickScore: player.score || 0,
         draggedRedFives: player.draggedRedFives || 0,
         draggedDiamondFives: player.draggedDiamondFives || 0,
         throwFailures: player.throwFailures || 0,
         gameScore: roundGameScore(isBankerTeam ? bankerEachScore : idleEachScore),
-        gameScoreText: gameScoreText(isBankerTeam ? bankerEachScore : idleEachScore)
+        gameScoreText: gameScoreText(isBankerTeam ? bankerEachScore : idleEachScore),
+        evaluation,
+        evaluationTags: evaluation?.tags || []
       };
     })
   };
 
-  addEvent(room, `本局结束：${teamName(winnerTeam)}获胜，闲家 ${idleScore}/${threshold} 分，闲家每人 ${room.result.idleEachScoreText} 分，庄家每人 ${room.result.bankerEachScoreText} 分`);
+  addEvent(room, `本局结束：${teamName(winnerTeam)}牌局获胜，闲家 ${idleScore}/${threshold} 分，闲家每人 ${room.result.idleEachScoreText} 分，庄队每人 ${room.result.bankerEachScoreText} 分`);
 }
 
 function completeCurrentTrick(room) {
@@ -3252,6 +3271,25 @@ async function handleApi(req, res, pathParts, url) {
       room.doglegNeeded = nextCount;
       room.doglegConfigured = true;
       addEvent(room, `房主将本局狗腿数量设置为 ${nextCount} 个`);
+      broadcast(room);
+      return writeJson(res, 200, roomSnapshot(room, viewer));
+    }
+
+    if (req.method === "POST" && pathParts[3] === "random-seats") {
+      const body = await readJson(req);
+      const viewer = requirePlayer(res, room, body.playerId, body.token);
+      if (!viewer) return;
+      if (!viewer.host) return writeJson(res, 403, { error: "只有房主可以随机座位" });
+      if (room.status !== "lobby") return writeJson(res, 409, { error: "只有开局前可以随机座位" });
+      if (room.players.length < 2) return writeJson(res, 409, { error: "至少需要 2 名玩家才能随机座位" });
+
+      const previousOrder = room.players.map((player) => player.id);
+      const nextOrder = shuffle(room.players);
+      if (nextOrder.every((player, index) => player.id === previousOrder[index])) {
+        nextOrder.push(nextOrder.shift());
+      }
+      room.players = nextOrder;
+      addEvent(room, "房主重新随机了玩家座位");
       broadcast(room);
       return writeJson(res, 200, roomSnapshot(room, viewer));
     }

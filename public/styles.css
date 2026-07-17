@@ -365,7 +365,7 @@ label {
 
 .result-row {
   display: grid;
-  grid-template-columns: minmax(88px, 1.2fr) 72px repeat(4, minmax(58px, 0.75fr)) minmax(54px, 0.6fr);
+  grid-template-columns: minmax(124px, 1.4fr) 92px repeat(4, minmax(58px, 0.75fr)) minmax(54px, 0.6fr);
   gap: 8px;
   align-items: center;
   min-height: 38px;
@@ -397,11 +397,69 @@ label {
   box-shadow: inset 4px 0 #ad5555;
 }
 
+.result-row.neutral {
+  border-color: #d7ddd9;
+  background: #fafcfb;
+  box-shadow: inset 4px 0 #87958d;
+}
+
 .result-player-name {
   min-width: 0;
   display: flex;
   align-items: center;
   gap: 6px;
+  flex-wrap: wrap;
+}
+
+.result-evaluations {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  flex-wrap: wrap;
+}
+
+.result-evaluation {
+  display: inline-grid;
+  place-items: center;
+  min-width: 20px;
+  min-height: 20px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  padding: 2px 5px;
+  font-size: 10px;
+  font-weight: 900;
+  line-height: 1;
+  cursor: help;
+}
+
+.result-evaluation-mvp {
+  border-color: #d8b24d;
+  background: #fff1b9;
+  color: #755000;
+}
+
+.result-evaluation-couch {
+  border-color: #c8ced5;
+  background: #f0f2f4;
+  color: #59636e;
+}
+
+.result-evaluation-pit {
+  border-color: #d8a6a6;
+  background: #f9e5e5;
+  color: #933c3c;
+}
+
+.result-evaluation-support {
+  border-color: #9fc8b0;
+  background: #e4f3ea;
+  color: #226847;
+}
+
+.result-evaluation-stiff {
+  border-color: #9fbfd2;
+  background: #e4f0f6;
+  color: #285f7d;
 }
 
 .result-outcome {
@@ -428,6 +486,30 @@ label {
 
 .result-row.loser .result-outcome {
   background: #f4e0e0;
+}
+
+.result-row.neutral .result-outcome,
+.result-row.neutral b {
+  color: #526159;
+}
+
+.result-row.neutral .result-outcome {
+  background: #e8eeea;
+}
+
+.result-score-note {
+  border-left: 3px solid #9eb5a7;
+  padding: 8px 10px;
+  background: #f4f8f5;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.result-score-note.warning {
+  border-left-color: #bc7a2c;
+  background: #fff8e9;
+  color: #76501f;
 }
 
 .status {
@@ -1125,7 +1207,7 @@ label {
 .trick-grid.table-circle {
   position: relative;
   display: block;
-  min-height: clamp(700px, 58vw, 820px);
+  min-height: clamp(760px, 61vw, 880px);
   margin: 8px 0 4px;
   border: 0;
   background: transparent;
@@ -1308,7 +1390,7 @@ label {
 }
 
 .seat-top .seat-play {
-  left: 50%;
+  left: calc(50% + var(--play-shift-x, 0px));
   bottom: calc(-100% + 6px);
   transform: translateX(-50%);
 }

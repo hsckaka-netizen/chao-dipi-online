@@ -154,7 +154,8 @@ function transitionNotice(previousState, nextState) {
     return `开始出牌：主牌为${trump}。`;
   }
   if (previousState.stage === "playing" && nextState.stage === "finished") {
-    return `本局结束：${nextState.result?.winnerTeamName || "胜方"}获胜，闲家每人 ${nextState.result?.idleEachScoreText || 0} 分。`;
+    const result = nextState.result || {};
+    return `本局结束：${result.winnerTeamName || "胜方"}牌局获胜；积分结算为闲家每人 ${signedScore(result.idleEachScoreText, result.idleEachScore)} 分，庄队每人 ${signedScore(result.bankerEachScoreText, result.bankerEachScore)} 分。`;
   }
   return "";
 }
@@ -401,6 +402,19 @@ async function addRobot() {
       body: JSON.stringify({ playerId: session.playerId, token: session.token })
     }), { highlightNewKitty: false });
     setMessage("已添加 1 个机器人。");
+  } catch (error) {
+    setMessage(error.message, true);
+  }
+}
+
+async function randomizeSeats() {
+  if (!session) return;
+  try {
+    applyState(await api(`/api/rooms/${session.roomId}/random-seats`, {
+      method: "POST",
+      body: JSON.stringify({ playerId: session.playerId, token: session.token })
+    }), { highlightNewKitty: false });
+    setMessage("玩家座位已重新随机。");
   } catch (error) {
     setMessage(error.message, true);
   }
@@ -1500,7 +1514,7 @@ function renderProfileManager() {
         <h2>玩家列表</h2>
         <button type="button" class="secondary compact-button" data-action="show-rooms">返回房间</button>
       </div>
-      <div class="meta">玩家列表由后台预置；这里先支持修改现有玩家名称。头像后续会直接写入基础素材。</div>
+      <div class="meta">玩家列表由后台预置；头像使用内置素材，这里支持修改现有玩家名称。</div>
       <div class="profile-list">
         ${profiles.length ? profiles.map(renderProfileRow).join("") : `<div class="empty">暂无玩家。</div>`}
       </div>
@@ -1561,6 +1575,7 @@ function renderRoom() {
               ${state.viewer.host && state.status === "lobby" ? renderDoglegCountControl() : ""}
               ${inLobbyView ? renderReadyControls({ waitingNextRound }) : ""}
               ${state.viewer.host && state.status === "lobby" ? `<button type="button" class="secondary" data-action="add-robot" ${state.players.length >= state.maxPlayers ? "disabled" : ""}>添加机器人</button>` : ""}
+              ${state.viewer.host && state.status === "lobby" ? `<button type="button" class="secondary" data-action="random-seats" ${state.players.length < 2 ? "disabled" : ""}>随机座位</button>` : ""}
               ${state.viewer.host && state.status === "lobby" ? `<button type="button" data-action="start" ${canStart() ? "" : "disabled"}>开始并发牌</button>` : ""}
               ${state.canViewKitty ? `<button type="button" class="secondary" data-action="open-kitty">查看底牌</button>` : ""}
               ${state.viewer.host && started ? `<button type="button" class="secondary" data-action="reset">重开房间</button>` : ""}
@@ -1950,6 +1965,28 @@ function signedScore(valueText, value) {
   return text;
 }
 
+function resultScoreStatus(value) {
+  const numeric = Number(value);
+  if (numeric > 0) return { className: "winner", label: "积分加" };
+  if (numeric < 0) return { className: "loser", label: "积分扣" };
+  return { className: "neutral", label: "积分平" };
+}
+
+function renderEvaluationTags(tags) {
+  if (!Array.isArray(tags) || !tags.length) return "";
+  return `
+    <span class="result-evaluations">
+      ${tags.map((tag) => `
+        <span
+          class="result-evaluation result-evaluation-${escapeHtml(tag.code || "default")}"
+          title="${escapeHtml(tag.title || tag.label || "本局评价")}"
+          aria-label="${escapeHtml(tag.title || tag.label || "本局评价")}"
+        >${escapeHtml(tag.label || "评")}</span>
+      `).join("")}
+    </span>
+  `;
+}
+
 function renderResultPanel() {
   const result = state.result;
   if (!result) return `
@@ -1959,6 +1996,8 @@ function renderResultPanel() {
       </section>
     </div>
   `;
+  const winnerEachScore = result.winnerTeam === "idle" ? result.idleEachScore : result.bankerEachScore;
+  const scoreDirectionReversed = Number(winnerEachScore) < 0;
   return `
     <div class="modal-backdrop">
       <section class="modal-card result-modal stack" role="dialog" aria-modal="true" aria-label="总结看板">
@@ -1974,7 +2013,7 @@ function renderResultPanel() {
           </div>
         </div>
         <div class="tags">
-          <span class="tag accent">${escapeHtml(result.winnerTeamName)}获胜</span>
+          <span class="tag accent">牌局胜方：${escapeHtml(result.winnerTeamName)}</span>
           <span class="tag good">闲家 ${result.idleScore}/${result.threshold} 分</span>
           ${result.bankerBidScore ? `<span class="tag">叫分 ${escapeHtml(result.bankerBidScore)} / 总分 ${escapeHtml(result.totalGamePoints)}</span>` : ""}
           <span class="tag">${state.trickHistory.length} 轮</span>
@@ -1995,8 +2034,13 @@ function renderResultPanel() {
           </div>
           <div>
             <div class="meta">每人积分</div>
-            <strong>闲家 ${signedScore(result.idleEachScoreText, result.idleEachScore)} / 庄家 ${signedScore(result.bankerEachScoreText, result.bankerEachScore)}</strong>
+            <strong>闲家 ${signedScore(result.idleEachScoreText, result.idleEachScore)} / 庄队 ${signedScore(result.bankerEachScoreText, result.bankerEachScore)}</strong>
           </div>
+        </div>
+        <div class="result-score-note ${scoreDirectionReversed ? "warning" : ""}">
+          ${scoreDirectionReversed
+            ? "牌局胜负按闲家牌分判断；保底、拖五和甩牌调整后，牌局胜方本局仍可能成为积分扣分方。"
+            : "牌局胜负按闲家牌分判断；每人积分还包含保底、拖五和甩牌调整。"}
         </div>
         <div class="score-breakdown">
           <span class="tag">胜负 ${signedScore(null, result.baseScore)}</span>
@@ -2017,11 +2061,16 @@ function renderResultPanel() {
         </div>
         <div class="result-table">
           ${result.playerResults.map((player) => {
-            const won = player.team === result.winnerTeam;
+            const wonGame = player.team === result.winnerTeam;
+            const scoreStatus = resultScoreStatus(player.gameScore);
             return `
-            <div class="result-row ${won ? "winner" : "loser"}">
-              <strong class="result-player-name">${escapeHtml(player.name)}<span class="result-outcome">${won ? "赢家" : "输家"}</span></strong>
-              <span>${escapeHtml(player.role || player.teamName)}</span>
+            <div class="result-row ${scoreStatus.className}">
+              <strong class="result-player-name">
+                <span>${escapeHtml(player.name)}</span>
+                ${renderEvaluationTags(player.evaluationTags)}
+                <span class="result-outcome">${scoreStatus.label}</span>
+              </strong>
+              <span>${escapeHtml(player.role || player.teamName)} · ${wonGame ? "牌胜" : "牌负"}</span>
               <span>牌分 ${player.trickScore}</span>
               <span>红五 ${player.draggedRedFives}</span>
               <span>方五 ${player.draggedDiamondFives}</span>
@@ -2567,16 +2616,24 @@ function seatStyle(index, total) {
   }
   if (side.name === "top") {
     const x = 94 - ((side.slot + 0.5) * 88) / counts.top;
-    return `--seat-x:${x.toFixed(2)}%;--seat-y:9%;`;
+    const playShift = topPlayShift(side.slot, counts.top);
+    return `--seat-x:${x.toFixed(2)}%;--seat-y:9%;--play-shift-x:${playShift}px;`;
   }
   const y = sideSeatY(side.slot, counts.left);
   return `--seat-x:12%;--seat-y:${y.toFixed(2)}%;`;
 }
 
 function sideSeatY(slot, count, reverse = false) {
-  const positions = count <= 1 ? [42] : [29, 49];
+  const positions = count <= 1 ? [42] : [39, 58];
   const positionIndex = reverse ? positions.length - 1 - slot : slot;
   return positions[Math.max(0, Math.min(positionIndex, positions.length - 1))];
+}
+
+function topPlayShift(slot, count) {
+  if (count <= 1) return 0;
+  if (count === 2) return slot === 0 ? -120 : 120;
+  if (count === 3) return [-84, 0, 84][slot] || 0;
+  return [-72, -24, 24, 72][slot] || 0;
 }
 
 function seatZone(index, total) {
@@ -3023,6 +3080,7 @@ document.addEventListener("click", (event) => {
   if (action === "call-mode-score") setCallMode("score");
   if (action === "dogleg-count") setDoglegCount(Number(event.target.closest("[data-count]")?.dataset.count || 0));
   if (action === "add-robot") addRobot();
+  if (action === "random-seats") randomizeSeats();
   if (action === "start") startGame();
   if (action === "ready-on") setReady(true);
   if (action === "ready-off") setReady(false);
