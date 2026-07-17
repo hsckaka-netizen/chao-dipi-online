@@ -10,7 +10,7 @@
   --accent: #b86b22;
   --bad: #a93434;
   --good: #16744c;
-  --club: #137a4b;
+  --club: #155f8f;
   --shadow: 0 18px 50px rgba(27, 41, 34, 0.11);
 }
 
@@ -910,6 +910,14 @@ label {
 .card.green,
 .card.suit-C {
   color: var(--club);
+}
+
+.card-suit-club {
+  display: block;
+  width: 1.08em;
+  height: 1.08em;
+  overflow: visible;
+  fill: currentColor;
 }
 
 .card-corner {

@@ -1617,7 +1617,7 @@ function scoreBidActionButtons() {
 
 function doglegCardText(card) {
   if (!card) return "未确定";
-  return card.label || `${card.symbol || ""}${card.rank || ""}`;
+  return displayCardLabel(card);
 }
 
 function renderDoglegPanel() {
@@ -2092,7 +2092,7 @@ function renderTwoCardChoices(cards) {
                 type="button"
                 class="card choice-card ${card.color} ${cardSuitClass(card)} ${selectedCardIds.has(card.id) ? "selected" : ""}"
                 style="--i:${index}"
-                title="${escapeHtml(card.label)}"
+                title="${escapeHtml(displayCardLabel(card))}"
                 aria-pressed="${selectedCardIds.has(card.id) ? "true" : "false"}"
                 data-action="toggle-card"
                 data-card-id="${escapeHtml(card.id)}"
@@ -2109,7 +2109,7 @@ function renderTwoCardChoices(cards) {
 
 function renderStaticCard(card) {
   return `
-    <div class="card static ${card.color} ${cardSuitClass(card)}" title="${escapeHtml(card.label)}">
+    <div class="card static ${card.color} ${cardSuitClass(card)}" title="${escapeHtml(displayCardLabel(card))}">
       ${cardCorner(card)}
     </div>
   `;
@@ -2562,15 +2562,21 @@ function seatStyle(index, total) {
   const counts = sideSeatCounts(total);
   const side = sideSeatInfo(index, counts);
   if (side.name === "right") {
-    const y = 78 - ((side.slot + 1) * 56) / (counts.right + 1);
+    const y = sideSeatY(side.slot, counts.right, true);
     return `--seat-x:88%;--seat-y:${y.toFixed(2)}%;`;
   }
   if (side.name === "top") {
     const x = 94 - ((side.slot + 0.5) * 88) / counts.top;
     return `--seat-x:${x.toFixed(2)}%;--seat-y:9%;`;
   }
-  const y = 22 + ((side.slot + 1) * 56) / (counts.left + 1);
+  const y = sideSeatY(side.slot, counts.left);
   return `--seat-x:12%;--seat-y:${y.toFixed(2)}%;`;
+}
+
+function sideSeatY(slot, count, reverse = false) {
+  const positions = count <= 1 ? [42] : [29, 49];
+  const positionIndex = reverse ? positions.length - 1 - slot : slot;
+  return positions[Math.max(0, Math.min(positionIndex, positions.length - 1))];
 }
 
 function seatZone(index, total) {
@@ -2766,9 +2772,31 @@ function cardCorner(card) {
   return `
     <span class="card-corner">
       <span class="card-rank">${escapeHtml(card.rank)}</span>
-      <span class="card-suit">${escapeHtml(card.symbol)}</span>
+      ${renderCardSuit(card)}
     </span>
   `;
+}
+
+function renderCardSuit(card) {
+  if (card?.suit !== "C") return `<span class="card-suit">${escapeHtml(displayCardSymbol(card))}</span>`;
+  return `
+    <svg class="card-suit card-suit-club" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <ellipse cx="12" cy="5.5" rx="3.1" ry="4.3"></ellipse>
+      <ellipse cx="6.6" cy="10.5" rx="3.1" ry="4.1" transform="rotate(-38 6.6 10.5)"></ellipse>
+      <ellipse cx="17.4" cy="10.5" rx="3.1" ry="4.1" transform="rotate(38 17.4 10.5)"></ellipse>
+      <path d="M10.5 11.5c.2 3.9-1 6.7-2.8 8.5h8.6c-1.8-1.8-3-4.6-2.8-8.5z"></path>
+    </svg>
+  `;
+}
+
+function displayCardSymbol(card) {
+  return card?.suit === "C" ? "♣" : card?.symbol || "";
+}
+
+function displayCardLabel(card) {
+  if (!card) return "";
+  if (card.type === "normal") return `${displayCardSymbol(card)}${card.rank || ""}`;
+  return card.label || `${card.symbol || ""}${card.rank || ""}`;
 }
 
 function cardSuitClass(card) {
@@ -2801,7 +2829,7 @@ function renderHand(hand, options = {}) {
               type="button"
               class="card ${card.color} ${cardSuitClass(card)} ${selectedCardIds.has(card.id) ? "selected" : ""} ${isThrowDraftCard(card.id) ? "throw-queued" : ""}"
               style="--i:${index}"
-              title="${escapeHtml(card.label)}"
+              title="${escapeHtml(displayCardLabel(card))}"
               aria-pressed="${selectedCardIds.has(card.id) ? "true" : "false"}"
               aria-disabled="${isThrowDraftCard(card.id) ? "true" : "false"}"
               data-action="toggle-card"
@@ -2828,7 +2856,7 @@ function renderHand(hand, options = {}) {
                 type="button"
                 class="card ${card.color} ${cardSuitClass(card)} ${selectedCardIds.has(card.id) ? "selected" : ""} ${isThrowDraftCard(card.id) ? "throw-queued" : ""}"
                 style="--i:${index}"
-                title="${escapeHtml(card.label)}"
+                title="${escapeHtml(displayCardLabel(card))}"
                 aria-pressed="${selectedCardIds.has(card.id) ? "true" : "false"}"
                 aria-disabled="${isThrowDraftCard(card.id) ? "true" : "false"}"
                 data-action="toggle-card"
@@ -2850,7 +2878,7 @@ function renderMiniCards(cards) {
   return `
     <div class="mini-cards">
       ${sortedCards.map((card, index) => `
-        <span class="mini-card ${card.color} ${cardSuitClass(card)}" style="--i:${index}" title="${escapeHtml(card.label)}">${cardCorner(card)}</span>
+        <span class="mini-card ${card.color} ${cardSuitClass(card)}" style="--i:${index}" title="${escapeHtml(displayCardLabel(card))}">${cardCorner(card)}</span>
       `).join("")}
     </div>
   `;
