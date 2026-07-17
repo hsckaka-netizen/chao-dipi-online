@@ -10,6 +10,7 @@
   --accent: #b86b22;
   --bad: #a93434;
   --good: #16744c;
+  --club: #285541;
   --shadow: 0 18px 50px rgba(27, 41, 34, 0.11);
 }
 
@@ -45,10 +46,6 @@ button {
   font-weight: 700;
 }
 
-button:hover {
-  background: var(--primary-dark);
-}
-
 button:disabled {
   cursor: not-allowed;
   background: #a7b2ad;
@@ -59,17 +56,23 @@ button.secondary {
   color: var(--text);
 }
 
-button.secondary:hover {
-  background: #dbe5df;
-}
-
 button.danger {
   background: #fff0ee;
   color: var(--bad);
 }
 
-button.danger:hover {
-  background: #f7deda;
+@media (hover: hover) and (pointer: fine) {
+  button:hover {
+    background: var(--primary-dark);
+  }
+
+  button.secondary:hover {
+    background: #dbe5df;
+  }
+
+  button.danger:hover {
+    background: #f7deda;
+  }
 }
 
 button.compact-button {
@@ -316,7 +319,7 @@ label {
 }
 
 .dogleg-panel .green {
-  color: #3f6f58;
+  color: var(--club);
 }
 
 .result-panel {
@@ -840,9 +843,10 @@ label {
 }
 
 .card.selected {
-  outline: 3px solid rgba(17, 106, 85, 0.28);
+  outline: 3px solid rgba(17, 106, 85, 0.34);
   border-color: var(--primary);
-  transform: translateY(-6px);
+  box-shadow: 0 8px 16px rgba(26, 76, 59, 0.16);
+  transform: translateY(-11px);
 }
 
 .card.static {
@@ -860,7 +864,7 @@ label {
 
 .card.green,
 .card.suit-C {
-  color: #3f6f58;
+  color: var(--club);
 }
 
 .card-corner {
@@ -1430,7 +1434,7 @@ label {
 .hand-count-badge.suit-C {
   border-color: #cbd9d1;
   background: #f3f7f4;
-  color: #3f6f58;
+  color: var(--club);
 }
 
 .hand-count-badge.suit-rank > span {
@@ -1447,7 +1451,7 @@ label {
 }
 
 .hand-count-badge.suit-C > span {
-  color: #3f6f58;
+  color: var(--club);
 }
 
 .seat-hand .card {
@@ -1469,15 +1473,123 @@ label {
 .seat-hand .hand-controls {
   justify-content: flex-end;
   align-self: center;
+  min-height: 52px;
+  align-content: flex-start;
 }
 
 .seat-hand .hand-controls button {
+  flex: 0 0 auto;
   min-height: 34px;
   padding: 0 12px;
 }
 
+.seat-hand .hand-controls .action-reason {
+  flex: 1 0 100%;
+  min-height: 14px;
+  text-align: right;
+  line-height: 14px;
+}
+
+.seat-hand .hand-controls .action-reason:empty {
+  visibility: hidden;
+}
+
 .seat-hand .turn-waiting {
   min-height: 32px;
+}
+
+.throw-entry {
+  border: 1px solid #d1b57a;
+  background: #fff8e8;
+  color: #7c4a13;
+}
+
+.throw-controls {
+  max-width: 620px;
+}
+
+.throw-draft {
+  display: grid;
+  gap: 7px;
+  margin: 2px 0 7px;
+  border-block: 1px solid #dfc99c;
+  background: #fffaf0;
+  padding: 7px 8px;
+}
+
+.throw-draft-head,
+.throw-component-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.throw-draft-head strong {
+  color: #7c4a13;
+  font-size: 13px;
+}
+
+.throw-draft-head span,
+.throw-component-title span,
+.throw-draft-empty {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.throw-components {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding-bottom: 2px;
+}
+
+.throw-component {
+  flex: 0 0 auto;
+  min-width: 112px;
+  border-left: 3px solid #d1b57a;
+  padding: 3px 6px 4px 8px;
+}
+
+.throw-component-title button {
+  min-height: 26px;
+  padding: 0 8px;
+  font-size: 11px;
+}
+
+.throw-component .mini-cards {
+  flex-wrap: nowrap;
+  padding: 4px 0 0 18px;
+}
+
+.throw-component .mini-card {
+  flex-basis: 43px;
+  width: 43px;
+  min-height: 54px;
+  margin-left: -18px;
+  padding: 4px 3px 0 4px;
+  font-size: 12px;
+}
+
+.card.throw-queued {
+  border-color: #d1b57a;
+  background: #fffaf0;
+  opacity: 0.58;
+  cursor: not-allowed;
+  transform: none;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .throw-entry:hover {
+    background: #f8eccf;
+  }
+
+  .card.throw-queued:hover {
+    border-color: #d1b57a;
+    background: #fffaf0;
+    transform: none;
+  }
 }
 
 .trick-player.played {
@@ -1632,7 +1744,7 @@ label {
 
 .mini-card.green,
 .mini-card.suit-C {
-  color: #3f6f58;
+  color: var(--club);
 }
 
 .history {

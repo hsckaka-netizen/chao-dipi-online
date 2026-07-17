@@ -386,6 +386,8 @@ function deal(room) {
   if (room.callMode === CALL_MODE_SCORE) room.setup.scoreBid = createScoreBidSetup(room);
   room.currentTrick = null;
   room.trickHistory = [];
+  room.playPauseUntil = null;
+  room.notice = null;
   if (room.callMode === CALL_MODE_SCORE && room.setup.scoreBid?.current) {
     const scoreBid = room.setup.scoreBid;
     room.phase = `${playerName(room, scoreBid.current.playerId)} 以 ${scoreBid.current.score} 分起叫，等待其他玩家加分或过`;
@@ -419,6 +421,8 @@ function resetRoomToLobby(room, options = {}) {
   room.setup = emptySetup();
   room.currentTrick = null;
   room.trickHistory = [];
+  room.playPauseUntil = null;
+  room.notice = null;
   room.players.forEach((player) => {
     player.hand = [];
     player.score = 0;
@@ -582,6 +586,11 @@ function trickSnapshot(room, trick) {
         at: play?.at || null,
         throwPlay: Boolean(play?.throwPlay),
         throwFailed: Boolean(play?.throwFailed),
+        throwAttemptCards: play?.throwAttemptCards?.map(publicCard) || [],
+        throwRevealUntil: play?.throwRevealUntil || null,
+        throwDisplayPhase: play?.throwFailed
+          ? (Date.now() < new Date(play.throwRevealUntil).getTime() ? "attempt" : "failed")
+          : "",
         cards: play ? play.cards.map(publicCard) : []
       };
     })
@@ -632,6 +641,7 @@ function roomSnapshot(room, viewer = null) {
     startedAt: room.startedAt,
     readyCount,
     allReady,
+    notice: room.notice?.expiresAt && Date.now() < new Date(room.notice.expiresAt).getTime() ? room.notice : null,
     hostId: room.hostId,
     setup: setupSnapshot(room),
     viewer: viewer ? { id: viewer.id, name: viewer.name, avatarUrl: viewer.avatarUrl || "", host: viewer.host, ready: Boolean(viewer.ready) } : null,
@@ -651,13 +661,25 @@ function roomSnapshot(room, viewer = null) {
       throwFailures: player.throwFailures || 0,
       cardCount: player.hand.length
     })),
-    hand: viewer ? viewer.hand.map(publicCard) : [],
+    hand: viewer ? viewerHandForSnapshot(room, viewer).map(publicCard) : [],
     currentTrick: trickSnapshot(room, room.currentTrick),
     trickHistory: room.trickHistory.map((trick) => trickSnapshot(room, trick)),
     playedProtectedFives: playedProtectedFiveCounts(room),
     result: room.result,
     events: room.events
   };
+}
+
+function viewerHandForSnapshot(room, viewer) {
+  const pendingThrow = room.currentTrick?.plays?.find((play) =>
+    play.playerId === viewer.id &&
+    play.throwFailed &&
+    play.throwAttemptCards?.length &&
+    Date.now() < new Date(play.throwRevealUntil).getTime()
+  );
+  if (!pendingThrow) return viewer.hand;
+  const attemptedIds = new Set(pendingThrow.throwAttemptCards.map((card) => card.id));
+  return viewer.hand.filter((card) => !attemptedIds.has(card.id));
 }
 
 function requirePlayer(res, room, playerId, token) {
@@ -998,6 +1020,7 @@ function orderedPlayersFrom(room, leaderId) {
 
 function expectedPlayerId(room) {
   if (room.stage !== "playing") return null;
+  if (room.playPauseUntil && Date.now() < new Date(room.playPauseUntil).getTime()) return null;
   const trick = room.currentTrick;
   if (!trick) return null;
   const leaderId = trick.leaderId || room.hostId || room.players[0]?.id || null;
@@ -2235,8 +2258,7 @@ function patternSignature(pattern) {
   return `${pattern.type}:${pattern.count}`;
 }
 
-function throwComponentFromGroups(groups, trumpSuit) {
-  const cards = groups.flatMap((group) => group.cards);
+function throwComponentFromCards(cards, trumpSuit) {
   const pattern = detectPlayPattern(cards, trumpSuit);
   if (!pattern) return null;
   return {
@@ -2248,6 +2270,42 @@ function throwComponentFromGroups(groups, trumpSuit) {
     strongestValue: Math.min(...cards.map((card) => patternValue(card, trumpSuit))),
     weakestValue: Math.max(...cards.map((card) => patternValue(card, trumpSuit)))
   };
+}
+
+function throwComponentFromGroups(groups, trumpSuit) {
+  return throwComponentFromCards(groups.flatMap((group) => group.cards), trumpSuit);
+}
+
+function throwComponentsFromExplicitGroups(cards, componentCardIds, trumpSuit) {
+  if (!Array.isArray(componentCardIds)) return throwComponentsFromCards(cards, trumpSuit);
+  if (!componentCardIds.length) return { error: "请至少加入一手甩牌牌型" };
+
+  const cardsById = new Map(cards.map((card) => [card.id, card]));
+  const usedIds = new Set();
+  const components = [];
+  const routes = new Set();
+  for (const ids of componentCardIds) {
+    if (!Array.isArray(ids) || !ids.length) return { error: "甩牌中存在空的牌型" };
+    const componentCards = [];
+    for (const rawId of ids) {
+      const cardId = String(rawId);
+      const card = cardsById.get(cardId);
+      if (!card) return { error: "甩牌分组中包含未选择的牌" };
+      if (usedIds.has(cardId)) return { error: "甩牌分组中不能重复使用同一张牌" };
+      usedIds.add(cardId);
+      componentCards.push(card);
+    }
+    const suitsInComponent = uniquePlaySuits(componentCards, trumpSuit);
+    if (suitsInComponent.length !== 1) return { error: "甩牌中的每手牌型必须属于同一路牌" };
+    const component = throwComponentFromCards(componentCards, trumpSuit);
+    if (!component) return { error: "甩牌中存在不合法的牌型" };
+    routes.add(suitsInComponent[0]);
+    components.push(component);
+  }
+
+  if (usedIds.size !== cards.length) return { error: "所有选中的牌都必须加入甩牌框" };
+  if (routes.size !== 1) return { error: "甩牌中的所有牌型必须属于同一路牌" };
+  return { suit: [...routes][0], components };
 }
 
 function throwComponentsFromCards(cards, trumpSuit) {
@@ -2308,16 +2366,11 @@ function throwComponentsFromCards(cards, trumpSuit) {
   return { suit: suitsInCards[0], components };
 }
 
-function throwShapeKey(components) {
-  return [...components].map((component) => component.signature).sort().join("|");
-}
-
 function throwPlayComparisonAgainstLead(info, cards, trumpSuit) {
   if (cards.length !== info.count) return null;
-  const parsed = throwComponentsFromCards(cards, trumpSuit);
-  if (parsed.error || !sameThrowShape(info.throwComponents, parsed.components)) return null;
   const suitsInCards = uniquePlaySuits(cards, trumpSuit);
   if (suitsInCards.length !== 1) return null;
+  if (!cardsMatchThrowComponents(cards, info.throwComponents, trumpSuit)) return null;
   const playSuitId = suitsInCards[0];
   let level = null;
   if (playSuitId === info.suit) level = 1;
@@ -2329,9 +2382,30 @@ function throwPlayComparisonAgainstLead(info, cards, trumpSuit) {
   };
 }
 
-function sameThrowShape(a, b) {
-  if (!a?.length || !b?.length || a.length !== b.length) return false;
-  return throwShapeKey(a) === throwShapeKey(b);
+function cardsMatchThrowComponents(cards, leadComponents, trumpSuit) {
+  const expectedCount = (leadComponents || []).reduce((total, component) => total + component.count, 0);
+  if (!leadComponents?.length || cards.length !== expectedCount) return false;
+  const ordered = [...leadComponents].sort((a, b) =>
+    b.count - a.count || a.signature.localeCompare(b.signature)
+  );
+  const failedStates = new Set();
+
+  function match(index, remaining) {
+    if (index === ordered.length) return remaining.length === 0;
+    const stateKey = `${index}:${remaining.map((card) => card.id).sort().join(",")}`;
+    if (failedStates.has(stateKey)) return false;
+    const candidates = exactPatternCandidates(remaining, ordered[index].pattern, trumpSuit);
+    for (const candidate of candidates) {
+      const candidateIds = new Set(candidate.map((card) => card.id));
+      const next = remaining.filter((card) => !candidateIds.has(card.id));
+      if (next.length !== remaining.length - candidate.length) continue;
+      if (match(index + 1, next)) return true;
+    }
+    failedStates.add(stateKey);
+    return false;
+  }
+
+  return match(0, cards);
 }
 
 function publicThrowComponents(components) {
@@ -2367,11 +2441,11 @@ function chooseFailedThrowComponent(beatableComponents) {
   return tied[randomInt(tied.length)];
 }
 
-function prepareThrowLeadPlay(room, player, selected) {
+function prepareThrowLeadPlay(room, player, selected, componentCardIds = null) {
   if (leadInfo(room.currentTrick, room.trumpSuit)) {
     return { error: "只有首家出牌时可以甩牌", status: 400 };
   }
-  const parsed = throwComponentsFromCards(selected, room.trumpSuit);
+  const parsed = throwComponentsFromExplicitGroups(selected, componentCardIds, room.trumpSuit);
   if (parsed.error) return { error: parsed.error, status: 400 };
 
   const otherPlayers = room.players.filter((item) => item.id !== player.id);
@@ -2381,13 +2455,13 @@ function prepareThrowLeadPlay(room, player, selected) {
 
   if (beatableComponents.length) {
     const failedComponent = chooseFailedThrowComponent(beatableComponents);
-    player.throwFailures = (player.throwFailures || 0) + 1;
-    addEvent(room, `${player.name} 甩牌失败，改出 ${failedComponent.cards.map((card) => card.label).join(" ")}，累计甩牌失败 ${player.throwFailures} 次`);
     return {
       ok: true,
       failed: true,
       cards: failedComponent.cards,
-      components: [failedComponent]
+      components: [failedComponent],
+      attemptCards: selected,
+      revealUntil: new Date(Date.now() + 2400).toISOString()
     };
   }
 
@@ -2863,6 +2937,11 @@ function playCards(room, player, cardIds, options = {}) {
   if (room.status !== "dealt" || room.stage !== "playing") {
     return { error: "还没有进入打牌阶段，暂不能出牌", status: 409 };
   }
+  if (room.playPauseUntil) {
+    const pauseUntil = new Date(room.playPauseUntil).getTime();
+    if (Date.now() < pauseUntil) return { error: "正在展示甩牌判定结果，请稍候", status: 409 };
+    room.playPauseUntil = null;
+  }
   if (!Array.isArray(cardIds) || cardIds.length === 0) {
     return { error: "请选择要出的牌", status: 400 };
   }
@@ -2885,7 +2964,7 @@ function playCards(room, player, cardIds, options = {}) {
   let playedCards = selected;
   let throwMeta = null;
   if (options.throwPlay) {
-    throwMeta = prepareThrowLeadPlay(room, player, selected);
+    throwMeta = prepareThrowLeadPlay(room, player, selected, options.throwComponents);
     if (throwMeta.error) return { error: throwMeta.error, status: throwMeta.status || 400 };
     playedCards = throwMeta.cards;
   } else {
@@ -2903,15 +2982,24 @@ function playCards(room, player, cardIds, options = {}) {
     cards: playedCards,
     throwPlay: Boolean(throwMeta && !throwMeta.failed),
     throwFailed: Boolean(throwMeta?.failed),
+    throwAttemptCards: throwMeta?.attemptCards || null,
+    throwRevealUntil: throwMeta?.revealUntil || null,
     throwComponents: throwMeta?.components ? publicThrowComponents(throwMeta.components) : null
   });
-  addEvent(room, `${player.name} 第 ${room.currentTrick.number} 轮出了 ${playedCards.map((card) => card.label).join(" ")}`);
+  if (!throwMeta?.failed) {
+    addEvent(room, `${player.name} 第 ${room.currentTrick.number} 轮出了 ${playedCards.map((card) => card.label).join(" ")}`);
+  }
   revealDoglegIfNeeded(room, player, playedCards);
 
   if (room.currentTrick.plays.length === room.players.length) {
     completeCurrentTrick(room);
   }
 
+  if (throwMeta?.failed) {
+    const resumeAt = new Date(new Date(throwMeta.revealUntil).getTime() + 1400).toISOString();
+    room.playPauseUntil = resumeAt;
+    return { ok: true, revealAt: throwMeta.revealUntil, resumeAt };
+  }
   return { ok: true };
 }
 
@@ -3028,6 +3116,8 @@ async function handleApi(req, res, pathParts, url) {
       setup: emptySetup(),
       currentTrick: null,
       trickHistory: [],
+      playPauseUntil: null,
+      notice: null,
       events: [],
       clients: new Set()
     };
@@ -3365,8 +3455,43 @@ async function handleApi(req, res, pathParts, url) {
       const body = await readJson(req);
       const viewer = requirePlayer(res, room, body.playerId, body.token);
       if (!viewer) return;
-      const result = playCards(room, viewer, body.cardIds, { throwPlay: Boolean(body.throwPlay) });
+      const result = playCards(room, viewer, body.cardIds, {
+        throwPlay: Boolean(body.throwPlay),
+        throwComponents: body.throwComponents
+      });
       if (result.error) return writeJson(res, result.status, { error: result.error });
+      if (result.resumeAt) {
+        const revealAt = result.revealAt;
+        const resumeAt = result.resumeAt;
+        const noticeId = `throw-${room.currentTrick?.number || 0}-${viewer.id}-${revealAt}`;
+        broadcast(room);
+        setTimeout(() => {
+          const activeRoom = rooms.get(room.id);
+          if (!activeRoom || activeRoom.playPauseUntil !== resumeAt) return;
+          const failedPlayer = playerById(activeRoom, viewer.id);
+          const failedPlay = activeRoom.currentTrick?.plays?.find((play) => play.playerId === viewer.id && play.throwFailed);
+          if (failedPlayer && failedPlay) {
+            failedPlayer.throwFailures = (failedPlayer.throwFailures || 0) + 1;
+            addEvent(activeRoom, `${failedPlayer.name} 甩牌失败，改出 ${failedPlay.cards.map((card) => card.label).join(" ")}，累计甩牌失败 ${failedPlayer.throwFailures} 次`);
+          }
+          activeRoom.notice = {
+            id: noticeId,
+            text: `${viewer.name} 甩牌失败，已自动改出被压过的牌型。`,
+            bad: true,
+            expiresAt: new Date(Date.now() + 4500).toISOString()
+          };
+          broadcast(activeRoom);
+        }, Math.max(0, new Date(revealAt).getTime() - Date.now()) + 20);
+        setTimeout(() => {
+          const activeRoom = rooms.get(room.id);
+          if (!activeRoom || activeRoom.playPauseUntil !== resumeAt) return;
+          activeRoom.playPauseUntil = null;
+          const autoPlayed = autoPlayTestPlayersUntilHuman(activeRoom);
+          if (autoPlayed) addEvent(activeRoom, `机器人自动出牌 ${autoPlayed} 次，已停在下一个真人玩家`);
+          broadcast(activeRoom);
+        }, Math.max(0, new Date(resumeAt).getTime() - Date.now()) + 20);
+        return writeJson(res, 200, roomSnapshot(room, viewer));
+      }
       if (!viewer.test) {
         const autoPlayed = autoPlayTestPlayersUntilHuman(room);
         if (autoPlayed) addEvent(room, `机器人自动出牌 ${autoPlayed} 次，已停在下一个真人玩家`);

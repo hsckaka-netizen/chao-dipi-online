@@ -6,6 +6,7 @@ let state = null;
 let message = "";
 let messageBad = false;
 let selectedCardIds = new Set();
+let throwDraftComponents = null;
 let dragSelect = null;
 let suppressCardClickUntil = 0;
 let activeDialog = null;
@@ -13,6 +14,7 @@ let dismissedActionDialogKey = null;
 let dismissedResultRoomId = null;
 let messageTimer = null;
 let scoreBidAutoPassTimer = null;
+let throwRevealTimer = null;
 let homeView = "rooms";
 let profiles = [];
 let profilesLoaded = false;
@@ -40,18 +42,21 @@ function clearSession() {
   localStorage.removeItem(storageKey);
   if (source) source.close();
   if (scoreBidAutoPassTimer) window.clearTimeout(scoreBidAutoPassTimer);
+  if (throwRevealTimer) window.clearTimeout(throwRevealTimer);
   scoreBidAutoPassTimer = null;
+  throwRevealTimer = null;
   source = null;
   state = null;
+  throwDraftComponents = null;
   render();
 }
 
-function setMessage(text, bad = false) {
+function setMessage(text, bad = false, autoDismiss = !bad) {
   if (messageTimer) window.clearTimeout(messageTimer);
   message = text;
   messageBad = bad;
   render();
-  if (text && !bad) {
+  if (text && autoDismiss) {
     messageTimer = window.setTimeout(() => {
       if (message === text) {
         message = "";
@@ -77,6 +82,8 @@ function applyState(nextState, options = {}) {
   if (sameRoom && previousVersion && nextVersion && nextVersion < previousVersion) return false;
   const previousHandIds = new Set((state?.hand || []).map((card) => card.id));
   state = nextState;
+  syncThrowDraftForState();
+  scheduleThrowReveal(previousState);
   if (previousState?.roomId !== nextState.roomId || nextState.status !== "finished") {
     dismissedResultRoomId = null;
   }
@@ -87,9 +94,16 @@ function applyState(nextState, options = {}) {
     activeDialog = null;
     dismissedResultRoomId = null;
     selectedCardIds = new Set();
+    throwDraftComponents = null;
   }
+  const roomNotice = nextState.notice?.id && nextState.notice.id !== previousState?.notice?.id
+    ? nextState.notice
+    : null;
+  const throwNotice = throwFailureTransitionNotice(previousState, nextState);
   const notice = transitionNotice(previousState, nextState);
-  if (notice && options.showTransitionNotice !== false) setMessage(notice);
+  if (roomNotice && options.showTransitionNotice !== false) setMessage(roomNotice.text, Boolean(roomNotice.bad), true);
+  else if (throwNotice && options.showTransitionNotice !== false) setMessage(throwNotice, true, true);
+  else if (notice && options.showTransitionNotice !== false) setMessage(notice);
   scheduleScoreBidAutoPass();
   if (options.highlightNewKitty === false || !shouldHighlightNewKitty(nextState)) return false;
   const newCardIds = (nextState.hand || [])
@@ -143,6 +157,74 @@ function transitionNotice(previousState, nextState) {
     return `本局结束：${nextState.result?.winnerTeamName || "胜方"}获胜，闲家每人 ${nextState.result?.idleEachScoreText || 0} 分。`;
   }
   return "";
+}
+
+function throwFailureEntries() {
+  if (!state) return [];
+  const tricks = [...(state.trickHistory || [])];
+  if (state.currentTrick && !tricks.some((trick) => trick.number === state.currentTrick.number)) {
+    tricks.push(state.currentTrick);
+  }
+  return tricks.flatMap((trick) => (trick.plays || [])
+    .filter((play) => play.throwFailed && play.throwRevealUntil)
+    .map((play) => ({
+      trickNumber: trick.number,
+      play,
+      revealAt: new Date(play.throwRevealUntil).getTime()
+    })))
+    .filter((entry) => Number.isFinite(entry.revealAt));
+}
+
+function isThrowAttemptVisible(play) {
+  if (play?.throwDisplayPhase) return play.throwDisplayPhase === "attempt";
+  return Boolean(
+    play?.throwFailed &&
+    play.throwAttemptCards?.length &&
+    play.throwRevealUntil &&
+    Date.now() < new Date(play.throwRevealUntil).getTime()
+  );
+}
+
+function displayedPlayCards(play) {
+  return isThrowAttemptVisible(play) ? play.throwAttemptCards : (play.cards || []);
+}
+
+function snapshotPlays(snapshot) {
+  if (!snapshot) return [];
+  const tricks = [...(snapshot.trickHistory || [])];
+  if (snapshot.currentTrick && !tricks.some((trick) => trick.number === snapshot.currentTrick.number)) {
+    tricks.push(snapshot.currentTrick);
+  }
+  return tricks.flatMap((trick) => (trick.plays || []).map((play) => ({ trickNumber: trick.number, play })));
+}
+
+function throwFailureTransitionNotice(previousState, nextState) {
+  if (!previousState || previousState.roomId !== nextState?.roomId) return "";
+  const previousPhases = new Map(snapshotPlays(previousState).map(({ trickNumber, play }) => [
+    `${trickNumber}:${play.playerId}:${play.at || ""}`,
+    play.throwDisplayPhase || ""
+  ]));
+  const revealed = snapshotPlays(nextState).find(({ trickNumber, play }) =>
+    play.throwFailed &&
+    play.throwDisplayPhase === "failed" &&
+    previousPhases.get(`${trickNumber}:${play.playerId}:${play.at || ""}`) === "attempt"
+  );
+  return revealed ? `${revealed.play.playerName} 甩牌失败，已自动改出被压过的牌型。` : "";
+}
+
+function scheduleThrowReveal() {
+  if (throwRevealTimer) window.clearTimeout(throwRevealTimer);
+  throwRevealTimer = null;
+  const entries = throwFailureEntries();
+  const nowMs = Date.now();
+  const nextEntry = entries
+    .filter((entry) => entry.revealAt > nowMs)
+    .sort((a, b) => a.revealAt - b.revealAt)[0];
+  if (!nextEntry) return;
+  throwRevealTimer = window.setTimeout(() => {
+    throwRevealTimer = null;
+    render();
+  }, Math.max(0, nextEntry.revealAt - nowMs) + 30);
 }
 
 function hasCompleteKittySelection() {
@@ -514,18 +596,43 @@ async function chooseDoglegSelectedCard() {
   }
 }
 
-async function playSelectedCards(throwPlay = false) {
+async function playSelectedCards() {
   if (!session) return;
   try {
     const cardIds = [...selectedCardIds];
     applyState(await api(`/api/rooms/${session.roomId}/play`, {
       method: "POST",
-      body: JSON.stringify({ playerId: session.playerId, token: session.token, cardIds, throwPlay })
+      body: JSON.stringify({ playerId: session.playerId, token: session.token, cardIds, throwPlay: false })
     }), { highlightNewKitty: false });
     const playedIds = new Set(cardIds);
     const handIds = new Set((state.hand || []).map((card) => card.id));
     selectedCardIds = new Set([...selectedCardIds].filter((cardId) => !playedIds.has(cardId) && handIds.has(cardId)));
-    setMessage(throwPlay ? "已尝试甩牌，结果以桌面和日志为准。" : "已出牌，其他玩家会在当前轮看到。");
+    setMessage("已出牌，其他玩家会在当前轮看到。");
+  } catch (error) {
+    setMessage(error.message, true);
+  }
+}
+
+async function playThrowDraft() {
+  if (!session || !throwDraftComponents) return;
+  const validation = validateThrowDraft();
+  if (!validation.ok) return setMessage(validation.reason, true);
+  const components = throwDraftComponents.map((component) => [...component]);
+  const cardIds = components.flat();
+  try {
+    applyState(await api(`/api/rooms/${session.roomId}/play`, {
+      method: "POST",
+      body: JSON.stringify({
+        playerId: session.playerId,
+        token: session.token,
+        cardIds,
+        throwPlay: true,
+        throwComponents: components
+      })
+    }), { highlightNewKitty: false });
+    throwDraftComponents = null;
+    selectedCardIds = new Set();
+    setMessage("甩牌已提交，结果以桌面和日志为准。");
   } catch (error) {
     setMessage(error.message, true);
   }
@@ -727,6 +834,113 @@ function viewerCanSelectCards() {
 function selectedCards() {
   const ids = new Set(selectedCardIds);
   return (state?.hand || []).filter((card) => ids.has(card.id));
+}
+
+function throwDraftCardIds() {
+  return new Set((throwDraftComponents || []).flat());
+}
+
+function isThrowDraftCard(cardId) {
+  return Boolean(throwDraftComponents && throwDraftCardIds().has(cardId));
+}
+
+function cardsFromIds(cardIds) {
+  const ids = new Set(cardIds || []);
+  return (state?.hand || []).filter((card) => ids.has(card.id));
+}
+
+function syncThrowDraftForState() {
+  if (!throwDraftComponents) return;
+  if (!viewerCanThrowLead()) {
+    throwDraftComponents = null;
+    return;
+  }
+  const handIds = new Set((state?.hand || []).map((card) => card.id));
+  const complete = throwDraftComponents.every((component) =>
+    component.length > 0 && component.every((cardId) => handIds.has(cardId))
+  );
+  if (!complete) throwDraftComponents = null;
+}
+
+function enterThrowMode() {
+  if (!viewerCanThrowLead()) return setMessage("只有首家出牌时可以甩牌", true);
+  throwDraftComponents = [];
+  selectedCardIds = new Set();
+  render();
+}
+
+function cancelThrowMode() {
+  throwDraftComponents = null;
+  selectedCardIds = new Set();
+  render();
+}
+
+function throwDraftRoute() {
+  const firstCardId = throwDraftComponents?.[0]?.[0];
+  return playSuit(cardsFromIds([firstCardId])[0]);
+}
+
+function playPatternLabel(pattern) {
+  if (!pattern) return "不合法牌型";
+  if (pattern.type === "single") return "单张";
+  if (pattern.type === "multi") return `${pattern.width} 张同点牌`;
+  if (pattern.type === "tractor") return `${pattern.width} 张头拖拉机`;
+  return "牌型";
+}
+
+function validateThrowComponentSelection() {
+  if (!viewerCanThrowLead()) return { ok: false, reason: "只有首家出牌时可以甩牌" };
+  if (!throwDraftComponents) return { ok: false, reason: "请先进入甩牌模式" };
+  const cards = selectedCards();
+  if (!cards.length) return { ok: false, reason: "请选择一手要加入的牌型" };
+  if (cards.some((card) => isThrowDraftCard(card.id))) return { ok: false, reason: "甩牌框中已有这些牌" };
+  const suits = uniquePlaySuits(cards);
+  if (suits.length !== 1) return { ok: false, reason: "每一手牌型必须属于同一路牌" };
+  const pattern = detectPlayPattern(cards);
+  if (!pattern) return { ok: false, reason: "当前选择不是合法的单张、多张或拖拉机" };
+  const route = throwDraftRoute();
+  if (route && suits[0] !== route) {
+    return { ok: false, reason: `甩牌框内是${followSuitName(route)}，只能继续加入同一路牌` };
+  }
+  return { ok: true, reason: "", pattern };
+}
+
+function addSelectedThrowComponent() {
+  const validation = validateThrowComponentSelection();
+  if (!validation.ok) return setMessage(validation.reason, true);
+  throwDraftComponents.push([...selectedCardIds]);
+  selectedCardIds = new Set();
+  setMessage(`已加入第 ${throwDraftComponents.length} 手牌型：${playPatternLabel(validation.pattern)}。`);
+}
+
+function removeThrowComponent(index) {
+  if (!throwDraftComponents || !Number.isInteger(index) || index < 0 || index >= throwDraftComponents.length) return;
+  throwDraftComponents.splice(index, 1);
+  selectedCardIds = new Set();
+  render();
+}
+
+function validateThrowDraft() {
+  if (!viewerCanThrowLead()) return { ok: false, reason: "只有首家出牌时可以甩牌" };
+  if (!throwDraftComponents?.length) return { ok: false, reason: "请至少加入一手牌型" };
+  if (selectedCardIds.size) return { ok: false, reason: "请先把当前选牌加入甩牌框，或取消选中" };
+  const routes = new Set();
+  const used = new Set();
+  for (const component of throwDraftComponents) {
+    const cards = cardsFromIds(component);
+    if (cards.length !== component.length || !detectPlayPattern(cards)) {
+      return { ok: false, reason: "甩牌框中存在已经失效的牌型" };
+    }
+    const suits = uniquePlaySuits(cards);
+    if (suits.length !== 1) return { ok: false, reason: "甩牌框中的牌型必须属于同一路牌" };
+    routes.add(suits[0]);
+    for (const card of cards) {
+      if (used.has(card.id)) return { ok: false, reason: "甩牌框中不能重复使用同一张牌" };
+      used.add(card.id);
+    }
+  }
+  if (routes.size !== 1) return { ok: false, reason: "甩牌框中的所有牌型必须属于同一路牌" };
+  return { ok: true, reason: "" };
 }
 
 function isTwoCard(card) {
@@ -972,14 +1186,6 @@ function viewerCanThrowLead() {
   return viewerCanPlayCurrent() && !leadInfoFromSnapshot(state.currentTrick);
 }
 
-function validateThrowSelection() {
-  if (!viewerCanThrowLead()) return { ok: false, reason: "只有首家出牌时可以甩牌" };
-  const cards = selectedCards();
-  if (!cards.length) return { ok: false, reason: "请选择要甩的牌" };
-  if (uniquePlaySuits(cards).length !== 1) return { ok: false, reason: "甩牌必须选择同一路牌" };
-  return { ok: true, reason: "" };
-}
-
 function selectionAction() {
   if (viewerCanBid()) {
     const validation = validateBidLikeSelection("bid");
@@ -1010,15 +1216,26 @@ function selectionAction() {
     };
   }
   if (viewerCanPlayCurrent()) {
+    if (throwDraftComponents) {
+      const componentValidation = validateThrowComponentSelection();
+      const throwValidation = validateThrowDraft();
+      return {
+        action: "add-throw-component",
+        label: "加入甩牌框",
+        enabled: componentValidation.ok,
+        reason: componentValidation.reason,
+        throwMode: true,
+        throwEnabled: throwValidation.ok,
+        throwReason: throwValidation.reason
+      };
+    }
     const validation = validatePlaySelection();
-    const throwValidation = validateThrowSelection();
     return {
       action: "play-selected",
       label: "出选中的牌",
       enabled: validation.ok,
       reason: validation.reason,
-      throwEnabled: throwValidation.ok,
-      throwReason: throwValidation.reason
+      canEnterThrow: viewerCanThrowLead()
     };
   }
   return null;
@@ -1026,18 +1243,30 @@ function selectionAction() {
 
 function renderHandControls(action) {
   if (action) {
-    const throwButton = action.action === "play-selected" && viewerCanThrowLead()
-      ? `<button type="button" class="secondary" data-action="throw-selected" ${action.throwEnabled ? "" : "disabled"}>甩牌</button>`
+    if (action.throwMode) {
+      const reason = selectedCardIds.size
+        ? (!action.enabled ? action.reason : "")
+        : (!action.throwEnabled ? action.throwReason : "");
+      return `
+        <div class="row hand-controls throw-controls">
+          <span class="tag">${selectedCardIds.size} 张已选</span>
+          <button type="button" data-action="add-throw-component" ${action.enabled ? "" : "disabled"}>加入牌型</button>
+          <button type="button" data-action="confirm-throw" ${action.throwEnabled ? "" : "disabled"}>确认甩牌</button>
+          <button type="button" class="secondary" data-action="cancel-throw">取消</button>
+          <span class="action-reason">${escapeHtml(reason)}</span>
+        </div>
+      `;
+    }
+    const throwButton = action.action === "play-selected" && action.canEnterThrow
+      ? `<button type="button" class="secondary throw-entry" data-action="enter-throw">甩牌</button>`
       : "";
-    const reason = !action.enabled && action.reason
-      ? action.reason
-      : (throwButton && !action.throwEnabled && action.throwReason ? action.throwReason : "");
+    const reason = !action.enabled && action.reason ? action.reason : "";
     return `
       <div class="row hand-controls">
         <span class="tag">${selectedCardIds.size} 张已选</span>
         <button type="button" data-action="${action.action}" ${action.enabled ? "" : "disabled"}>${escapeHtml(action.label)}</button>
         ${throwButton}
-        ${reason ? `<span class="action-reason">${escapeHtml(reason)}</span>` : ""}
+        <span class="action-reason">${escapeHtml(reason)}</span>
       </div>
     `;
   }
@@ -1054,6 +1283,34 @@ function renderHandControls(action) {
     <div class="hand-waiting-controls">
       <span class="tag">${selectedCardIds.size} 张已选</span>
       <div class="turn-waiting">${escapeHtml(text)}</div>
+    </div>
+  `;
+}
+
+function renderThrowDraft() {
+  if (!throwDraftComponents) return "";
+  const totalCards = throwDraftComponents.reduce((total, component) => total + component.length, 0);
+  return `
+    <div class="throw-draft">
+      <div class="throw-draft-head">
+        <strong>甩牌框</strong>
+        <span>${throwDraftComponents.length} 手 · ${totalCards} 张</span>
+      </div>
+      <div class="throw-components">
+        ${throwDraftComponents.length ? throwDraftComponents.map((component, index) => {
+          const cards = cardsFromIds(component);
+          const pattern = detectPlayPattern(cards);
+          return `
+            <div class="throw-component">
+              <div class="throw-component-title">
+                <span>第 ${index + 1} 手 · ${escapeHtml(playPatternLabel(pattern))}</span>
+                <button type="button" class="secondary" data-action="remove-throw-component" data-component-index="${index}">移除</button>
+              </div>
+              ${renderMiniCards(cards)}
+            </div>
+          `;
+        }).join("") : `<div class="throw-draft-empty">尚未加入牌型</div>`}
+      </div>
     </div>
   `;
 }
@@ -2134,6 +2391,7 @@ function renderSeatHand(action, play, trick, index, options = {}) {
         </div>
         ${renderHandControls(action)}
       </div>
+      ${renderThrowDraft()}
       ${renderHand(state.hand, { compact: true })}
     </div>
   `;
@@ -2177,7 +2435,8 @@ function renderTrick(trick, current, options = {}) {
           </div>
         ` : ""}
         ${displayPlays.map((play, index) => {
-          const playContent = setupTable ? renderSetupActionTrail(play.setupActions) : (play.played ? renderMiniCards(play.cards) : "");
+          const playCards = displayedPlayCards(play);
+          const playContent = setupTable ? renderSetupActionTrail(play.setupActions) : (play.played ? renderMiniCards(playCards) : "");
           const isViewerSeat = current && play.playerId === state.viewer?.id;
           const playIndex = play.turnIndex ?? index;
           const statusText = playStatusText(trick, play, playIndex, current, { heldResult, setupTable });
@@ -2195,7 +2454,7 @@ function renderTrick(trick, current, options = {}) {
                 <span>方五 <b>${play.draggedDiamondFives || 0}</b></span>
                 <span>甩失 <b>${play.throwFailures || 0}</b></span>
               </div>
-              ${!current && play.played ? renderMiniCards(play.cards) : ""}
+              ${!current && play.played ? renderMiniCards(playCards) : ""}
             </div>
           `;
           if (!current) return playerCard;
@@ -2214,21 +2473,24 @@ function renderTrick(trick, current, options = {}) {
 
 function playStatusText(trick, play, index, current, options = {}) {
   if (options.setupTable) return play.statusText || "等待";
+  if (isThrowAttemptVisible(play)) return "甩牌判断中";
   if (!current) {
+    if (play.throwFailed) return "甩牌失败";
+    if (play.throwPlay) return "甩牌成功";
     if (play.winning) return "本轮最大";
     return play.played ? fmtTime(play.at) : "未出牌";
   }
   if (options.heldResult) {
-    if (play.winning) return "本轮最大";
     if (play.throwFailed) return "甩牌失败";
     if (play.throwPlay) return "甩牌成功";
+    if (play.winning) return "本轮最大";
     return play.played ? "已出" : "未出牌";
   }
   if (trick.currentTurnPlayerId === play.playerId) return "当前";
-  if (play.winning && play.played) return "当前最大";
-  if (play.lead) return play.played ? "首家已出" : "首家";
   if (play.throwFailed) return "甩牌失败";
   if (play.throwPlay) return "甩牌成功";
+  if (play.winning && play.played) return "当前最大";
+  if (play.lead) return play.played ? "首家已出" : "首家";
   if (play.played) return `${index + 1}手已出`;
   return `${index + 1}手`;
 }
@@ -2527,10 +2789,11 @@ function renderHand(hand, options = {}) {
           ${compactCards.map((card, index) => `
             <button
               type="button"
-              class="card ${card.color} ${cardSuitClass(card)} ${selectedCardIds.has(card.id) ? "selected" : ""}"
+              class="card ${card.color} ${cardSuitClass(card)} ${selectedCardIds.has(card.id) ? "selected" : ""} ${isThrowDraftCard(card.id) ? "throw-queued" : ""}"
               style="--i:${index}"
               title="${escapeHtml(card.label)}"
               aria-pressed="${selectedCardIds.has(card.id) ? "true" : "false"}"
+              aria-disabled="${isThrowDraftCard(card.id) ? "true" : "false"}"
               data-action="toggle-card"
               data-card-id="${escapeHtml(card.id)}"
             >
@@ -2553,10 +2816,11 @@ function renderHand(hand, options = {}) {
             ${group.cards.map((card, index) => `
               <button
                 type="button"
-                class="card ${card.color} ${cardSuitClass(card)} ${selectedCardIds.has(card.id) ? "selected" : ""}"
+                class="card ${card.color} ${cardSuitClass(card)} ${selectedCardIds.has(card.id) ? "selected" : ""} ${isThrowDraftCard(card.id) ? "throw-queued" : ""}"
                 style="--i:${index}"
                 title="${escapeHtml(card.label)}"
                 aria-pressed="${selectedCardIds.has(card.id) ? "true" : "false"}"
+                aria-disabled="${isThrowDraftCard(card.id) ? "true" : "false"}"
                 data-action="toggle-card"
                 data-card-id="${escapeHtml(card.id)}"
               >
@@ -2643,7 +2907,7 @@ function shouldSuppressCardClick() {
 }
 
 function toggleCard(cardId) {
-  if (!cardId || !viewerCanSelectCards()) return;
+  if (!cardId || !viewerCanSelectCards() || isThrowDraftCard(cardId)) return;
   setCardSelected(cardId, !selectedCardIds.has(cardId));
   render();
 }
@@ -2651,7 +2915,7 @@ function toggleCard(cardId) {
 function beginDragSelect(event) {
   const cardElement = event.target.closest("[data-card-id]");
   const cardId = cardElement?.dataset.cardId;
-  if (!cardId || !viewerCanSelectCards()) return;
+  if (!cardId || !viewerCanSelectCards() || isThrowDraftCard(cardId)) return;
   if (event.pointerType === "mouse" && event.button !== 0) return;
   suppressNextCardClick();
   dragSelect = {
@@ -2673,7 +2937,7 @@ function continueDragSelect(event) {
   if (!dragSelect || event.pointerId !== dragSelect.pointerId) return;
   const target = document.elementFromPoint(event.clientX, event.clientY)?.closest("[data-card-id]");
   const cardId = target?.dataset.cardId;
-  if (!cardId || !viewerCanSelectCards()) return;
+  if (!cardId || !viewerCanSelectCards() || isThrowDraftCard(cardId)) return;
   if (!dragSelect.active) {
     const dx = event.clientX - dragSelect.startX;
     const dy = event.clientY - dragSelect.startY;
@@ -2745,8 +3009,14 @@ document.addEventListener("click", (event) => {
     render();
   }
   if (action === "dogleg-selected") chooseDoglegSelectedCard();
-  if (action === "play-selected") playSelectedCards(false);
-  if (action === "throw-selected") playSelectedCards(true);
+  if (action === "play-selected") playSelectedCards();
+  if (action === "enter-throw") enterThrowMode();
+  if (action === "add-throw-component") addSelectedThrowComponent();
+  if (action === "remove-throw-component") {
+    removeThrowComponent(Number(event.target.closest("[data-component-index]")?.dataset.componentIndex));
+  }
+  if (action === "confirm-throw") playThrowDraft();
+  if (action === "cancel-throw") cancelThrowMode();
   if (action === "reset") resetRoom();
   if (action === "play-again") playAgain();
   if (action === "open-kitty") {
