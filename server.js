@@ -13,12 +13,12 @@ const port = Number(process.env.PORT || 3000);
 
 const MIN_PLAYERS = 5;
 const MAX_PLAYERS = 9;
-let snapshotSequence = 0;
 const HAND_SIZE = 53;
 const CALL_MODE_TWO = "two";
 const CALL_MODE_SCORE = "score";
 const SCORE_BID_SECONDS = 20;
 const AI_PLAY_DELAY_MS = 1000;
+const MAX_GAME_EVENTS = 700;
 
 const suits = [
   { id: "S", name: "黑桃", symbol: "♠", color: "black", sort: 0 },
@@ -89,7 +89,7 @@ function now() {
 
 function addEvent(room, text) {
   room.events.unshift({ id: id(6), at: now(), text });
-  room.events = room.events.slice(0, 30);
+  room.events = room.events.slice(0, MAX_GAME_EVENTS);
 }
 
 function publicProfile(profile) {
@@ -362,6 +362,7 @@ function sortHand(hand) {
 
 function deal(room) {
   clearAiPlayTimer(room);
+  room.events = [];
   const count = room.players.length;
   const deck = shuffle(createDeck(count));
   room.players.forEach((player, playerIndex) => {
@@ -425,7 +426,6 @@ function resetRoomToLobby(room, options = {}) {
   room.result = null;
   room.setup = emptySetup();
   room.currentTrick = null;
-  room.trickHistory = [];
   room.playPauseUntil = null;
   room.notice = null;
   room.players.forEach((player) => {
@@ -558,7 +558,9 @@ function trickSnapshot(room, trick) {
   if (!trick) return null;
   const currentTurnPlayerId = trick === room.currentTrick ? expectedPlayerId(room) : null;
   const turnIndexByPlayerId = new Map(orderedPlayersFrom(room, trick.leaderId || room.hostId).map((player, index) => [player.id, index]));
-  const provisionalOutcome = trick.plays.length ? settleTrick(room, trick) : null;
+  const provisionalOutcome = trick === room.currentTrick && trick.plays.length && trick.winningPlayIndex == null
+    ? settleTrick(room, trick)
+    : null;
   const winningPlayIndex = trick.winningPlayIndex ?? provisionalOutcome?.winningPlayIndex ?? null;
   return {
     number: trick.number,
@@ -625,7 +627,7 @@ function roomSnapshot(room, viewer = null) {
   const readyCount = readyPlayerCount(room);
   const allReady = allPlayersReady(room);
   return {
-    snapshotVersion: ++snapshotSequence,
+    snapshotVersion: room.snapshotVersion || 0,
     roomId: room.id,
     status: room.status,
     stage: room.stage,
@@ -3079,10 +3081,28 @@ function getRoom(res, rawRoomId) {
 }
 
 function broadcast(room) {
+  room.snapshotVersion = (room.snapshotVersion || 0) + 1;
   for (const client of room.clients) {
-    const viewer = room.players.find((player) => player.id === client.playerId) || null;
-    client.res.write(`event: state\ndata: ${JSON.stringify(roomSnapshot(room, viewer))}\n\n`);
+    sendLatestState(room, client);
   }
+}
+
+function sendLatestState(room, client) {
+  if (!room.clients.has(client)) return;
+  if (client.backpressured) {
+    client.pendingState = true;
+    return;
+  }
+  const viewer = room.players.find((player) => player.id === client.playerId) || null;
+  const payload = `id: ${room.snapshotVersion || 0}\nevent: state\ndata: ${JSON.stringify(roomSnapshot(room, viewer))}\n\n`;
+  if (client.res.write(payload)) return;
+  client.backpressured = true;
+  client.res.once("drain", () => {
+    client.backpressured = false;
+    if (!room.clients.has(client) || !client.pendingState) return;
+    client.pendingState = false;
+    sendLatestState(room, client);
+  });
 }
 
 function updateConnection(room, playerId, connected) {
@@ -3155,7 +3175,8 @@ async function handleApi(req, res, pathParts, url) {
       aiPlayTimer: null,
       notice: null,
       events: [],
-      clients: new Set()
+      clients: new Set(),
+      snapshotVersion: 0
     };
     rooms.set(room.id, room);
     addEvent(room, `${profile.name} 创建了房间`);
@@ -3629,16 +3650,19 @@ function handleEvents(req, res, url) {
     connection: "keep-alive",
     "x-accel-buffering": "no"
   });
-  res.write(`event: state\ndata: ${JSON.stringify(roomSnapshot(room, viewer))}\n\n`);
-
-  const client = { res, playerId: viewer.id };
+  const client = {
+    res,
+    playerId: viewer.id,
+    backpressured: false,
+    pendingState: false
+  };
   room.clients.add(client);
   viewer.connected = true;
   broadcast(room);
 
   const keepAlive = setInterval(() => {
-    res.write(": keep-alive\n\n");
-  }, 25_000);
+    if (!client.backpressured) res.write(`event: heartbeat\ndata: ${room.snapshotVersion || 0}\n\n`);
+  }, 5_000);
 
   req.on("close", () => {
     clearInterval(keepAlive);
@@ -3657,19 +3681,27 @@ async function serveStatic(req, res, url) {
     return;
   }
 
+  const extension = extname(target).toLowerCase();
   const type = {
     ".html": "text/html; charset=utf-8",
     ".css": "text/css; charset=utf-8",
     ".js": "text/javascript; charset=utf-8",
     ".json": "application/json; charset=utf-8",
-    ".svg": "image/svg+xml"
-  }[extname(target)] || "application/octet-stream";
+    ".svg": "image/svg+xml",
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".webp": "image/webp"
+  }[extension] || "application/octet-stream";
+  const cacheControl = url.pathname.startsWith("/assets/")
+    ? "public, max-age=604800"
+    : "no-cache";
 
   try {
     await readFile(target);
     res.writeHead(200, {
       "content-type": type,
-      "cache-control": "no-store"
+      "cache-control": cacheControl
     });
     createReadStream(target).pipe(res);
   } catch {

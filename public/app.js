@@ -2,6 +2,10 @@ const app = document.querySelector("#app");
 const storageKey = "chaoDipiOnlineSession";
 let session = loadSession();
 let source = null;
+let stateSyncTimer = null;
+let stateWatchdogTimer = null;
+let stateSyncInFlight = false;
+let lastEventReceivedAt = 0;
 let state = null;
 let message = "";
 let messageBad = false;
@@ -43,8 +47,14 @@ function clearSession() {
   if (source) source.close();
   if (scoreBidAutoPassTimer) window.clearTimeout(scoreBidAutoPassTimer);
   if (throwRevealTimer) window.clearTimeout(throwRevealTimer);
+  if (stateSyncTimer) window.clearTimeout(stateSyncTimer);
+  if (stateWatchdogTimer) window.clearInterval(stateWatchdogTimer);
   scoreBidAutoPassTimer = null;
   throwRevealTimer = null;
+  stateSyncTimer = null;
+  stateWatchdogTimer = null;
+  stateSyncInFlight = false;
+  lastEventReceivedAt = 0;
   source = null;
   state = null;
   throwDraftComponents = null;
@@ -308,9 +318,24 @@ function connectEvents() {
     token: session.token
   });
   source = new EventSource(`/events?${params.toString()}`);
+  source.addEventListener("open", () => {
+    lastEventReceivedAt = Date.now();
+    scheduleStateSync(0);
+  });
   source.addEventListener("state", (event) => {
-    applyState(JSON.parse(event.data));
-    render();
+    try {
+      lastEventReceivedAt = Date.now();
+      applyState(JSON.parse(event.data));
+      render();
+    } catch {
+      scheduleStateSync(0);
+    }
+  });
+  source.addEventListener("heartbeat", (event) => {
+    lastEventReceivedAt = Date.now();
+    const remoteVersion = Number(event.data || 0);
+    const localVersion = Number(state?.snapshotVersion || 0);
+    if (remoteVersion > localVersion) scheduleStateSync(0);
   });
   source.addEventListener("kicked", (event) => {
     const data = JSON.parse(event.data || "{}");
@@ -318,8 +343,57 @@ function connectEvents() {
     setMessage(data.message || "你已离开房间。", true);
   });
   source.onerror = () => {
-    setMessage("连接中断，正在等待浏览器自动重连", true);
+    scheduleStateSync(700);
+    if (source?.readyState === EventSource.CLOSED) {
+      source.close();
+      source = null;
+      window.setTimeout(connectEvents, 1200);
+    }
   };
+  startStateWatchdog();
+}
+
+function stateUrl(activeSession = session) {
+  if (!activeSession) return "";
+  const params = new URLSearchParams({
+    playerId: activeSession.playerId,
+    token: activeSession.token
+  });
+  return `/api/rooms/${activeSession.roomId}/state?${params.toString()}`;
+}
+
+async function syncRoomState({ showError = false } = {}) {
+  if (!session || stateSyncInFlight) return;
+  const activeSession = { ...session };
+  stateSyncInFlight = true;
+  try {
+    const nextState = await api(stateUrl(activeSession));
+    if (!session || session.roomId !== activeSession.roomId || session.playerId !== activeSession.playerId) return;
+    applyState(nextState, { showTransitionNotice: false });
+    render();
+  } catch (error) {
+    if (showError) setMessage(error.message || "房间状态同步失败", true);
+  } finally {
+    stateSyncInFlight = false;
+  }
+}
+
+function scheduleStateSync(delay = 0) {
+  if (!session) return;
+  if (stateSyncTimer) window.clearTimeout(stateSyncTimer);
+  stateSyncTimer = window.setTimeout(() => {
+    stateSyncTimer = null;
+    syncRoomState();
+  }, Math.max(0, delay));
+}
+
+function startStateWatchdog() {
+  if (stateWatchdogTimer) return;
+  stateWatchdogTimer = window.setInterval(() => {
+    if (!session || document.hidden) return;
+    const eventAge = Date.now() - lastEventReceivedAt;
+    if (!lastEventReceivedAt || eventAge > 7_000) scheduleStateSync(0);
+  }, 2_000);
 }
 
 async function createRoom(event) {
@@ -1571,6 +1645,7 @@ function renderRoom() {
               <button type="button" data-action="copy">复制链接</button>
               <button type="button" class="secondary" data-action="open-players">玩家</button>
               <button type="button" class="secondary" data-action="open-events">日志</button>
+              ${state.trickHistory.length ? `<button type="button" class="secondary" data-action="open-history">历史出牌 ${state.trickHistory.length}</button>` : ""}
               ${state.viewer.host && state.status === "lobby" ? renderCallModeToggle() : ""}
               ${state.viewer.host && state.status === "lobby" ? renderDoglegCountControl() : ""}
               ${inLobbyView ? renderReadyControls({ waitingNextRound }) : ""}
@@ -1946,7 +2021,7 @@ function renderEventsDialog() {
         <div class="section-head">
           <div>
             <h2>房间日志</h2>
-            <div class="meta">${state.events.length} 条最近记录</div>
+            <div class="meta">本局完整记录 · ${state.events.length} 条，下一局开始时清空</div>
           </div>
           <button type="button" class="secondary compact-button" data-action="close-dialog">关闭</button>
         </div>
@@ -2207,14 +2282,19 @@ function idleTargetScore() {
   return Math.round(state.players.length * 100 * 0.5);
 }
 
+function currentIdleScore() {
+  if (!state) return 0;
+  if (state.status === "finished" && state.result) return Number(state.result.idleScore) || 0;
+  return (state.players || [])
+    .filter((player) => player.role === "闲家")
+    .reduce((total, player) => total + (Number(player.score) || 0), 0);
+}
+
 function renderGameInfoTags() {
   const setup = state.setup || {};
   const tags = [];
   if (setup.currentTrumpSuitName || setup.trumpSuitName) tags.push(`<span class="tag good">主牌 ${escapeHtml(setup.currentTrumpSuitName || setup.trumpSuitName)}</span>`);
-  tags.push(`<span class="tag">闲家线 ${escapeHtml(idleTargetScore())} 分</span>`);
-  tags.push(`<span class="tag">狗腿 ${escapeHtml(setup.doglegNeeded || 0)} 个</span>`);
-  if (setup.doglegCard) tags.push(`<span class="tag accent">狗腿牌 ${escapeHtml(doglegCardText(setup.doglegCard))}</span>`);
-  if (setup.bankerName) tags.push(`<span class="tag accent">庄家 ${escapeHtml(setup.bankerName)}</span>`);
+  tags.push(`<span class="tag idle-score-tag">闲家 <strong>${escapeHtml(currentIdleScore())}</strong> / ${escapeHtml(idleTargetScore())} 分</span>`);
   return tags.join("");
 }
 
@@ -2249,7 +2329,6 @@ function renderPlayTable() {
         <h2>打牌桌面</h2>
         <div class="tags">
           ${renderGameInfoTags()}
-          <span class="tag accent">${holdingPreviousResult ? `第 ${tableTrick.number} 轮结果` : `当前第 ${state.currentTrick?.number || 1} 轮`}</span>
           <span class="tag good">${escapeHtml(holdingPreviousResult ? `${turnText}，上一轮结果暂留` : turnText)}</span>
           <button type="button" class="secondary compact-button" data-action="open-history">历史出牌 ${state.trickHistory.length}</button>
         </div>
@@ -2427,8 +2506,26 @@ function renderSeatHand(action, play, trick, index, options = {}) {
   if (!state?.viewer?.id || !Array.isArray(state.hand)) return "";
   const statusText = playStatusText(trick, play, index, true, options);
   const statusTone = playStatusTone(trick, play, true, options);
+  const myTurn = state.stage === "playing" && viewerCanPlayCurrent();
+  const turnName = state.currentTrick?.currentTurnPlayerName || "";
+  const turnTitle = myTurn
+    ? "轮到你出牌"
+    : viewerPlayedCurrent()
+      ? "本轮已出牌"
+      : turnName
+        ? `等待 ${turnName} 出牌`
+        : "等待下一轮";
+  const turnDetail = myTurn
+    ? (selectedCardIds.size ? `已选择 ${selectedCardIds.size} 张牌` : "请选择要出的牌")
+    : "可以提前选择手牌，轮到后直接出牌";
   return `
-    <div class="seat-hand">
+    <div class="seat-hand ${myTurn ? "is-my-turn" : ""}">
+      ${state.stage === "playing" ? `
+        <div class="viewer-turn-banner ${myTurn ? "active" : "waiting"}" role="status">
+          <strong>${escapeHtml(turnTitle)}</strong>
+          <span>${escapeHtml(turnDetail)}</span>
+        </div>
+      ` : ""}
       <div class="seat-hand-head">
         <div class="seat-hand-player">
           <div class="seat-hand-player-line">
@@ -2587,7 +2684,7 @@ function roleClass(role) {
 function avatarHtml(name, avatarUrl = "", size = "normal") {
   const initial = String(name || "玩").trim().slice(0, 1) || "玩";
   if (avatarUrl) {
-    return `<span class="avatar ${size}" title="${escapeHtml(name)}"><img src="${escapeHtml(avatarUrl)}" alt=""></span>`;
+    return `<span class="avatar ${size}" title="${escapeHtml(name)}"><img src="${escapeHtml(avatarUrl)}" alt="" decoding="async" draggable="false"></span>`;
   }
   return `<span class="avatar ${size}" title="${escapeHtml(name)}">${escapeHtml(initial)}</span>`;
 }
@@ -3164,6 +3261,22 @@ document.addEventListener("pointerdown", (event) => {
 document.addEventListener("pointermove", continueDragSelect);
 document.addEventListener("pointerup", endDragSelect);
 document.addEventListener("pointercancel", endDragSelect);
+
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden || !session) return;
+  scheduleStateSync(0);
+  if (!source) connectEvents();
+});
+
+window.addEventListener("online", () => {
+  if (!session) return;
+  scheduleStateSync(0);
+  if (!source) connectEvents();
+});
+
+window.addEventListener("pageshow", () => {
+  if (session) scheduleStateSync(0);
+});
 
 async function resume() {
   if (!session) return render();

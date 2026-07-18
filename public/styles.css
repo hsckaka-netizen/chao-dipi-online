@@ -683,16 +683,22 @@ label {
   background: #fbfcfb;
 }
 
-.player.banker-team,
-.trick-player.banker-team {
+.player.banker-team {
   border-color: #e0b36f;
   background: #fffaf1;
 }
 
-.player.idle-team,
-.trick-player.idle-team {
+.player.idle-team {
   border-color: #bcdcc9;
   background: #f4fbf7;
+}
+
+.trick-player.banker-team {
+  --team-border: #c7832d;
+}
+
+.trick-player.idle-team {
+  --team-border: #2f8a62;
 }
 
 .player-side {
@@ -1198,6 +1204,11 @@ label {
   color: #731d1d;
 }
 
+.idle-score-tag strong {
+  color: var(--good);
+  font-size: 13px;
+}
+
 .trick-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
@@ -1448,13 +1459,59 @@ label {
 .seat-hand {
   box-sizing: border-box;
   width: 100%;
-  max-height: min(32vh, 300px);
-  overflow: auto;
+  max-height: none;
+  overflow: visible;
   border: 1px solid rgba(203, 216, 208, 0.96);
   border-radius: 8px;
   background: rgba(255, 255, 255, 0.97);
   box-shadow: 0 12px 28px rgba(31, 45, 38, 0.14);
   padding: 10px;
+}
+
+.seat-hand.is-my-turn {
+  border-color: #4f9a73;
+  box-shadow: 0 0 0 3px rgba(22, 116, 76, 0.13), 0 12px 28px rgba(31, 45, 38, 0.14);
+}
+
+.viewer-turn-banner {
+  min-height: 42px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 16px;
+  margin: -2px -2px 8px;
+  border: 1px solid #dbe4de;
+  border-radius: 7px;
+  background: #f5f8f6;
+  padding: 7px 10px;
+  color: var(--muted);
+}
+
+.viewer-turn-banner strong {
+  color: var(--text);
+  font-size: 14px;
+}
+
+.viewer-turn-banner span {
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.viewer-turn-banner.active {
+  border-color: #63a983;
+  background: #e8f6ee;
+  color: #276b4b;
+  animation: turn-reminder-pulse 1.8s ease-in-out infinite;
+}
+
+.viewer-turn-banner.active strong {
+  color: #0e6845;
+  font-size: 16px;
+}
+
+@keyframes turn-reminder-pulse {
+  0%, 100% { box-shadow: inset 0 0 0 0 rgba(22, 116, 76, 0.08); }
+  50% { box-shadow: inset 0 0 0 3px rgba(22, 116, 76, 0.12); }
 }
 
 .seat-hand-head {
@@ -1769,6 +1826,21 @@ label {
   box-shadow: 0 0 0 3px rgba(184, 107, 34, 0.16), 0 8px 22px rgba(31, 45, 38, 0.11);
 }
 
+.trick-player.banker-team,
+.trick-player.idle-team {
+  border-inline-start: 5px solid var(--team-border);
+  padding-inline-start: 7px;
+}
+
+.trick-player.current-turn.banker-team,
+.trick-player.current-turn.idle-team,
+.trick-player.winning.banker-team,
+.trick-player.winning.idle-team,
+.trick-player.lead.banker-team,
+.trick-player.lead.idle-team {
+  border-inline-start-color: var(--team-border);
+}
+
 .trick-name {
   display: flex;
   justify-content: space-between;
@@ -1992,6 +2064,7 @@ label {
   .trick-grid.table-circle {
     display: grid;
     grid-template-columns: 1fr;
+    gap: 10px;
     min-height: 0;
     border-radius: 8px;
     background: transparent;
@@ -1999,7 +2072,17 @@ label {
   }
 
   .table-center {
-    display: none;
+    position: static;
+    order: -2;
+    display: grid;
+    width: 100%;
+    min-width: 0;
+    max-width: none;
+    transform: none;
+    border: 1px solid #dfe7e1;
+    border-radius: 8px;
+    background: #f7faf8;
+    padding: 8px 10px;
   }
 
   .finished-table .table-center.result-center {
@@ -2012,6 +2095,18 @@ label {
     justify-items: center;
   }
 
+  .table-corner-stats {
+    position: static;
+    order: -3;
+    width: 100%;
+  }
+
+  .played-five-stats {
+    width: 100%;
+    justify-content: center;
+    border-radius: 8px;
+  }
+
   .table-circle .trick-seat {
     position: static;
     width: auto;
@@ -2022,7 +2117,9 @@ label {
   }
 
   .table-circle .trick-seat.viewer-seat {
+    order: 100;
     width: auto;
+    margin-top: 4px;
     transform: none;
   }
 
@@ -2072,6 +2169,12 @@ label {
   .seat-hand-head {
     grid-template-columns: 1fr;
     align-items: stretch;
+  }
+
+  .viewer-turn-banner {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 2px;
   }
 
   .profile-row {
