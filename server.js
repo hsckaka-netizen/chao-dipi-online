@@ -17,7 +17,8 @@ const HAND_SIZE = 53;
 const CALL_MODE_TWO = "two";
 const CALL_MODE_SCORE = "score";
 const SCORE_BID_SECONDS = 20;
-const AI_PLAY_DELAY_MS = 1000;
+const configuredAiPlayDelay = Number(process.env.AI_PLAY_DELAY_MS || 1000);
+const AI_PLAY_DELAY_MS = Number.isFinite(configuredAiPlayDelay) ? Math.max(0, configuredAiPlayDelay) : 1000;
 const MAX_GAME_EVENTS = 700;
 
 const suits = [
@@ -391,6 +392,7 @@ function deal(room) {
   if (room.callMode === CALL_MODE_SCORE) room.setup.scoreBid = createScoreBidSetup(room);
   room.currentTrick = null;
   room.trickHistory = [];
+  room.provisionalWinnerPlayerIds = [];
   room.playPauseUntil = null;
   room.notice = null;
   if (room.callMode === CALL_MODE_SCORE && room.setup.scoreBid?.current) {
@@ -426,6 +428,7 @@ function resetRoomToLobby(room, options = {}) {
   room.result = null;
   room.setup = emptySetup();
   room.currentTrick = null;
+  room.provisionalWinnerPlayerIds = [];
   room.playPauseUntil = null;
   room.notice = null;
   room.players.forEach((player) => {
@@ -598,6 +601,12 @@ function trickSnapshot(room, trick) {
         throwDisplayPhase: play?.throwFailed
           ? (Date.now() < new Date(play.throwRevealUntil).getTime() ? "attempt" : "failed")
           : "",
+        throwComponents: (play?.throwComponents || []).map((component) => ({
+          signature: component.signature,
+          pattern: component.pattern,
+          count: component.count,
+          cards: (component.cards || []).map(publicCard)
+        })),
         cards: play ? play.cards.map(publicCard) : []
       };
     })
@@ -865,11 +874,18 @@ function finishGame(room, completedTrick) {
   const idleEachScore = baseScore + scoreStep + bottomDelta + draggedDelta + throwFailureDelta;
   const bankerEachScore = bankerIds.length ? -idleEachScore * idleIds.length / bankerIds.length : 0;
   const winnerTeam = idleScore >= threshold ? "idle" : "banker";
+  const bottomWinningPlay = completedTrick.plays.find((play) => play.playerId === bottomWinnerId);
+  const finalSideSuitBottomWinnerId = bottomWinningPlay?.cards?.length
+    && bottomWinningPlay.cards.every((card) => !isMainPlayCard(card, room.trumpSuit))
+    ? bottomWinnerId
+    : null;
   const evaluations = buildGameEvaluations({
     players: room.players,
     tricks: room.trickHistory,
     bankerTeamIds: bankerIds,
     winnerTeam,
+    provisionalWinnerPlayerIds: room.provisionalWinnerPlayerIds || [],
+    finalSideSuitBottomWinnerId,
     bottom: {
       winnerId: bottomWinnerId,
       winnerTeam: bottomWinnerTeam,
@@ -2538,6 +2554,17 @@ function settleTrick(room, trick) {
   };
 }
 
+function recordProvisionalWinner(room) {
+  const trick = room.currentTrick;
+  if (!trick?.plays?.length) return;
+  const outcome = settleTrick(room, trick);
+  if (!outcome.winnerId) return;
+  if (!Array.isArray(room.provisionalWinnerPlayerIds)) room.provisionalWinnerPlayerIds = [];
+  if (!room.provisionalWinnerPlayerIds.includes(outcome.winnerId)) {
+    room.provisionalWinnerPlayerIds.push(outcome.winnerId);
+  }
+}
+
 function validatePlay(room, player, selected) {
   const trick = room.currentTrick;
   const expected = expectedPlayerId(room);
@@ -2970,6 +2997,29 @@ function scheduleNextAiPlay(room, delayMs = AI_PLAY_DELAY_MS) {
   return true;
 }
 
+function autoCompleteFinalTrick(room, triggeringPlayer) {
+  const finalTrick = room.currentTrick;
+  if (!finalTrick || room.stage !== "playing") return;
+  addEvent(room, `${triggeringPlayer.name} 打出最后一手，剩余玩家自动跟出`);
+
+  let remainingPlayers = room.players.length;
+  while (
+    remainingPlayers > 0
+    && room.stage === "playing"
+    && room.currentTrick === finalTrick
+    && finalTrick.plays.length < room.players.length
+  ) {
+    remainingPlayers -= 1;
+    const nextPlayer = playerById(room, expectedPlayerId(room));
+    if (!nextPlayer?.hand?.length) break;
+    const result = playCards(room, nextPlayer, nextPlayer.hand.map((card) => card.id), { autoFinalFollow: true });
+    if (result.error) {
+      addEvent(room, `${nextPlayer.name} 最后一手自动跟牌失败：${result.error}`);
+      break;
+    }
+  }
+}
+
 function playCards(room, player, cardIds, options = {}) {
   if (room.status !== "dealt" || room.stage !== "playing") {
     return { error: "还没有进入打牌阶段，暂不能出牌", status: 409 };
@@ -3027,9 +3077,12 @@ function playCards(room, player, cardIds, options = {}) {
     addEvent(room, `${player.name} 第 ${room.currentTrick.number} 轮出了 ${playedCards.map((card) => card.label).join(" ")}`);
   }
   revealDoglegIfNeeded(room, player, playedCards);
+  recordProvisionalWinner(room);
 
   if (room.currentTrick.plays.length === room.players.length) {
     completeCurrentTrick(room);
+  } else if (player.hand.length === 0 && !throwMeta?.failed && !options.autoFinalFollow) {
+    autoCompleteFinalTrick(room, player);
   }
 
   if (throwMeta?.failed) {
@@ -3171,6 +3224,7 @@ async function handleApi(req, res, pathParts, url) {
       setup: emptySetup(),
       currentTrick: null,
       trickHistory: [],
+      provisionalWinnerPlayerIds: [],
       playPauseUntil: null,
       aiPlayTimer: null,
       notice: null,

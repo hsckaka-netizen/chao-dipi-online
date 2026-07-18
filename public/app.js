@@ -17,8 +17,15 @@ let activeDialog = null;
 let dismissedActionDialogKey = null;
 let dismissedResultRoomId = null;
 let messageTimer = null;
+let actionDialogResumeTimer = null;
+let actionPassInFlight = false;
+let actionDialogTemporarilyBlocked = false;
+let buryInFlight = false;
 let scoreBidAutoPassTimer = null;
 let throwRevealTimer = null;
+let gameplayEffectTimer = null;
+let doglegRevealEffects = [];
+let draggedFiveEffect = null;
 let homeView = "rooms";
 let profiles = [];
 let profilesLoaded = false;
@@ -47,12 +54,21 @@ function clearSession() {
   if (source) source.close();
   if (scoreBidAutoPassTimer) window.clearTimeout(scoreBidAutoPassTimer);
   if (throwRevealTimer) window.clearTimeout(throwRevealTimer);
+  if (gameplayEffectTimer) window.clearTimeout(gameplayEffectTimer);
   if (stateSyncTimer) window.clearTimeout(stateSyncTimer);
   if (stateWatchdogTimer) window.clearInterval(stateWatchdogTimer);
+  if (actionDialogResumeTimer) window.clearTimeout(actionDialogResumeTimer);
   scoreBidAutoPassTimer = null;
   throwRevealTimer = null;
+  gameplayEffectTimer = null;
+  doglegRevealEffects = [];
+  draggedFiveEffect = null;
   stateSyncTimer = null;
   stateWatchdogTimer = null;
+  actionDialogResumeTimer = null;
+  actionPassInFlight = false;
+  actionDialogTemporarilyBlocked = false;
+  buryInFlight = false;
   stateSyncInFlight = false;
   lastEventReceivedAt = 0;
   source = null;
@@ -90,6 +106,7 @@ function applyState(nextState, options = {}) {
   const previousVersion = Number(previousState?.snapshotVersion || 0);
   const nextVersion = Number(nextState?.snapshotVersion || 0);
   if (sameRoom && previousVersion && nextVersion && nextVersion < previousVersion) return false;
+  captureGameplayEffects(previousState, nextState);
   const previousHandIds = new Set((state?.hand || []).map((card) => card.id));
   state = nextState;
   syncThrowDraftForState();
@@ -122,6 +139,84 @@ function applyState(nextState, options = {}) {
   if (!newCardIds.length) return false;
   selectedCardIds = new Set(newCardIds);
   return true;
+}
+
+function snapshotTricks(snapshot) {
+  if (!snapshot) return [];
+  return [...(snapshot.trickHistory || []), ...(snapshot.currentTrick ? [snapshot.currentTrick] : [])];
+}
+
+function findPlayedCard(snapshot, playerId, matcher) {
+  const tricks = snapshotTricks(snapshot);
+  for (let trickIndex = tricks.length - 1; trickIndex >= 0; trickIndex -= 1) {
+    const play = (tricks[trickIndex].plays || []).find((item) => item.playerId === playerId && item.played);
+    const card = play?.cards?.find(matcher);
+    if (card) return card;
+  }
+  return null;
+}
+
+function captureGameplayEffects(previousState, nextState) {
+  const nowMs = Date.now();
+  doglegRevealEffects = doglegRevealEffects.filter((effect) => effect.until > nowMs);
+
+  if (previousState?.roomId === nextState?.roomId) {
+    const previousDoglegs = new Set(previousState.setup?.doglegPlayerIds || []);
+    const doglegCard = nextState.setup?.doglegCard;
+    (nextState.setup?.doglegPlayerIds || [])
+      .filter((playerId) => !previousDoglegs.has(playerId))
+      .forEach((playerId) => {
+        const card = findPlayedCard(nextState, playerId, (item) =>
+          item.type === doglegCard?.type && item.suit === doglegCard?.suit && item.rank === doglegCard?.rank
+        );
+        doglegRevealEffects.push({ playerId, cardId: card?.id || null, until: nowMs + 900 });
+      });
+
+    if (draggedFiveEffect) {
+      const currentTrick = nextState.currentTrick;
+      const nextRoundStarted = currentTrick
+        && currentTrick.number !== draggedFiveEffect.trickNumber
+        && (currentTrick.plays || []).some((play) => play.played && play.cards?.length);
+      if (nextRoundStarted || nextState.status === "lobby") draggedFiveEffect = null;
+    }
+
+    const previousCompleted = new Set((previousState.trickHistory || []).map((trick) => trick.number));
+    const newlyCompleted = (nextState.trickHistory || []).filter((trick) => !previousCompleted.has(trick.number));
+    const completed = newlyCompleted[newlyCompleted.length - 1];
+    if (completed) {
+      const entries = (completed.plays || []).flatMap((play) => {
+        if (!play.played || play.playerId === completed.winnerId) return [];
+        return (play.cards || [])
+          .filter((card) => card.type === "normal" && card.rank === "5" && (card.suit === "H" || card.suit === "D"))
+          .map((card) => ({ playerId: play.playerId, cardId: card.id, suit: card.suit }));
+      });
+      if (entries.length) {
+        draggedFiveEffect = { trickNumber: completed.number, entries, animateUntil: nowMs + 900 };
+      }
+    }
+  } else {
+    doglegRevealEffects = [];
+    draggedFiveEffect = null;
+  }
+  scheduleGameplayEffectEnd();
+}
+
+function scheduleGameplayEffectEnd() {
+  if (gameplayEffectTimer) window.clearTimeout(gameplayEffectTimer);
+  gameplayEffectTimer = null;
+  const nowMs = Date.now();
+  const expirations = doglegRevealEffects.map((effect) => effect.until);
+  if (draggedFiveEffect?.animateUntil > nowMs) expirations.push(draggedFiveEffect.animateUntil);
+  const nextExpiration = expirations.filter((value) => value > nowMs).sort((a, b) => a - b)[0];
+  if (!nextExpiration) return;
+  gameplayEffectTimer = window.setTimeout(() => {
+    gameplayEffectTimer = null;
+    const currentTime = Date.now();
+    doglegRevealEffects = doglegRevealEffects.filter((effect) => effect.until > currentTime);
+    if (draggedFiveEffect?.animateUntil <= currentTime) draggedFiveEffect.animateUntil = 0;
+    render();
+    scheduleGameplayEffectEnd();
+  }, Math.max(0, nextExpiration - nowMs) + 20);
 }
 
 function transitionNotice(previousState, nextState) {
@@ -525,18 +620,28 @@ async function bidSelectedCards() {
 }
 
 async function passBid() {
-  if (!session) return;
+  if (!session || actionPassInFlight) return;
+  actionPassInFlight = true;
+  actionDialogTemporarilyBlocked = true;
+  activeDialog = null;
+  setMessage("正在提交“过”…", false, false);
   try {
     const highlighted = applyState(await api(`/api/rooms/${session.roomId}/bid-pass`, {
       method: "POST",
       body: JSON.stringify({ playerId: session.playerId, token: session.token })
     }));
     clearSelectionUnlessKitty(highlighted);
-    activeDialog = null;
+    actionPassInFlight = false;
+    temporarilyDismissActionDialog();
     setMessage(state.stage === "burying"
       ? `叫主成功：${state.setup?.bankerName || "庄家"} 成为庄家，已拿底等待贴底。`
-      : "已过。");
+      : viewerCanBid()
+        ? "已过，其他玩家操作后再次轮到你。"
+        : "已过，等待其他玩家操作。");
   } catch (error) {
+    actionPassInFlight = false;
+    actionDialogTemporarilyBlocked = false;
+    activeDialog = viewerCanBid() ? "bid" : null;
     setMessage(error.message, true);
   }
 }
@@ -619,15 +724,21 @@ async function revealTrumpSelectedCards() {
 }
 
 async function burySelectedCards() {
-  if (!session) return;
+  if (!session || buryInFlight) return;
+  const cardIds = [...selectedCardIds];
+  buryInFlight = true;
+  setMessage(`正在贴底（${cardIds.length} 张）…`, false, false);
   try {
     applyState(await api(`/api/rooms/${session.roomId}/bury`, {
       method: "POST",
-      body: JSON.stringify({ playerId: session.playerId, token: session.token, cardIds: [...selectedCardIds] })
+      body: JSON.stringify({ playerId: session.playerId, token: session.token, cardIds })
     }));
     selectedCardIds = new Set();
+    buryInFlight = false;
     setMessage(state.stage === "frying" ? "已贴底，进入炒底阶段。" : "已贴底。");
+    scheduleStateSync(0);
   } catch (error) {
+    buryInFlight = false;
     setMessage(error.message, true);
   }
 }
@@ -648,18 +759,28 @@ async function frySelectedCards() {
 }
 
 async function passFry() {
-  if (!session) return;
+  if (!session || actionPassInFlight) return;
+  actionPassInFlight = true;
+  actionDialogTemporarilyBlocked = true;
+  activeDialog = null;
+  setMessage("正在提交“不炒”…", false, false);
   try {
     const highlighted = applyState(await api(`/api/rooms/${session.roomId}/fry-pass`, {
       method: "POST",
       body: JSON.stringify({ playerId: session.playerId, token: session.token })
     }));
     clearSelectionUnlessKitty(highlighted);
-    activeDialog = null;
+    actionPassInFlight = false;
+    temporarilyDismissActionDialog();
     setMessage(state.stage === "dogleg"
       ? `炒底结束：主牌确定为${state.setup?.currentTrumpSuitName || state.setup?.trumpSuitName || "主牌"}，等待庄家选择狗腿牌。`
-      : "已选择不炒。");
+      : viewerCanFry()
+        ? "已选择不炒，其他玩家操作后再次轮到你。"
+        : "已选择不炒，等待其他玩家操作。");
   } catch (error) {
+    actionPassInFlight = false;
+    actionDialogTemporarilyBlocked = false;
+    activeDialog = viewerCanFry() ? "fry" : null;
     setMessage(error.message, true);
   }
 }
@@ -1284,11 +1405,12 @@ function selectionAction() {
     return { action: "trump-selected", label: "亮选中的2定主", enabled: validation.ok, reason: validation.reason };
   }
   if (viewerCanBury()) {
+    const complete = selectedCardIds.size === state.kittySize;
     return {
       action: "bury-selected",
-      label: `贴底选中的牌`,
-      enabled: selectedCardIds.size === state.kittySize,
-      reason: selectedCardIds.size === state.kittySize ? "" : `需要选择 ${state.kittySize} 张牌`
+      label: buryInFlight ? "正在贴底…" : "贴底选中的牌",
+      enabled: complete && !buryInFlight,
+      reason: buryInFlight ? "贴底已提交，请稍候" : complete ? "" : `需要选择 ${state.kittySize} 张牌`
     };
   }
   if (viewerCanFry()) {
@@ -1805,8 +1927,8 @@ function renderSetupPanel() {
         ${currentTrumpBlock}
       </div>
       <div class="row">
-        ${viewerCanBid() ? `<button type="button" data-action="open-bid-dialog">${setup.bid ? "选择2抢主" : "选择2叫主"}</button>` : ""}
-        ${viewerCanPassBid() ? `<button type="button" class="secondary" data-action="bid-pass">过</button>` : ""}
+        ${viewerCanBid() ? `<button type="button" data-action="open-bid-dialog" ${actionPassInFlight ? "disabled" : ""}>${setup.bid ? "选择2抢主" : "选择2叫主"}</button>` : ""}
+        ${viewerCanPassBid() ? `<button type="button" class="secondary" data-action="bid-pass" ${actionPassInFlight ? "disabled" : ""}>${actionPassInFlight ? "提交中…" : "过"}</button>` : ""}
         ${state.viewer.host && !setup.bid ? `<button type="button" class="secondary" data-action="random-bid">无人叫主，随机指定</button>` : ""}
       </div>
     `;
@@ -1890,8 +2012,8 @@ function renderSetupPanel() {
         ${currentTrumpBlock}
       </div>
       <div class="row">
-        ${viewerCanFry() ? `<button type="button" data-action="open-fry-dialog">选择2炒底</button>` : ""}
-        ${viewerCanFry() ? `<button type="button" class="secondary" data-action="fry-pass">不炒</button>` : ""}
+        ${viewerCanFry() ? `<button type="button" data-action="open-fry-dialog" ${actionPassInFlight ? "disabled" : ""}>选择2炒底</button>` : ""}
+        ${viewerCanFry() ? `<button type="button" class="secondary" data-action="fry-pass" ${actionPassInFlight ? "disabled" : ""}>${actionPassInFlight ? "提交中…" : "不炒"}</button>` : ""}
       </div>
     `;
   }
@@ -1965,9 +2087,27 @@ function maybeAutoOpenActionDialog() {
     dismissedActionDialogKey = null;
     return;
   }
+  if (actionDialogTemporarilyBlocked) {
+    if (activeDialog === "bid" || activeDialog === "fry") activeDialog = null;
+    return;
+  }
   if (activeDialog) return;
   if (dismissedActionDialogKey === key) return;
   activeDialog = key.startsWith("bid:") ? "bid" : "fry";
+}
+
+function temporarilyDismissActionDialog(delay = 900) {
+  if (actionDialogResumeTimer) window.clearTimeout(actionDialogResumeTimer);
+  const key = actionDialogKey();
+  activeDialog = null;
+  dismissedActionDialogKey = key || null;
+  actionDialogTemporarilyBlocked = true;
+  actionDialogResumeTimer = window.setTimeout(() => {
+    actionDialogResumeTimer = null;
+    actionDialogTemporarilyBlocked = false;
+    if (dismissedActionDialogKey === actionDialogKey()) dismissedActionDialogKey = null;
+    render();
+  }, delay);
 }
 
 function renderActiveDialog() {
@@ -2263,10 +2403,13 @@ function renderKittyDialog() {
 
 function renderPlayedFiveStats() {
   const counts = state.playedProtectedFives || {};
+  const animate = Boolean(draggedFiveEffect?.animateUntil > Date.now());
+  const redBump = animate && draggedFiveEffect.entries.some((entry) => entry.suit === "H");
+  const diamondBump = animate && draggedFiveEffect.entries.some((entry) => entry.suit === "D");
   return `
     <div class="played-five-stats" title="只统计已打到桌面上的红五和方五">
-      <span>已出红五 <b>${counts.red || 0}</b></span>
-      <span>已出方五 <b>${counts.diamond || 0}</b></span>
+      <span class="${redBump ? "five-stat-bump" : ""}">已出红五 <b>${counts.red || 0}</b></span>
+      <span class="${diamondBump ? "five-stat-bump" : ""}">已出方五 <b>${counts.diamond || 0}</b></span>
     </div>
   `;
 }
@@ -2519,7 +2662,7 @@ function renderSeatHand(action, play, trick, index, options = {}) {
     ? (selectedCardIds.size ? `已选择 ${selectedCardIds.size} 张牌` : "请选择要出的牌")
     : "可以提前选择手牌，轮到后直接出牌";
   return `
-    <div class="seat-hand ${myTurn ? "is-my-turn" : ""}">
+    <div class="seat-hand ${myTurn ? "is-my-turn" : ""}" data-action="clear-selection">
       ${state.stage === "playing" ? `
         <div class="viewer-turn-banner ${myTurn ? "active" : "waiting"}" role="status">
           <strong>${escapeHtml(turnTitle)}</strong>
@@ -2591,7 +2734,7 @@ function renderTrick(trick, current, options = {}) {
         ` : ""}
         ${displayPlays.map((play, index) => {
           const playCards = displayedPlayCards(play);
-          const playContent = setupTable ? renderSetupActionTrail(play.setupActions) : (play.played ? renderMiniCards(playCards) : "");
+          const playContent = setupTable ? renderSetupActionTrail(play.setupActions) : (play.played ? renderPlayedCards(play, playCards, trick.number) : "");
           const isViewerSeat = current && play.playerId === state.viewer?.id;
           const showViewerHand = isViewerSeat && !finishedResult;
           const playIndex = play.turnIndex ?? index;
@@ -2610,7 +2753,7 @@ function renderTrick(trick, current, options = {}) {
                 <span>方五 <b>${play.draggedDiamondFives || 0}</b></span>
                 <span>甩失 <b>${play.throwFailures || 0}</b></span>
               </div>
-              ${!current && play.played ? renderMiniCards(playCards) : ""}
+              ${!current && play.played ? renderPlayedCards(play, playCards, trick.number) : ""}
             </div>
           `;
           if (!current) return playerCard;
@@ -2668,11 +2811,12 @@ function orientPlaysForViewer(plays) {
   return [...plays.slice(index), ...plays.slice(0, index)];
 }
 
-function roleMark(role) {
+function roleMark(role, playerId = "") {
   if (!role) return "";
   const text = role === "狗腿" ? "腿" : role === "庄家" || role === "主" ? "庄" : "闲";
   const tone = role === "庄家" || role === "主" || role === "狗腿" ? "accent" : "idle";
-  return `<span class="role-mark ${tone}" title="${escapeHtml(role)}">${escapeHtml(text)}</span>`;
+  const reveal = role === "狗腿" && doglegRevealEffects.some((effect) => effect.playerId === playerId && effect.until > Date.now());
+  return `<span class="role-mark ${tone} ${reveal ? "dogleg-role-reveal" : ""}" title="${escapeHtml(role)}">${escapeHtml(text)}</span>`;
 }
 
 function roleClass(role) {
@@ -2689,18 +2833,18 @@ function avatarHtml(name, avatarUrl = "", size = "normal") {
   return `<span class="avatar ${size}" title="${escapeHtml(name)}">${escapeHtml(initial)}</span>`;
 }
 
-function playerIdentity(name, role, avatarUrl = "", suffix = "") {
+function playerIdentity(name, role, avatarUrl = "", suffix = "", playerId = "") {
   return `
     <span class="player-identity">
       ${avatarHtml(name, avatarUrl, "small")}
-      ${roleMark(role)}
+      ${roleMark(role, playerId)}
       <span class="name-text">${escapeHtml(`${name}${suffix}`)}</span>
     </span>
   `;
 }
 
 function playerNameWithRole(play) {
-  return playerIdentity(play.playerName, play.role, play.avatarUrl);
+  return playerIdentity(play.playerName, play.role, play.avatarUrl, "", play.playerId);
 }
 
 function seatStyle(index, total) {
@@ -2787,7 +2931,7 @@ function renderPlayer(player) {
   return `
     <div class="player ${roleClass(player.role)}" data-player-id="${escapeHtml(player.id)}">
       <div>
-        <strong class="player-name-line">${playerIdentity(player.name, player.role, player.avatarUrl, isMe ? "（我）" : "")}</strong>
+        <strong class="player-name-line">${playerIdentity(player.name, player.role, player.avatarUrl, isMe ? "（我）" : "", player.id)}</strong>
         <div class="tags">
           ${player.host ? `<span class="tag accent">房主</span>` : ""}
           ${player.test ? `<span class="tag">机器人</span>` : ""}
@@ -3026,13 +3170,58 @@ function renderHand(hand, options = {}) {
   `;
 }
 
-function renderMiniCards(cards) {
+function playedCardEffectClass(play, card, trickNumber) {
+  const classes = [];
+  const doglegEffect = doglegRevealEffects.find((effect) =>
+    effect.until > Date.now() && effect.playerId === play?.playerId && effect.cardId === card.id
+  );
+  if (doglegEffect) classes.push("dogleg-card-reveal");
+  const dragged = draggedFiveEffect?.trickNumber === trickNumber
+    && draggedFiveEffect.entries.some((entry) => entry.playerId === play?.playerId && entry.cardId === card.id);
+  if (dragged) {
+    classes.push("dragged-five-marked");
+    if (draggedFiveEffect.animateUntil > Date.now()) classes.push("dragged-five-animated");
+  }
+  return classes.join(" ");
+}
+
+function renderMiniCards(cards, options = {}) {
   if (!cards.length) return `<div class="meta">未出牌</div>`;
   const sortedCards = sortCardsForPlay(cards);
   return `
     <div class="mini-cards">
       ${sortedCards.map((card, index) => `
-        <span class="mini-card ${card.color} ${cardSuitClass(card)}" style="--i:${index}" title="${escapeHtml(displayCardLabel(card))}">${cardCorner(card)}</span>
+        <span class="mini-card ${card.color} ${cardSuitClass(card)} ${playedCardEffectClass(options.play, card, options.trickNumber)}" style="--i:${index}" title="${escapeHtml(displayCardLabel(card))}">${cardCorner(card)}</span>
+      `).join("")}
+    </div>
+  `;
+}
+
+function throwComponentLabel(component) {
+  const pattern = component?.pattern;
+  if (!pattern) return `${component?.count || 0} 张`;
+  if (pattern.type === "single") return "单张";
+  if (pattern.type === "multi") {
+    if (pattern.width === 2) return "对子";
+    if (pattern.width === 3) return "三张";
+    return `${pattern.width} 张同点`;
+  }
+  if (pattern.type === "tractor") {
+    const unit = pattern.width === 2 ? "对" : `${pattern.width}张头`;
+    return `${pattern.length} 连${unit}（${pattern.count} 张）`;
+  }
+  return `${component?.count || pattern.count || 0} 张牌型`;
+}
+
+function renderPlayedCards(play, fallbackCards = [], trickNumber = null) {
+  if (!play?.throwPlay || !play.throwComponents?.length) return renderMiniCards(fallbackCards, { play, trickNumber });
+  return `
+    <div class="played-throw-components" aria-label="甩牌牌型">
+      ${play.throwComponents.map((component) => `
+        <div class="played-throw-component">
+          <span class="played-throw-label">${escapeHtml(throwComponentLabel(component))}</span>
+          ${renderMiniCards(component.cards || [], { play, trickNumber })}
+        </div>
       `).join("")}
     </div>
   `;

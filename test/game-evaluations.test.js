@@ -88,3 +88,39 @@ test("bottom dragged fives count as doubled opponent benefit and loss", () => {
   assert.equal(result.awards.mvpPlayerId, "idle-winner");
   assert.equal(result.awards.pitPlayerId, "banker");
 });
+
+test("evaluation awards stiffest, thunder, and precision labels", () => {
+  const result = buildGameEvaluations({
+    players: [
+      { id: "a", score: 100 },
+      { id: "b", score: 0 },
+      { id: "c", score: 0 },
+      { id: "d", score: 0 }
+    ],
+    bankerTeamIds: ["c", "d"],
+    winnerTeam: "idle",
+    provisionalWinnerPlayerIds: ["a", "c"],
+    finalSideSuitBottomWinnerId: "a",
+    tricks: [
+      {
+        leaderId: "c",
+        winnerId: "a",
+        plays: [
+          { playerId: "c", cards: [card("4")] },
+          { playerId: "d", cards: [card("4")] },
+          { playerId: "a", cards: [card("A")] },
+          { playerId: "b", cards: [card("5", "H"), card("5", "H")] }
+        ]
+      }
+    ]
+  });
+
+  assert.equal(result.byPlayerId.a.teammateDragHarmValue, 4);
+  assert.equal(result.byPlayerId.a.wasProvisionalWinner, true);
+  assert.equal(result.byPlayerId.b.wasProvisionalWinner, false);
+  assert.deepEqual(result.awards.stiffestPlayerIds, ["b", "d"]);
+  assert.deepEqual(result.awards.thunderPlayerIds, ["a"]);
+  assert.equal(result.awards.precisionPlayerId, "a");
+  assert.deepEqual(result.byPlayerId.a.tags.map((tag) => tag.label), ["MVP", "雷", "精"]);
+  assert.deepEqual(result.byPlayerId.b.tags.map((tag) => tag.label), ["躺", "辅", "僵", "僵中僵"]);
+});

@@ -41,9 +41,13 @@ export function buildGameEvaluations({
   tricks = [],
   bankerTeamIds = [],
   winnerTeam = "idle",
+  provisionalWinnerPlayerIds = null,
+  finalSideSuitBottomWinnerId = null,
   bottom = null
 } = {}) {
   const bankerIds = new Set(bankerTeamIds);
+  const hasProvisionalWinnerData = Array.isArray(provisionalWinnerPlayerIds);
+  const provisionalWinnerIds = new Set(provisionalWinnerPlayerIds || []);
   const teamByPlayerId = new Map(players.map((player) => [player.id, bankerIds.has(player.id) ? "banker" : "idle"]));
   const metrics = players.map((player, seatIndex) => ({
     playerId: player.id,
@@ -59,6 +63,7 @@ export function buildGameEvaluations({
     enemyDragBenefit: 0,
     teammateDraggedRedFives: 0,
     teammateDraggedDiamondFives: 0,
+    teammateDragHarmValue: 0,
     draggedByOpponentRedFives: 0,
     draggedByOpponentDiamondFives: 0,
     enemyDragLoss: 0,
@@ -69,6 +74,7 @@ export function buildGameEvaluations({
     mvpValue: 0,
     contributionValue: 0,
     harmValue: 0,
+    wasProvisionalWinner: provisionalWinnerIds.has(player.id),
     tags: []
   }));
   const metricByPlayerId = new Map(metrics.map((metric) => [metric.playerId, metric]));
@@ -93,6 +99,7 @@ export function buildGameEvaluations({
         if (!value) return;
         const isRedFive = card.suit === "H";
         if (contributorTeam === winnerTeam) {
+          winner.teammateDragHarmValue += value;
           if (isRedFive) {
             winner.teammateDraggedRedFives += 1;
             contributor.draggedByTeammateRedFives += 1;
@@ -164,6 +171,11 @@ export function buildGameEvaluations({
     ["capturedPoints", "asc"]
   ]);
   const stiffPlayers = metrics.filter((metric) => metric.leadRounds === 0 && metric.wonTricks === 0);
+  const stiffestPlayers = hasProvisionalWinnerData
+    ? metrics.filter((metric) => !metric.wasProvisionalWinner)
+    : [];
+  const thunderPlayers = metrics.filter((metric) => metric.teammateDragHarmValue >= 4);
+  const precision = metricByPlayerId.get(finalSideSuitBottomWinnerId) || null;
 
   addTag(
     mvp,
@@ -192,6 +204,18 @@ export function buildGameEvaluations({
   stiffPlayers.forEach((metric) => {
     addTag(metric, "stiff", "僵", "本局没有首出，也没有赢得过下一轮出牌权");
   });
+  stiffestPlayers.forEach((metric) => {
+    addTag(metric, "stiffest", "僵中僵", "本局每次出牌后都未曾成为当时全场最大");
+  });
+  thunderPlayers.forEach((metric) => {
+    addTag(
+      metric,
+      "thunder",
+      "雷",
+      `拖到队友红五 ${metric.teammateDraggedRedFives}、方五 ${metric.teammateDraggedDiamondFives}（折算 ${metric.teammateDragHarmValue} 积分）`
+    );
+  });
+  addTag(precision, "precision", "精", "最后一轮以副牌赢得本轮并成功保底");
 
   return {
     awards: {
@@ -199,7 +223,10 @@ export function buildGameEvaluations({
       couchPlayerId: couch?.playerId || null,
       pitPlayerId: pit?.playerId || null,
       supportPlayerId: support?.playerId || null,
-      stiffPlayerIds: stiffPlayers.map((metric) => metric.playerId)
+      stiffPlayerIds: stiffPlayers.map((metric) => metric.playerId),
+      stiffestPlayerIds: stiffestPlayers.map((metric) => metric.playerId),
+      thunderPlayerIds: thunderPlayers.map((metric) => metric.playerId),
+      precisionPlayerId: precision?.playerId || null
     },
     byPlayerId: Object.fromEntries(metrics.map((metric) => [metric.playerId, metric]))
   };
