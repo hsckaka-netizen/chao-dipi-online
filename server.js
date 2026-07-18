@@ -3747,9 +3747,11 @@ async function serveStatic(req, res, url) {
     ".jpeg": "image/jpeg",
     ".webp": "image/webp"
   }[extension] || "application/octet-stream";
-  const cacheControl = url.pathname.startsWith("/assets/")
-    ? "public, max-age=604800"
-    : "no-cache";
+  const cacheControl = extension === ".html"
+    ? "no-store"
+    : url.pathname.startsWith("/assets/")
+      ? "public, max-age=604800"
+      : "no-cache";
 
   try {
     await readFile(target);

@@ -129,4 +129,9 @@ test("room snapshots stay monotonic and visual assets are cached", async (t) => 
   assert.equal(assetResponse.status, 200);
   assert.match(assetResponse.headers.get("cache-control") || "", /max-age=604800/);
   assert.equal(assetResponse.headers.get("content-type"), "image/png");
+
+  const indexResponse = await fetch(`${server.baseUrl}/`);
+  assert.equal(indexResponse.status, 200);
+  assert.equal(indexResponse.headers.get("cache-control"), "no-store");
+  assert.equal(indexResponse.headers.get("content-type"), "text/html; charset=utf-8");
 });
