@@ -3176,8 +3176,11 @@ function playedCardEffectClass(play, card, trickNumber) {
     effect.until > Date.now() && effect.playerId === play?.playerId && effect.cardId === card.id
   );
   if (doglegEffect) classes.push("dogleg-card-reveal");
-  const dragged = draggedFiveEffect?.trickNumber === trickNumber
-    && draggedFiveEffect.entries.some((entry) => entry.playerId === play?.playerId && entry.cardId === card.id);
+  const dragged = Boolean(
+    draggedFiveEffect
+      && draggedFiveEffect.trickNumber === trickNumber
+      && draggedFiveEffect.entries.some((entry) => entry.playerId === play?.playerId && entry.cardId === card.id)
+  );
   if (dragged) {
     classes.push("dragged-five-marked");
     if (draggedFiveEffect.animateUntil > Date.now()) classes.push("dragged-five-animated");
