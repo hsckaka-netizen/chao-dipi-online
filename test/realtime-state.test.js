@@ -148,6 +148,8 @@ test("room snapshots stay monotonic and visual assets are cached", async (t) => 
     body: JSON.stringify(credentials)
   });
   assert.equal(started.stage, "bidding", "开局请求应先返回，不应同步跑完机器人准备流程");
+  assert.equal(started.kittySize, 5);
+  assert.deepEqual(started.removedCards, []);
 
   const spectate = await jsonRequest(`${server.baseUrl}/api/rooms/${created.roomId}/spectate`, {
     method: "POST",
@@ -210,7 +212,13 @@ test("room snapshots stay monotonic and visual assets are cached", async (t) => 
       body: JSON.stringify(countAuth)
     });
     assert.equal(countStarted.players.length, playerCount);
-    assert.equal(countStarted.kittySize, playerCount);
+    const expectedKittySize = Math.min(playerCount, 6);
+    const expectedRemovedCount = Math.max(0, playerCount - 6);
+    assert.equal(countStarted.kittySize, expectedKittySize);
+    assert.equal(countStarted.kittyCount, expectedKittySize);
+    assert.equal(countStarted.removedCards.length, expectedRemovedCount);
+    assert.ok(countStarted.removedCards.every((card) => card.rank === "4"));
+    assert.equal(new Set(countStarted.removedCards.map((card) => card.suit)).size, expectedRemovedCount);
     assert.equal(countStarted.hand.length, 53);
     assert.equal(countStarted.stage, "bidding");
 

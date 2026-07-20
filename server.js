@@ -359,6 +359,23 @@ function shuffle(cards) {
   return copy;
 }
 
+function deckForPlayerCount(playerCount) {
+  const fullDeck = createDeck(playerCount);
+  const removeCount = Math.max(0, playerCount - 6);
+  if (!removeCount) return { deck: fullDeck, removedCards: [] };
+
+  const selectedSuits = shuffle(suits.map((suit) => suit.id)).slice(0, removeCount);
+  const deck = [...fullDeck];
+  const removedCards = selectedSuits.map((suit) => {
+    const candidates = deck
+      .map((card, index) => ({ card, index }))
+      .filter(({ card }) => card.type === "normal" && card.rank === "4" && card.suit === suit);
+    const selected = candidates[randomInt(candidates.length)];
+    return deck.splice(selected.index, 1)[0];
+  });
+  return { deck, removedCards };
+}
+
 function sortHand(hand) {
   return [...hand].sort((a, b) => a.sort - b.sort || a.deck - b.deck || a.id.localeCompare(b.id));
 }
@@ -368,7 +385,9 @@ function deal(room) {
   clearAiPlayTimer(room);
   room.events = [];
   const count = room.players.length;
-  const deck = shuffle(createDeck(count));
+  const preparedDeck = deckForPlayerCount(count);
+  const deck = shuffle(preparedDeck.deck);
+  room.removedCards = preparedDeck.removedCards;
   room.players.forEach((player, playerIndex) => {
     const start = playerIndex * HAND_SIZE;
     player.hand = sortHand(deck.slice(start, start + HAND_SIZE));
@@ -378,13 +397,13 @@ function deal(room) {
     player.throwFailures = 0;
     player.ready = false;
   });
-  room.kitty = deck.slice(count * HAND_SIZE, count * HAND_SIZE + count);
+  room.kitty = deck.slice(count * HAND_SIZE);
   room.status = "dealt";
   room.callMode = normalizedCallMode(room.callMode);
   room.stage = room.callMode === CALL_MODE_SCORE ? "score-bidding" : "bidding";
   room.phase = room.callMode === CALL_MODE_SCORE ? "叫分抢庄" : "叫主/抢主";
   room.startedAt = now();
-  room.kittySize = count;
+  room.kittySize = room.kitty.length;
   room.bankerId = null;
   room.trumpSuit = null;
   room.doglegCard = null;
@@ -395,9 +414,13 @@ function deal(room) {
   if (room.callMode === CALL_MODE_SCORE) room.setup.scoreBid = createScoreBidSetup(room);
   room.currentTrick = null;
   room.trickHistory = [];
+  room.settledTrickHistory = [];
   room.provisionalWinnerPlayerIds = [];
   room.playPauseUntil = null;
   room.notice = null;
+  if (room.removedCards.length) {
+    addEvent(room, `本局开局移除 ${room.removedCards.map((card) => card.label).join("、")}，底牌保持 ${room.kittySize} 张`);
+  }
   if (room.callMode === CALL_MODE_SCORE && room.setup.scoreBid?.current) {
     const scoreBid = room.setup.scoreBid;
     room.phase = `${playerName(room, scoreBid.current.playerId)} 以 ${scoreBid.current.score} 分起叫，等待其他玩家加分或过`;
@@ -423,6 +446,7 @@ function resetRoomToLobby(room, options = {}) {
   room.phase = "等待玩家加入";
   room.startedAt = null;
   room.kitty = [];
+  room.removedCards = [];
   room.kittySize = room.players.length;
   room.bankerId = null;
   room.trumpSuit = null;
@@ -432,6 +456,7 @@ function resetRoomToLobby(room, options = {}) {
   room.result = null;
   room.setup = emptySetup();
   room.currentTrick = null;
+  room.settledTrickHistory = [];
   room.provisionalWinnerPlayerIds = [];
   room.playPauseUntil = null;
   room.notice = null;
@@ -657,6 +682,7 @@ function roomSnapshot(room, viewer = null) {
     kittyViewerId,
     kittyViewerName: kittyViewerId ? playerName(room, kittyViewerId) : "",
     kitty: canViewKitty ? room.kitty.map(publicCard) : [],
+    removedCards: (room.removedCards || []).map(publicCard),
     createdAt: room.createdAt,
     startedAt: room.startedAt,
     readyCount,
@@ -683,7 +709,9 @@ function roomSnapshot(room, viewer = null) {
     })),
     hand: viewer ? viewerHandForSnapshot(room, viewer).map(publicCard) : [],
     currentTrick: trickSnapshot(room, room.currentTrick),
-    trickHistory: room.trickHistory.map((trick) => trickSnapshot(room, trick)),
+    trickHistory: room.stage === "finished" && room.settledTrickHistory?.length
+      ? room.settledTrickHistory
+      : room.trickHistory.map((trick) => trickSnapshot(room, trick)),
     playedProtectedFives: playedProtectedFiveCounts(room),
     result: room.result,
     events: room.events
@@ -732,7 +760,7 @@ function requirePlayer(res, room, playerId, token) {
 }
 
 function canChangeRoomPlayers(room) {
-  return room.status === "lobby" || room.status === "finished";
+  return room.status === "lobby";
 }
 
 function disconnectPlayerClients(room, playerId, messageText) {
@@ -936,10 +964,11 @@ function finishGame(room, completedTrick) {
       draggedDiamondFives: bottomDraggedDiamondFives
     }
   });
+  room.settledTrickHistory = room.trickHistory.map((trick) => trickSnapshot(room, trick));
 
-  room.status = "finished";
+  room.status = "lobby";
   room.stage = "finished";
-  room.phase = `本局结束：${teamName(winnerTeam)}获胜`;
+  room.phase = `本局结束：${teamName(winnerTeam)}获胜，等待下一局`;
   room.currentTrick = null;
   room.players.forEach((player) => {
     player.ready = Boolean(player.test);
@@ -3287,6 +3316,7 @@ async function handleApi(req, res, pathParts, url) {
       hostId: host.id,
       players: [host],
       kitty: [],
+      removedCards: [],
       kittySize: 0,
       bankerId: null,
       trumpSuit: null,
@@ -3298,6 +3328,7 @@ async function handleApi(req, res, pathParts, url) {
       setup: emptySetup(),
       currentTrick: null,
       trickHistory: [],
+      settledTrickHistory: [],
       provisionalWinnerPlayerIds: [],
       playPauseUntil: null,
       aiSetupTimer: null,
@@ -3524,15 +3555,11 @@ async function handleApi(req, res, pathParts, url) {
       const body = await readJson(req);
       const viewer = requirePlayer(res, room, body.playerId, body.token);
       if (!viewer) return;
-      if (room.status !== "lobby" && room.status !== "finished") return writeJson(res, 409, { error: "只有等待开局或本局结束后可以准备" });
+      if (room.status !== "lobby") return writeJson(res, 409, { error: "只有等待开局时可以准备" });
       const nextReady = Boolean(body.ready);
       if (viewer.ready !== nextReady) {
         viewer.ready = nextReady;
         addEvent(room, `${viewer.name} ${nextReady ? "已准备" : "取消准备"}`);
-      }
-      if (room.status === "finished" && allPlayersReady(room)) {
-        resetRoomToLobby(room, { preserveReady: true });
-        addEvent(room, "所有玩家已确认再来一局，等待房主开局");
       }
       broadcast(room);
       return writeJson(res, 200, roomSnapshot(room, viewer));
@@ -3751,18 +3778,9 @@ async function handleApi(req, res, pathParts, url) {
       const body = await readJson(req);
       const viewer = requirePlayer(res, room, body.playerId, body.token);
       if (!viewer) return;
-      if (room.status === "finished") {
-        if (!viewer.ready) {
-          viewer.ready = true;
-          addEvent(room, `${viewer.name} 选择再来一局，并已自动准备`);
-        }
-        if (allPlayersReady(room)) {
-          resetRoomToLobby(room, { preserveReady: true });
-          addEvent(room, "所有玩家已确认再来一局，等待房主开局");
-        }
-      } else if (room.status === "lobby") {
+      if (room.status === "lobby") {
         viewer.ready = true;
-        addEvent(room, `${viewer.name} 已准备再来一局`);
+        addEvent(room, `${viewer.name} ${room.stage === "finished" ? "已准备再来一局" : "已准备"}`);
       } else {
         return writeJson(res, 409, { error: "本局还未结束，暂不能再来一局" });
       }

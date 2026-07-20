@@ -26,6 +26,7 @@ let throwRevealTimer = null;
 let gameplayEffectTimer = null;
 let doglegRevealEffects = [];
 let draggedFiveEffect = null;
+let lastMutatingActionAt = 0;
 let homeView = "rooms";
 let profiles = [];
 let profilesLoaded = false;
@@ -81,7 +82,7 @@ function isSpectating() {
   return Boolean(session?.spectator || state?.spectator);
 }
 
-function setMessage(text, bad = false, autoDismiss = !bad) {
+function setMessage(text, bad = false, autoDismiss = true) {
   if (messageTimer) window.clearTimeout(messageTimer);
   message = text;
   messageBad = bad;
@@ -92,7 +93,7 @@ function setMessage(text, bad = false, autoDismiss = !bad) {
         message = "";
         render();
       }
-    }, 4500);
+    }, 3000);
   }
 }
 
@@ -115,13 +116,13 @@ function applyState(nextState, options = {}) {
   state = nextState;
   syncThrowDraftForState();
   scheduleThrowReveal(previousState);
-  if (previousState?.roomId !== nextState.roomId || nextState.status !== "finished") {
+  if (previousState?.roomId !== nextState.roomId || nextState.stage !== "finished") {
     dismissedResultRoomId = null;
   }
-  if (previousState?.status !== "finished" && nextState.status === "finished") {
+  if (previousState?.stage !== "finished" && nextState.stage === "finished") {
     dismissedResultRoomId = null;
   }
-  if (previousState?.status === "finished" && nextState.status === "lobby") {
+  if (previousState?.stage === "finished" && nextState.stage === "lobby") {
     activeDialog = null;
     dismissedResultRoomId = null;
     selectedCardIds = new Set();
@@ -902,7 +903,7 @@ async function setReady(ready) {
       method: "POST",
       body: JSON.stringify({ playerId: session.playerId, token: session.token, ready })
     }), { highlightNewKitty: false });
-    if (state?.status === "finished") {
+    if (state?.stage === "finished") {
       dismissedResultRoomId = ready ? state.roomId : null;
       activeDialog = null;
     }
@@ -920,7 +921,7 @@ async function playAgain() {
       body: JSON.stringify({ playerId: session.playerId, token: session.token })
     }), { highlightNewKitty: false });
     activeDialog = null;
-    dismissedResultRoomId = state?.status === "finished" ? state?.roomId || null : null;
+    dismissedResultRoomId = state?.stage === "finished" ? state?.roomId || null : null;
     setMessage("已准备下一局，等待其他玩家确认。");
   } catch (error) {
     setMessage(error.message, true);
@@ -1520,8 +1521,10 @@ function renderHandControls(action) {
       ? `<button type="button" class="secondary throw-entry" data-action="enter-throw">甩牌</button>`
       : "";
     const reason = !action.enabled && action.reason ? action.reason : "";
+    const turnIndicator = action.action === "play-selected" ? `<span class="turn-indicator">轮到你出牌</span>` : "";
     return `
       <div class="row hand-controls">
+        ${turnIndicator}
         <span class="tag">${selectedCardIds.size} 张已选</span>
         <button type="button" data-action="${action.action}" ${action.enabled ? "" : "disabled"}>${escapeHtml(action.label)}</button>
         ${throwButton}
@@ -1795,9 +1798,10 @@ function renderProfileRow(profile) {
 function renderRoom() {
   const viewer = viewerPlayer();
   const spectating = isSpectating();
-  const waitingNextRound = !spectating && state.status === "finished" && Boolean(viewer?.ready);
-  const inLobbyView = state.status === "lobby" || waitingNextRound;
-  const started = state.status !== "lobby" && !waitingNextRound;
+  const waitingNextRound = !spectating && state.stage === "finished" && Boolean(viewer?.ready);
+  const inLobbyView = state.status === "lobby";
+  const gameInProgress = state.status === "dealt";
+  const showTable = state.stage !== "lobby";
   selectedCardIds = new Set([...selectedCardIds].filter((cardId) => state.hand.some((card) => card.id === cardId)));
   maybeAutoOpenActionDialog();
   const waitingText = state.players.length < state.minPlayers
@@ -1818,9 +1822,8 @@ function renderRoom() {
             <div class="tags">
               <span class="tag accent">${state.players.length}/${state.maxPlayers} 人</span>
               ${spectating ? `<span class="tag good">观战 · ${escapeHtml(state.spectator?.targetPlayerName || state.viewer?.name || "玩家")}</span>` : ""}
-              <span class="tag">${escapeHtml(waitingNextRound ? "等待下一局" : state.phase)}</span>
+              <span class="tag">${escapeHtml(state.phase)}</span>
               ${inLobbyView ? `<span class="tag good">${escapeHtml(readyStatusText())}</span>` : ""}
-              ${started ? `<span class="tag good">底牌 ${state.kittyCount} 张</span>` : ""}
             </div>
           </div>
           <div class="share">
@@ -1830,7 +1833,7 @@ function renderRoom() {
               <button type="button" data-action="copy">复制链接</button>
               <button type="button" class="secondary" data-action="open-players">玩家</button>
               <button type="button" class="secondary" data-action="open-events">日志</button>
-              ${state.trickHistory.length ? `<button type="button" class="secondary" data-action="open-history">历史出牌 ${state.trickHistory.length}</button>` : ""}
+              ${state.trickHistory.length || state.removedCards?.length ? `<button type="button" class="secondary" data-action="open-history">历史出牌 ${state.trickHistory.length}</button>` : ""}
               ${state.canViewKitty ? `<button type="button" class="secondary" data-action="open-kitty">查看底牌</button>` : ""}
               ${spectating ? "" : `
                 ${state.viewer.host && state.status === "lobby" ? renderCallModeToggle() : ""}
@@ -1839,9 +1842,9 @@ function renderRoom() {
                 ${state.viewer.host && state.status === "lobby" ? `<button type="button" class="secondary" data-action="add-robot" ${state.players.length >= state.maxPlayers ? "disabled" : ""}>添加机器人</button>` : ""}
                 ${state.viewer.host && state.status === "lobby" ? `<button type="button" class="secondary" data-action="random-seats" ${state.players.length < 2 ? "disabled" : ""}>随机座位</button>` : ""}
                 ${state.viewer.host && state.status === "lobby" ? `<button type="button" data-action="start" ${canStart() ? "" : "disabled"}>开始并发牌</button>` : ""}
-                ${state.viewer.host && started ? `<button type="button" class="secondary" data-action="reset">重开房间</button>` : ""}
+                ${state.viewer.host && gameInProgress ? `<button type="button" class="secondary" data-action="reset">重开房间</button>` : ""}
                 ${state.viewer.host ? `<button type="button" class="secondary danger" data-action="dissolve-room">解散房间</button>` : ""}
-                ${state.status === "lobby" || state.status === "finished" ? `<button type="button" class="secondary" data-action="room-leave">退出房间</button>` : ""}
+                ${state.status === "lobby" ? `<button type="button" class="secondary" data-action="room-leave">退出房间</button>` : ""}
               `}
             </div>
             ${spectating ? `<div class="spectator-notice">只读观战中：你看到的是 ${escapeHtml(state.spectator?.targetPlayerName || state.viewer?.name || "该玩家")} 的完整视角，无法操作任何牌。</div>` : ""}
@@ -1849,11 +1852,10 @@ function renderRoom() {
           </div>
         </section>
 
-        ${!started ? renderLobbyPlayersPanel() : ""}
-        ${started && state.setup?.doglegCard ? renderDoglegPanel() : ""}
-        ${started && state.stage !== "playing" && state.stage !== "finished" ? renderSetupPanel() : ""}
-        ${started ? renderPlayTable() : ""}
-        ${!started ? `<section class="panel"><div class="empty">${escapeHtml(lobbyEmptyText(waitingNextRound))}</div></section>` : ""}
+        ${!showTable ? renderLobbyPlayersPanel() : ""}
+        ${showTable && state.setup?.doglegCard ? renderDoglegPanel() : ""}
+        ${showTable ? renderPlayTable() : ""}
+        ${!showTable ? `<section class="panel"><div class="empty">${escapeHtml(lobbyEmptyText(waitingNextRound))}</div></section>` : ""}
       </div>
     </div>
     ${renderActiveDialog()}
@@ -1963,7 +1965,7 @@ function renderSetupPlayers(type) {
   `;
 }
 
-function renderSetupPanel() {
+function renderSetupCenter() {
   const setup = state.setup || {};
   const stage = state.stage;
   let body = "";
@@ -2122,15 +2124,10 @@ function renderSetupPanel() {
   }
 
   return `
-    <section class="panel stack setup-detail setup-detail-${escapeHtml(state.stage)}">
-      <div class="section-head">
-        <h2>牌桌状态</h2>
-        <div class="tags">
-          <span class="tag accent">${escapeHtml(state.phase)}</span>
-        </div>
-      </div>
+    <div class="setup-center-content">
+      <span class="tag accent">${escapeHtml(state.phase)}</span>
       ${body}
-    </section>
+    </div>
   `;
 }
 
@@ -2183,7 +2180,7 @@ function renderActiveDialog() {
   if (activeDialog === "history") return renderHistoryDialog();
   if (activeDialog === "players") return renderPlayersDialog();
   if (activeDialog === "events") return renderEventsDialog();
-  if (activeDialog === "result" && state.status === "finished" && !viewerPlayer()?.ready) return renderResultPanel();
+  if (activeDialog === "result" && state.stage === "finished") return renderResultPanel();
   return "";
 }
 
@@ -2406,7 +2403,8 @@ function renderTwoCardChoices(cards) {
   const groups = ["S", "H", "C", "D"].map((suit) => ({
     suit,
     label: { S: "黑桃", H: "红桃", C: "草花", D: "方块" }[suit],
-    cards: cards.filter((card) => card.suit === suit)
+    cards: cards.filter((card) => card.suit === suit),
+    routeCount: (state.hand || []).filter((card) => card.type === "normal" && card.suit === suit).length
   })).filter((group) => group.cards.length);
   return `
     <div class="two-card-groups">
@@ -2414,7 +2412,7 @@ function renderTwoCardChoices(cards) {
         <div class="two-card-group">
           <div class="hand-group-title">
             <strong>${escapeHtml(group.label)}</strong>
-            <span>${group.cards.length} 张</span>
+            <span>该路 ${group.routeCount} 张</span>
           </div>
           <div class="choice-cards">
             ${group.cards.map((card, index) => `
@@ -2482,6 +2480,7 @@ function renderPlayedFiveStats() {
 
 function idleTargetScore() {
   if (!state) return "";
+  if (state.stage === "finished" && state.result) return Number(state.result.threshold) || 0;
   if (state.callMode === "score" && state.setup?.scoreBid?.currentScore) {
     return state.players.length * 100 - state.setup.scoreBid.currentScore;
   }
@@ -2493,7 +2492,7 @@ function idleTargetScore() {
 
 function currentIdleScore() {
   if (!state) return 0;
-  if (state.status === "finished" && state.result) return Number(state.result.idleScore) || 0;
+  if (state.stage === "finished" && state.result) return Number(state.result.idleScore) || 0;
   return (state.players || [])
     .filter((player) => player.role === "闲家")
     .reduce((total, player) => total + (Number(player.score) || 0), 0);
@@ -2558,7 +2557,6 @@ function renderSetupTable() {
     "fry-burying": "炒底贴底",
     dogleg: "狗腿牌"
   };
-  const currentAction = setupTableActionText();
   const seats = state.players.map((player) => {
     const status = setupSeatStatus(player);
     return {
@@ -2594,33 +2592,11 @@ function renderSetupTable() {
         <h2>${escapeHtml(titleByStage[state.stage] || "牌桌")}</h2>
         <div class="tags">
           ${renderGameInfoTags()}
-          <span class="tag accent">${escapeHtml(state.phase)}</span>
-          ${currentAction ? `<span class="tag good">${escapeHtml(currentAction)}</span>` : ""}
         </div>
       </div>
       ${renderTrick(tableTrick, true, { setupTable: true })}
     </section>
   `;
-}
-
-function setupTableActionText() {
-  const setup = state.setup || {};
-  const fry = setup.fry || {};
-  if (state.stage === "bidding") {
-    if (!setup.bid) return "等待玩家叫主";
-    return setup.biddingTurnPlayerName ? `轮到 ${setup.biddingTurnPlayerName} 抢主或过` : "叫主结束";
-  }
-  if (state.stage === "score-bidding") {
-    const scoreBidState = setup.scoreBid || {};
-    if (!scoreBidState.currentPlayerId) return `等待玩家以 ${scoreBidState.minimum || 0} 分叫庄`;
-    return `${scoreBidState.currentPlayerName} 当前 ${scoreBidState.currentScore} 分`;
-  }
-  if (state.stage === "trump-selecting") return setup.bankerName ? `等待 ${setup.bankerName} 亮2定主` : "等待定主";
-  if (state.stage === "burying") return setup.bankerName ? `等待 ${setup.bankerName} 贴底` : "等待贴底";
-  if (state.stage === "frying") return fry.currentPlayerName ? `轮到 ${fry.currentPlayerName} 炒底或不炒` : "等待炒底";
-  if (state.stage === "fry-burying") return fry.currentPlayerName ? `等待 ${fry.currentPlayerName} 贴底` : "等待贴底";
-  if (state.stage === "dogleg") return setup.bankerName ? `等待 ${setup.bankerName} 选择狗腿牌` : "等待选择狗腿牌";
-  return "";
 }
 
 function setupSeatStatus(player) {
@@ -2716,45 +2692,19 @@ function renderSeatHand(action, play, trick, index, options = {}) {
   const statusText = playStatusText(trick, play, index, true, options);
   const statusTone = playStatusTone(trick, play, true, options);
   const myTurn = state.stage === "playing" && viewerCanPlayCurrent();
-  const turnName = state.currentTrick?.currentTurnPlayerName || "";
-  const turnTitle = myTurn
-    ? "轮到你出牌"
-    : viewerPlayedCurrent()
-      ? "本轮已出牌"
-      : turnName
-        ? `等待 ${turnName} 出牌`
-        : "等待下一轮";
-  const turnDetail = myTurn
-    ? (selectedCardIds.size ? `已选择 ${selectedCardIds.size} 张牌` : "请选择要出的牌")
-    : isSpectating()
-      ? "观战模式仅展示该玩家视角，不能操作手牌"
-      : "可以提前选择手牌，轮到后直接出牌";
   return `
     <div class="seat-hand ${myTurn ? "is-my-turn" : ""}" data-action="clear-selection">
-      ${state.stage === "playing" ? `
-        <div class="viewer-turn-banner ${myTurn ? "active" : "waiting"}" role="status">
-          <strong>${escapeHtml(turnTitle)}</strong>
-          <span>${escapeHtml(turnDetail)}</span>
-        </div>
-      ` : ""}
       <div class="seat-hand-head">
         <div class="seat-hand-player">
           <div class="seat-hand-player-line">
             <strong>${playerNameWithRole(play)}</strong>
             <span class="seat-status ${escapeHtml(statusTone)}">${escapeHtml(statusText)}</span>
           </div>
-          <div class="seat-hand-stats">
-            <span>牌分 <b>${play.score || 0}</b></span>
-            <span>红五 <b>${play.draggedRedFives || 0}</b></span>
-            <span>方五 <b>${play.draggedDiamondFives || 0}</b></span>
-            <span>甩失 <b>${play.throwFailures || 0}</b></span>
-            <span>手牌 <b>${state.hand.length}</b></span>
-          </div>
         </div>
         ${renderHandControls(action)}
       </div>
       ${renderThrowDraft()}
-      ${renderHand(state.hand, { compact: true })}
+      ${renderHand(state.hand, { compact: true, stats: play })}
     </div>
   `;
 }
@@ -2787,16 +2737,18 @@ function renderTrick(trick, current, options = {}) {
     : `${trick.winnerName ? `胜者 ${trick.winnerName} · ${trick.points} 分` : "已完成"}`;
   return `
     <div class="trick ${current ? "current" : ""} ${heldResult ? "held-result" : ""} ${setupTable ? "setup-table" : ""} ${finishedResult ? "finished-table" : ""}">
-      <div class="trick-title">
-        <span>${current ? (finishedResult ? "最后一轮" : setupTable ? "当前状态" : heldResult ? "上一轮结果" : "当前轮") : `第 ${trick.number} 轮`}</span>
-        <span>${escapeHtml(titleMeta)}</span>
-      </div>
+      ${setupTable ? "" : `
+        <div class="trick-title">
+          <span>${current ? (finishedResult ? "最后一轮" : heldResult ? "上一轮结果" : "当前轮") : `第 ${trick.number} 轮`}</span>
+          <span>${escapeHtml(titleMeta)}</span>
+        </div>
+      `}
       <div class="trick-grid ${current ? `table-circle table-seats-${displayPlays.length}` : ""}">
         ${current ? `
           <div class="table-corner-stats">${renderPlayedFiveStats()}</div>
-          <div class="table-center ${finishedResult ? "result-center" : ""}">
+          <div class="table-center ${setupTable ? "setup-center" : ""} ${finishedResult ? "result-center" : ""}">
             <strong>${finishedResult ? "本局结束" : setupTable ? "牌桌" : heldResult ? `第 ${trick.number} 轮结果` : `第 ${trick.number} 轮`}</strong>
-            <span>${escapeHtml(finishedResult ? `${state.result?.winnerTeamName || "胜方"}获胜` : titleMeta)}</span>
+            ${setupTable ? renderSetupCenter() : `<span>${escapeHtml(finishedResult ? `${state.result?.winnerTeamName || "胜方"}获胜` : titleMeta)}</span>`}
             ${finishedResult ? `<button type="button" data-action="open-result">查看结算</button>` : ""}
           </div>
         ` : ""}
@@ -2970,16 +2922,26 @@ function sideSeatInfo(index, counts) {
 
 function renderHistoryDialog() {
   const history = [...(state.trickHistory || [])].reverse();
+  const removedCards = state.removedCards || [];
   return `
     <div class="modal-backdrop">
       <section class="modal-card history-modal" role="dialog" aria-modal="true" aria-label="历史出牌">
         <div class="section-head">
           <div>
             <h2>历史出牌</h2>
-            <div class="meta">${history.length} 轮</div>
+            <div class="meta">${history.length} 轮${removedCards.length ? ` · 开局移除 ${removedCards.length} 张4` : ""}</div>
           </div>
           <button type="button" class="secondary compact-button" data-action="close-dialog">关闭</button>
         </div>
+        ${removedCards.length ? `
+          <div class="history-removed-cards">
+            <div class="section-head compact">
+              <h3>开局移除的4</h3>
+              <span class="tag">底牌保持 6 张</span>
+            </div>
+            <div class="kitty-cards">${sortCardsForPlay(removedCards).map(renderStaticCard).join("")}</div>
+          </div>
+        ` : ""}
         ${history.length ? `
           <div class="history">
             ${history.map((trick) => renderTrick(trick, false)).join("")}
@@ -2995,7 +2957,7 @@ function renderPlayer(player) {
   const isTurn = state.currentTrick?.currentTurnPlayerId === player.id;
   const isSetupTurn = state.setup?.biddingTurnPlayerId === player.id || state.setup?.fry?.currentPlayerId === player.id;
   const isBankerAction = (state.stage === "burying" || state.stage === "dogleg") && state.setup?.bankerId === player.id;
-  const canKick = !isSpectating() && state.viewer?.host && !isMe && (state.status === "lobby" || state.status === "finished");
+  const canKick = !isSpectating() && state.viewer?.host && !isMe && state.status === "lobby";
   return `
     <div class="player ${roleClass(player.role)}" data-player-id="${escapeHtml(player.id)}">
       <div>
@@ -3003,7 +2965,7 @@ function renderPlayer(player) {
         <div class="tags">
           ${player.host ? `<span class="tag accent">房主</span>` : ""}
           ${player.test ? `<span class="tag">机器人</span>` : ""}
-          ${state.status === "lobby" || state.status === "finished" ? `<span class="tag ${player.ready ? "good" : ""}">${player.ready ? "已准备" : "未准备"}</span>` : ""}
+          ${state.status === "lobby" ? `<span class="tag ${player.ready ? "good" : ""}">${player.ready ? "已准备" : "未准备"}</span>` : ""}
           ${isTurn ? `<span class="tag good">出牌</span>` : ""}
           ${isSetupTurn || isBankerAction ? `<span class="tag good">操作</span>` : ""}
           <span class="tag ${player.connected ? "good" : ""}">${player.connected ? "在线" : "未连接"}</span>
@@ -3181,13 +3143,24 @@ function renderHand(hand, options = {}) {
     const compactCards = groups.flatMap((group) => group.cards);
     return `
       <div class="hand hand-compact">
-        <div class="hand-counts">
-          ${groups.map((group) => `
-            <span class="hand-count-badge suit-${escapeHtml(group.id)}" title="${escapeHtml(group.label)}">
-              <span>${escapeHtml(compactHandGroupLabel(group))}</span>
-              <strong>${group.cards.length}</strong>
-            </span>
-          `).join("")}
+        <div class="hand-summary-line">
+          <div class="hand-counts">
+            ${groups.map((group) => `
+              <span class="hand-count-badge suit-${escapeHtml(group.id)}" title="${escapeHtml(group.label)}">
+                <span>${escapeHtml(compactHandGroupLabel(group))}</span>
+                <strong>${group.cards.length}</strong>
+              </span>
+            `).join("")}
+          </div>
+          ${options.stats ? `
+            <div class="hand-inline-stats">
+              <span>牌分 <b>${options.stats.score || 0}</b></span>
+              <span>红五 <b>${options.stats.draggedRedFives || 0}</b></span>
+              <span>方五 <b>${options.stats.draggedDiamondFives || 0}</b></span>
+              <span>甩失 <b>${options.stats.throwFailures || 0}</b></span>
+              <span>手牌 <b>${hand.length}</b></span>
+            </div>
+          ` : ""}
         </div>
         <div class="hand-row hand-row-compact" data-action="clear-selection">
           ${compactCards.map((card, index) => `
@@ -3198,7 +3171,7 @@ function renderHand(hand, options = {}) {
               title="${escapeHtml(displayCardLabel(card))}"
               aria-pressed="${selectedCardIds.has(card.id) ? "true" : "false"}"
               aria-disabled="${isSpectating() || isThrowDraftCard(card.id) ? "true" : "false"}"
-              ${isSpectating() ? "disabled" : ""}
+              ${isSpectating() ? 'tabindex="-1"' : ""}
               data-action="toggle-card"
               data-card-id="${escapeHtml(card.id)}"
             >
@@ -3226,7 +3199,7 @@ function renderHand(hand, options = {}) {
                 title="${escapeHtml(displayCardLabel(card))}"
                 aria-pressed="${selectedCardIds.has(card.id) ? "true" : "false"}"
                 aria-disabled="${isSpectating() || isThrowDraftCard(card.id) ? "true" : "false"}"
-                ${isSpectating() ? "disabled" : ""}
+                ${isSpectating() ? 'tabindex="-1"' : ""}
                 data-action="toggle-card"
                 data-card-id="${escapeHtml(card.id)}"
               >
@@ -3411,6 +3384,23 @@ function endDragSelect(event) {
   render();
 }
 
+const mutatingActions = new Set([
+  "room-leave", "dissolve-room", "call-mode-two", "call-mode-score", "dogleg-count",
+  "add-robot", "random-seats", "start", "ready-on", "ready-off", "bid-selected",
+  "bid-pass", "random-bid", "score-bid-start", "score-bid-10", "score-bid-20",
+  "score-bid-30", "score-pass", "trump-selected", "bury-selected", "fry-selected",
+  "fry-pass", "dogleg-selected", "play-selected", "confirm-throw", "reset", "play-again",
+  "kick-player"
+]);
+
+function isRapidMutatingAction(action) {
+  if (!mutatingActions.has(action)) return false;
+  const actionAt = Date.now();
+  if (actionAt - lastMutatingActionAt < 450) return true;
+  lastMutatingActionAt = actionAt;
+  return false;
+}
+
 document.addEventListener("submit", (event) => {
   const form = event.target.closest("form");
   if (!form) return;
@@ -3433,6 +3423,7 @@ document.addEventListener("click", (event) => {
     "close-dialog",
     "clear-selection"
   ]).has(action)) return;
+  if (isRapidMutatingAction(action)) return;
   if (action === "leave") clearSession();
   if (action === "leave-spectating") leaveSpectating();
   if (action === "room-leave") leaveRoom();
@@ -3516,7 +3507,7 @@ document.addEventListener("click", (event) => {
   }
   if (action === "close-dialog") {
     if (activeDialog === "bid" || activeDialog === "fry") dismissedActionDialogKey = actionDialogKey();
-    if (activeDialog === "result" || (!activeDialog && state?.status === "finished")) dismissedResultRoomId = state?.roomId || null;
+    if (activeDialog === "result" || (!activeDialog && state?.stage === "finished")) dismissedResultRoomId = state?.roomId || null;
     activeDialog = null;
     render();
   }
