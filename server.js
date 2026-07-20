@@ -17,6 +17,8 @@ const HAND_SIZE = 53;
 const CALL_MODE_TWO = "two";
 const CALL_MODE_SCORE = "score";
 const SCORE_BID_SECONDS = 20;
+const configuredAiSetupDelay = Number(process.env.AI_SETUP_DELAY_MS || 450);
+const AI_SETUP_DELAY_MS = Number.isFinite(configuredAiSetupDelay) ? Math.max(0, configuredAiSetupDelay) : 450;
 const configuredAiPlayDelay = Number(process.env.AI_PLAY_DELAY_MS || 1000);
 const AI_PLAY_DELAY_MS = Number.isFinite(configuredAiPlayDelay) ? Math.max(0, configuredAiPlayDelay) : 1000;
 const MAX_GAME_EVENTS = 700;
@@ -362,6 +364,7 @@ function sortHand(hand) {
 }
 
 function deal(room) {
+  clearAiSetupTimer(room);
   clearAiPlayTimer(room);
   room.events = [];
   const count = room.players.length;
@@ -411,6 +414,7 @@ function allPlayersReady(room) {
 }
 
 function resetRoomToLobby(room, options = {}) {
+  clearAiSetupTimer(room);
   clearAiPlayTimer(room);
   const readyPlayerId = options.readyPlayerId || null;
   const previousReady = new Map(room.players.map((player) => [player.id, Boolean(player.ready)]));
@@ -686,6 +690,29 @@ function roomSnapshot(room, viewer = null) {
   };
 }
 
+function roomSpectators(room) {
+  if (!(room.spectators instanceof Map)) room.spectators = new Map();
+  return room.spectators;
+}
+
+function spectatorFor(room, spectatorId, token) {
+  const spectator = roomSpectators(room).get(String(spectatorId || ""));
+  return spectator?.token === token ? spectator : null;
+}
+
+function spectatorSnapshot(room, spectator) {
+  const viewer = playerById(room, spectator?.targetPlayerId);
+  if (!viewer) return null;
+  return {
+    ...roomSnapshot(room, viewer),
+    spectator: {
+      id: spectator.id,
+      targetPlayerId: viewer.id,
+      targetPlayerName: viewer.name
+    }
+  };
+}
+
 function viewerHandForSnapshot(room, viewer) {
   const pendingThrow = room.currentTrick?.plays?.find((play) =>
     play.playerId === viewer.id &&
@@ -717,6 +744,14 @@ function disconnectPlayerClients(room, playerId, messageText) {
   }
 }
 
+function disconnectSpectatorClients(room, spectatorId) {
+  for (const client of [...room.clients]) {
+    if (client.spectatorId !== spectatorId) continue;
+    client.res.end();
+    room.clients.delete(client);
+  }
+}
+
 function disconnectAllRoomClients(room, messageText) {
   for (const client of [...room.clients]) {
     client.res.write(`event: kicked\ndata: ${JSON.stringify({ message: messageText })}\n\n`);
@@ -730,6 +765,7 @@ function hasHumanPlayer(room) {
 }
 
 function dissolveRoom(room, messageText) {
+  clearAiSetupTimer(room);
   clearAiPlayTimer(room);
   disconnectAllRoomClients(room, messageText);
   rooms.delete(room.id);
@@ -740,6 +776,11 @@ function removePlayerFromRoom(room, playerId, messageText) {
   if (playerIndex < 0) return null;
   const [removed] = room.players.splice(playerIndex, 1);
   disconnectPlayerClients(room, playerId, messageText);
+  for (const spectator of [...roomSpectators(room).values()]) {
+    if (spectator.targetPlayerId !== playerId) continue;
+    disconnectSpectatorClients(room, spectator.id);
+    roomSpectators(room).delete(spectator.id);
+  }
 
   if (!room.players.length || !hasHumanPlayer(room)) {
     dissolveRoom(room, "房间只剩 AI，已自动解散");
@@ -817,6 +858,7 @@ function teamName(team) {
 
 function finishGame(room, completedTrick) {
   if (room.result) return;
+  clearAiSetupTimer(room);
   clearAiPlayTimer(room);
 
   const bankerIds = bankerTeamIds(room);
@@ -1350,6 +1392,7 @@ function continueFryingAfterBury(room, player) {
 }
 
 function beginPlaying(room) {
+  clearAiSetupTimer(room);
   room.stage = "playing";
   room.phase = `打牌中，主牌为${suitName(room.trumpSuit)}`;
   room.currentTrick = createEmptyTrick(1, room.bankerId);
@@ -1911,9 +1954,9 @@ function buryCandidateCards(room, player, count, context) {
   const candidates = player.hand
     .filter((card) => candidateIds.has(card.id))
     .sort((a, b) => autoBuryCardScore(room, player, b, context) - autoBuryCardScore(room, player, a, context) || b.id.localeCompare(a.id));
-  if (candidates.length >= count) return candidates.slice(0, 18);
+  if (candidates.length >= count) return candidates.slice(0, 15);
   scored.forEach((item) => candidateIds.add(item.card.id));
-  return player.hand.filter((card) => candidateIds.has(card.id)).slice(0, Math.max(count, 18));
+  return player.hand.filter((card) => candidateIds.has(card.id)).slice(0, Math.max(count, 15));
 }
 
 function bestBuryCombination(room, player, candidates, count, context) {
@@ -2032,10 +2075,10 @@ function bestAutoScoreBid(room, player) {
   return options[0] || null;
 }
 
-function autoProgressTestSetup(room) {
+function autoProgressTestSetup(room, maxActions = Number.POSITIVE_INFINITY) {
   let actions = 0;
   let safety = room.players.length * 8;
-  while (safety > 0) {
+  while (safety > 0 && actions < maxActions) {
     safety -= 1;
     autoAdvanceExpiredScoreBid(room);
 
@@ -2145,6 +2188,32 @@ function autoProgressTestSetup(room) {
     break;
   }
   return actions;
+}
+
+function clearAiSetupTimer(room) {
+  if (!room?.aiSetupTimer) return;
+  clearTimeout(room.aiSetupTimer);
+  room.aiSetupTimer = null;
+}
+
+function scheduleNextAiSetupAction(room, delayMs = AI_SETUP_DELAY_MS) {
+  if (!room || room.aiSetupTimer || room.status !== "dealt" || room.stage === "playing" || room.stage === "finished") {
+    return false;
+  }
+  room.aiSetupTimer = setTimeout(() => {
+    room.aiSetupTimer = null;
+    if (rooms.get(room.id) !== room || room.status !== "dealt") return;
+    const actions = autoProgressTestSetup(room, 1);
+    if (!actions) return;
+    broadcastAndContinueAutomation(room);
+  }, Math.max(0, delayMs));
+  return true;
+}
+
+function broadcastAndContinueAutomation(room) {
+  broadcast(room);
+  if (room.stage === "playing") scheduleNextAiPlay(room);
+  else scheduleNextAiSetupAction(room);
 }
 
 function rankValue(card, trumpSuit) {
@@ -3146,8 +3215,13 @@ function sendLatestState(room, client) {
     client.pendingState = true;
     return;
   }
-  const viewer = room.players.find((player) => player.id === client.playerId) || null;
-  const payload = `id: ${room.snapshotVersion || 0}\nevent: state\ndata: ${JSON.stringify(roomSnapshot(room, viewer))}\n\n`;
+  const spectator = client.spectatorId ? roomSpectators(room).get(client.spectatorId) : null;
+  const viewer = spectator
+    ? playerById(room, spectator.targetPlayerId)
+    : room.players.find((player) => player.id === client.playerId) || null;
+  const snapshot = spectator ? spectatorSnapshot(room, spectator) : roomSnapshot(room, viewer);
+  if (!snapshot) return;
+  const payload = `id: ${room.snapshotVersion || 0}\nevent: state\ndata: ${JSON.stringify(snapshot)}\n\n`;
   if (client.res.write(payload)) return;
   client.backpressured = true;
   client.res.once("drain", () => {
@@ -3226,10 +3300,12 @@ async function handleApi(req, res, pathParts, url) {
       trickHistory: [],
       provisionalWinnerPlayerIds: [],
       playPauseUntil: null,
+      aiSetupTimer: null,
       aiPlayTimer: null,
       notice: null,
       events: [],
       clients: new Set(),
+      spectators: new Map(),
       snapshotVersion: 0
     };
     rooms.set(room.id, room);
@@ -3247,11 +3323,49 @@ async function handleApi(req, res, pathParts, url) {
     if (!room) return;
 
     if (req.method === "GET" && pathParts[3] === "state") {
+      const spectatorId = url.searchParams.get("spectatorId");
       const playerId = url.searchParams.get("playerId");
       const token = url.searchParams.get("token");
+      if (spectatorId) {
+        const spectator = spectatorFor(room, spectatorId, token);
+        if (!spectator) return writeJson(res, 401, { error: "观战身份已失效，请重新选择观战玩家" });
+        const snapshot = spectatorSnapshot(room, spectator);
+        if (!snapshot) return writeJson(res, 404, { error: "被观战玩家已离开房间" });
+        return writeJson(res, 200, snapshot);
+      }
       const viewer = playerFor(room, playerId, token);
       if (!viewer) return writeJson(res, 401, { error: "玩家身份已失效，请重新加入房间" });
       return writeJson(res, 200, roomSnapshot(room, viewer));
+    }
+
+    if (req.method === "POST" && pathParts[3] === "spectate") {
+      const body = await readJson(req);
+      if (room.status !== "dealt") return writeJson(res, 409, { error: "只有进行中的牌局可以观战" });
+      const target = playerById(room, body.targetPlayerId);
+      if (!target) return writeJson(res, 404, { error: "要观战的玩家不存在" });
+      const spectator = {
+        id: id(9),
+        token: id(18),
+        targetPlayerId: target.id,
+        createdAt: now()
+      };
+      roomSpectators(room).set(spectator.id, spectator);
+      return writeJson(res, 201, {
+        roomId: room.id,
+        spectatorId: spectator.id,
+        token: spectator.token,
+        targetPlayerId: target.id,
+        snapshot: spectatorSnapshot(room, spectator)
+      });
+    }
+
+    if (req.method === "POST" && pathParts[3] === "spectate-leave") {
+      const body = await readJson(req);
+      const spectator = spectatorFor(room, body.spectatorId, body.token);
+      if (!spectator) return writeJson(res, 401, { error: "观战身份已失效" });
+      disconnectSpectatorClients(room, spectator.id);
+      roomSpectators(room).delete(spectator.id);
+      return writeJson(res, 200, { ok: true });
     }
 
     if (req.method === "POST" && pathParts[3] === "join") {
@@ -3439,9 +3553,7 @@ async function handleApi(req, res, pathParts, url) {
 
       deal(room);
       addEvent(room, `房主开始牌局：${room.players.length} 人，每人 ${HAND_SIZE} 张，底牌 ${room.kitty.length} 张`);
-      const autoActions = autoProgressTestSetup(room);
-      if (autoActions) addEvent(room, `机器人自动推进准备流程 ${autoActions} 步`);
-      broadcast(room);
+      broadcastAndContinueAutomation(room);
       return writeJson(res, 200, roomSnapshot(room, viewer));
     }
 
@@ -3451,9 +3563,7 @@ async function handleApi(req, res, pathParts, url) {
       if (!viewer) return;
       const result = submitBid(room, viewer, body.cardIds);
       if (result.error) return writeJson(res, result.status, { error: result.error });
-      const autoActions = autoProgressTestSetup(room);
-      if (autoActions) addEvent(room, `机器人自动推进准备流程 ${autoActions} 步`);
-      broadcast(room);
+      broadcastAndContinueAutomation(room);
       return writeJson(res, 200, roomSnapshot(room, viewer));
     }
 
@@ -3463,9 +3573,7 @@ async function handleApi(req, res, pathParts, url) {
       if (!viewer) return;
       const result = passBid(room, viewer);
       if (result.error) return writeJson(res, result.status, { error: result.error });
-      const autoActions = autoProgressTestSetup(room);
-      if (autoActions) addEvent(room, `机器人自动推进准备流程 ${autoActions} 步`);
-      broadcast(room);
+      broadcastAndContinueAutomation(room);
       return writeJson(res, 200, roomSnapshot(room, viewer));
     }
 
@@ -3476,9 +3584,7 @@ async function handleApi(req, res, pathParts, url) {
       if (!viewer.host) return writeJson(res, 403, { error: "只有房主可以随机指定主" });
       const result = randomDeclare(room);
       if (result.error) return writeJson(res, result.status, { error: result.error });
-      const autoActions = autoProgressTestSetup(room);
-      if (autoActions) addEvent(room, `机器人自动推进准备流程 ${autoActions} 步`);
-      broadcast(room);
+      broadcastAndContinueAutomation(room);
       return writeJson(res, 200, roomSnapshot(room, viewer));
     }
 
@@ -3488,9 +3594,7 @@ async function handleApi(req, res, pathParts, url) {
       if (!viewer) return;
       const result = submitScoreBid(room, viewer, body.increment);
       if (result.error) return writeJson(res, result.status, { error: result.error });
-      const autoActions = autoProgressTestSetup(room);
-      if (autoActions) addEvent(room, `机器人自动推进准备流程 ${autoActions} 步`);
-      broadcast(room);
+      broadcastAndContinueAutomation(room);
       return writeJson(res, 200, roomSnapshot(room, viewer));
     }
 
@@ -3500,9 +3604,7 @@ async function handleApi(req, res, pathParts, url) {
       if (!viewer) return;
       const result = passScoreBid(room, viewer);
       if (result.error) return writeJson(res, result.status, { error: result.error });
-      const autoActions = autoProgressTestSetup(room);
-      if (autoActions) addEvent(room, `机器人自动推进准备流程 ${autoActions} 步`);
-      broadcast(room);
+      broadcastAndContinueAutomation(room);
       return writeJson(res, 200, roomSnapshot(room, viewer));
     }
 
@@ -3512,9 +3614,7 @@ async function handleApi(req, res, pathParts, url) {
       if (!viewer) return;
       const result = revealTrumpCards(room, viewer, body.cardIds);
       if (result.error) return writeJson(res, result.status, { error: result.error });
-      const autoActions = autoProgressTestSetup(room);
-      if (autoActions) addEvent(room, `机器人自动推进准备流程 ${autoActions} 步`);
-      broadcast(room);
+      broadcastAndContinueAutomation(room);
       return writeJson(res, 200, roomSnapshot(room, viewer));
     }
 
@@ -3524,9 +3624,7 @@ async function handleApi(req, res, pathParts, url) {
       if (!viewer) return;
       const result = buryCards(room, viewer, body.cardIds);
       if (result.error) return writeJson(res, result.status, { error: result.error });
-      const autoActions = autoProgressTestSetup(room);
-      if (autoActions) addEvent(room, `机器人自动推进准备流程 ${autoActions} 步`);
-      broadcast(room);
+      broadcastAndContinueAutomation(room);
       return writeJson(res, 200, roomSnapshot(room, viewer));
     }
 
@@ -3538,10 +3636,10 @@ async function handleApi(req, res, pathParts, url) {
       if (room.status !== "dealt" || room.stage === "playing") {
         return writeJson(res, 409, { error: "当前不在准备流程中" });
       }
-      const autoActions = autoProgressTestSetup(room);
+      clearAiSetupTimer(room);
+      const autoActions = autoProgressTestSetup(room, 1);
       if (!autoActions) return writeJson(res, 409, { error: "当前没有可自动推进的机器人" });
-      addEvent(room, `房主触发机器人自动推进准备流程 ${autoActions} 步`);
-      broadcast(room);
+      broadcastAndContinueAutomation(room);
       return writeJson(res, 200, roomSnapshot(room, viewer));
     }
 
@@ -3551,9 +3649,7 @@ async function handleApi(req, res, pathParts, url) {
       if (!viewer) return;
       const result = submitFry(room, viewer, body.cardIds);
       if (result.error) return writeJson(res, result.status, { error: result.error });
-      const autoActions = autoProgressTestSetup(room);
-      if (autoActions) addEvent(room, `机器人自动推进准备流程 ${autoActions} 步`);
-      broadcast(room);
+      broadcastAndContinueAutomation(room);
       return writeJson(res, 200, roomSnapshot(room, viewer));
     }
 
@@ -3563,9 +3659,7 @@ async function handleApi(req, res, pathParts, url) {
       if (!viewer) return;
       const result = passFry(room, viewer);
       if (result.error) return writeJson(res, result.status, { error: result.error });
-      const autoActions = autoProgressTestSetup(room);
-      if (autoActions) addEvent(room, `机器人自动推进准备流程 ${autoActions} 步`);
-      broadcast(room);
+      broadcastAndContinueAutomation(room);
       return writeJson(res, 200, roomSnapshot(room, viewer));
     }
 
@@ -3575,9 +3669,7 @@ async function handleApi(req, res, pathParts, url) {
       if (!viewer) return;
       const result = selectDogleg(room, viewer, body.cardIds);
       if (result.error) return writeJson(res, result.status, { error: result.error });
-      const autoActions = autoProgressTestSetup(room);
-      if (autoActions) addEvent(room, `机器人自动推进准备流程 ${autoActions} 步`);
-      broadcast(room);
+      broadcastAndContinueAutomation(room);
       return writeJson(res, 200, roomSnapshot(room, viewer));
     }
 
@@ -3689,10 +3781,12 @@ function handleEvents(req, res, url) {
     res.end("room not found");
     return;
   }
+  const spectatorId = url.searchParams.get("spectatorId");
   const playerId = url.searchParams.get("playerId");
   const token = url.searchParams.get("token");
-  const viewer = playerFor(room, playerId, token);
-  if (!viewer) {
+  const spectator = spectatorId ? spectatorFor(room, spectatorId, token) : null;
+  const viewer = spectator ? playerById(room, spectator.targetPlayerId) : playerFor(room, playerId, token);
+  if (!viewer || (spectatorId && !spectator)) {
     res.writeHead(401);
     res.end("unauthorized");
     return;
@@ -3706,13 +3800,17 @@ function handleEvents(req, res, url) {
   });
   const client = {
     res,
-    playerId: viewer.id,
+    playerId: spectator ? null : viewer.id,
+    spectatorId: spectator?.id || null,
     backpressured: false,
     pendingState: false
   };
   room.clients.add(client);
-  viewer.connected = true;
-  broadcast(room);
+  if (spectator) sendLatestState(room, client);
+  else {
+    viewer.connected = true;
+    broadcast(room);
+  }
 
   const keepAlive = setInterval(() => {
     if (!client.backpressured) res.write(`event: heartbeat\ndata: ${room.snapshotVersion || 0}\n\n`);
@@ -3721,8 +3819,10 @@ function handleEvents(req, res, url) {
   req.on("close", () => {
     clearInterval(keepAlive);
     room.clients.delete(client);
-    updateConnection(room, viewer.id, false);
-    broadcast(room);
+    if (!spectator) {
+      updateConnection(room, viewer.id, false);
+      broadcast(room);
+    }
   });
 }
 

@@ -626,9 +626,8 @@ label {
   padding: 12px;
 }
 
-.joinable-room-card.disabled {
+.joinable-room-card.in-progress {
   background: #f3f5f3;
-  opacity: 0.86;
 }
 
 .joinable-room-main {
@@ -677,6 +676,48 @@ label {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+button.joinable-room-player.spectate-player {
+  min-height: 34px;
+  max-width: 190px;
+  padding: 3px 7px 3px 4px;
+  background: #fff;
+  color: var(--muted);
+}
+
+.spectate-player-label {
+  border-left: 1px solid var(--line);
+  padding-left: 6px;
+  color: var(--primary);
+  font-size: 11px;
+  font-weight: 900;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  button.joinable-room-player.spectate-player:hover {
+    border-color: #8dbda6;
+    background: #f1f8f4;
+    color: var(--text);
+  }
+}
+
+.spectator-notice {
+  border: 1px solid #badaca;
+  border-radius: 6px;
+  background: #f1f8f4;
+  color: #256646;
+  padding: 8px 10px;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.spectator-mode .card {
+  cursor: default;
+}
+
+.spectator-mode .card:disabled {
+  opacity: 1;
 }
 
 .joinable-room-actions {
@@ -1255,7 +1296,7 @@ label {
 .trick-grid.table-circle {
   position: relative;
   display: block;
-  min-height: clamp(760px, 61vw, 880px);
+  min-height: clamp(840px, 66vw, 980px);
   margin: 8px 0 4px;
   border: 0;
   background: transparent;
@@ -1457,9 +1498,9 @@ label {
 
 .table-circle .viewer-seat .seat-play {
   left: 50%;
-  top: -90px;
+  top: auto;
   right: auto;
-  bottom: auto;
+  bottom: calc(100% + 16px);
   width: min(460px, 92%);
   transform: translateX(-50%);
 }

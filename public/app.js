@@ -77,6 +77,10 @@ function clearSession() {
   render();
 }
 
+function isSpectating() {
+  return Boolean(session?.spectator || state?.spectator);
+}
+
 function setMessage(text, bad = false, autoDismiss = !bad) {
   if (messageTimer) window.clearTimeout(messageTimer);
   message = text;
@@ -409,9 +413,10 @@ function connectEvents() {
   if (!session || source) return;
   const params = new URLSearchParams({
     roomId: session.roomId,
-    playerId: session.playerId,
     token: session.token
   });
+  if (session.spectator) params.set("spectatorId", session.spectatorId);
+  else params.set("playerId", session.playerId);
   source = new EventSource(`/events?${params.toString()}`);
   source.addEventListener("open", () => {
     lastEventReceivedAt = Date.now();
@@ -450,11 +455,15 @@ function connectEvents() {
 
 function stateUrl(activeSession = session) {
   if (!activeSession) return "";
-  const params = new URLSearchParams({
-    playerId: activeSession.playerId,
-    token: activeSession.token
-  });
+  const params = new URLSearchParams({ token: activeSession.token });
+  if (activeSession.spectator) params.set("spectatorId", activeSession.spectatorId);
+  else params.set("playerId", activeSession.playerId);
   return `/api/rooms/${activeSession.roomId}/state?${params.toString()}`;
+}
+
+function sameSessionIdentity(left, right) {
+  if (!left || !right || left.roomId !== right.roomId || Boolean(left.spectator) !== Boolean(right.spectator)) return false;
+  return left.spectator ? left.spectatorId === right.spectatorId : left.playerId === right.playerId;
 }
 
 async function syncRoomState({ showError = false } = {}) {
@@ -463,7 +472,7 @@ async function syncRoomState({ showError = false } = {}) {
   stateSyncInFlight = true;
   try {
     const nextState = await api(stateUrl(activeSession));
-    if (!session || session.roomId !== activeSession.roomId || session.playerId !== activeSession.playerId) return;
+    if (!sameSessionIdentity(session, activeSession)) return;
     applyState(nextState, { showTransitionNotice: false });
     render();
   } catch (error) {
@@ -530,6 +539,45 @@ async function joinRoom(event) {
   } catch (error) {
     setMessage(error.message, true);
   }
+}
+
+async function spectatePlayer(roomId, targetPlayerId) {
+  try {
+    const data = await api(`/api/rooms/${encodeURIComponent(roomId)}/spectate`, {
+      method: "POST",
+      body: JSON.stringify({ targetPlayerId })
+    });
+    saveSession({
+      roomId: data.roomId,
+      spectator: true,
+      spectatorId: data.spectatorId,
+      targetPlayerId: data.targetPlayerId,
+      token: data.token
+    });
+    history.replaceState(null, "", `?room=${data.roomId}`);
+    applyState(data.snapshot, { highlightNewKitty: false });
+    message = "";
+    connectEvents();
+    render();
+  } catch (error) {
+    setMessage(error.message || "无法进入观战", true);
+  }
+}
+
+async function leaveSpectating() {
+  if (!session?.spectator) return clearSession();
+  const activeSession = { ...session };
+  try {
+    await api(`/api/rooms/${activeSession.roomId}/spectate-leave`, {
+      method: "POST",
+      body: JSON.stringify({ spectatorId: activeSession.spectatorId, token: activeSession.token })
+    });
+  } catch {
+    // The local spectator session can always be discarded, even if the room already ended.
+  }
+  clearSession();
+  history.replaceState(null, "", location.pathname);
+  setMessage("已退出观战。");
 }
 
 async function updateProfile(event) {
@@ -950,7 +998,8 @@ function fmtTime(value) {
 }
 
 function canStart() {
-  return state?.viewer?.host
+  return !isSpectating()
+    && state?.viewer?.host
     && state.status === "lobby"
     && state.players.length >= state.minPlayers
     && state.players.length <= state.maxPlayers
@@ -958,7 +1007,7 @@ function canStart() {
 }
 
 function isViewer(playerId) {
-  return state?.viewer?.id === playerId;
+  return !isSpectating() && state?.viewer?.id === playerId;
 }
 
 function viewerPlayer() {
@@ -976,20 +1025,20 @@ function viewerPlayedCurrent() {
 }
 
 function viewerCanPlayCurrent() {
-  return state?.currentTrick?.currentTurnPlayerId === state.viewer?.id && !viewerPlayedCurrent();
+  return !isSpectating() && state?.currentTrick?.currentTurnPlayerId === state.viewer?.id && !viewerPlayedCurrent();
 }
 
 function viewerCanBid() {
-  if (state?.stage !== "bidding") return false;
+  if (isSpectating() || state?.stage !== "bidding") return false;
   return !state.setup?.bid || state.setup?.biddingTurnPlayerId === state.viewer?.id;
 }
 
 function viewerCanPassBid() {
-  return state?.stage === "bidding" && state.setup?.bid && state.setup?.biddingTurnPlayerId === state.viewer?.id;
+  return !isSpectating() && state?.stage === "bidding" && state.setup?.bid && state.setup?.biddingTurnPlayerId === state.viewer?.id;
 }
 
 function viewerCanScoreBid() {
-  if (state?.stage !== "score-bidding") return false;
+  if (isSpectating() || state?.stage !== "score-bidding") return false;
   const currentId = state.setup?.scoreBid?.currentPlayerId || null;
   if (currentId === state.viewer?.id) return false;
   return !(state.setup?.scoreBid?.passIds || []).includes(state.viewer?.id);
@@ -1037,7 +1086,7 @@ function viewerCanRevealTrump() {
 }
 
 function viewerCanSelectCards() {
-  return state?.stage === "playing" || viewerCanBid() || viewerCanRevealTrump() || viewerCanBury() || viewerCanFry() || viewerCanChooseDogleg();
+  return !isSpectating() && (state?.stage === "playing" || viewerCanBid() || viewerCanRevealTrump() || viewerCanBury() || viewerCanFry() || viewerCanChooseDogleg());
 }
 
 function selectedCards() {
@@ -1576,7 +1625,7 @@ function renderShell(content) {
           <h1>炒地皮在线房间</h1>
           <p>多人在线牌桌，支持真人和机器人同局参与。</p>
         </div>
-        ${session ? `<button class="secondary" data-action="leave">退出本机身份</button>` : ""}
+        ${session ? `<button class="secondary" data-action="${session.spectator ? "leave-spectating" : "leave"}">${session.spectator ? "退出观战" : "退出本机身份"}</button>` : ""}
       </header>
       ${message ? `<div class="status toast ${messageBad ? "bad" : ""}" role="status">${escapeHtml(message)}</div>` : ""}
       ${content}
@@ -1635,7 +1684,7 @@ function renderJoinableRooms() {
       <div class="section-head">
         <div>
           <h2>当前房间</h2>
-          <div class="meta">等待中的房间可加入，进行中的房间只展示状态。</div>
+          <div class="meta">等待中的房间可加入；进行中的房间可选择任意玩家视角观战。</div>
         </div>
         <button type="button" class="secondary compact-button" data-action="refresh-rooms" ${joinableRoomsLoading ? "disabled" : ""}>
           ${joinableRoomsLoading ? "刷新中" : "刷新"}
@@ -1650,7 +1699,7 @@ function renderJoinableRoom(room) {
   const players = room.players || [];
   const joinable = Boolean(room.joinable);
   return `
-    <form class="joinable-room-card ${joinable ? "" : "disabled"}" data-form="join">
+    <form class="joinable-room-card ${joinable ? "" : "in-progress"}" data-form="join">
       <input type="hidden" name="roomId" value="${escapeHtml(room.roomId)}">
       <div class="joinable-room-main">
         <div>
@@ -1668,7 +1717,20 @@ function renderJoinableRoom(room) {
         </div>
       </div>
       <div class="joinable-room-players">
-        ${players.map((player) => `
+        ${players.map((player) => room.status === "dealt" ? `
+          <button
+            type="button"
+            class="joinable-room-player spectate-player"
+            data-action="spectate-player"
+            data-room-id="${escapeHtml(room.roomId)}"
+            data-player-id="${escapeHtml(player.id)}"
+            title="以${escapeHtml(player.name)}的视角观战"
+          >
+            ${avatarHtml(player.name, player.avatarUrl)}
+            <span class="joinable-room-player-name">${escapeHtml(player.name)}</span>
+            <span class="spectate-player-label">观战</span>
+          </button>
+        ` : `
           <span class="joinable-room-player ${player.ready ? "ready" : ""}">
             ${avatarHtml(player.name, player.avatarUrl)}
             <span class="joinable-room-player-name">${escapeHtml(player.name)}</span>
@@ -1683,8 +1745,7 @@ function renderJoinableRoom(room) {
           </label>
           <button type="submit">加入此房间</button>
         ` : `
-          <div class="meta">牌局已开始，暂不能加入。</div>
-          <button type="button" disabled>进行中</button>
+          <div class="meta">牌局已开始，点击上方玩家即可观战。</div>
         `}
       </div>
     </form>
@@ -1733,7 +1794,8 @@ function renderProfileRow(profile) {
 
 function renderRoom() {
   const viewer = viewerPlayer();
-  const waitingNextRound = state.status === "finished" && Boolean(viewer?.ready);
+  const spectating = isSpectating();
+  const waitingNextRound = !spectating && state.status === "finished" && Boolean(viewer?.ready);
   const inLobbyView = state.status === "lobby" || waitingNextRound;
   const started = state.status !== "lobby" && !waitingNextRound;
   selectedCardIds = new Set([...selectedCardIds].filter((cardId) => state.hand.some((card) => card.id === cardId)));
@@ -1745,7 +1807,7 @@ function renderRoom() {
       : "人数已满足，等待所有玩家准备";
 
   renderShell(`
-    <div class="room-layout">
+    <div class="room-layout ${spectating ? "spectator-mode" : ""}">
       <div class="stack room-main">
         <section class="panel stack">
           <div class="row" style="justify-content:space-between">
@@ -1755,6 +1817,7 @@ function renderRoom() {
             </div>
             <div class="tags">
               <span class="tag accent">${state.players.length}/${state.maxPlayers} 人</span>
+              ${spectating ? `<span class="tag good">观战 · ${escapeHtml(state.spectator?.targetPlayerName || state.viewer?.name || "玩家")}</span>` : ""}
               <span class="tag">${escapeHtml(waitingNextRound ? "等待下一局" : state.phase)}</span>
               ${inLobbyView ? `<span class="tag good">${escapeHtml(readyStatusText())}</span>` : ""}
               ${started ? `<span class="tag good">底牌 ${state.kittyCount} 张</span>` : ""}
@@ -1768,18 +1831,21 @@ function renderRoom() {
               <button type="button" class="secondary" data-action="open-players">玩家</button>
               <button type="button" class="secondary" data-action="open-events">日志</button>
               ${state.trickHistory.length ? `<button type="button" class="secondary" data-action="open-history">历史出牌 ${state.trickHistory.length}</button>` : ""}
-              ${state.viewer.host && state.status === "lobby" ? renderCallModeToggle() : ""}
-              ${state.viewer.host && state.status === "lobby" ? renderDoglegCountControl() : ""}
-              ${inLobbyView ? renderReadyControls({ waitingNextRound }) : ""}
-              ${state.viewer.host && state.status === "lobby" ? `<button type="button" class="secondary" data-action="add-robot" ${state.players.length >= state.maxPlayers ? "disabled" : ""}>添加机器人</button>` : ""}
-              ${state.viewer.host && state.status === "lobby" ? `<button type="button" class="secondary" data-action="random-seats" ${state.players.length < 2 ? "disabled" : ""}>随机座位</button>` : ""}
-              ${state.viewer.host && state.status === "lobby" ? `<button type="button" data-action="start" ${canStart() ? "" : "disabled"}>开始并发牌</button>` : ""}
               ${state.canViewKitty ? `<button type="button" class="secondary" data-action="open-kitty">查看底牌</button>` : ""}
-              ${state.viewer.host && started ? `<button type="button" class="secondary" data-action="reset">重开房间</button>` : ""}
-              ${state.viewer.host ? `<button type="button" class="secondary danger" data-action="dissolve-room">解散房间</button>` : ""}
-              ${state.status === "lobby" || state.status === "finished" ? `<button type="button" class="secondary" data-action="room-leave">退出房间</button>` : ""}
+              ${spectating ? "" : `
+                ${state.viewer.host && state.status === "lobby" ? renderCallModeToggle() : ""}
+                ${state.viewer.host && state.status === "lobby" ? renderDoglegCountControl() : ""}
+                ${inLobbyView ? renderReadyControls({ waitingNextRound }) : ""}
+                ${state.viewer.host && state.status === "lobby" ? `<button type="button" class="secondary" data-action="add-robot" ${state.players.length >= state.maxPlayers ? "disabled" : ""}>添加机器人</button>` : ""}
+                ${state.viewer.host && state.status === "lobby" ? `<button type="button" class="secondary" data-action="random-seats" ${state.players.length < 2 ? "disabled" : ""}>随机座位</button>` : ""}
+                ${state.viewer.host && state.status === "lobby" ? `<button type="button" data-action="start" ${canStart() ? "" : "disabled"}>开始并发牌</button>` : ""}
+                ${state.viewer.host && started ? `<button type="button" class="secondary" data-action="reset">重开房间</button>` : ""}
+                ${state.viewer.host ? `<button type="button" class="secondary danger" data-action="dissolve-room">解散房间</button>` : ""}
+                ${state.status === "lobby" || state.status === "finished" ? `<button type="button" class="secondary" data-action="room-leave">退出房间</button>` : ""}
+              `}
             </div>
-            ${inLobbyView ? `<div class="meta">${escapeHtml(waitingNextRound ? `你已准备下一局，等待其他玩家确认。${readyStatusText()}` : `${waitingText}。${readyStatusText()}。当前支持 5-9 人。`)}</div>` : ""}
+            ${spectating ? `<div class="spectator-notice">只读观战中：你看到的是 ${escapeHtml(state.spectator?.targetPlayerName || state.viewer?.name || "该玩家")} 的完整视角，无法操作任何牌。</div>` : ""}
+            ${inLobbyView && !spectating ? `<div class="meta">${escapeHtml(waitingNextRound ? `你已准备下一局，等待其他玩家确认。${readyStatusText()}` : `${waitingText}。${readyStatusText()}。当前支持 5-9 人。`)}</div>` : ""}
           </div>
         </section>
 
@@ -1929,7 +1995,7 @@ function renderSetupPanel() {
       <div class="row">
         ${viewerCanBid() ? `<button type="button" data-action="open-bid-dialog" ${actionPassInFlight ? "disabled" : ""}>${setup.bid ? "选择2抢主" : "选择2叫主"}</button>` : ""}
         ${viewerCanPassBid() ? `<button type="button" class="secondary" data-action="bid-pass" ${actionPassInFlight ? "disabled" : ""}>${actionPassInFlight ? "提交中…" : "过"}</button>` : ""}
-        ${state.viewer.host && !setup.bid ? `<button type="button" class="secondary" data-action="random-bid">无人叫主，随机指定</button>` : ""}
+        ${!isSpectating() && state.viewer.host && !setup.bid ? `<button type="button" class="secondary" data-action="random-bid">无人叫主，随机指定</button>` : ""}
       </div>
     `;
   }
@@ -2660,7 +2726,9 @@ function renderSeatHand(action, play, trick, index, options = {}) {
         : "等待下一轮";
   const turnDetail = myTurn
     ? (selectedCardIds.size ? `已选择 ${selectedCardIds.size} 张牌` : "请选择要出的牌")
-    : "可以提前选择手牌，轮到后直接出牌";
+    : isSpectating()
+      ? "观战模式仅展示该玩家视角，不能操作手牌"
+      : "可以提前选择手牌，轮到后直接出牌";
   return `
     <div class="seat-hand ${myTurn ? "is-my-turn" : ""}" data-action="clear-selection">
       ${state.stage === "playing" ? `
@@ -2927,7 +2995,7 @@ function renderPlayer(player) {
   const isTurn = state.currentTrick?.currentTurnPlayerId === player.id;
   const isSetupTurn = state.setup?.biddingTurnPlayerId === player.id || state.setup?.fry?.currentPlayerId === player.id;
   const isBankerAction = (state.stage === "burying" || state.stage === "dogleg") && state.setup?.bankerId === player.id;
-  const canKick = state.viewer?.host && !isMe && (state.status === "lobby" || state.status === "finished");
+  const canKick = !isSpectating() && state.viewer?.host && !isMe && (state.status === "lobby" || state.status === "finished");
   return `
     <div class="player ${roleClass(player.role)}" data-player-id="${escapeHtml(player.id)}">
       <div>
@@ -3129,7 +3197,8 @@ function renderHand(hand, options = {}) {
               style="--i:${index}"
               title="${escapeHtml(displayCardLabel(card))}"
               aria-pressed="${selectedCardIds.has(card.id) ? "true" : "false"}"
-              aria-disabled="${isThrowDraftCard(card.id) ? "true" : "false"}"
+              aria-disabled="${isSpectating() || isThrowDraftCard(card.id) ? "true" : "false"}"
+              ${isSpectating() ? "disabled" : ""}
               data-action="toggle-card"
               data-card-id="${escapeHtml(card.id)}"
             >
@@ -3156,7 +3225,8 @@ function renderHand(hand, options = {}) {
                 style="--i:${index}"
                 title="${escapeHtml(displayCardLabel(card))}"
                 aria-pressed="${selectedCardIds.has(card.id) ? "true" : "false"}"
-                aria-disabled="${isThrowDraftCard(card.id) ? "true" : "false"}"
+                aria-disabled="${isSpectating() || isThrowDraftCard(card.id) ? "true" : "false"}"
+                ${isSpectating() ? "disabled" : ""}
                 data-action="toggle-card"
                 data-card-id="${escapeHtml(card.id)}"
               >
@@ -3352,7 +3422,19 @@ document.addEventListener("submit", (event) => {
 document.addEventListener("click", (event) => {
   const action = event.target.closest("[data-action]")?.dataset.action;
   if (!action) return;
+  if (isSpectating() && !new Set([
+    "leave-spectating",
+    "copy",
+    "open-kitty",
+    "open-history",
+    "open-players",
+    "open-events",
+    "open-result",
+    "close-dialog",
+    "clear-selection"
+  ]).has(action)) return;
   if (action === "leave") clearSession();
+  if (action === "leave-spectating") leaveSpectating();
   if (action === "room-leave") leaveRoom();
   if (action === "dissolve-room") dissolveRoom();
   if (action === "show-profiles") {
@@ -3364,6 +3446,10 @@ document.addEventListener("click", (event) => {
     render();
   }
   if (action === "refresh-rooms") refreshJoinableRooms();
+  if (action === "spectate-player") {
+    const target = event.target.closest("[data-player-id]");
+    spectatePlayer(target?.dataset.roomId || "", target?.dataset.playerId || "");
+  }
   if (action === "copy") copyShare();
   if (action === "call-mode-two") setCallMode("two");
   if (action === "call-mode-score") setCallMode("score");
@@ -3473,12 +3559,12 @@ window.addEventListener("pageshow", () => {
 async function resume() {
   if (!session) return render();
   try {
-    const params = new URLSearchParams({ playerId: session.playerId, token: session.token });
-    applyState(await api(`/api/rooms/${session.roomId}/state?${params.toString()}`));
+    applyState(await api(stateUrl(session)));
     connectEvents();
   } catch {
+    const wasSpectating = Boolean(session?.spectator);
     clearSession();
-    setMessage("本机没有可恢复的房间身份，请重新创建或加入。", true);
+    setMessage(wasSpectating ? "观战已结束，请重新选择房间和玩家。" : "本机没有可恢复的房间身份，请重新创建或加入。", true);
   }
   render();
 }
