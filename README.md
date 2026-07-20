@@ -44,8 +44,37 @@
 
 暂未实现：
 
-- 结算结果的数据库保存和赛季榜单汇总。
-- 数据库保存和断线后的跨设备身份恢复。
+- 玩家账号登录、昵称和头像自助管理。
+- 历史牌局与统计数据的前端展示。
+- 服务器重启后的进行中牌局恢复。
+
+## 牌局历史（分阶段启用）
+
+项目支持把现有结算结果旁路写入 PostgreSQL。该功能不参与牌局判断，数据库不可用时不会阻断开局、出牌或结算。
+
+环境变量：
+
+```text
+DATABASE_URL=Supabase Session pooler 连接地址
+GAME_HISTORY_ENABLED=false
+```
+
+只配置 `DATABASE_URL` 时，服务启动会创建或升级数据表，但不会保存正式牌局。完成连接验证后，将 `GAME_HISTORY_ENABLED` 改为 `true` 才会开启影子记录。
+
+数据结构：
+
+- `cdp_games`：牌局、规则、庄闲胜负、底牌和完整出牌历史。
+- `cdp_game_players`：每位玩家的阵营、角色、牌分、积分和拖五数据。
+- `cdp_game_tags`：MVP、躺、坑、辅、僵等牌局标签。
+- `cdp_player_statistics`：按预置玩家身份自动汇总的统计视图，机器人不计入。
+
+只读检查接口：
+
+```text
+GET /api/history/status
+GET /api/history/statistics
+GET /api/history/games?limit=30
+```
 
 ## 本地启动
 

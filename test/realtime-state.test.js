@@ -81,6 +81,11 @@ test("room snapshots stay monotonic and visual assets are cached", async (t) => 
   const server = await startServer();
   t.after(() => server.child.kill());
 
+  const historyStatus = await jsonRequest(`${server.baseUrl}/api/history/status`);
+  assert.equal(historyStatus.configured, false);
+  assert.equal(historyStatus.enabled, false);
+  assert.equal(historyStatus.connected, false);
+
   const created = await jsonRequest(`${server.baseUrl}/api/rooms`, {
     method: "POST",
     body: JSON.stringify({ profileId: "player-benlei" })

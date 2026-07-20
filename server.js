@@ -3,9 +3,16 @@ import { readFile } from "node:fs/promises";
 import { createReadStream } from "node:fs";
 import { extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
-import { randomBytes, randomInt } from "node:crypto";
+import { randomBytes, randomInt, randomUUID } from "node:crypto";
 
 import { buildGameEvaluations } from "./game-evaluations.js";
+import {
+  gameHistoryStatus,
+  initializeGameHistory,
+  listPlayerStatistics,
+  listRecentGames,
+  queueGameRecord
+} from "./game-history.js";
 
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
 const publicDir = join(__dirname, "public");
@@ -445,6 +452,7 @@ function resetRoomToLobby(room, options = {}) {
   room.stage = "lobby";
   room.phase = "等待玩家加入";
   room.startedAt = null;
+  room.gameRecordId = null;
   room.kitty = [];
   room.removedCards = [];
   room.kittySize = room.players.length;
@@ -1048,6 +1056,7 @@ function completeCurrentTrick(room) {
   addEvent(room, `第 ${completed.number} 轮结束：${outcome.winnerName} 获得 ${outcome.points} 分，下轮先出`);
   if (room.players.every((player) => player.hand.length === 0)) {
     finishGame(room, completed);
+    queueGameRecord(room);
     return;
   }
   room.currentTrick = createEmptyTrick(completed.number + 1, outcome.winnerId);
@@ -3269,6 +3278,19 @@ function updateConnection(room, playerId, connected) {
 }
 
 async function handleApi(req, res, pathParts, url) {
+  if (pathParts[1] === "history" && req.method === "GET") {
+    if (pathParts[2] === "status") {
+      return writeJson(res, 200, gameHistoryStatus());
+    }
+    if (pathParts[2] === "statistics") {
+      return writeJson(res, 200, { players: await listPlayerStatistics() });
+    }
+    if (pathParts[2] === "games") {
+      return writeJson(res, 200, { games: await listRecentGames(url.searchParams.get("limit")) });
+    }
+    return writeJson(res, 404, { error: "历史记录接口不存在" });
+  }
+
   if (pathParts[1] === "players") {
     if (req.method === "GET" && pathParts.length === 2) {
       return writeJson(res, 200, { players: profilesList() });
@@ -3312,6 +3334,7 @@ async function handleApi(req, res, pathParts, url) {
       phase: "等待玩家加入",
       createdAt: now(),
       startedAt: null,
+      gameRecordId: null,
       callMode: CALL_MODE_TWO,
       hostId: host.id,
       players: [host],
@@ -3579,6 +3602,7 @@ async function handleApi(req, res, pathParts, url) {
       }
 
       deal(room);
+      room.gameRecordId = randomUUID();
       addEvent(room, `房主开始牌局：${room.players.length} 人，每人 ${HAND_SIZE} 张，底牌 ${room.kitty.length} 张`);
       broadcastAndContinueAutomation(room);
       return writeJson(res, 200, roomSnapshot(room, viewer));
@@ -3897,6 +3921,8 @@ const server = createServer(async (req, res) => {
     writeJson(res, status, { error: error.message || "服务器错误" });
   }
 });
+
+await initializeGameHistory();
 
 server.listen(port, () => {
   console.log(`炒地皮在线版已启动：http://localhost:${port}`);
