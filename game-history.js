@@ -25,8 +25,20 @@ const status = {
   migrationVersion: 0,
   pendingCount: 0,
   lastSavedAt: null,
-  lastErrorAt: null
+  lastErrorAt: null,
+  lastErrorCode: null,
+  lastErrorMessage: null
 };
+
+function rememberError(error) {
+  const rawMessage = String(error?.message || "数据库操作失败");
+  status.lastErrorAt = new Date().toISOString();
+  status.lastErrorCode = String(error?.code || "UNKNOWN").slice(0, 32);
+  status.lastErrorMessage = rawMessage
+    .replace(/postgres(?:ql)?:\/\/[^\s]+/gi, "[database-url]")
+    .replace(/sb_secret_[A-Za-z0-9_-]+/g, "[secret-key]")
+    .slice(0, 240);
+}
 
 function jsonValue(value, fallback) {
   if (value === undefined || value === null) return fallback;
@@ -85,7 +97,7 @@ export async function initializeGameHistory() {
   });
   pool.on("error", (error) => {
     status.connected = false;
-    status.lastErrorAt = new Date().toISOString();
+    rememberError(error);
     console.error("[game-history] database pool error", error.message);
   });
 
@@ -95,10 +107,13 @@ export async function initializeGameHistory() {
     await client.query("SELECT 1");
     await applyMigrations(client);
     status.connected = true;
+    status.lastErrorAt = null;
+    status.lastErrorCode = null;
+    status.lastErrorMessage = null;
     console.log(`[game-history] database ready; writes ${HISTORY_ENABLED ? "enabled" : "disabled"}; migration ${status.migrationVersion}`);
   } catch (error) {
     status.connected = false;
-    status.lastErrorAt = new Date().toISOString();
+    rememberError(error);
     console.error("[game-history] database initialization failed", error.message);
   } finally {
     client?.release();
@@ -262,7 +277,7 @@ async function flushPendingGameRecords() {
       } catch (error) {
         pending.attempts += 1;
         status.connected = false;
-        status.lastErrorAt = new Date().toISOString();
+        rememberError(error);
         console.error(`[game-history] save failed for ${gameId} (attempt ${pending.attempts})`, error.message);
         if (pending.attempts >= 3) {
           pendingRecords.delete(gameId);
@@ -284,7 +299,7 @@ export function queueGameRecord(room, onStatus) {
   try {
     record = buildGameRecord(room);
   } catch (error) {
-    status.lastErrorAt = new Date().toISOString();
+    rememberError(error);
     console.error("[game-history] could not build game record", error.message);
     return { status: "failed" };
   }
