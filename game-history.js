@@ -9,6 +9,10 @@ const MIGRATIONS = [
   {
     version: 1,
     path: fileURLToPath(new URL("./db/migrations/001_game_history.sql", import.meta.url))
+  },
+  {
+    version: 2,
+    path: fileURLToPath(new URL("./db/migrations/002_player_profiles.sql", import.meta.url))
   }
 ];
 const HISTORY_ENABLED = String(process.env.GAME_HISTORY_ENABLED || "").toLowerCase() === "true";
@@ -23,6 +27,9 @@ const status = {
   enabled: HISTORY_ENABLED,
   connected: false,
   migrationVersion: 0,
+  profileStorageReady: false,
+  storedProfileCount: 0,
+  lastProfileSavedAt: null,
   pendingCount: 0,
   lastSavedAt: null,
   lastErrorAt: null,
@@ -81,6 +88,9 @@ async function applyMigrations(client) {
     }
     const versionResult = await client.query("SELECT coalesce(max(version), 0) AS version FROM cdp_schema_migrations");
     status.migrationVersion = Number(versionResult.rows[0]?.version || 0);
+    const profileCountResult = await client.query("SELECT count(*)::integer AS count FROM cdp_player_profiles");
+    status.profileStorageReady = true;
+    status.storedProfileCount = Number(profileCountResult.rows[0]?.count || 0);
   } finally {
     await client.query("SELECT pg_advisory_unlock($1)", [2026072001]);
   }
@@ -123,6 +133,76 @@ export async function initializeGameHistory() {
 
 export function gameHistoryStatus() {
   return safeStatus();
+}
+
+export async function loadStoredPlayerProfiles() {
+  if (!pool || !status.connected || !status.profileStorageReady) return [];
+  try {
+    const result = await pool.query(`
+      SELECT
+        profile_id, account_id, display_name, avatar_url, avatar_version,
+        avatar_frame, play_effect, updated_at
+      FROM cdp_player_profiles
+      ORDER BY profile_id
+    `);
+    status.storedProfileCount = result.rows.length;
+    return result.rows.map((row) => ({
+      id: row.profile_id,
+      accountId: row.account_id || null,
+      name: row.display_name,
+      avatarUrl: row.avatar_url || "",
+      avatarVersion: Number(row.avatar_version) || 0,
+      avatarFrame: row.avatar_frame || "",
+      playEffect: row.play_effect || "",
+      updatedAt: row.updated_at ? new Date(row.updated_at).toISOString() : null
+    }));
+  } catch (error) {
+    rememberError(error);
+    console.error("[player-profiles] load failed", error.message);
+    return [];
+  }
+}
+
+export async function saveStoredPlayerProfile(profile) {
+  if (!pool || !status.connected || !status.profileStorageReady) return { status: "unavailable" };
+  try {
+    const result = await pool.query(
+      `INSERT INTO cdp_player_profiles (
+        profile_id, account_id, display_name, avatar_url, avatar_version,
+        avatar_frame, play_effect, updated_at
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+      ON CONFLICT (profile_id) DO UPDATE SET
+        account_id = excluded.account_id,
+        display_name = excluded.display_name,
+        avatar_url = excluded.avatar_url,
+        avatar_version = excluded.avatar_version,
+        avatar_frame = excluded.avatar_frame,
+        play_effect = excluded.play_effect,
+        updated_at = excluded.updated_at
+      RETURNING updated_at`,
+      [
+        profile.id,
+        profile.accountId || null,
+        profile.name,
+        profile.avatarUrl || "",
+        Number(profile.avatarVersion) || 0,
+        profile.avatarFrame || "",
+        profile.playEffect || "",
+        profile.updatedAt || new Date().toISOString()
+      ]
+    );
+    const countResult = await pool.query("SELECT count(*)::integer AS count FROM cdp_player_profiles");
+    status.storedProfileCount = Number(countResult.rows[0]?.count || 0);
+    status.lastProfileSavedAt = new Date().toISOString();
+    return {
+      status: "saved",
+      updatedAt: result.rows[0]?.updated_at ? new Date(result.rows[0].updated_at).toISOString() : profile.updatedAt
+    };
+  } catch (error) {
+    rememberError(error);
+    console.error(`[player-profiles] save failed for ${profile.id}`, error.message);
+    return { status: "failed" };
+  }
 }
 
 export function buildGameRecord(room) {

@@ -59,7 +59,7 @@ DATABASE_URL=Supabase Session pooler 连接地址
 GAME_HISTORY_ENABLED=false
 ```
 
-只配置 `DATABASE_URL` 时，服务启动会创建或升级数据表，但不会保存正式牌局。完成连接验证后，将 `GAME_HISTORY_ENABLED` 改为 `true` 才会开启影子记录。
+只配置 `DATABASE_URL` 时，服务启动会创建或升级数据表，并持久化预置玩家的名称、头像框和出牌特效，但不会保存正式牌局。完成连接验证后，将 `GAME_HISTORY_ENABLED` 改为 `true` 才会开启牌局影子记录。
 
 数据结构：
 
@@ -67,6 +67,7 @@ GAME_HISTORY_ENABLED=false
 - `cdp_game_players`：每位玩家的阵营、角色、牌分、积分和拖五数据。
 - `cdp_game_tags`：MVP、躺、坑、辅、僵等牌局标签。
 - `cdp_player_statistics`：按预置玩家身份自动汇总的统计视图，机器人不计入。
+- `cdp_player_profiles`：玩家名称、账号关联、头像版本、头像框和出牌特效配置。
 
 只读检查接口：
 

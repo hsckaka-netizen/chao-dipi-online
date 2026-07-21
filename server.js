@@ -12,7 +12,9 @@ import {
   initializeGameHistory,
   listPlayerStatistics,
   listRecentGames,
-  queueGameRecord
+  loadStoredPlayerProfiles,
+  queueGameRecord,
+  saveStoredPlayerProfile
 } from "./game-history.js";
 
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
@@ -25,6 +27,8 @@ const HAND_SIZE = 53;
 const CALL_MODE_TWO = "two";
 const CALL_MODE_SCORE = "score";
 const SCORE_BID_SECONDS = 20;
+const AVATAR_FRAMES = new Set(["", "vip"]);
+const PLAY_EFFECTS = new Set(["", "fireworks"]);
 const configuredAiSetupDelay = Number(process.env.AI_SETUP_DELAY_MS || 450);
 const AI_SETUP_DELAY_MS = Number.isFinite(configuredAiSetupDelay) ? Math.max(0, configuredAiSetupDelay) : 450;
 const configuredAiPlayDelay = Number(process.env.AI_PLAY_DELAY_MS || 1000);
@@ -74,6 +78,9 @@ const playerProfiles = new Map(initialPlayerProfiles.map((profile) => [
     id: profile.id,
     name: profile.name,
     avatarUrl: profile.avatarUrl || "",
+    avatarVersion: Number(profile.avatarVersion) || 0,
+    avatarFrame: AVATAR_FRAMES.has(profile.avatarFrame) ? profile.avatarFrame : "",
+    playEffect: PLAY_EFFECTS.has(profile.playEffect) ? profile.playEffect : "",
     builtIn: true,
     updatedAt: now()
   }
@@ -94,6 +101,16 @@ function cleanName(value) {
   return String(value || "").trim().replace(/\s+/g, " ").slice(0, 16);
 }
 
+function normalizeAvatarFrame(value) {
+  const normalized = String(value || "");
+  return AVATAR_FRAMES.has(normalized) ? normalized : "";
+}
+
+function normalizePlayEffect(value) {
+  const normalized = String(value || "");
+  return PLAY_EFFECTS.has(normalized) ? normalized : "";
+}
+
 function now() {
   return new Date().toISOString();
 }
@@ -107,6 +124,9 @@ function publicProfile(profile) {
     id: profile.id,
     name: profile.name,
     avatarUrl: profile.avatarUrl || "",
+    avatarVersion: Number(profile.avatarVersion) || 0,
+    avatarFrame: normalizeAvatarFrame(profile.avatarFrame),
+    playEffect: normalizePlayEffect(profile.playEffect),
     builtIn: Boolean(profile.builtIn),
     updatedAt: profile.updatedAt
   };
@@ -182,6 +202,7 @@ function joinableRoomsList() {
         profileId: player.profileId || null,
         name: player.name,
         avatarUrl: player.avatarUrl || "",
+        avatarFrame: normalizeAvatarFrame(player.avatarFrame),
         host: player.host,
         ready: Boolean(player.ready)
       }))
@@ -202,6 +223,8 @@ function createPlayer(profileOrName, host = false, test = false) {
     name,
     profileId: profile?.id || null,
     avatarUrl: profile?.avatarUrl || "",
+    avatarFrame: normalizeAvatarFrame(profile?.avatarFrame),
+    playEffect: normalizePlayEffect(profile?.playEffect),
     host,
     test,
     connected: false,
@@ -225,6 +248,8 @@ function createAiTestPlayer(room, fallbackIndex) {
   const profile = pool.length ? pool[randomInt(pool.length)] : null;
   const player = createPlayer(`${profile?.name || `机器人${fallbackIndex}`}（AI）`, false, true);
   player.avatarUrl = profile?.avatarUrl || "";
+  player.avatarFrame = normalizeAvatarFrame(profile?.avatarFrame);
+  player.playEffect = normalizePlayEffect(profile?.playEffect);
   return player;
 }
 
@@ -235,10 +260,32 @@ function syncProfileToRooms(profile) {
       if (player.profileId !== profile.id) return;
       player.name = profile.name;
       player.avatarUrl = profile.avatarUrl || "";
+      player.avatarFrame = normalizeAvatarFrame(profile.avatarFrame);
+      player.playEffect = normalizePlayEffect(profile.playEffect);
       changed = true;
     });
     if (changed) broadcast(room);
   }
+}
+
+async function initializePersistence() {
+  const databaseStatus = await initializeGameHistory();
+  if (!databaseStatus.connected || !databaseStatus.profileStorageReady) return;
+  const storedProfiles = await loadStoredPlayerProfiles();
+  storedProfiles.forEach((stored) => {
+    const profile = profileForId(stored.id);
+    if (!profile) return;
+    const storedName = cleanName(stored.name);
+    if (storedName && !profileNameTaken(storedName, profile.id)) profile.name = storedName;
+    profile.accountId = stored.accountId || null;
+    profile.avatarUrl = stored.avatarUrl ?? profile.avatarUrl;
+    profile.avatarVersion = Number(stored.avatarVersion) || 0;
+    profile.avatarFrame = normalizeAvatarFrame(stored.avatarFrame);
+    profile.playEffect = normalizePlayEffect(stored.playEffect);
+    profile.updatedAt = stored.updatedAt || profile.updatedAt;
+    playerProfiles.set(profile.id, profile);
+    syncProfileToRooms(profile);
+  });
 }
 
 function playerProfileFromBody(body) {
@@ -698,12 +745,20 @@ function roomSnapshot(room, viewer = null) {
     notice: room.notice?.expiresAt && Date.now() < new Date(room.notice.expiresAt).getTime() ? room.notice : null,
     hostId: room.hostId,
     setup: setupSnapshot(room),
-    viewer: viewer ? { id: viewer.id, name: viewer.name, avatarUrl: viewer.avatarUrl || "", host: viewer.host, ready: Boolean(viewer.ready) } : null,
+    viewer: viewer ? {
+      id: viewer.id,
+      name: viewer.name,
+      avatarUrl: viewer.avatarUrl || "",
+      host: viewer.host,
+      ready: Boolean(viewer.ready)
+    } : null,
     players: room.players.map((player) => ({
       id: player.id,
       profileId: player.profileId || null,
       name: player.name,
       avatarUrl: player.avatarUrl || "",
+      avatarFrame: normalizeAvatarFrame(player.avatarFrame),
+      playEffect: normalizePlayEffect(player.playEffect),
       host: player.host,
       test: player.test,
       role: playerRole(room, player.id),
@@ -3319,10 +3374,17 @@ async function handleApi(req, res, pathParts, url) {
       if (!name) return writeJson(res, 400, { error: "请输入玩家名称" });
       if (profileNameTaken(name, profile.id)) return writeJson(res, 409, { error: "这个玩家名称已经存在" });
       profile.name = name;
+      if (Object.hasOwn(body, "avatarFrame")) profile.avatarFrame = normalizeAvatarFrame(body.avatarFrame);
+      if (Object.hasOwn(body, "playEffect")) profile.playEffect = normalizePlayEffect(body.playEffect);
       profile.updatedAt = now();
       playerProfiles.set(profile.id, profile);
       syncProfileToRooms(profile);
-      return writeJson(res, 200, { player: publicProfile(profile), players: profilesList() });
+      const persistence = await saveStoredPlayerProfile(profile);
+      return writeJson(res, 200, {
+        player: publicProfile(profile),
+        players: profilesList(),
+        persistent: persistence.status === "saved"
+      });
     }
 
     return writeJson(res, 404, { error: "接口不存在" });
@@ -3908,11 +3970,14 @@ async function serveStatic(req, res, url) {
     ".jpeg": "image/jpeg",
     ".webp": "image/webp"
   }[extension] || "application/octet-stream";
+  const versionedStaticFile = url.searchParams.has("v") && (extension === ".js" || extension === ".css");
   const cacheControl = extension === ".html"
     ? "no-store"
     : url.pathname.startsWith("/assets/")
       ? "public, max-age=604800"
-      : "no-cache";
+      : versionedStaticFile
+        ? "public, max-age=604800, immutable"
+        : "no-cache";
 
   try {
     await readFile(target);
@@ -3943,7 +4008,7 @@ const server = createServer(async (req, res) => {
 
 server.listen(port, () => {
   console.log(`炒地皮在线版已启动：http://localhost:${port}`);
-  void initializeGameHistory().catch((error) => {
-    console.error("[game-history] background initialization failed", error.message);
+  void initializePersistence().catch((error) => {
+    console.error("[persistence] background initialization failed", error.message);
   });
 });

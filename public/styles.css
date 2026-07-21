@@ -824,11 +824,12 @@ button.joinable-room-player.spectate-player {
 }
 
 .avatar {
+  position: relative;
   flex: 0 0 auto;
   display: inline-grid;
   place-items: center;
-  width: 34px;
-  height: 34px;
+  width: 48px;
+  height: 48px;
   overflow: hidden;
   border: 1px solid #cbd8d0;
   border-radius: 50%;
@@ -840,9 +841,9 @@ button.joinable-room-player.spectate-player {
 }
 
 .avatar.small {
-  width: 24px;
-  height: 24px;
-  font-size: 12px;
+  width: 38px;
+  height: 38px;
+  font-size: 14px;
 }
 
 .avatar img {
@@ -850,6 +851,33 @@ button.joinable-room-player.spectate-player {
   height: 100%;
   object-fit: cover;
   display: block;
+  border-radius: inherit;
+}
+
+.avatar.avatar-frame-vip {
+  overflow: visible;
+  border: 2px solid #d4a72c;
+  background: #fff8dc;
+  box-shadow: 0 0 0 2px #fff1ad, 0 0 0 3px #8b6411, 0 3px 10px rgba(126, 88, 8, 0.24);
+}
+
+.avatar.avatar-frame-vip::after {
+  content: "VIP";
+  position: absolute;
+  left: 50%;
+  bottom: -7px;
+  z-index: 2;
+  min-width: 22px;
+  transform: translateX(-50%);
+  border: 1px solid #8b6411;
+  border-radius: 3px;
+  background: #f1c84b;
+  color: #513500;
+  padding: 1px 3px;
+  font-size: 7px;
+  font-weight: 900;
+  line-height: 1;
+  text-align: center;
 }
 
 .role-mark {
@@ -920,6 +948,12 @@ button.joinable-room-player.spectate-player {
   border: 1px solid var(--line);
   border-radius: 8px;
   background: #fbfcfb;
+}
+
+.profile-fields {
+  display: grid;
+  grid-template-columns: minmax(150px, 1.2fr) minmax(130px, .8fr) minmax(180px, 1fr);
+  gap: 10px;
 }
 
 .tags {
@@ -1502,6 +1536,61 @@ button.joinable-room-player.spectate-player {
   pointer-events: none;
 }
 
+.seat-play.large-play-effect-active {
+  isolation: isolate;
+}
+
+.seat-play.large-play-effect-active > .mini-cards,
+.seat-play.large-play-effect-active > .played-throw-components {
+  position: relative;
+  z-index: 2;
+}
+
+.play-fireworks {
+  position: absolute;
+  inset: -42px;
+  z-index: 3;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.firework-burst {
+  position: absolute;
+  width: 4px;
+  height: 4px;
+}
+
+.firework-one { left: 20%; top: 42%; }
+.firework-two { left: 78%; top: 32%; }
+.firework-three { left: 53%; top: 76%; }
+
+.firework-burst i {
+  --spark-color: #e4473d;
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 4px;
+  height: 14px;
+  border-radius: 999px;
+  background: var(--spark-color);
+  opacity: 0;
+  transform-origin: 50% 100%;
+  animation: play-firework-spark 1050ms cubic-bezier(.15, .65, .25, 1) both;
+  animation-delay: 70ms;
+}
+
+.firework-two i { --spark-color: #d8a923; animation-delay: 230ms; }
+.firework-three i { --spark-color: #2185c5; animation-delay: 390ms; }
+.firework-burst i:nth-child(3n + 2) { --spark-color: #2c9a64; }
+.firework-burst i:nth-child(3n) { --spark-color: #d85a96; }
+
+@keyframes play-firework-spark {
+  0% { opacity: 0; transform: rotate(calc(var(--ray) * 45deg)) translateY(0) scaleY(.25); }
+  18% { opacity: 1; }
+  75% { opacity: .9; }
+  100% { opacity: 0; transform: rotate(calc(var(--ray) * 45deg)) translateY(-52px) scaleY(.55); }
+}
+
 .seat-bottom .seat-play {
   left: 50%;
   top: calc(-100% + 6px);
@@ -2070,6 +2159,7 @@ button.joinable-room-player.spectate-player {
   .mini-card.dogleg-card-reveal,
   .mini-card.dragged-five-animated,
   .mini-card.dragged-five-animated::after,
+  .firework-burst i,
   .played-five-stats .five-stat-bump {
     animation: none;
   }
@@ -2369,6 +2459,10 @@ button.joinable-room-player.spectate-player {
 
   .profile-row {
     grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .profile-fields {
+    grid-template-columns: 1fr;
   }
 
   .profile-row button {

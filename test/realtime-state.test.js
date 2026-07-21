@@ -104,10 +104,22 @@ test("room snapshots stay monotonic and visual assets are cached", async (t) => 
   assert.equal(historyStatus.enabled, false);
   assert.equal(historyStatus.connected, false);
 
+  const updatedProfiles = await jsonRequest(`${server.baseUrl}/api/players/player-benlei`, {
+    method: "PUT",
+    body: JSON.stringify({ name: "奔雷", avatarFrame: "vip", playEffect: "fireworks" })
+  });
+  assert.equal(updatedProfiles.player.avatarFrame, "vip");
+  assert.equal(updatedProfiles.player.playEffect, "fireworks");
+  assert.equal(updatedProfiles.player.avatarVersion, 0);
+  assert.equal(updatedProfiles.persistent, false);
+
   const created = await jsonRequest(`${server.baseUrl}/api/rooms`, {
     method: "POST",
     body: JSON.stringify({ profileId: "player-benlei" })
   });
+  assert.equal(created.snapshot.viewer.avatarUrl, "/assets/avatars/benlei.png");
+  assert.equal(created.snapshot.players[0].avatarFrame, "vip");
+  assert.equal(created.snapshot.players[0].playEffect, "fireworks");
   const credentials = {
     playerId: created.playerId,
     token: created.token
@@ -158,6 +170,11 @@ test("room snapshots stay monotonic and visual assets are cached", async (t) => 
   assert.equal(assetResponse.status, 200);
   assert.match(assetResponse.headers.get("cache-control") || "", /max-age=604800/);
   assert.equal(assetResponse.headers.get("content-type"), "image/png");
+
+  const effectModuleResponse = await fetch(`${server.baseUrl}/gameplay-effects.js?v=20260721-1`);
+  assert.equal(effectModuleResponse.status, 200);
+  assert.match(effectModuleResponse.headers.get("cache-control") || "", /max-age=604800/);
+  assert.match(await effectModuleResponse.text(), /detectNewLargePlayEffects/);
 
   const indexResponse = await fetch(`${server.baseUrl}/`);
   assert.equal(indexResponse.status, 200);

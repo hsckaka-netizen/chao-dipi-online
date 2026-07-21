@@ -1,7 +1,16 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { buildGameRecord, gameHistoryStatus, queueGameRecord } from "../game-history.js";
+import { readFile } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
+
+import {
+  buildGameRecord,
+  gameHistoryStatus,
+  loadStoredPlayerProfiles,
+  queueGameRecord,
+  saveStoredPlayerProfile
+} from "../game-history.js";
 
 function settledRoom() {
   return {
@@ -136,4 +145,23 @@ test("settled game is converted to an immutable history record", () => {
 test("history queue remains a no-op when the feature flag is disabled", () => {
   assert.equal(gameHistoryStatus().enabled, false);
   assert.deepEqual(queueGameRecord(settledRoom()), { status: "disabled" });
+});
+
+test("player profile persistence remains optional when no database is configured", async () => {
+  assert.deepEqual(await loadStoredPlayerProfiles(), []);
+  assert.deepEqual(await saveStoredPlayerProfile({
+    id: "player-benlei",
+    name: "奔雷",
+    avatarFrame: "vip",
+    playEffect: "fireworks"
+  }), { status: "unavailable" });
+});
+
+test("profile migration reserves account and avatar version fields", async () => {
+  const migrationPath = fileURLToPath(new URL("../db/migrations/002_player_profiles.sql", import.meta.url));
+  const migration = await readFile(migrationPath, "utf8");
+  assert.match(migration, /CREATE TABLE IF NOT EXISTS cdp_player_profiles/);
+  assert.match(migration, /account_id uuid UNIQUE/);
+  assert.match(migration, /avatar_version integer NOT NULL DEFAULT 0/);
+  assert.match(migration, /play_effect varchar\(32\)/);
 });

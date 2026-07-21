@@ -1,4 +1,5 @@
-import { applyStatePatch } from "./state-patch.js";
+import { applyStatePatch } from "./state-patch.js?v=20260721-1";
+import { detectNewLargePlayEffects } from "./gameplay-effects.js?v=20260721-1";
 
 const app = document.querySelector("#app");
 const storageKey = "chaoDipiOnlineSession";
@@ -28,6 +29,7 @@ let throwRevealTimer = null;
 let gameplayEffectTimer = null;
 let doglegRevealEffects = [];
 let draggedFiveEffect = null;
+let largePlayEffects = [];
 let lastMutatingActionAt = 0;
 let homeView = "rooms";
 let profiles = [];
@@ -67,6 +69,7 @@ function clearSession() {
   gameplayEffectTimer = null;
   doglegRevealEffects = [];
   draggedFiveEffect = null;
+  largePlayEffects = [];
   stateSyncTimer = null;
   stateWatchdogTimer = null;
   actionDialogResumeTimer = null;
@@ -196,8 +199,13 @@ function findPlayedCard(snapshot, playerId, matcher) {
 function captureGameplayEffects(previousState, nextState) {
   const nowMs = Date.now();
   doglegRevealEffects = doglegRevealEffects.filter((effect) => effect.until > nowMs);
+  largePlayEffects = largePlayEffects.filter((effect) => effect.until > nowMs);
 
   if (previousState?.roomId === nextState?.roomId) {
+    const activeKeys = new Set(largePlayEffects.map((effect) => effect.key));
+    largePlayEffects.push(...detectNewLargePlayEffects(previousState, nextState, nowMs)
+      .filter((effect) => !activeKeys.has(effect.key)));
+
     const previousDoglegs = new Set(previousState.setup?.doglegPlayerIds || []);
     const doglegCard = nextState.setup?.doglegCard;
     (nextState.setup?.doglegPlayerIds || [])
@@ -234,6 +242,7 @@ function captureGameplayEffects(previousState, nextState) {
   } else {
     doglegRevealEffects = [];
     draggedFiveEffect = null;
+    largePlayEffects = [];
   }
   scheduleGameplayEffectEnd();
 }
@@ -244,12 +253,14 @@ function scheduleGameplayEffectEnd() {
   const nowMs = Date.now();
   const expirations = doglegRevealEffects.map((effect) => effect.until);
   if (draggedFiveEffect?.animateUntil > nowMs) expirations.push(draggedFiveEffect.animateUntil);
+  expirations.push(...largePlayEffects.map((effect) => effect.until));
   const nextExpiration = expirations.filter((value) => value > nowMs).sort((a, b) => a - b)[0];
   if (!nextExpiration) return;
   gameplayEffectTimer = window.setTimeout(() => {
     gameplayEffectTimer = null;
     const currentTime = Date.now();
     doglegRevealEffects = doglegRevealEffects.filter((effect) => effect.until > currentTime);
+    largePlayEffects = largePlayEffects.filter((effect) => effect.until > currentTime);
     if (draggedFiveEffect?.animateUntil <= currentTime) draggedFiveEffect.animateUntil = 0;
     render();
     scheduleGameplayEffectEnd();
@@ -650,11 +661,15 @@ async function updateProfile(event) {
   try {
     const data = await api(`/api/players/${encodeURIComponent(profileId)}`, {
       method: "PUT",
-      body: JSON.stringify({ name: form.get("name") })
+      body: JSON.stringify({
+        name: form.get("name"),
+        avatarFrame: form.get("avatarFrame"),
+        playEffect: form.get("playEffect")
+      })
     });
     profiles = data.players || [];
     profilesLoaded = true;
-    setMessage("玩家资料已保存。");
+    setMessage(data.persistent ? "玩家资料已保存。" : "资料已在当前服务保存，数据库暂时不可用。", !data.persistent);
   } catch (error) {
     setMessage(error.message, true);
   }
@@ -1789,13 +1804,13 @@ function renderJoinableRoom(room) {
             data-player-id="${escapeHtml(player.id)}"
             title="以${escapeHtml(player.name)}的视角观战"
           >
-            ${avatarHtml(player.name, player.avatarUrl)}
+            ${avatarHtml(player.name, player.avatarUrl, "normal", player.avatarFrame)}
             <span class="joinable-room-player-name">${escapeHtml(player.name)}</span>
             <span class="spectate-player-label">观战</span>
           </button>
         ` : `
           <span class="joinable-room-player ${player.ready ? "ready" : ""}">
-            ${avatarHtml(player.name, player.avatarUrl)}
+            ${avatarHtml(player.name, player.avatarUrl, "normal", player.avatarFrame)}
             <span class="joinable-room-player-name">${escapeHtml(player.name)}</span>
           </span>
         `).join("")}
@@ -1834,7 +1849,7 @@ function renderProfileManager() {
         <h2>玩家列表</h2>
         <button type="button" class="secondary compact-button" data-action="show-rooms">返回房间</button>
       </div>
-      <div class="meta">玩家列表由后台预置；头像使用内置素材，这里支持修改现有玩家名称。</div>
+      <div class="meta">玩家列表由后台预置；这里可以修改名称，并为每位玩家设置头像框和出牌特效。</div>
       <div class="profile-list">
         ${profiles.length ? profiles.map(renderProfileRow).join("") : `<div class="empty">暂无玩家。</div>`}
       </div>
@@ -1845,11 +1860,27 @@ function renderProfileManager() {
 function renderProfileRow(profile) {
   return `
     <form class="profile-row" data-form="update-profile" data-profile-id="${escapeHtml(profile.id)}">
-      ${avatarHtml(profile.name, profile.avatarUrl)}
-      <label>
-        玩家名称
-        <input name="name" maxlength="16" required value="${escapeHtml(profile.name)}">
-      </label>
+      ${avatarHtml(profile.name, profile.avatarUrl, "normal", profile.avatarFrame)}
+      <div class="profile-fields">
+        <label>
+          玩家名称
+          <input name="name" maxlength="16" required value="${escapeHtml(profile.name)}">
+        </label>
+        <label>
+          头像框
+          <select name="avatarFrame">
+            <option value="" ${profile.avatarFrame ? "" : "selected"}>默认</option>
+            <option value="vip" ${profile.avatarFrame === "vip" ? "selected" : ""}>VIP 金色</option>
+          </select>
+        </label>
+        <label>
+          出牌特效
+          <select name="playEffect">
+            <option value="" ${profile.playEffect ? "" : "selected"}>无</option>
+            <option value="fireworks" ${profile.playEffect === "fireworks" ? "selected" : ""}>烟花（9张及以上）</option>
+          </select>
+        </label>
+      </div>
       <button type="submit" class="secondary">保存</button>
     </form>
   `;
@@ -2624,6 +2655,8 @@ function renderSetupTable() {
       playerName: player.name,
       role: player.role,
       avatarUrl: player.avatarUrl || "",
+      avatarFrame: player.avatarFrame || "",
+      playEffect: player.playEffect || "",
       played: false,
       winning: false,
       lead: false,
@@ -2821,6 +2854,7 @@ function renderTrick(trick, current, options = {}) {
           const statusText = playStatusText(trick, play, playIndex, current, { heldResult, setupTable });
           const statusTone = playStatusTone(trick, play, current, { heldResult, setupTable });
           const seatHand = showViewerHand ? renderSeatHand(viewerAction, play, trick, playIndex, { heldResult, setupTable }) : "";
+          const playEffect = setupTable ? "" : renderLargePlayEffect(play, trick.number);
           const playerCard = `
             <div class="trick-player ${roleClass(play.role)} ${play.played ? "played" : ""} ${play.lead ? "lead" : ""} ${play.currentTurn ? "current-turn" : ""} ${play.winning ? "winning" : ""}">
               <div class="trick-name">
@@ -2840,7 +2874,7 @@ function renderTrick(trick, current, options = {}) {
           return `
             <div class="trick-seat ${seatZone(index, displayPlays.length)} ${isViewerSeat ? "viewer-seat" : ""}" style="${seatStyle(index, displayPlays.length)}">
               ${showViewerHand ? "" : playerCard}
-              ${playContent ? `<div class="seat-play">${playContent}</div>` : ""}
+              ${playContent ? `<div class="seat-play ${playEffect ? "large-play-effect-active" : ""}">${playContent}${playEffect}</div>` : ""}
               ${seatHand}
             </div>
           `;
@@ -2905,18 +2939,19 @@ function roleClass(role) {
   return "";
 }
 
-function avatarHtml(name, avatarUrl = "", size = "normal") {
+function avatarHtml(name, avatarUrl = "", size = "normal", avatarFrame = "") {
   const initial = String(name || "玩").trim().slice(0, 1) || "玩";
+  const frameClass = avatarFrame === "vip" ? "avatar-frame-vip" : "";
   if (avatarUrl) {
-    return `<span class="avatar ${size}" title="${escapeHtml(name)}"><img src="${escapeHtml(avatarUrl)}" alt="" decoding="async" draggable="false"></span>`;
+    return `<span class="avatar ${size} ${frameClass}" title="${escapeHtml(name)}"><img src="${escapeHtml(avatarUrl)}" alt="" decoding="async" draggable="false"></span>`;
   }
-  return `<span class="avatar ${size}" title="${escapeHtml(name)}">${escapeHtml(initial)}</span>`;
+  return `<span class="avatar ${size} ${frameClass}" title="${escapeHtml(name)}">${escapeHtml(initial)}</span>`;
 }
 
-function playerIdentity(name, role, avatarUrl = "", suffix = "", playerId = "") {
+function playerIdentity(name, role, avatarUrl = "", suffix = "", playerId = "", avatarFrame = "") {
   return `
     <span class="player-identity">
-      ${avatarHtml(name, avatarUrl, "small")}
+      ${avatarHtml(name, avatarUrl, "small", avatarFrame)}
       ${roleMark(role, playerId)}
       <span class="name-text">${escapeHtml(`${name}${suffix}`)}</span>
     </span>
@@ -2924,7 +2959,8 @@ function playerIdentity(name, role, avatarUrl = "", suffix = "", playerId = "") 
 }
 
 function playerNameWithRole(play) {
-  return playerIdentity(play.playerName, play.role, play.avatarUrl, "", play.playerId);
+  const player = state?.players?.find((item) => item.id === play.playerId);
+  return playerIdentity(play.playerName, play.role, play.avatarUrl, "", play.playerId, play.avatarFrame || player?.avatarFrame);
 }
 
 function seatStyle(index, total) {
@@ -3021,7 +3057,7 @@ function renderPlayer(player) {
   return `
     <div class="player ${roleClass(player.role)}" data-player-id="${escapeHtml(player.id)}">
       <div>
-        <strong class="player-name-line">${playerIdentity(player.name, player.role, player.avatarUrl, isMe ? "（我）" : "", player.id)}</strong>
+        <strong class="player-name-line">${playerIdentity(player.name, player.role, player.avatarUrl, isMe ? "（我）" : "", player.id, player.avatarFrame)}</strong>
         <div class="tags">
           ${player.host ? `<span class="tag accent">房主</span>` : ""}
           ${player.test ? `<span class="tag">机器人</span>` : ""}
@@ -3330,6 +3366,21 @@ function renderPlayedCards(play, fallbackCards = [], trickNumber = null) {
         </div>
       `).join("")}
     </div>
+  `;
+}
+
+function renderLargePlayEffect(play, trickNumber) {
+  const active = largePlayEffects.some((effect) =>
+    effect.trickNumber === trickNumber && effect.playerId === play.playerId && effect.until > Date.now()
+  );
+  if (!active) return "";
+  const rays = Array.from({ length: 8 }, (_, index) => `<i style="--ray:${index}"></i>`).join("");
+  return `
+    <span class="play-fireworks" aria-hidden="true">
+      <span class="firework-burst firework-one">${rays}</span>
+      <span class="firework-burst firework-two">${rays}</span>
+      <span class="firework-burst firework-three">${rays}</span>
+    </span>
   `;
 }
 
