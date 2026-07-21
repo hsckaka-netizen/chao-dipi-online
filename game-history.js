@@ -30,6 +30,7 @@ const pendingRecords = new Map();
 const status = {
   configured: Boolean(DATABASE_URL),
   enabled: HISTORY_ENABLED,
+  recordPolicy: "human-only-settlement",
   connected: false,
   migrationVersion: 0,
   profileStorageReady: false,
@@ -311,6 +312,10 @@ export function buildGameRecord(room) {
   };
 }
 
+export function isHumanOnlyGame(room) {
+  return Boolean(room?.players?.length) && room.players.every((player) => !player.test);
+}
+
 async function saveGameRecord(record) {
   if (!pool) throw new Error("数据库尚未连接");
   const client = await pool.connect();
@@ -454,6 +459,7 @@ async function flushPendingGameRecords() {
 
 export function queueGameRecord(room, onStatus) {
   if (!HISTORY_ENABLED) return { status: "disabled" };
+  if (!isHumanOnlyGame(room)) return { status: "skipped-ai" };
   if (!pool) return { status: "unavailable" };
   let record;
   try {

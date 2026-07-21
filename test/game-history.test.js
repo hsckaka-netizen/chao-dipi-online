@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import {
   buildGameRecord,
   gameHistoryStatus,
+  isHumanOnlyGame,
   loadStoredPlayerProfiles,
   queueGameRecord,
   saveStoredPlayerProfile
@@ -174,7 +175,18 @@ test("settled game is converted to an immutable history record", () => {
 
 test("history queue remains a no-op when the feature flag is disabled", () => {
   assert.equal(gameHistoryStatus().enabled, false);
+  assert.equal(gameHistoryStatus().recordPolicy, "human-only-settlement");
   assert.deepEqual(queueGameRecord(settledRoom()), { status: "disabled" });
+});
+
+test("only all-human games are eligible for history persistence", () => {
+  const room = settledRoom();
+  assert.equal(isHumanOnlyGame(room), false);
+
+  room.players.forEach((player) => {
+    player.test = false;
+  });
+  assert.equal(isHumanOnlyGame(room), true);
 });
 
 test("player profile persistence remains optional when no database is configured", async () => {
