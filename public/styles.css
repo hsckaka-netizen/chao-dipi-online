@@ -481,7 +481,7 @@ label {
   font-size: 13px;
 }
 
-.result-row span {
+.result-row > span {
   color: var(--muted);
 }
 
@@ -583,6 +583,36 @@ label {
   border-color: #7eb7b2;
   background: #e0f2ef;
   color: #17645d;
+}
+
+.result-evaluation-god {
+  border-color: #d3ad42;
+  background: #fff0ae;
+  color: #704d00;
+}
+
+.result-evaluation-heaven {
+  border-color: #a497d2;
+  background: #eeeaff;
+  color: #55428f;
+}
+
+.result-evaluation-god-pit {
+  border-color: #b67373;
+  background: #f5dada;
+  color: #792727;
+}
+
+.result-evaluation-exhausted {
+  border-color: #88abc3;
+  background: #e3f0f8;
+  color: #275c7d;
+}
+
+.result-evaluation-pillar {
+  border-color: #72aa9f;
+  background: #dff1ec;
+  color: #155f54;
 }
 
 .result-outcome {

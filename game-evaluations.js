@@ -13,6 +13,22 @@ function draggedFiveValue(card) {
   return 0;
 }
 
+function roundMetric(value) {
+  return Math.round((Number(value) || 0) * 100) / 100;
+}
+
+function metricText(value) {
+  const rounded = roundMetric(value);
+  return Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(2).replace(/0+$/, "").replace(/\.$/, "");
+}
+
+export function finalScoreWinnerTeam(idleEachScore) {
+  const score = Number(idleEachScore) || 0;
+  if (score > 0) return "idle";
+  if (score < 0) return "banker";
+  return null;
+}
+
 function selectMetric(items, fields) {
   if (!items.length) return null;
   return [...items].sort((a, b) => {
@@ -29,11 +45,12 @@ function addTag(metric, code, label, title) {
   metric.tags.push({ code, label, title });
 }
 
-function dragSummary(metric, mode) {
-  const benefit = mode === "gain" ? metric.enemyDragBenefit : metric.enemyDragLoss;
-  const red = mode === "gain" ? metric.enemyDraggedRedFives : metric.draggedByOpponentRedFives;
-  const diamond = mode === "gain" ? metric.enemyDraggedDiamondFives : metric.draggedByOpponentDiamondFives;
-  return `红五 ${red}、方五 ${diamond}（折算 ${benefit} 积分）`;
+function contributionSummary(metric) {
+  return `贡献 ${metricText(metric.contributionValue)} 积分：牌分折算 ${metricText(metric.capturedPointValue)}，拖对手 ${metricText(metric.enemyDragBenefit)}，保底 ${metricText(metric.bottomWinValue + metric.bottomPointValue)}，拖队友及甩牌扣 ${metricText(metric.teammateDragHarmValue + metric.throwFailures)}`;
+}
+
+function opponentContributionSummary(metric) {
+  return `给对方贡献 ${metricText(metric.opponentContributionValue)} 积分：贴牌分 ${metricText(metric.opponentPointsFedValue)}，被拖 ${metricText(metric.enemyDragLoss)}，拖队友 ${metricText(metric.teammateDragHarmValue)}，其他损失 ${metricText(metric.throwFailures + metric.bottomLossValue + metric.bottomPointsFedValue)}`;
 }
 
 export function buildGameEvaluations({
@@ -54,10 +71,12 @@ export function buildGameEvaluations({
     team: teamByPlayerId.get(player.id),
     seatIndex,
     capturedPoints: Number(player.score) || 0,
+    capturedPointValue: 0,
     wonTricks: 0,
     leadRounds: 0,
     teammateAssistPoints: 0,
     opponentPointsFed: 0,
+    opponentPointsFedValue: 0,
     enemyDraggedRedFives: 0,
     enemyDraggedDiamondFives: 0,
     enemyDragBenefit: 0,
@@ -71,9 +90,17 @@ export function buildGameEvaluations({
     draggedByTeammateDiamondFives: 0,
     bottomDragBenefit: 0,
     bottomDragLoss: 0,
+    bottomWinValue: 0,
+    bottomPointValue: 0,
+    bottomLossValue: 0,
+    bottomPointsFedValue: 0,
+    throwFailures: Number(player.throwFailures) || 0,
+    grossContributionValue: 0,
     mvpValue: 0,
     contributionValue: 0,
+    opponentContributionValue: 0,
     harmValue: 0,
+    thunderValue: 0,
     wasProvisionalWinner: provisionalWinnerIds.has(player.id),
     tags: []
   }));
@@ -122,8 +149,16 @@ export function buildGameEvaluations({
     });
   });
 
+  const bottomWinner = metricByPlayerId.get(bottom?.winnerId);
+  if (bottomWinner) {
+    bottomWinner.bottomWinValue += 1;
+    if (bottom?.winnerTeam === "banker") {
+      bottomWinner.bottomPointValue += ((Number(bottom.points) || 0) * 2) / 40;
+    }
+  }
+
   if (bottom?.winnerTeam === "idle") {
-    const winner = metricByPlayerId.get(bottom.winnerId);
+    const winner = bottomWinner;
     const victim = metricByPlayerId.get(bottom.bankerId);
     if (winner && victim && winner.team !== victim.team) {
       const redFives = Number(bottom.draggedRedFives) || 0;
@@ -137,32 +172,43 @@ export function buildGameEvaluations({
       victim.draggedByOpponentDiamondFives += diamondFives;
       victim.enemyDragLoss += doubledValue;
       victim.bottomDragLoss += doubledValue;
+      victim.bottomLossValue += 1;
+      victim.bottomPointsFedValue += ((Number(bottom.points) || 0) * 2) / 40;
     }
   }
 
   metrics.forEach((metric) => {
-    metric.mvpValue = metric.capturedPoints + metric.enemyDragBenefit * 40;
-    metric.contributionValue = metric.mvpValue + metric.teammateAssistPoints;
-    metric.harmValue = metric.opponentPointsFed + metric.enemyDragLoss * 40;
+    metric.capturedPointValue = roundMetric(metric.capturedPoints / 40);
+    metric.opponentPointsFedValue = roundMetric(metric.opponentPointsFed / 40);
+    metric.grossContributionValue = roundMetric(
+      metric.capturedPointValue + metric.enemyDragBenefit + metric.bottomWinValue + metric.bottomPointValue
+    );
+    metric.contributionValue = roundMetric(
+      metric.grossContributionValue - metric.teammateDragHarmValue - metric.throwFailures
+    );
+    metric.opponentContributionValue = roundMetric(
+      metric.opponentPointsFedValue
+        + metric.enemyDragLoss
+        + metric.teammateDragHarmValue
+        + metric.throwFailures
+        + metric.bottomLossValue
+        + metric.bottomPointsFedValue
+    );
+    metric.mvpValue = metric.contributionValue;
+    metric.harmValue = metric.opponentContributionValue;
+    metric.thunderValue = roundMetric(metric.teammateDragHarmValue - metric.enemyDragBenefit);
   });
 
   const winningMetrics = metrics.filter((metric) => metric.team === winnerTeam);
   const mvp = selectMetric(winningMetrics, [
     ["mvpValue", "desc"],
-    ["capturedPoints", "desc"],
+    ["grossContributionValue", "desc"],
     ["enemyDragBenefit", "desc"],
     ["wonTricks", "desc"]
   ]);
-  const couch = winningMetrics.length > 1
-    ? selectMetric(winningMetrics, [
-      ["contributionValue", "asc"],
-      ["capturedPoints", "asc"],
-      ["teammateAssistPoints", "asc"],
-      ["wonTricks", "asc"]
-    ])
-    : null;
-  const pit = selectMetric(metrics.filter((metric) => metric.harmValue > 0), [
-    ["harmValue", "desc"],
+  const couchPlayers = winningMetrics.filter((metric) => metric.contributionValue <= 0);
+  const pit = selectMetric(metrics.filter((metric) => metric.opponentContributionValue >= 5), [
+    ["opponentContributionValue", "desc"],
     ["opponentPointsFed", "desc"],
     ["enemyDragLoss", "desc"]
   ]);
@@ -170,39 +216,43 @@ export function buildGameEvaluations({
     ["teammateAssistPoints", "desc"],
     ["capturedPoints", "asc"]
   ]);
-  const stiffPlayers = metrics.filter((metric) => metric.leadRounds === 0 && metric.wonTricks === 0);
+  const stiffPlayers = metrics.filter((metric) => metric.wonTricks === 0);
   const stiffestPlayers = hasProvisionalWinnerData
     ? metrics.filter((metric) => !metric.wasProvisionalWinner)
     : [];
-  const thunderPlayers = metrics.filter((metric) => metric.teammateDragHarmValue >= 4);
+  const thunderPlayers = metrics.filter((metric) => metric.thunderValue >= 4);
   const precision = metricByPlayerId.get(finalSideSuitBottomWinnerId) || null;
+  const godPlayers = metrics.filter((metric) => metric.contributionValue >= 15);
+  const heavenPlayers = metrics.filter((metric) => metric.contributionValue >= 20);
+  const godPitPlayers = metrics.filter((metric) => metric.opponentContributionValue >= 10);
+  const losingTeam = winnerTeam === "idle" ? "banker" : winnerTeam === "banker" ? "idle" : null;
+  const globalContributionLeader = selectMetric(metrics, [
+    ["contributionValue", "desc"],
+    ["grossContributionValue", "desc"],
+    ["capturedPoints", "desc"],
+    ["wonTricks", "desc"]
+  ]);
+  const exhausted = globalContributionLeader?.team === losingTeam ? globalContributionLeader : null;
+  const pillar = exhausted?.contributionValue >= 10 ? exhausted : null;
 
   addTag(
     mvp,
     "mvp",
     "MVP",
-    mvp ? `牌局胜方核心：获得 ${mvp.capturedPoints} 分，拖对手${dragSummary(mvp, "gain")}` : ""
+    mvp ? `最终积分胜方贡献最大；${contributionSummary(mvp)}` : ""
   );
-  addTag(
-    couch,
-    "couch",
-    "躺",
-    couch ? `牌局胜方贡献较少：获得 ${couch.capturedPoints} 分，给队友贴 ${couch.teammateAssistPoints} 分，拖对手${dragSummary(couch, "gain")}` : ""
-  );
+  addTag(support, "support", "辅", support ? `全场给队友提供牌分最多：${support.teammateAssistPoints} 分` : "");
+  couchPlayers.forEach((metric) => {
+    addTag(metric, "couch", "躺", `最终积分胜方个人贡献不高于 0；${contributionSummary(metric)}`);
+  });
   addTag(
     pit,
     "pit",
     "坑",
-    pit ? `负面贡献较高：给对手贴 ${pit.opponentPointsFed} 分，被对手拖${dragSummary(pit, "loss")}` : ""
-  );
-  addTag(
-    support,
-    "support",
-    "辅",
-    support ? `给队友贴分最多：${support.teammateAssistPoints} 分` : ""
+    pit ? `全场给对方贡献积分最多且不少于 5；${opponentContributionSummary(pit)}` : ""
   );
   stiffPlayers.forEach((metric) => {
-    addTag(metric, "stiff", "僵", "本局没有首出，也没有赢得过下一轮出牌权");
+    addTag(metric, "stiff", "僵", "本局没有获得过任意一轮的最终最大");
   });
   stiffestPlayers.forEach((metric) => {
     addTag(metric, "stiffest", "僵中僵", "本局每次出牌后都未曾成为当时全场最大");
@@ -212,21 +262,32 @@ export function buildGameEvaluations({
       metric,
       "thunder",
       "雷",
-      `拖到队友红五 ${metric.teammateDraggedRedFives}、方五 ${metric.teammateDraggedDiamondFives}（折算 ${metric.teammateDragHarmValue} 积分）`
+      `拖队友红方五损失 ${metricText(metric.teammateDragHarmValue)}，扣除拖对手收益 ${metricText(metric.enemyDragBenefit)} 后，净损失 ${metricText(metric.thunderValue)} 积分`
     );
   });
   addTag(precision, "precision", "精", "最后一轮以副牌赢得本轮并成功保底");
+  godPlayers.forEach((metric) => addTag(metric, "god", "神", `为本队贡献不少于 15 积分；${contributionSummary(metric)}`));
+  heavenPlayers.forEach((metric) => addTag(metric, "heaven", "天之上", `为本队贡献不少于 20 积分；${contributionSummary(metric)}`));
+  godPitPlayers.forEach((metric) => addTag(metric, "god-pit", "神坑", `为对方队伍贡献不少于 10 积分；${opponentContributionSummary(metric)}`));
+  addTag(exhausted, "exhausted", "尽", exhausted ? `最终积分败方中出现全场贡献最高者；${contributionSummary(exhausted)}` : "");
+  addTag(pillar, "pillar", "擎", pillar ? `最终积分败方的全场贡献最高者，且贡献不少于 10；${contributionSummary(pillar)}` : "");
 
   return {
     awards: {
       mvpPlayerId: mvp?.playerId || null,
-      couchPlayerId: couch?.playerId || null,
+      couchPlayerId: couchPlayers[0]?.playerId || null,
+      couchPlayerIds: couchPlayers.map((metric) => metric.playerId),
       pitPlayerId: pit?.playerId || null,
       supportPlayerId: support?.playerId || null,
       stiffPlayerIds: stiffPlayers.map((metric) => metric.playerId),
       stiffestPlayerIds: stiffestPlayers.map((metric) => metric.playerId),
       thunderPlayerIds: thunderPlayers.map((metric) => metric.playerId),
-      precisionPlayerId: precision?.playerId || null
+      precisionPlayerId: precision?.playerId || null,
+      godPlayerIds: godPlayers.map((metric) => metric.playerId),
+      heavenPlayerIds: heavenPlayers.map((metric) => metric.playerId),
+      godPitPlayerIds: godPitPlayers.map((metric) => metric.playerId),
+      exhaustedPlayerId: exhausted?.playerId || null,
+      pillarPlayerId: pillar?.playerId || null
     },
     byPlayerId: Object.fromEntries(metrics.map((metric) => [metric.playerId, metric]))
   };

@@ -21,7 +21,7 @@ import {
   validatePassword,
   validateUsername
 } from "./account-auth.js";
-import { buildGameEvaluations } from "./game-evaluations.js";
+import { buildGameEvaluations, finalScoreWinnerTeam } from "./game-evaluations.js";
 import { versionedAssetUrl } from "./public/asset-versions.js";
 import { createStatePatch } from "./public/state-patch.js";
 import {
@@ -1287,6 +1287,7 @@ function finishGame(room, completedTrick) {
   const idleEachScore = baseScore + scoreStep + bottomDelta + draggedDelta + throwFailureDelta;
   const bankerEachScore = bankerIds.length ? -idleEachScore * idleIds.length / bankerIds.length : 0;
   const winnerTeam = idleScore >= threshold ? "idle" : "banker";
+  const evaluationWinnerTeam = finalScoreWinnerTeam(idleEachScore);
   const bottomWinningPlay = completedTrick.plays.find((play) => play.playerId === bottomWinnerId);
   const finalSideSuitBottomWinnerId = bottomWinningPlay?.cards?.length
     && bottomWinningPlay.cards.every((card) => !isMainPlayCard(card, room.trumpSuit))
@@ -1296,13 +1297,14 @@ function finishGame(room, completedTrick) {
     players: room.players,
     tricks: room.trickHistory,
     bankerTeamIds: bankerIds,
-    winnerTeam,
+    winnerTeam: evaluationWinnerTeam,
     provisionalWinnerPlayerIds: room.provisionalWinnerPlayerIds || [],
     finalSideSuitBottomWinnerId,
     bottom: {
       winnerId: bottomWinnerId,
       winnerTeam: bottomWinnerTeam,
       bankerId: room.bankerId,
+      points: bottomPoints,
       draggedRedFives: bottomDraggedRedFives,
       draggedDiamondFives: bottomDraggedDiamondFives
     }
@@ -1334,6 +1336,8 @@ function finishGame(room, completedTrick) {
     scoreDiff,
     winnerTeam,
     winnerTeamName: teamName(winnerTeam),
+    evaluationWinnerTeam,
+    evaluationWinnerTeamName: evaluationWinnerTeam ? teamName(evaluationWinnerTeam) : "平局",
     bottomWinnerId,
     bottomWinnerName: playerName(room, bottomWinnerId),
     bottomWinnerTeam,
