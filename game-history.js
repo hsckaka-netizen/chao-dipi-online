@@ -13,6 +13,10 @@ const MIGRATIONS = [
   {
     version: 2,
     path: fileURLToPath(new URL("./db/migrations/002_player_profiles.sql", import.meta.url))
+  },
+  {
+    version: 3,
+    path: fileURLToPath(new URL("./db/migrations/003_history_compaction.sql", import.meta.url))
   }
 ];
 const HISTORY_ENABLED = String(process.env.GAME_HISTORY_ENABLED || "").toLowerCase() === "true";
@@ -21,6 +25,7 @@ const DATABASE_URL = String(process.env.DATABASE_URL || "").trim();
 let pool = null;
 let retryTimer = null;
 let flushInFlight = false;
+const storedProfileIds = new Set();
 const pendingRecords = new Map();
 const status = {
   configured: Boolean(DATABASE_URL),
@@ -88,9 +93,7 @@ async function applyMigrations(client) {
     }
     const versionResult = await client.query("SELECT coalesce(max(version), 0) AS version FROM cdp_schema_migrations");
     status.migrationVersion = Number(versionResult.rows[0]?.version || 0);
-    const profileCountResult = await client.query("SELECT count(*)::integer AS count FROM cdp_player_profiles");
     status.profileStorageReady = true;
-    status.storedProfileCount = Number(profileCountResult.rows[0]?.count || 0);
   } finally {
     await client.query("SELECT pg_advisory_unlock($1)", [2026072001]);
   }
@@ -100,8 +103,8 @@ export async function initializeGameHistory() {
   if (!DATABASE_URL) return safeStatus();
   pool = new Pool({
     connectionString: DATABASE_URL,
-    max: 5,
-    idleTimeoutMillis: 30_000,
+    max: 2,
+    idleTimeoutMillis: 15_000,
     connectionTimeoutMillis: 10_000,
     ssl: { rejectUnauthorized: false }
   });
@@ -145,7 +148,9 @@ export async function loadStoredPlayerProfiles() {
       FROM cdp_player_profiles
       ORDER BY profile_id
     `);
-    status.storedProfileCount = result.rows.length;
+    storedProfileIds.clear();
+    result.rows.forEach((row) => storedProfileIds.add(row.profile_id));
+    status.storedProfileCount = storedProfileIds.size;
     return result.rows.map((row) => ({
       id: row.profile_id,
       accountId: row.account_id || null,
@@ -191,8 +196,8 @@ export async function saveStoredPlayerProfile(profile) {
         profile.updatedAt || new Date().toISOString()
       ]
     );
-    const countResult = await pool.query("SELECT count(*)::integer AS count FROM cdp_player_profiles");
-    status.storedProfileCount = Number(countResult.rows[0]?.count || 0);
+    storedProfileIds.add(profile.id);
+    status.storedProfileCount = storedProfileIds.size;
     status.lastProfileSavedAt = new Date().toISOString();
     return {
       status: "saved",
@@ -203,6 +208,45 @@ export async function saveStoredPlayerProfile(profile) {
     console.error(`[player-profiles] save failed for ${profile.id}`, error.message);
     return { status: "failed" };
   }
+}
+
+function compactCardId(card) {
+  if (card?.id) return card.id;
+  if (card?.type === "joker") return `${card.deck || 0}-JOKER-${String(card.joker || "").toUpperCase()}`;
+  return `${card?.deck || 0}-${card?.suit || "?"}-${card?.rank || "?"}`;
+}
+
+function compactThrow(play) {
+  if (!play?.throwPlay && !play?.throwFailed) return null;
+  return {
+    result: play.throwFailed ? "failed" : "success",
+    attempt: (play.throwAttemptCards || []).map(compactCardId),
+    components: (play.throwComponents || []).map((component) => ({
+      signature: component.signature || "",
+      pattern: jsonValue(component.pattern, null),
+      cards: (component.cards || []).map(compactCardId)
+    }))
+  };
+}
+
+function compactTrickHistory(tricks) {
+  return (tricks || []).map((trick) => ({
+    number: trick.number,
+    leaderId: trick.leaderId || null,
+    winnerId: trick.winnerId || null,
+    points: Number(trick.points) || 0,
+    plays: (trick.plays || []).filter((play) => play.played !== false && play.cards?.length).map((play) => ({
+      playerId: play.playerId,
+      at: play.at || null,
+      cards: play.cards.map(compactCardId),
+      throw: compactThrow(play)
+    }))
+  }));
+}
+
+function compactResult(result) {
+  const { playerResults: _playerResults, bottomCards: _bottomCards, ...summary } = result || {};
+  return jsonValue(summary, {});
 }
 
 export function buildGameRecord(room) {
@@ -234,6 +278,7 @@ export function buildGameRecord(room) {
   });
 
   return {
+    recordFormatVersion: 2,
     gameId: room.gameRecordId,
     roomCode: room.id,
     startedAt: room.startedAt,
@@ -247,7 +292,7 @@ export function buildGameRecord(room) {
     trumpSuit: room.trumpSuit || null,
     bankerRoomPlayerId: room.bankerId || null,
     bankerProfileId: profileIdForRoomPlayer(room, room.bankerId),
-    doglegCard: jsonValue(room.doglegCard, null),
+    doglegCard: room.doglegCard ? compactCardId(room.doglegCard) : null,
     doglegProfileIds: (room.doglegPlayerIds || []).map((playerId) => profileIdForRoomPlayer(room, playerId)).filter(Boolean),
     threshold: Number(result.threshold) || 0,
     idleScore: Number(result.idleScore) || 0,
@@ -257,11 +302,11 @@ export function buildGameRecord(room) {
     bottomWinnerProfileId: profileIdForRoomPlayer(room, result.bottomWinnerId),
     bottomWinnerTeam: result.bottomWinnerTeam || null,
     bottomPoints: Number(result.bottomPoints) || 0,
-    bottomCards: jsonValue(result.bottomCards, []),
-    removedCards: jsonValue(room.removedCards, []),
+    bottomCards: (result.bottomCards || []).map(compactCardId),
+    removedCards: (room.removedCards || []).map(compactCardId),
     setup: jsonValue(room.setup, {}),
-    result: jsonValue(result, {}),
-    trickHistory: jsonValue(room.settledTrickHistory?.length ? room.settledTrickHistory : room.trickHistory, []),
+    result: compactResult(result),
+    trickHistory: compactTrickHistory(room.settledTrickHistory?.length ? room.settledTrickHistory : room.trickHistory),
     players
   };
 }
@@ -278,14 +323,14 @@ async function saveGameRecord(record) {
         banker_room_player_id, banker_profile_id, dogleg_card, dogleg_profile_ids,
         threshold, idle_score, score_diff, winner_team, bottom_winner_room_player_id,
         bottom_winner_profile_id, bottom_winner_team, bottom_points, bottom_cards,
-        removed_cards, setup_data, result_data, trick_history
+        removed_cards, setup_data, result_data, trick_history, record_format_version
       ) VALUES (
         $1, $2, $3, $4, $5, $6,
         $7, $8, $9, $10, $11,
         $12, $13, $14::jsonb, $15::jsonb,
         $16, $17, $18, $19, $20,
         $21, $22, $23, $24::jsonb,
-        $25::jsonb, $26::jsonb, $27::jsonb, $28::jsonb
+        $25::jsonb, $26::jsonb, $27::jsonb, $28::jsonb, $29
       ) ON CONFLICT (game_id) DO NOTHING`,
       [
         record.gameId, record.roomCode, record.startedAt, record.finishedAt, record.rulesVersion, record.playerCount,
@@ -293,37 +338,72 @@ async function saveGameRecord(record) {
         record.bankerRoomPlayerId, record.bankerProfileId, JSON.stringify(record.doglegCard), JSON.stringify(record.doglegProfileIds),
         record.threshold, record.idleScore, record.scoreDiff, record.winnerTeam, record.bottomWinnerRoomPlayerId,
         record.bottomWinnerProfileId, record.bottomWinnerTeam, record.bottomPoints, JSON.stringify(record.bottomCards),
-        JSON.stringify(record.removedCards), JSON.stringify(record.setup), JSON.stringify(record.result), JSON.stringify(record.trickHistory)
+        JSON.stringify(record.removedCards), JSON.stringify(record.setup), JSON.stringify(record.result), JSON.stringify(record.trickHistory),
+        record.recordFormatVersion
       ]
     );
 
-    for (const player of record.players) {
+    if (record.players.length) {
       await client.query(
         `INSERT INTO cdp_game_players (
           game_id, room_player_id, profile_id, account_id, seat_index, is_ai,
           name_snapshot, avatar_url_snapshot, role, team, won, trick_score,
           game_score, dragged_red_fives, dragged_diamond_fives, throw_failures,
           evaluation_data
-        ) VALUES (
-          $1, $2, $3, $4, $5, $6,
-          $7, $8, $9, $10, $11, $12,
-          $13, $14, $15, $16, $17::jsonb
-        ) ON CONFLICT (game_id, room_player_id) DO NOTHING`,
-        [
-          record.gameId, player.roomPlayerId, player.profileId, player.accountId, player.seatIndex, player.isAi,
-          player.name, player.avatarUrl, player.role, player.team, player.won, player.trickScore,
-          player.gameScore, player.draggedRedFives, player.draggedDiamondFives, player.throwFailures,
-          JSON.stringify(player.evaluation)
-        ]
+        )
+        SELECT
+          $1::uuid, player.room_player_id, player.profile_id, player.account_id,
+          player.seat_index, player.is_ai, player.name_snapshot, player.avatar_url_snapshot,
+          player.role, player.team, player.won, player.trick_score, player.game_score,
+          player.dragged_red_fives, player.dragged_diamond_fives, player.throw_failures,
+          player.evaluation_data
+        FROM jsonb_to_recordset($2::jsonb) AS player(
+          room_player_id text, profile_id text, account_id uuid, seat_index smallint,
+          is_ai boolean, name_snapshot text, avatar_url_snapshot text, role text,
+          team text, won boolean, trick_score integer, game_score numeric,
+          dragged_red_fives integer, dragged_diamond_fives integer,
+          throw_failures integer, evaluation_data jsonb
+        )
+        WHERE true
+        ON CONFLICT (game_id, room_player_id) DO NOTHING`,
+        [record.gameId, JSON.stringify(record.players.map((player) => ({
+          room_player_id: player.roomPlayerId,
+          profile_id: player.profileId,
+          account_id: player.accountId,
+          seat_index: player.seatIndex,
+          is_ai: player.isAi,
+          name_snapshot: player.name,
+          avatar_url_snapshot: player.avatarUrl,
+          role: player.role,
+          team: player.team,
+          won: player.won,
+          trick_score: player.trickScore,
+          game_score: player.gameScore,
+          dragged_red_fives: player.draggedRedFives,
+          dragged_diamond_fives: player.draggedDiamondFives,
+          throw_failures: player.throwFailures,
+          evaluation_data: player.evaluation
+        })))]
       );
-      for (const tag of player.tags) {
-        await client.query(
-          `INSERT INTO cdp_game_tags (game_id, room_player_id, tag_code, tag_label, tag_title)
-           VALUES ($1, $2, $3, $4, $5)
-           ON CONFLICT (game_id, room_player_id, tag_code) DO NOTHING`,
-          [record.gameId, player.roomPlayerId, tag.code || "default", tag.label || "", tag.title || ""]
-        );
-      }
+    }
+
+    const tags = record.players.flatMap((player) => player.tags.map((tag) => ({
+      room_player_id: player.roomPlayerId,
+      tag_code: tag.code || "default",
+      tag_label: tag.label || "",
+      tag_title: tag.title || ""
+    })));
+    if (tags.length) {
+      await client.query(
+        `INSERT INTO cdp_game_tags (game_id, room_player_id, tag_code, tag_label, tag_title)
+         SELECT $1::uuid, tag.room_player_id, tag.tag_code, tag.tag_label, tag.tag_title
+         FROM jsonb_to_recordset($2::jsonb) AS tag(
+           room_player_id text, tag_code text, tag_label text, tag_title text
+         )
+         WHERE true
+         ON CONFLICT (game_id, room_player_id, tag_code) DO NOTHING`,
+        [record.gameId, JSON.stringify(tags)]
+      );
     }
     await client.query("COMMIT");
     status.connected = true;

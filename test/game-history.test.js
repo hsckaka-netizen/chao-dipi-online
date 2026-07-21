@@ -21,15 +21,32 @@ function settledRoom() {
     trumpSuit: "H",
     bankerId: "room-banker",
     doglegPlayerIds: ["room-dogleg"],
-    doglegCard: { type: "normal", suit: "C", rank: "A" },
-    removedCards: [{ type: "normal", suit: "D", rank: "4" }],
+    doglegCard: { id: "1-C-A", type: "normal", suit: "C", rank: "A" },
+    removedCards: [{ id: "1-D-4", type: "normal", suit: "D", rank: "4" }],
     setup: { currentTrumpSuit: "H" },
     settledTrickHistory: [
       {
         number: 1,
+        leaderId: "room-banker",
         winnerId: "room-idle",
         points: 10,
-        plays: []
+        plays: [
+          {
+            playerId: "room-banker",
+            playerName: "奔雷",
+            avatarUrl: "/assets/avatars/benlei.png",
+            played: true,
+            at: "2026-07-20T10:15:00.000Z",
+            cards: [{ id: "1-H-10", type: "normal", suit: "H", rank: "10" }]
+          },
+          {
+            playerId: "room-idle",
+            playerName: "陈然",
+            played: true,
+            at: "2026-07-20T10:15:05.000Z",
+            cards: [{ id: "2-H-A", type: "normal", suit: "H", rank: "A" }]
+          }
+        ]
       }
     ],
     trickHistory: [],
@@ -77,7 +94,7 @@ function settledRoom() {
       bottomWinnerId: "room-idle",
       bottomWinnerTeam: "idle",
       bottomPoints: 10,
-      bottomCards: [{ type: "normal", suit: "H", rank: "10" }],
+      bottomCards: [{ id: "3-H-10", type: "normal", suit: "H", rank: "10" }],
       playerResults: [
         {
           playerId: "room-banker",
@@ -136,6 +153,19 @@ test("settled game is converted to an immutable history record", () => {
   assert.equal(record.players[2].tags[0].code, "mvp");
   assert.equal(record.players[3].profileId, null);
   assert.equal(record.players[3].isAi, true);
+  assert.equal(record.recordFormatVersion, 2);
+  assert.equal(record.doglegCard, "1-C-A");
+  assert.deepEqual(record.bottomCards, ["3-H-10"]);
+  assert.deepEqual(record.removedCards, ["1-D-4"]);
+  assert.deepEqual(record.trickHistory[0].plays[0], {
+    playerId: "room-banker",
+    at: "2026-07-20T10:15:00.000Z",
+    cards: ["1-H-10"],
+    throw: null
+  });
+  assert.equal(record.trickHistory[0].plays[0].playerName, undefined);
+  assert.equal(record.result.playerResults, undefined);
+  assert.equal(record.result.bottomCards, undefined);
   assert.notEqual(record.result, room.result);
 
   room.result.playerResults[2].name = "已修改";
@@ -164,4 +194,11 @@ test("profile migration reserves account and avatar version fields", async () =>
   assert.match(migration, /account_id uuid UNIQUE/);
   assert.match(migration, /avatar_version integer NOT NULL DEFAULT 0/);
   assert.match(migration, /play_effect varchar\(32\)/);
+});
+
+test("history compaction has its own forward-only migration", async () => {
+  const migrationPath = fileURLToPath(new URL("../db/migrations/003_history_compaction.sql", import.meta.url));
+  const migration = await readFile(migrationPath, "utf8");
+  assert.match(migration, /ALTER TABLE cdp_games/);
+  assert.match(migration, /record_format_version smallint NOT NULL DEFAULT 1/);
 });
