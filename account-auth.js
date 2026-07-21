@@ -104,11 +104,11 @@ export function clearedSessionCookie(req) {
 }
 
 function supabaseHeaders(extra = {}) {
-  const headers = { apikey: SUPABASE_SECRET_KEY, ...extra };
-  if (SUPABASE_SECRET_KEY && !SUPABASE_SECRET_KEY.startsWith("sb_")) {
-    headers.authorization = `Bearer ${SUPABASE_SECRET_KEY}`;
-  }
-  return headers;
+  return {
+    apikey: SUPABASE_SECRET_KEY,
+    authorization: `Bearer ${SUPABASE_SECRET_KEY}`,
+    ...extra
+  };
 }
 
 async function supabaseRequest(path, options = {}) {
