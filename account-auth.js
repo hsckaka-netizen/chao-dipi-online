@@ -179,19 +179,27 @@ export async function ensureAvatarBucket() {
     headers: supabaseHeaders()
   });
   if (current.ok) return { ready: true };
-  if (current.status !== 404) return { ready: false };
-  await supabaseRequest("/storage/v1/bucket", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({
-      id: AVATAR_BUCKET,
-      name: AVATAR_BUCKET,
-      public: true,
-      file_size_limit: AVATAR_MAX_BYTES,
-      allowed_mime_types: ["image/webp", "image/jpeg", "image/png"]
-    })
-  });
-  return { ready: true };
+  try {
+    await supabaseRequest("/storage/v1/bucket", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        id: AVATAR_BUCKET,
+        name: AVATAR_BUCKET,
+        public: true,
+        file_size_limit: AVATAR_MAX_BYTES,
+        allowed_mime_types: ["image/webp", "image/jpeg", "image/png"]
+      })
+    });
+    return { ready: true };
+  } catch (createError) {
+    const retry = await fetch(`${SUPABASE_URL}/storage/v1/bucket/${AVATAR_BUCKET}`, {
+      method: "GET",
+      headers: supabaseHeaders()
+    });
+    if (retry.ok) return { ready: true };
+    throw createError;
+  }
 }
 
 function avatarImageType(buffer, declaredType) {
