@@ -13,6 +13,7 @@ function playState(cardCount, options = {}) {
       plays: cardCount == null ? [] : [{
         playerId: "player-1",
         played: true,
+        winning: options.winning ?? true,
         throwFailed: Boolean(options.throwFailed),
         at: "2026-07-21T10:00:00.000Z",
         cards: Array.from({ length: cardCount }, (_, index) => ({ id: `card-${index}` }))
@@ -21,9 +22,9 @@ function playState(cardCount, options = {}) {
   };
 }
 
-test("fireworks trigger only for a newly played successful hand of at least nine cards", () => {
+test("fireworks trigger for a newly played hand of at least eight cards that is currently winning", () => {
   const before = playState(null);
-  const effects = detectNewLargePlayEffects(before, playState(9), 1000);
+  const effects = detectNewLargePlayEffects(before, playState(8), 1000);
   assert.deepEqual(effects, [{
     key: "3:player-1:2026-07-21T10:00:00.000Z",
     trickNumber: 3,
@@ -31,13 +32,14 @@ test("fireworks trigger only for a newly played successful hand of at least nine
     until: 2800
   }]);
 
-  assert.deepEqual(detectNewLargePlayEffects(before, playState(8), 1000), []);
+  assert.deepEqual(detectNewLargePlayEffects(before, playState(7), 1000), []);
+  assert.deepEqual(detectNewLargePlayEffects(before, playState(12, { winning: false }), 1000), []);
   assert.deepEqual(detectNewLargePlayEffects(before, playState(12, { throwFailed: true }), 1000), []);
   assert.deepEqual(detectNewLargePlayEffects(before, playState(12, { playEffect: "" }), 1000), []);
   assert.deepEqual(detectNewLargePlayEffects(playState(9), playState(9), 1000), []);
 });
 
-test("successful throws use their total played card count", () => {
+test("successful winning throws use their total played card count", () => {
   const next = playState(15);
   next.currentTrick.plays[0].throwPlay = true;
   next.currentTrick.plays[0].throwComponents = [

@@ -1,5 +1,5 @@
 import { applyStatePatch } from "./state-patch.js?v=20260721-1";
-import { detectNewLargePlayEffects } from "./gameplay-effects.js?v=20260721-1";
+import { detectNewLargePlayEffects } from "./gameplay-effects.js?v=20260721-2";
 
 const app = document.querySelector("#app");
 const storageKey = "chaoDipiOnlineSession";
@@ -2247,14 +2247,14 @@ function renderProfileRow(profile) {
           头像框
           <select name="avatarFrame">
             <option value="" ${profile.avatarFrame ? "" : "selected"}>默认</option>
-            <option value="vip" ${profile.avatarFrame === "vip" ? "selected" : ""}>VIP 金色</option>
+            <option value="vip" ${profile.avatarFrame === "vip" ? "selected" : ""}>VIP 羽翼</option>
           </select>
         </label>
         <label>
           出牌特效
           <select name="playEffect">
             <option value="" ${profile.playEffect ? "" : "selected"}>无</option>
-            <option value="fireworks" ${profile.playEffect === "fireworks" ? "selected" : ""}>烟花（9张及以上）</option>
+            <option value="fireworks" ${profile.playEffect === "fireworks" ? "selected" : ""}>烟花（至少8张且当前最大）</option>
           </select>
         </label>
         <label>

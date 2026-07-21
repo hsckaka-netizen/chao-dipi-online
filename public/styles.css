@@ -960,28 +960,22 @@ button.joinable-room-player.spectate-player {
 
 .avatar.avatar-frame-vip {
   overflow: visible;
-  border: 2px solid #d4a72c;
-  background: #fff8dc;
-  box-shadow: 0 0 0 2px #fff1ad, 0 0 0 3px #8b6411, 0 3px 10px rgba(126, 88, 8, 0.24);
+  border-color: #cbd8d0;
+  background: #e8eee9;
 }
 
 .avatar.avatar-frame-vip::after {
-  content: "VIP";
+  content: "";
   position: absolute;
+  top: 50%;
   left: 50%;
-  bottom: -7px;
-  z-index: 2;
-  min-width: 22px;
-  transform: translateX(-50%);
-  border: 1px solid #8b6411;
-  border-radius: 3px;
-  background: #f1c84b;
-  color: #513500;
-  padding: 1px 3px;
-  font-size: 7px;
-  font-weight: 900;
-  line-height: 1;
-  text-align: center;
+  z-index: 3;
+  width: 176%;
+  height: 176%;
+  transform: translate(-50%, -50%);
+  background: url("/assets/vip-avatar-frame.png") center / contain no-repeat;
+  pointer-events: none;
+  filter: drop-shadow(0 2px 3px rgba(64, 43, 96, 0.24));
 }
 
 .role-mark {

@@ -14,8 +14,8 @@ export function detectNewLargePlayEffects(previousState, nextState, nowMs = Date
   const effectByPlayerId = new Map((nextState.players || []).map((player) => [player.id, player.playEffect || ""]));
   const tricks = [...(nextState.trickHistory || []), ...(nextState.currentTrick ? [nextState.currentTrick] : [])];
   return tricks.flatMap((trick) => (trick.plays || []).flatMap((play) => {
-    if (!play.played || play.throwFailed || effectByPlayerId.get(play.playerId) !== "fireworks") return [];
-    if ((play.cards?.length || 0) <= 8) return [];
+    if (!play.played || play.throwFailed || !play.winning || effectByPlayerId.get(play.playerId) !== "fireworks") return [];
+    if ((play.cards?.length || 0) < 8) return [];
     const key = `${trick.number}:${play.playerId}:${play.at || ""}`;
     if (previousKeys.has(key)) return [];
     return [{ key, trickNumber: trick.number, playerId: play.playerId, until: nowMs + durationMs }];
