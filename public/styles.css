@@ -958,9 +958,25 @@ button.joinable-room-player.spectate-player {
   border-radius: inherit;
 }
 
+.avatar-core {
+  display: inline-grid;
+  place-items: center;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  border-radius: inherit;
+}
+
 .avatar.avatar-frame-vip {
   overflow: visible;
-  border-color: #cbd8d0;
+  border-color: transparent;
+  background: transparent;
+}
+
+.avatar.avatar-frame-vip .avatar-core {
+  width: 100%;
+  height: 100%;
+  border: 1px solid #cbd8d0;
   background: #e8eee9;
 }
 
@@ -970,10 +986,10 @@ button.joinable-room-player.spectate-player {
   top: 50%;
   left: 50%;
   z-index: 3;
-  width: 176%;
-  height: 176%;
+  width: 200%;
+  height: 200%;
   transform: translate(-50%, -50%);
-  background: url("/assets/vip-avatar-frame.png") center / contain no-repeat;
+  background: var(--vip-avatar-frame-image) center / contain no-repeat;
   pointer-events: none;
   filter: drop-shadow(0 2px 3px rgba(64, 43, 96, 0.24));
 }
@@ -1301,7 +1317,7 @@ button.joinable-room-player.spectate-player {
   position: absolute;
   inset: 1px 1px 1px 17px;
   border-radius: 0 6px 6px 0;
-  background-image: url("/assets/joker-face.png");
+  background-image: var(--joker-face-image);
   background-size: cover;
   background-position: center;
   opacity: 0.9;
@@ -1309,7 +1325,7 @@ button.joinable-room-player.spectate-player {
 }
 
 .card-joker-face.small {
-  background-image: url("/assets/joker-face-small.png");
+  background-image: var(--joker-face-small-image);
 }
 
 .modal-backdrop {

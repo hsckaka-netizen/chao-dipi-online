@@ -115,7 +115,7 @@ test("room snapshots stay monotonic and visual assets are cached", async (t) => 
     method: "POST",
     body: JSON.stringify({ profileId: "player-benlei" })
   });
-  assert.equal(created.snapshot.viewer.avatarUrl, "/assets/avatars/benlei.png");
+  assert.equal(created.snapshot.viewer.avatarUrl, "/assets/avatars/benlei.png?v=d699949c7781");
   assert.equal(created.snapshot.players[0].avatarFrame, "");
   assert.equal(created.snapshot.players[0].playEffect, "");
   const credentials = {
@@ -164,14 +164,18 @@ test("room snapshots stay monotonic and visual assets are cached", async (t) => 
   assert.equal(refreshedState.players.length, pushedState.players.length);
   assert.ok(pushedUpdate.bytes < Buffer.byteLength(JSON.stringify(refreshedState)));
 
-  const assetResponse = await fetch(`${server.baseUrl}/assets/avatars/benlei.png`);
+  const assetResponse = await fetch(`${server.baseUrl}${created.snapshot.viewer.avatarUrl}`);
   assert.equal(assetResponse.status, 200);
-  assert.match(assetResponse.headers.get("cache-control") || "", /max-age=604800/);
+  assert.equal(assetResponse.headers.get("cache-control"), "public, max-age=31536000, immutable");
   assert.equal(assetResponse.headers.get("content-type"), "image/png");
 
-  const effectModuleResponse = await fetch(`${server.baseUrl}/gameplay-effects.js?v=20260721-1`);
+  const unversionedAssetResponse = await fetch(`${server.baseUrl}/assets/avatars/benlei.png`);
+  assert.equal(unversionedAssetResponse.status, 200);
+  assert.equal(unversionedAssetResponse.headers.get("cache-control"), "no-cache");
+
+  const effectModuleResponse = await fetch(`${server.baseUrl}/gameplay-effects.js?v=d2368568e06d`);
   assert.equal(effectModuleResponse.status, 200);
-  assert.match(effectModuleResponse.headers.get("cache-control") || "", /max-age=604800/);
+  assert.equal(effectModuleResponse.headers.get("cache-control"), "public, max-age=31536000, immutable");
   assert.match(await effectModuleResponse.text(), /detectNewLargePlayEffects/);
 
   const indexResponse = await fetch(`${server.baseUrl}/`);

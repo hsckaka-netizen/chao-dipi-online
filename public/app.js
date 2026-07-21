@@ -1,7 +1,11 @@
-import { applyStatePatch } from "./state-patch.js?v=20260721-1";
-import { detectNewLargePlayEffects } from "./gameplay-effects.js?v=20260721-2";
+import { applyStatePatch } from "./state-patch.js?v=9330552c7e1e";
+import { detectNewLargePlayEffects } from "./gameplay-effects.js?v=d2368568e06d";
+import { ASSET_URLS } from "./asset-versions.js?v=ed81fd3729f8";
 
 const app = document.querySelector("#app");
+document.documentElement.style.setProperty("--joker-face-image", `url("${ASSET_URLS.jokerFace}")`);
+document.documentElement.style.setProperty("--joker-face-small-image", `url("${ASSET_URLS.jokerFaceSmall}")`);
+document.documentElement.style.setProperty("--vip-avatar-frame-image", `url("${ASSET_URLS.vipAvatarFrame}")`);
 const storageKey = "chaoDipiOnlineSession";
 let session = loadSession();
 let source = null;
@@ -3326,10 +3330,10 @@ function roleClass(role) {
 function avatarHtml(name, avatarUrl = "", size = "normal", avatarFrame = "") {
   const initial = String(name || "玩").trim().slice(0, 1) || "玩";
   const frameClass = avatarFrame === "vip" ? "avatar-frame-vip" : "";
-  if (avatarUrl) {
-    return `<span class="avatar ${size} ${frameClass}" title="${escapeHtml(name)}"><img src="${escapeHtml(avatarUrl)}" alt="" decoding="async" draggable="false"></span>`;
-  }
-  return `<span class="avatar ${size} ${frameClass}" title="${escapeHtml(name)}">${escapeHtml(initial)}</span>`;
+  const content = avatarUrl
+    ? `<img src="${escapeHtml(avatarUrl)}" alt="" decoding="async" draggable="false">`
+    : escapeHtml(initial);
+  return `<span class="avatar ${size} ${frameClass}" title="${escapeHtml(name)}"><span class="avatar-core">${content}</span></span>`;
 }
 
 function playerIdentity(name, role, avatarUrl = "", suffix = "", playerId = "", avatarFrame = "") {

@@ -22,6 +22,7 @@ import {
   validateUsername
 } from "./account-auth.js";
 import { buildGameEvaluations } from "./game-evaluations.js";
+import { versionedAssetUrl } from "./public/asset-versions.js";
 import { createStatePatch } from "./public/state-patch.js";
 import {
   gameHistoryStatus,
@@ -109,7 +110,7 @@ const playerProfiles = new Map(initialPlayerProfiles.map((profile) => [
   {
     id: profile.id,
     name: profile.name,
-    avatarUrl: profile.avatarUrl || "",
+    avatarUrl: versionedAssetUrl(profile.avatarUrl || ""),
     avatarVersion: Number(profile.avatarVersion) || 0,
     avatarUpdatedAt: profile.avatarUpdatedAt || null,
     avatarFrame: AVATAR_FRAMES.has(profile.avatarFrame) ? profile.avatarFrame : "",
@@ -156,7 +157,7 @@ function publicProfile(profile) {
   return {
     id: profile.id,
     name: profile.name,
-    avatarUrl: profile.avatarUrl || "",
+    avatarUrl: versionedAssetUrl(profile.avatarUrl || ""),
     avatarVersion: Number(profile.avatarVersion) || 0,
     avatarFrame: normalizeAvatarFrame(profile.avatarFrame),
     playEffect: normalizePlayEffect(profile.playEffect),
@@ -399,7 +400,7 @@ async function initializePersistence() {
     const storedName = cleanName(stored.name);
     if (storedName && !profileNameTaken(storedName, profile.id)) profile.name = storedName;
     profile.accountId = stored.accountId || null;
-    profile.avatarUrl = stored.avatarUrl ?? profile.avatarUrl;
+    profile.avatarUrl = versionedAssetUrl(stored.avatarUrl ?? profile.avatarUrl);
     profile.avatarVersion = Number(stored.avatarVersion) || 0;
     profile.avatarUpdatedAt = stored.avatarUpdatedAt || null;
     profile.avatarFrame = normalizeAvatarFrame(stored.avatarFrame);
@@ -4376,14 +4377,12 @@ async function serveStatic(req, res, url) {
     ".jpeg": "image/jpeg",
     ".webp": "image/webp"
   }[extension] || "application/octet-stream";
-  const versionedStaticFile = url.searchParams.has("v") && (extension === ".js" || extension === ".css");
+  const versionedStaticFile = url.searchParams.has("v");
   const cacheControl = extension === ".html"
     ? "no-store"
-    : url.pathname.startsWith("/assets/")
-      ? "public, max-age=604800"
-      : versionedStaticFile
-        ? "public, max-age=604800, immutable"
-        : "no-cache";
+    : versionedStaticFile
+      ? "public, max-age=31536000, immutable"
+      : "no-cache";
 
   try {
     await readFile(target);
