@@ -5,6 +5,22 @@ import { extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomBytes, randomInt, randomUUID } from "node:crypto";
 
+import {
+  accountAuthStatus,
+  accountIdFromRequest,
+  authEmailForUsername,
+  clearedSessionCookie,
+  createSupabaseUser,
+  decodeAvatarDataUrl,
+  deleteSupabaseUser,
+  ensureAvatarBucket,
+  sessionCookie,
+  signInSupabaseUser,
+  updateSupabasePassword,
+  uploadSupabaseAvatar,
+  validatePassword,
+  validateUsername
+} from "./account-auth.js";
 import { buildGameEvaluations } from "./game-evaluations.js";
 import { createStatePatch } from "./public/state-patch.js";
 import {
@@ -12,9 +28,13 @@ import {
   initializeGameHistory,
   listPlayerStatistics,
   listRecentGames,
+  loadStoredAccounts,
   loadStoredPlayerProfiles,
   queueGameRecord,
-  saveStoredPlayerProfile
+  recordStoredAccountLogin,
+  createStoredAccount,
+  saveStoredPlayerProfile,
+  setStoredAccountEnabled
 } from "./game-history.js";
 
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
@@ -34,6 +54,9 @@ const AI_SETUP_DELAY_MS = Number.isFinite(configuredAiSetupDelay) ? Math.max(0, 
 const configuredAiPlayDelay = Number(process.env.AI_PLAY_DELAY_MS || 1000);
 const AI_PLAY_DELAY_MS = Number.isFinite(configuredAiPlayDelay) ? Math.max(0, configuredAiPlayDelay) : 1000;
 const MAX_GAME_EVENTS = 700;
+const AVATAR_CHANGE_COOLDOWN_MS = 7 * 24 * 60 * 60 * 1000;
+const ADMIN_BOOTSTRAP_USERNAME = String(process.env.ADMIN_BOOTSTRAP_USERNAME || "").trim();
+const ADMIN_BOOTSTRAP_PASSWORD = String(process.env.ADMIN_BOOTSTRAP_PASSWORD || "");
 
 const suits = [
   { id: "S", name: "黑桃", symbol: "♠", color: "black", sort: 0 },
@@ -52,6 +75,15 @@ const suitStrength = new Map([
   ["S", 3]
 ]);
 const rooms = new Map();
+const accounts = new Map();
+const accountIdsByUsername = new Map();
+const avatarUpdatesInFlight = new Set();
+const authRuntime = {
+  initialized: false,
+  avatarStorageReady: false,
+  bootstrapRequired: false,
+  lastError: null
+};
 const initialPlayerProfiles = [
   { id: "player-benlei", name: "奔雷", avatarUrl: "/assets/avatars/benlei.png" },
   { id: "player-biesan", name: "瘪三", avatarUrl: "/assets/avatars/biesan.png" },
@@ -79,6 +111,7 @@ const playerProfiles = new Map(initialPlayerProfiles.map((profile) => [
     name: profile.name,
     avatarUrl: profile.avatarUrl || "",
     avatarVersion: Number(profile.avatarVersion) || 0,
+    avatarUpdatedAt: profile.avatarUpdatedAt || null,
     avatarFrame: AVATAR_FRAMES.has(profile.avatarFrame) ? profile.avatarFrame : "",
     playEffect: PLAY_EFFECTS.has(profile.playEffect) ? profile.playEffect : "",
     builtIn: true,
@@ -129,6 +162,80 @@ function publicProfile(profile) {
     playEffect: normalizePlayEffect(profile.playEffect),
     builtIn: Boolean(profile.builtIn),
     updatedAt: profile.updatedAt
+  };
+}
+
+function storeAccount(account) {
+  accounts.set(account.id, account);
+  accountIdsByUsername.set(String(account.username || "").toLowerCase(), account.id);
+  if (account.profileId) {
+    const profile = profileForId(account.profileId);
+    if (profile) profile.accountId = account.id;
+  }
+  return account;
+}
+
+function accountForUsername(username) {
+  const accountId = accountIdsByUsername.get(String(username || "").trim().toLowerCase());
+  return accountId ? accounts.get(accountId) || null : null;
+}
+
+function accountForRequest(req) {
+  const account = accounts.get(accountIdFromRequest(req)) || null;
+  return account?.enabled ? account : null;
+}
+
+function publicAccount(account) {
+  if (!account) return null;
+  const profile = account.profileId ? profileForId(account.profileId) : null;
+  return {
+    id: account.id,
+    username: account.username,
+    role: account.role,
+    enabled: Boolean(account.enabled),
+    profileId: account.profileId || null,
+    profile: profile ? publicProfile(profile) : null,
+    createdAt: account.createdAt || null,
+    lastLoginAt: account.lastLoginAt || null,
+    nextAvatarChangeAt: profile ? nextAvatarChangeAt(profile) : null
+  };
+}
+
+function requireAccount(res, req) {
+  const account = accountForRequest(req);
+  if (!account) writeJson(res, 401, { error: "请先登录账号" });
+  return account;
+}
+
+function requireAdmin(res, req) {
+  const account = requireAccount(res, req);
+  if (!account) return null;
+  if (account.role !== "admin") {
+    writeJson(res, 403, { error: "只有管理员可以进行此操作" });
+    return null;
+  }
+  return account;
+}
+
+function nextAvatarChangeAt(profile) {
+  if (!profile?.avatarUpdatedAt) return null;
+  return new Date(new Date(profile.avatarUpdatedAt).getTime() + AVATAR_CHANGE_COOLDOWN_MS).toISOString();
+}
+
+function avatarChangeAllowed(profile) {
+  const availableAt = nextAvatarChangeAt(profile);
+  return !availableAt || Date.now() >= new Date(availableAt).getTime();
+}
+
+function authStatusPayload(req) {
+  const service = accountAuthStatus();
+  return {
+    ...service,
+    initialized: authRuntime.initialized,
+    avatarStorageReady: authRuntime.avatarStorageReady,
+    bootstrapRequired: authRuntime.bootstrapRequired,
+    legacyProfileSelection: true,
+    account: publicAccount(accountForRequest(req))
   };
 }
 
@@ -222,6 +329,7 @@ function createPlayer(profileOrName, host = false, test = false) {
     token: id(18),
     name,
     profileId: profile?.id || null,
+    accountId: profile?.accountId || null,
     avatarUrl: profile?.avatarUrl || "",
     avatarFrame: normalizeAvatarFrame(profile?.avatarFrame),
     playEffect: normalizePlayEffect(profile?.playEffect),
@@ -280,18 +388,169 @@ async function initializePersistence() {
     profile.accountId = stored.accountId || null;
     profile.avatarUrl = stored.avatarUrl ?? profile.avatarUrl;
     profile.avatarVersion = Number(stored.avatarVersion) || 0;
+    profile.avatarUpdatedAt = stored.avatarUpdatedAt || null;
     profile.avatarFrame = normalizeAvatarFrame(stored.avatarFrame);
     profile.playEffect = normalizePlayEffect(stored.playEffect);
     profile.updatedAt = stored.updatedAt || profile.updatedAt;
     playerProfiles.set(profile.id, profile);
     syncProfileToRooms(profile);
   });
+
+  const storedAccounts = await loadStoredAccounts();
+  storedAccounts.forEach(storeAccount);
+  if (accountAuthStatus().storageConfigured) {
+    try {
+      authRuntime.avatarStorageReady = Boolean((await ensureAvatarBucket()).ready);
+    } catch (error) {
+      authRuntime.lastError = error.message;
+      console.error("[avatars] bucket initialization failed", error.message);
+    }
+  }
+
+  if (![...accounts.values()].some((account) => account.role === "admin")) {
+    const usernameCheck = validateUsername(ADMIN_BOOTSTRAP_USERNAME);
+    const passwordCheck = validatePassword(ADMIN_BOOTSTRAP_PASSWORD);
+    if (accountAuthStatus().configured && !usernameCheck.error && !passwordCheck.error) {
+      const email = authEmailForUsername(usernameCheck.username);
+      let authUser = null;
+      try {
+        authUser = await createSupabaseUser({
+          email,
+          password: passwordCheck.password,
+          username: usernameCheck.username,
+          role: "admin"
+        });
+        const persistence = await createStoredAccount({
+          id: authUser.id,
+          username: usernameCheck.username,
+          authEmail: email,
+          role: "admin",
+          profileId: null,
+          enabled: true,
+          createdBy: null
+        });
+        if (persistence.status !== "saved") throw new Error("管理员账号写入数据库失败");
+        storeAccount(persistence.account);
+        console.log(`[accounts] bootstrap administrator created: ${usernameCheck.username}`);
+      } catch (error) {
+        if (authUser?.id) await deleteSupabaseUser(authUser.id).catch(() => {});
+        authRuntime.lastError = error.message;
+        console.error("[accounts] administrator bootstrap failed", error.message);
+      }
+    }
+  }
+  authRuntime.bootstrapRequired = ![...accounts.values()].some((account) => account.role === "admin");
+  authRuntime.initialized = true;
 }
 
-function playerProfileFromBody(body) {
+function playerProfileFromBody(body, authAccount = null) {
+  if (authAccount) {
+    if (authAccount.role !== "player" || !authAccount.profileId) {
+      return { error: "管理员账号未绑定玩家身份，不能直接加入牌局", status: 403 };
+    }
+    const accountProfile = profileForId(authAccount.profileId);
+    if (!accountProfile) return { error: "账号绑定的玩家不存在", status: 409 };
+    return { profile: accountProfile };
+  }
   const profile = profileForId(body.profileId);
   if (!profile) return { error: "请选择玩家列表里的玩家", status: 400 };
   return { profile };
+}
+
+function adminAccountsPayload() {
+  return {
+    accounts: [...accounts.values()]
+      .map(publicAccount)
+      .sort((left, right) => left.username.localeCompare(right.username)),
+    profiles: profilesList().map((profile) => {
+      const account = [...accounts.values()].find((item) => item.profileId === profile.id) || null;
+      return {
+        ...profile,
+        account: account ? {
+          id: account.id,
+          username: account.username,
+          enabled: Boolean(account.enabled)
+        } : null,
+        nextAvatarChangeAt: nextAvatarChangeAt(profileForId(profile.id))
+      };
+    })
+  };
+}
+
+async function createPlayerAccount(admin, body) {
+  const usernameCheck = validateUsername(body.username);
+  if (usernameCheck.error) throw Object.assign(new Error(usernameCheck.error), { status: 400 });
+  const passwordCheck = validatePassword(body.password);
+  if (passwordCheck.error) throw Object.assign(new Error(passwordCheck.error), { status: 400 });
+  if (accountForUsername(usernameCheck.username)) throw Object.assign(new Error("用户名已经存在"), { status: 409 });
+  const profile = profileForId(body.profileId);
+  if (!profile) throw Object.assign(new Error("请选择要绑定的玩家"), { status: 400 });
+  if ([...accounts.values()].some((account) => account.profileId === profile.id)) {
+    throw Object.assign(new Error("这个玩家已经绑定账号"), { status: 409 });
+  }
+
+  const email = authEmailForUsername(usernameCheck.username);
+  let authUser = null;
+  try {
+    authUser = await createSupabaseUser({
+      email,
+      password: passwordCheck.password,
+      username: usernameCheck.username,
+      role: "player"
+    });
+    const persistence = await createStoredAccount({
+      id: authUser.id,
+      username: usernameCheck.username,
+      authEmail: email,
+      role: "player",
+      profileId: profile.id,
+      enabled: true,
+      createdBy: admin.id
+    }, { ...profile, accountId: authUser.id });
+    if (persistence.status !== "saved") throw new Error("玩家账号写入数据库失败");
+    profile.accountId = authUser.id;
+    playerProfiles.set(profile.id, profile);
+    return storeAccount(persistence.account);
+  } catch (error) {
+    if (authUser?.id) await deleteSupabaseUser(authUser.id).catch(() => {});
+    throw error;
+  }
+}
+
+async function saveProfileAvatar(profile, dataUrl, { bypassCooldown = false } = {}) {
+  if (avatarUpdatesInFlight.has(profile.id)) {
+    throw Object.assign(new Error("头像正在上传，请勿重复提交"), { status: 409 });
+  }
+  avatarUpdatesInFlight.add(profile.id);
+  try {
+    if (!bypassCooldown && !avatarChangeAllowed(profile)) {
+      const error = new Error(`头像每 7 天只能更换一次，下次可更换时间：${new Date(nextAvatarChangeAt(profile)).toLocaleString("zh-CN", { timeZone: "Asia/Shanghai" })}`);
+      error.status = 429;
+      error.nextAvatarChangeAt = nextAvatarChangeAt(profile);
+      throw error;
+    }
+    const avatar = decodeAvatarDataUrl(dataUrl);
+    const nextVersion = (Number(profile.avatarVersion) || 0) + 1;
+    const avatarUrl = await uploadSupabaseAvatar(profile.id, nextVersion, avatar);
+    const nextProfile = {
+      ...profile,
+      avatarUrl,
+      avatarVersion: nextVersion,
+      avatarUpdatedAt: now(),
+      updatedAt: now()
+    };
+    const persistence = await saveStoredPlayerProfile(nextProfile);
+    if (persistence.status !== "saved") {
+      throw Object.assign(new Error("头像已上传，但玩家资料保存失败，请稍后重试"), { status: 503 });
+    }
+    Object.assign(profile, nextProfile);
+    playerProfiles.set(profile.id, profile);
+    syncProfileToRooms(profile);
+    authRuntime.avatarStorageReady = true;
+    return profile;
+  } finally {
+    avatarUpdatesInFlight.delete(profile.id);
+  }
 }
 
 function createEmptyTrick(number = 1, leaderId = null) {
@@ -3256,21 +3515,22 @@ function playCards(room, player, cardIds, options = {}) {
   return { ok: true };
 }
 
-function writeJson(res, status, data) {
+function writeJson(res, status, data, extraHeaders = {}) {
   const body = JSON.stringify(data);
   res.writeHead(status, {
     "content-type": "application/json; charset=utf-8",
-    "cache-control": "no-store"
+    "cache-control": "no-store",
+    ...extraHeaders
   });
   res.end(body);
 }
 
-function readJson(req) {
+function readJson(req, maxBytes = 100_000) {
   return new Promise((resolve, reject) => {
     let body = "";
     req.on("data", (chunk) => {
       body += chunk;
-      if (body.length > 100_000) {
+      if (body.length > maxBytes) {
         reject(Object.assign(new Error("请求内容过大"), { status: 413 }));
         req.destroy();
       }
@@ -3348,6 +3608,117 @@ function roomStateAck(room, extra = {}) {
 }
 
 async function handleApi(req, res, pathParts, url) {
+  if (pathParts[1] === "auth") {
+    if (req.method === "GET" && pathParts[2] === "status") {
+      return writeJson(res, 200, authStatusPayload(req));
+    }
+
+    if (req.method === "POST" && pathParts[2] === "login") {
+      if (!accountAuthStatus().configured || !authRuntime.initialized) {
+        return writeJson(res, 503, { error: "账号服务正在初始化，请稍后重试" });
+      }
+      const body = await readJson(req);
+      const account = accountForUsername(body.username);
+      if (!account?.enabled) return writeJson(res, 401, { error: "用户名或密码不正确" });
+      try {
+        const user = await signInSupabaseUser(account.authEmail, String(body.password || ""));
+        if (user?.id !== account.id) return writeJson(res, 401, { error: "用户名或密码不正确" });
+      } catch {
+        return writeJson(res, 401, { error: "用户名或密码不正确" });
+      }
+      account.lastLoginAt = now();
+      void recordStoredAccountLogin(account.id);
+      return writeJson(res, 200, { account: publicAccount(account) }, {
+        "set-cookie": sessionCookie(req, account.id)
+      });
+    }
+
+    if (req.method === "POST" && pathParts[2] === "logout") {
+      return writeJson(res, 200, { ok: true }, { "set-cookie": clearedSessionCookie(req) });
+    }
+
+    if (req.method === "POST" && pathParts[2] === "password") {
+      const account = requireAccount(res, req);
+      if (!account) return;
+      const body = await readJson(req);
+      const passwordCheck = validatePassword(body.newPassword);
+      if (passwordCheck.error) return writeJson(res, 400, { error: passwordCheck.error });
+      try {
+        const user = await signInSupabaseUser(account.authEmail, String(body.currentPassword || ""));
+        if (user?.id !== account.id) return writeJson(res, 401, { error: "当前密码不正确" });
+        await updateSupabasePassword(account.id, passwordCheck.password);
+        return writeJson(res, 200, { ok: true });
+      } catch {
+        return writeJson(res, 401, { error: "当前密码不正确" });
+      }
+    }
+
+    if (req.method === "POST" && pathParts[2] === "avatar") {
+      const account = requireAccount(res, req);
+      if (!account) return;
+      if (account.role !== "player" || !account.profileId) return writeJson(res, 403, { error: "当前账号没有玩家身份" });
+      const profile = profileForId(account.profileId);
+      if (!profile) return writeJson(res, 404, { error: "账号绑定的玩家不存在" });
+      const body = await readJson(req, 450_000);
+      try {
+        await saveProfileAvatar(profile, body.avatarDataUrl);
+        return writeJson(res, 200, {
+          account: publicAccount(account),
+          player: publicProfile(profile),
+          nextAvatarChangeAt: nextAvatarChangeAt(profile)
+        });
+      } catch (error) {
+        return writeJson(res, error.status || 500, {
+          error: error.message,
+          nextAvatarChangeAt: error.nextAvatarChangeAt || nextAvatarChangeAt(profile)
+        });
+      }
+    }
+
+    return writeJson(res, 404, { error: "账号接口不存在" });
+  }
+
+  if (pathParts[1] === "admin") {
+    const admin = requireAdmin(res, req);
+    if (!admin) return;
+
+    if (pathParts[2] === "accounts" && pathParts.length === 3 && req.method === "GET") {
+      return writeJson(res, 200, adminAccountsPayload());
+    }
+    if (pathParts[2] === "accounts" && pathParts.length === 3 && req.method === "POST") {
+      const body = await readJson(req);
+      const account = await createPlayerAccount(admin, body);
+      return writeJson(res, 201, { account: publicAccount(account), ...adminAccountsPayload() });
+    }
+    if (pathParts[2] === "accounts" && pathParts[3] && pathParts.length === 4 && req.method === "PATCH") {
+      const target = accounts.get(pathParts[3]);
+      if (!target) return writeJson(res, 404, { error: "账号不存在" });
+      if (target.role !== "player") return writeJson(res, 400, { error: "不能在这里停用管理员账号" });
+      const body = await readJson(req);
+      const persistence = await setStoredAccountEnabled(target.id, Boolean(body.enabled));
+      if (persistence.status !== "saved") return writeJson(res, 503, { error: "账号状态保存失败" });
+      storeAccount(persistence.account);
+      return writeJson(res, 200, adminAccountsPayload());
+    }
+    if (pathParts[2] === "accounts" && pathParts[3] && pathParts[4] === "password" && req.method === "POST") {
+      const target = accounts.get(pathParts[3]);
+      if (!target) return writeJson(res, 404, { error: "账号不存在" });
+      const body = await readJson(req);
+      const passwordCheck = validatePassword(body.password);
+      if (passwordCheck.error) return writeJson(res, 400, { error: passwordCheck.error });
+      await updateSupabasePassword(target.id, passwordCheck.password);
+      return writeJson(res, 200, { ok: true });
+    }
+    if (pathParts[2] === "profiles" && pathParts[3] && pathParts[4] === "avatar" && req.method === "POST") {
+      const profile = profileForId(pathParts[3]);
+      if (!profile) return writeJson(res, 404, { error: "玩家不存在" });
+      const body = await readJson(req, 450_000);
+      await saveProfileAvatar(profile, body.avatarDataUrl, { bypassCooldown: true });
+      return writeJson(res, 200, { player: publicProfile(profile), ...adminAccountsPayload() });
+    }
+    return writeJson(res, 404, { error: "管理员接口不存在" });
+  }
+
   if (pathParts[1] === "history" && req.method === "GET") {
     if (pathParts[2] === "status") {
       return writeJson(res, 200, gameHistoryStatus());
@@ -3367,6 +3738,8 @@ async function handleApi(req, res, pathParts, url) {
     }
 
     if (req.method === "PUT" && pathParts[2]) {
+      const admin = requireAdmin(res, req);
+      if (!admin) return;
       const profile = profileForId(pathParts[2]);
       if (!profile) return writeJson(res, 404, { error: "玩家不存在" });
       const body = await readJson(req);
@@ -3396,7 +3769,7 @@ async function handleApi(req, res, pathParts, url) {
 
   if (req.method === "POST" && pathParts[1] === "rooms" && pathParts.length === 2) {
     const body = await readJson(req);
-    const selectedProfile = playerProfileFromBody(body);
+    const selectedProfile = playerProfileFromBody(body, accountForRequest(req));
     if (selectedProfile.error) return writeJson(res, selectedProfile.status, { error: selectedProfile.error });
     const profile = selectedProfile.profile;
 
@@ -3501,7 +3874,7 @@ async function handleApi(req, res, pathParts, url) {
 
     if (req.method === "POST" && pathParts[3] === "join") {
       const body = await readJson(req);
-      const selectedProfile = playerProfileFromBody(body);
+      const selectedProfile = playerProfileFromBody(body, accountForRequest(req));
       if (selectedProfile.error) return writeJson(res, selectedProfile.status, { error: selectedProfile.error });
       const profile = selectedProfile.profile;
       if (room.status !== "lobby") return writeJson(res, 409, { error: "牌局已经开始，暂不能加入" });

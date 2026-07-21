@@ -104,22 +104,20 @@ test("room snapshots stay monotonic and visual assets are cached", async (t) => 
   assert.equal(historyStatus.enabled, false);
   assert.equal(historyStatus.connected, false);
 
-  const updatedProfiles = await jsonRequest(`${server.baseUrl}/api/players/player-benlei`, {
+  const protectedProfileUpdate = await fetch(`${server.baseUrl}/api/players/player-benlei`, {
     method: "PUT",
+    headers: { "content-type": "application/json" },
     body: JSON.stringify({ name: "奔雷", avatarFrame: "vip", playEffect: "fireworks" })
   });
-  assert.equal(updatedProfiles.player.avatarFrame, "vip");
-  assert.equal(updatedProfiles.player.playEffect, "fireworks");
-  assert.equal(updatedProfiles.player.avatarVersion, 0);
-  assert.equal(updatedProfiles.persistent, false);
+  assert.equal(protectedProfileUpdate.status, 401);
 
   const created = await jsonRequest(`${server.baseUrl}/api/rooms`, {
     method: "POST",
     body: JSON.stringify({ profileId: "player-benlei" })
   });
   assert.equal(created.snapshot.viewer.avatarUrl, "/assets/avatars/benlei.png");
-  assert.equal(created.snapshot.players[0].avatarFrame, "vip");
-  assert.equal(created.snapshot.players[0].playEffect, "fireworks");
+  assert.equal(created.snapshot.players[0].avatarFrame, "");
+  assert.equal(created.snapshot.players[0].playEffect, "");
   const credentials = {
     playerId: created.playerId,
     token: created.token

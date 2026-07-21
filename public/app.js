@@ -38,6 +38,16 @@ let profilesLoading = false;
 let joinableRooms = [];
 let joinableRoomsLoaded = false;
 let joinableRoomsLoading = false;
+let authState = {
+  loaded: false,
+  loading: false,
+  configured: false,
+  initialized: false,
+  bootstrapRequired: false,
+  account: null
+};
+let adminData = null;
+let adminDataLoading = false;
 const stateVersionWaiters = new Set();
 const dragSelectThreshold = 8;
 
@@ -413,8 +423,223 @@ async function api(path, options = {}) {
     }
   });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || "请求失败");
+  if (!res.ok) {
+    const error = new Error(data.error || "请求失败");
+    error.data = data;
+    error.status = res.status;
+    throw error;
+  }
   return data;
+}
+
+function ensureAuth(force = false) {
+  if (!force && (authState.loaded || authState.loading)) return;
+  authState.loading = true;
+  api("/api/auth/status")
+    .then((data) => {
+      authState = { ...data, loaded: true, loading: false };
+      render();
+    })
+    .catch((error) => {
+      authState = { ...authState, loaded: true, loading: false };
+      setMessage(error.message || "账号状态加载失败", true);
+    });
+}
+
+async function refreshAuth() {
+  const data = await api("/api/auth/status");
+  authState = { ...data, loaded: true, loading: false };
+  return authState;
+}
+
+function ensureAdminData(force = false) {
+  if (authState.account?.role !== "admin" || adminDataLoading || (!force && adminData)) return;
+  adminDataLoading = true;
+  api("/api/admin/accounts")
+    .then((data) => {
+      adminData = data;
+      profiles = data.profiles || profiles;
+      profilesLoaded = true;
+      adminDataLoading = false;
+      render();
+    })
+    .catch((error) => {
+      adminDataLoading = false;
+      setMessage(error.message || "管理员数据加载失败", true);
+    });
+}
+
+async function loginAccount(event) {
+  event.preventDefault();
+  const form = new FormData(event.target.closest("form"));
+  try {
+    const data = await api("/api/auth/login", {
+      method: "POST",
+      body: JSON.stringify({ username: form.get("username"), password: form.get("password") })
+    });
+    authState.account = data.account;
+    authState.loaded = true;
+    homeView = data.account?.role === "admin" ? "admin" : "rooms";
+    adminData = null;
+    setMessage(`已登录：${data.account?.profile?.name || data.account?.username || "账号"}`);
+    render();
+  } catch (error) {
+    setMessage(error.message, true);
+  }
+}
+
+async function logoutAccount() {
+  try {
+    await api("/api/auth/logout", { method: "POST", body: "{}" });
+  } catch {
+    // Local account state can still be cleared if the service restarts.
+  }
+  authState.account = null;
+  adminData = null;
+  homeView = "rooms";
+  setMessage("已退出账号。", false);
+  render();
+}
+
+async function changeAccountPassword(event) {
+  event.preventDefault();
+  const formEl = event.target.closest("form");
+  const form = new FormData(formEl);
+  if (form.get("newPassword") !== form.get("confirmPassword")) return setMessage("两次输入的新密码不一致", true);
+  try {
+    await api("/api/auth/password", {
+      method: "POST",
+      body: JSON.stringify({ currentPassword: form.get("currentPassword"), newPassword: form.get("newPassword") })
+    });
+    formEl.reset();
+    setMessage("密码已修改。", false);
+  } catch (error) {
+    setMessage(error.message, true);
+  }
+}
+
+function imageElementForFile(file) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const image = new Image();
+    image.onload = () => {
+      URL.revokeObjectURL(url);
+      resolve(image);
+    };
+    image.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error("无法读取头像图片"));
+    };
+    image.src = url;
+  });
+}
+
+function canvasBlob(canvas, type, quality) {
+  return new Promise((resolve) => canvas.toBlob(resolve, type, quality));
+}
+
+function blobDataUrl(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(new Error("头像处理失败"));
+    reader.readAsDataURL(blob);
+  });
+}
+
+async function prepareAvatarDataUrl(file) {
+  if (!file?.type?.startsWith("image/")) throw new Error("请选择图片文件");
+  if (file.size > 10 * 1024 * 1024) throw new Error("原始图片不能超过 10MB");
+  const image = await imageElementForFile(file);
+  const canvas = document.createElement("canvas");
+  canvas.width = 256;
+  canvas.height = 256;
+  const context = canvas.getContext("2d", { alpha: false });
+  const side = Math.min(image.naturalWidth, image.naturalHeight);
+  const sourceX = (image.naturalWidth - side) / 2;
+  const sourceY = (image.naturalHeight - side) / 2;
+  context.fillStyle = "#ffffff";
+  context.fillRect(0, 0, 256, 256);
+  context.drawImage(image, sourceX, sourceY, side, side, 0, 0, 256, 256);
+  let blob = await canvasBlob(canvas, "image/webp", 0.82);
+  if (!blob || blob.size > 280_000) blob = await canvasBlob(canvas, "image/jpeg", 0.76);
+  if (!blob || blob.size > 280_000) blob = await canvasBlob(canvas, "image/jpeg", 0.58);
+  if (!blob || blob.size > 300_000) throw new Error("头像压缩后仍然过大，请换一张图片");
+  return blobDataUrl(blob);
+}
+
+async function uploadOwnAvatar(event) {
+  event.preventDefault();
+  const formEl = event.target.closest("form");
+  const file = new FormData(formEl).get("avatar");
+  if (!(file instanceof File) || !file.size) return setMessage("请选择新头像", true);
+  try {
+    const avatarDataUrl = await prepareAvatarDataUrl(file);
+    const data = await api("/api/auth/avatar", {
+      method: "POST",
+      body: JSON.stringify({ avatarDataUrl })
+    });
+    authState.account = data.account;
+    profiles = profiles.map((profile) => profile.id === data.player.id ? data.player : profile);
+    formEl.reset();
+    setMessage("头像已更新，7 天后可以再次更换。", false);
+    render();
+  } catch (error) {
+    setMessage(error.message, true);
+  }
+}
+
+async function createManagedAccount(event) {
+  event.preventDefault();
+  const formEl = event.target.closest("form");
+  const form = new FormData(formEl);
+  try {
+    const data = await api("/api/admin/accounts", {
+      method: "POST",
+      body: JSON.stringify({
+        profileId: form.get("profileId"),
+        username: form.get("username"),
+        password: form.get("password")
+      })
+    });
+    adminData = data;
+    profiles = data.profiles || profiles;
+    formEl.reset();
+    setMessage("玩家账号已创建。", false);
+    render();
+  } catch (error) {
+    setMessage(error.message, true);
+  }
+}
+
+async function toggleManagedAccount(accountId, enabled) {
+  try {
+    adminData = await api(`/api/admin/accounts/${encodeURIComponent(accountId)}`, {
+      method: "PATCH",
+      body: JSON.stringify({ enabled })
+    });
+    setMessage(enabled ? "账号已启用。" : "账号已停用。", false);
+    render();
+  } catch (error) {
+    setMessage(error.message, true);
+  }
+}
+
+async function resetManagedPassword(event) {
+  event.preventDefault();
+  const formEl = event.target.closest("form");
+  const accountId = formEl.dataset.accountId;
+  const password = new FormData(formEl).get("password");
+  try {
+    await api(`/api/admin/accounts/${encodeURIComponent(accountId)}/password`, {
+      method: "POST",
+      body: JSON.stringify({ password })
+    });
+    formEl.reset();
+    setMessage("密码已重置。", false);
+  } catch (error) {
+    setMessage(error.message, true);
+  }
 }
 
 async function roomAction(path, options = {}) {
@@ -659,7 +884,7 @@ async function updateProfile(event) {
   const profileId = formEl?.dataset.profileId;
   const form = new FormData(formEl);
   try {
-    const data = await api(`/api/players/${encodeURIComponent(profileId)}`, {
+    await api(`/api/players/${encodeURIComponent(profileId)}`, {
       method: "PUT",
       body: JSON.stringify({
         name: form.get("name"),
@@ -667,9 +892,19 @@ async function updateProfile(event) {
         playEffect: form.get("playEffect")
       })
     });
-    profiles = data.players || [];
+    const avatarFile = form.get("avatar");
+    if (avatarFile instanceof File && avatarFile.size) {
+      const avatarDataUrl = await prepareAvatarDataUrl(avatarFile);
+      await api(`/api/admin/profiles/${encodeURIComponent(profileId)}/avatar`, {
+        method: "POST",
+        body: JSON.stringify({ avatarDataUrl })
+      });
+    }
+    adminData = await api("/api/admin/accounts");
+    profiles = adminData.profiles || [];
     profilesLoaded = true;
-    setMessage(data.persistent ? "玩家资料已保存。" : "资料已在当前服务保存，数据库暂时不可用。", !data.persistent);
+    setMessage("玩家资料已保存。", false);
+    render();
   } catch (error) {
     setMessage(error.message, true);
   }
@@ -1070,6 +1305,16 @@ function fmtTime(value) {
     hour: "2-digit",
     minute: "2-digit",
     second: "2-digit"
+  }).format(new Date(value));
+}
+
+function fmtDateTime(value) {
+  if (!value) return "";
+  return new Intl.DateTimeFormat("zh-CN", {
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit"
   }).format(new Date(value));
 }
 
@@ -1696,6 +1941,8 @@ function lobbyEmptyText(waitingNextRound) {
 }
 
 function renderShell(content) {
+  const account = authState.account;
+  const accountLabel = account?.profile?.name || account?.username || "";
   app.innerHTML = `
     <div class="page">
       <header class="topbar">
@@ -1703,7 +1950,18 @@ function renderShell(content) {
           <h1>炒地皮在线房间</h1>
           <p>多人在线牌桌，支持真人和机器人同局参与。</p>
         </div>
-        ${session ? `<button class="secondary" data-action="${session.spectator ? "leave-spectating" : "leave"}">${session.spectator ? "退出观战" : "退出本机身份"}</button>` : ""}
+        <div class="topbar-actions">
+          ${account ? `
+            <span class="account-chip">
+              ${account.profile ? avatarHtml(account.profile.name, account.profile.avatarUrl, "small", account.profile.avatarFrame) : `<span class="avatar small">管</span>`}
+              <span>${escapeHtml(accountLabel)}</span>
+              ${account.role === "admin" ? `<b>管理员</b>` : ""}
+            </span>
+            ${!session ? `<button class="secondary compact-button" data-action="${account.role === "admin" ? "show-admin" : "show-account"}">${account.role === "admin" ? "管理后台" : "账号设置"}</button>` : ""}
+            ${!session ? `<button class="secondary compact-button" data-action="logout-account">退出登录</button>` : ""}
+          ` : `<button class="secondary compact-button" data-action="show-login">账号登录</button>`}
+          ${session ? `<button class="secondary compact-button" data-action="${session.spectator ? "leave-spectating" : "leave"}">${session.spectator ? "退出观战" : "退出本机身份"}</button>` : ""}
+        </div>
       </header>
       ${message ? `<div class="status toast ${messageBad ? "bad" : ""}" role="status">${escapeHtml(message)}</div>` : ""}
       ${content}
@@ -1712,24 +1970,22 @@ function renderShell(content) {
 }
 
 function renderHome() {
+  ensureAuth();
   ensureProfiles();
   ensureJoinableRooms();
-  if (homeView === "players") return renderProfileManager();
+  if (homeView === "login") return renderLogin();
+  if (homeView === "account") return renderAccountSettings();
+  if (homeView === "admin" || homeView === "players") return renderProfileManager();
   const hintedRoom = roomFromUrl();
   renderShell(`
-    <div class="row" style="justify-content:flex-end;margin-bottom:14px">
-      <button type="button" class="secondary" data-action="show-profiles">玩家列表</button>
-    </div>
+    ${renderSignedInIdentity()}
     ${renderJoinableRooms()}
     <div class="grid">
       <section class="panel">
         <h2>创建房间</h2>
         <form class="form" data-form="create">
-          <label>
-            选择玩家
-            ${renderProfileSelect("profileId")}
-          </label>
-          <button type="submit">创建房间</button>
+          ${renderProfileIdentityField("profileId")}
+          <button type="submit" ${authState.account?.role === "admin" ? "disabled" : ""}>创建房间</button>
         </form>
       </section>
       <section class="panel">
@@ -1739,15 +1995,37 @@ function renderHome() {
             房间号
             <input name="roomId" maxlength="6" required value="${escapeHtml(hintedRoom)}" placeholder="例如：A7K2QD">
           </label>
-          <label>
-            选择玩家
-            ${renderProfileSelect("profileId")}
-          </label>
-          <button type="submit">加入房间</button>
+          ${renderProfileIdentityField("profileId")}
+          <button type="submit" ${authState.account?.role === "admin" ? "disabled" : ""}>加入房间</button>
         </form>
       </section>
     </div>
   `);
+}
+
+function renderSignedInIdentity() {
+  const account = authState.account;
+  if (!account?.profile) return account?.role === "admin"
+    ? `<section class="account-banner admin"><b>管理员模式</b><span>管理员账号不绑定牌桌身份，可管理玩家或进行观战。</span></section>`
+    : "";
+  return `
+    <section class="account-banner">
+      ${avatarHtml(account.profile.name, account.profile.avatarUrl, "normal", account.profile.avatarFrame)}
+      <div><b>${escapeHtml(account.profile.name)}</b><span>已使用账号 ${escapeHtml(account.username)} 登录，创建和加入房间时固定使用此身份。</span></div>
+    </section>
+  `;
+}
+
+function renderProfileIdentityField(name) {
+  const account = authState.account;
+  if (account?.profile) return `<div class="fixed-profile-field"><span>玩家身份</span><b>${escapeHtml(account.profile.name)}</b></div>`;
+  if (account?.role === "admin") return `<div class="fixed-profile-field blocked"><span>玩家身份</span><b>管理员账号未绑定玩家</b></div>`;
+  return `
+    <label>
+      备用身份选择
+      ${renderProfileSelect(name)}
+    </label>
+  `;
 }
 
 function renderJoinableRooms() {
@@ -1817,11 +2095,8 @@ function renderJoinableRoom(room) {
       </div>
       <div class="joinable-room-actions">
         ${joinable ? `
-          <label>
-            选择玩家
-            ${renderProfileSelect("profileId")}
-          </label>
-          <button type="submit">加入此房间</button>
+          ${renderProfileIdentityField("profileId")}
+          <button type="submit" ${authState.account?.role === "admin" ? "disabled" : ""}>加入此房间</button>
         ` : `
           <div class="meta">牌局已开始，点击上方玩家即可观战。</div>
         `}
@@ -1841,17 +2116,125 @@ function renderProfileSelect(name) {
   `;
 }
 
-function renderProfileManager() {
-  ensureProfiles();
+function renderLogin() {
   renderShell(`
-    <section class="panel stack">
+    <div class="auth-page-grid">
+      <section class="panel stack auth-panel">
+        <div class="section-head">
+          <h2>账号登录</h2>
+          <button type="button" class="secondary compact-button" data-action="show-rooms">返回房间</button>
+        </div>
+        ${authState.bootstrapRequired ? `<div class="status bad">管理员账号尚未创建，请先完成服务器初始化设置。</div>` : ""}
+        <form class="form" data-form="account-login">
+          <label>用户名<input name="username" autocomplete="username" required maxlength="24"></label>
+          <label>密码<input name="password" type="password" autocomplete="current-password" required maxlength="72"></label>
+          <button type="submit" ${!authState.configured || !authState.initialized ? "disabled" : ""}>登录</button>
+        </form>
+      </section>
+    </div>
+  `);
+}
+
+function renderAccountSettings() {
+  const account = authState.account;
+  if (!account) {
+    homeView = "login";
+    return renderLogin();
+  }
+  const profile = account.profile;
+  const nextAvatarAt = account.nextAvatarChangeAt ? new Date(account.nextAvatarChangeAt) : null;
+  const avatarLocked = nextAvatarAt && nextAvatarAt.getTime() > Date.now();
+  renderShell(`
+    <div class="settings-grid">
+      ${profile ? `
+        <section class="panel stack">
+          <div class="section-head">
+            <div><h2>我的头像</h2><div class="meta">头像由浏览器压缩后上传，每 7 天可以更换一次。</div></div>
+            <button type="button" class="secondary compact-button" data-action="show-rooms">返回房间</button>
+          </div>
+          <div class="account-profile-preview">
+            ${avatarHtml(profile.name, profile.avatarUrl, "normal", profile.avatarFrame)}
+            <div><b>${escapeHtml(profile.name)}</b><span>用户名 ${escapeHtml(account.username)}</span></div>
+          </div>
+          <form class="form" data-form="own-avatar">
+            <label>选择新头像<input type="file" name="avatar" accept="image/png,image/jpeg,image/webp" required ${avatarLocked ? "disabled" : ""}></label>
+            ${avatarLocked ? `<div class="status">下次可更换：${escapeHtml(fmtDateTime(account.nextAvatarChangeAt))}</div>` : ""}
+            <button type="submit" ${avatarLocked ? "disabled" : ""}>更换头像</button>
+          </form>
+        </section>
+      ` : ""}
+      <section class="panel stack">
+        <h2>修改密码</h2>
+        <form class="form" data-form="change-password">
+          <label>当前密码<input type="password" name="currentPassword" autocomplete="current-password" required maxlength="72"></label>
+          <label>新密码<input type="password" name="newPassword" autocomplete="new-password" required minlength="8" maxlength="72"></label>
+          <label>确认新密码<input type="password" name="confirmPassword" autocomplete="new-password" required minlength="8" maxlength="72"></label>
+          <button type="submit">保存新密码</button>
+        </form>
+      </section>
+    </div>
+  `);
+}
+
+function renderManagedAccount(account) {
+  const profileName = account.profile?.name || "未绑定玩家";
+  return `
+    <form class="managed-account-row" data-form="reset-password" data-account-id="${escapeHtml(account.id)}">
+      <div class="managed-account-main">
+        ${account.profile ? avatarHtml(account.profile.name, account.profile.avatarUrl, "small", account.profile.avatarFrame) : `<span class="avatar small">管</span>`}
+        <div><b>${escapeHtml(account.username)}</b><span>${escapeHtml(profileName)}</span></div>
+      </div>
+      <span class="tag ${account.enabled ? "good" : ""}">${account.enabled ? "已启用" : "已停用"}</span>
+      ${account.role === "player" ? `
+        <label>重置密码<input name="password" type="password" minlength="8" maxlength="72" placeholder="输入新密码" required></label>
+        <button type="submit" class="secondary compact-button">重置</button>
+        <button type="button" class="${account.enabled ? "danger" : "secondary"} compact-button" data-action="toggle-account" data-account-id="${escapeHtml(account.id)}" data-enabled="${account.enabled ? "false" : "true"}">${account.enabled ? "停用" : "启用"}</button>
+      ` : `<span class="tag accent">管理员</span>`}
+    </form>
+  `;
+}
+
+function renderProfileManager() {
+  if (authState.account?.role !== "admin") {
+    homeView = "login";
+    return renderLogin();
+  }
+  ensureAdminData();
+  const managedProfiles = adminData?.profiles || [];
+  const managedAccounts = adminData?.accounts || [];
+  const unboundProfiles = managedProfiles.filter((profile) => !profile.account);
+  renderShell(`
+    <section class="panel stack admin-account-create">
       <div class="section-head">
-        <h2>玩家列表</h2>
+        <div><h2>创建玩家账号</h2><div class="meta">账号必须绑定一个尚未绑定账号的玩家身份。</div></div>
         <button type="button" class="secondary compact-button" data-action="show-rooms">返回房间</button>
       </div>
-      <div class="meta">玩家列表由后台预置；这里可以修改名称，并为每位玩家设置头像框和出牌特效。</div>
+      <form class="admin-create-form" data-form="create-account">
+        <label>绑定玩家
+          <select name="profileId" required>
+            <option value="">请选择玩家</option>
+            ${unboundProfiles.map((profile) => `<option value="${escapeHtml(profile.id)}">${escapeHtml(profile.name)}</option>`).join("")}
+          </select>
+        </label>
+        <label>登录用户名<input name="username" required minlength="3" maxlength="24" pattern="[a-z0-9_-]+" placeholder="例如 benlei"></label>
+        <label>初始密码<input name="password" type="password" required minlength="8" maxlength="72"></label>
+        <button type="submit" ${!unboundProfiles.length ? "disabled" : ""}>创建账号</button>
+      </form>
+    </section>
+
+    <section class="panel stack">
+      <h2>账号状态</h2>
+      <div class="managed-account-list">
+        ${adminDataLoading && !adminData ? `<div class="empty">正在加载账号...</div>` : managedAccounts.map(renderManagedAccount).join("") || `<div class="empty">暂无账号。</div>`}
+      </div>
+    </section>
+
+    <section class="panel stack">
+      <div class="section-head">
+        <div><h2>玩家资料</h2><div class="meta">昵称、VIP 头像框和出牌特效由管理员管理；玩家可每 7 天自助更换头像一次。</div></div>
+      </div>
       <div class="profile-list">
-        ${profiles.length ? profiles.map(renderProfileRow).join("") : `<div class="empty">暂无玩家。</div>`}
+        ${managedProfiles.length ? managedProfiles.map(renderProfileRow).join("") : `<div class="empty">暂无玩家。</div>`}
       </div>
     </section>
   `);
@@ -1880,8 +2263,15 @@ function renderProfileRow(profile) {
             <option value="fireworks" ${profile.playEffect === "fireworks" ? "selected" : ""}>烟花（9张及以上）</option>
           </select>
         </label>
+        <label>
+          管理员更换头像
+          <input type="file" name="avatar" accept="image/png,image/jpeg,image/webp">
+        </label>
       </div>
-      <button type="submit" class="secondary">保存</button>
+      <div class="profile-row-actions">
+        ${profile.account ? `<span class="tag ${profile.account.enabled ? "good" : ""}">${escapeHtml(profile.account.username)}</span>` : `<span class="tag">未绑定账号</span>`}
+        <button type="submit" class="secondary">保存</button>
+      </div>
     </form>
   `;
 }
@@ -3518,6 +3908,11 @@ document.addEventListener("submit", (event) => {
   if (form.dataset.form === "create") return createRoom(event);
   if (form.dataset.form === "join") return joinRoom(event);
   if (form.dataset.form === "update-profile") return updateProfile(event);
+  if (form.dataset.form === "account-login") return loginAccount(event);
+  if (form.dataset.form === "change-password") return changeAccountPassword(event);
+  if (form.dataset.form === "own-avatar") return uploadOwnAvatar(event);
+  if (form.dataset.form === "create-account") return createManagedAccount(event);
+  if (form.dataset.form === "reset-password") return resetManagedPassword(event);
 });
 
 document.addEventListener("click", (event) => {
@@ -3540,8 +3935,25 @@ document.addEventListener("click", (event) => {
   if (action === "room-leave") leaveRoom();
   if (action === "dissolve-room") dissolveRoom();
   if (action === "show-profiles") {
-    homeView = "players";
+    homeView = "admin";
     render();
+  }
+  if (action === "show-login") {
+    homeView = "login";
+    render();
+  }
+  if (action === "show-account") {
+    homeView = "account";
+    render();
+  }
+  if (action === "show-admin") {
+    homeView = "admin";
+    render();
+  }
+  if (action === "logout-account") logoutAccount();
+  if (action === "toggle-account") {
+    const target = event.target.closest("[data-account-id]");
+    toggleManagedAccount(target?.dataset.accountId || "", target?.dataset.enabled === "true");
   }
   if (action === "show-rooms") {
     homeView = "rooms";
@@ -3659,6 +4071,7 @@ window.addEventListener("pageshow", () => {
 });
 
 async function resume() {
+  await refreshAuth().catch(() => {});
   if (!session) return render();
   try {
     applyState(await api(stateUrl(session)));

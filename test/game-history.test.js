@@ -6,8 +6,10 @@ import { fileURLToPath } from "node:url";
 
 import {
   buildGameRecord,
+  createStoredAccount,
   gameHistoryStatus,
   isHumanOnlyGame,
+  loadStoredAccounts,
   loadStoredPlayerProfiles,
   queueGameRecord,
   saveStoredPlayerProfile
@@ -197,6 +199,14 @@ test("player profile persistence remains optional when no database is configured
     avatarFrame: "vip",
     playEffect: "fireworks"
   }), { status: "unavailable" });
+  assert.deepEqual(await loadStoredAccounts(), []);
+  assert.deepEqual(await createStoredAccount({
+    id: "3d173ad8-a44f-44f6-8896-4139b7de9611",
+    username: "benlei",
+    authEmail: "cdp.benlei@example.invalid",
+    role: "player",
+    profileId: "player-benlei"
+  }), { status: "unavailable" });
 });
 
 test("profile migration reserves account and avatar version fields", async () => {
@@ -213,4 +223,14 @@ test("history compaction has its own forward-only migration", async () => {
   const migration = await readFile(migrationPath, "utf8");
   assert.match(migration, /ALTER TABLE cdp_games/);
   assert.match(migration, /record_format_version smallint NOT NULL DEFAULT 1/);
+});
+
+test("account migration adds login identities and avatar cooldown timestamps", async () => {
+  const migrationPath = fileURLToPath(new URL("../db/migrations/004_accounts.sql", import.meta.url));
+  const migration = await readFile(migrationPath, "utf8");
+  assert.match(migration, /avatar_updated_at timestamptz/);
+  assert.match(migration, /CREATE TABLE IF NOT EXISTS cdp_accounts/);
+  assert.match(migration, /account_id uuid PRIMARY KEY/);
+  assert.match(migration, /profile_id text UNIQUE REFERENCES cdp_player_profiles/);
+  assert.match(migration, /ENABLE ROW LEVEL SECURITY/);
 });

@@ -17,6 +17,10 @@ const MIGRATIONS = [
   {
     version: 3,
     path: fileURLToPath(new URL("./db/migrations/003_history_compaction.sql", import.meta.url))
+  },
+  {
+    version: 4,
+    path: fileURLToPath(new URL("./db/migrations/004_accounts.sql", import.meta.url))
   }
 ];
 const HISTORY_ENABLED = String(process.env.GAME_HISTORY_ENABLED || "").toLowerCase() === "true";
@@ -34,7 +38,9 @@ const status = {
   connected: false,
   migrationVersion: 0,
   profileStorageReady: false,
+  accountStorageReady: false,
   storedProfileCount: 0,
+  storedAccountCount: 0,
   lastProfileSavedAt: null,
   pendingCount: 0,
   lastSavedAt: null,
@@ -95,6 +101,7 @@ async function applyMigrations(client) {
     const versionResult = await client.query("SELECT coalesce(max(version), 0) AS version FROM cdp_schema_migrations");
     status.migrationVersion = Number(versionResult.rows[0]?.version || 0);
     status.profileStorageReady = true;
+    status.accountStorageReady = true;
   } finally {
     await client.query("SELECT pg_advisory_unlock($1)", [2026072001]);
   }
@@ -145,7 +152,7 @@ export async function loadStoredPlayerProfiles() {
     const result = await pool.query(`
       SELECT
         profile_id, account_id, display_name, avatar_url, avatar_version,
-        avatar_frame, play_effect, updated_at
+        avatar_frame, play_effect, avatar_updated_at, updated_at
       FROM cdp_player_profiles
       ORDER BY profile_id
     `);
@@ -160,6 +167,7 @@ export async function loadStoredPlayerProfiles() {
       avatarVersion: Number(row.avatar_version) || 0,
       avatarFrame: row.avatar_frame || "",
       playEffect: row.play_effect || "",
+      avatarUpdatedAt: row.avatar_updated_at ? new Date(row.avatar_updated_at).toISOString() : null,
       updatedAt: row.updated_at ? new Date(row.updated_at).toISOString() : null
     }));
   } catch (error) {
@@ -175,8 +183,8 @@ export async function saveStoredPlayerProfile(profile) {
     const result = await pool.query(
       `INSERT INTO cdp_player_profiles (
         profile_id, account_id, display_name, avatar_url, avatar_version,
-        avatar_frame, play_effect, updated_at
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        avatar_frame, play_effect, avatar_updated_at, updated_at
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
       ON CONFLICT (profile_id) DO UPDATE SET
         account_id = excluded.account_id,
         display_name = excluded.display_name,
@@ -184,6 +192,7 @@ export async function saveStoredPlayerProfile(profile) {
         avatar_version = excluded.avatar_version,
         avatar_frame = excluded.avatar_frame,
         play_effect = excluded.play_effect,
+        avatar_updated_at = excluded.avatar_updated_at,
         updated_at = excluded.updated_at
       RETURNING updated_at`,
       [
@@ -194,6 +203,7 @@ export async function saveStoredPlayerProfile(profile) {
         Number(profile.avatarVersion) || 0,
         profile.avatarFrame || "",
         profile.playEffect || "",
+        profile.avatarUpdatedAt || null,
         profile.updatedAt || new Date().toISOString()
       ]
     );
@@ -208,6 +218,140 @@ export async function saveStoredPlayerProfile(profile) {
     rememberError(error);
     console.error(`[player-profiles] save failed for ${profile.id}`, error.message);
     return { status: "failed" };
+  }
+}
+
+function publicStoredAccount(row) {
+  return {
+    id: row.account_id,
+    username: row.username,
+    authEmail: row.auth_email,
+    role: row.role,
+    profileId: row.profile_id || null,
+    enabled: Boolean(row.enabled),
+    createdBy: row.created_by || null,
+    createdAt: row.created_at ? new Date(row.created_at).toISOString() : null,
+    updatedAt: row.updated_at ? new Date(row.updated_at).toISOString() : null,
+    lastLoginAt: row.last_login_at ? new Date(row.last_login_at).toISOString() : null
+  };
+}
+
+export async function loadStoredAccounts() {
+  if (!pool || !status.connected || !status.accountStorageReady) return [];
+  try {
+    const result = await pool.query(`
+      SELECT
+        account_id, username, auth_email, role, profile_id, enabled,
+        created_by, created_at, updated_at, last_login_at
+      FROM cdp_accounts
+      ORDER BY role, lower(username)
+    `);
+    status.storedAccountCount = result.rows.length;
+    return result.rows.map(publicStoredAccount);
+  } catch (error) {
+    rememberError(error);
+    console.error("[accounts] load failed", error.message);
+    return [];
+  }
+}
+
+export async function createStoredAccount(account, profile = null) {
+  if (!pool || !status.connected || !status.accountStorageReady) return { status: "unavailable" };
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    if (profile) {
+      await client.query(
+        `INSERT INTO cdp_player_profiles (
+          profile_id, account_id, display_name, avatar_url, avatar_version,
+          avatar_frame, play_effect, avatar_updated_at, updated_at
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        ON CONFLICT (profile_id) DO UPDATE SET
+          account_id = excluded.account_id,
+          display_name = excluded.display_name,
+          avatar_url = excluded.avatar_url,
+          avatar_version = excluded.avatar_version,
+          avatar_frame = excluded.avatar_frame,
+          play_effect = excluded.play_effect,
+          avatar_updated_at = excluded.avatar_updated_at,
+          updated_at = excluded.updated_at`,
+        [
+          profile.id,
+          account.id,
+          profile.name,
+          profile.avatarUrl || "",
+          Number(profile.avatarVersion) || 0,
+          profile.avatarFrame || "",
+          profile.playEffect || "",
+          profile.avatarUpdatedAt || null,
+          profile.updatedAt || new Date().toISOString()
+        ]
+      );
+    }
+    const result = await client.query(
+      `INSERT INTO cdp_accounts (
+        account_id, username, auth_email, role, profile_id, enabled, created_by
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7)
+      RETURNING account_id, username, auth_email, role, profile_id, enabled,
+        created_by, created_at, updated_at, last_login_at`,
+      [
+        account.id,
+        account.username,
+        account.authEmail,
+        account.role,
+        account.profileId || null,
+        account.enabled !== false,
+        account.createdBy || null
+      ]
+    );
+    await client.query("COMMIT");
+    status.storedAccountCount += 1;
+    if (profile) {
+      storedProfileIds.add(profile.id);
+      status.storedProfileCount = storedProfileIds.size;
+    }
+    return { status: "saved", account: publicStoredAccount(result.rows[0]) };
+  } catch (error) {
+    await client.query("ROLLBACK");
+    rememberError(error);
+    console.error(`[accounts] create failed for ${account.username}`, error.message);
+    return { status: "failed", code: error.code || "UNKNOWN" };
+  } finally {
+    client.release();
+  }
+}
+
+export async function setStoredAccountEnabled(accountId, enabled) {
+  if (!pool || !status.connected || !status.accountStorageReady) return { status: "unavailable" };
+  try {
+    const result = await pool.query(
+      `UPDATE cdp_accounts
+       SET enabled = $2, updated_at = now()
+       WHERE account_id = $1
+       RETURNING account_id, username, auth_email, role, profile_id, enabled,
+         created_by, created_at, updated_at, last_login_at`,
+      [accountId, Boolean(enabled)]
+    );
+    return result.rows[0]
+      ? { status: "saved", account: publicStoredAccount(result.rows[0]) }
+      : { status: "missing" };
+  } catch (error) {
+    rememberError(error);
+    console.error(`[accounts] status update failed for ${accountId}`, error.message);
+    return { status: "failed" };
+  }
+}
+
+export async function recordStoredAccountLogin(accountId) {
+  if (!pool || !status.connected || !status.accountStorageReady) return;
+  try {
+    await pool.query(
+      `UPDATE cdp_accounts SET last_login_at = now() WHERE account_id = $1`,
+      [accountId]
+    );
+  } catch (error) {
+    rememberError(error);
+    console.error(`[accounts] login timestamp failed for ${accountId}`, error.message);
   }
 }
 
