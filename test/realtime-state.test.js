@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
+import { applyStatePatch } from "../public/state-patch.js";
+
 const projectDir = fileURLToPath(new URL("..", import.meta.url));
 
 function withTimeout(promise, message, timeoutMs = 5000) {
@@ -50,26 +52,34 @@ async function jsonRequest(url, options = {}) {
   return data;
 }
 
-function createSseReader(response) {
+function createSseReader(response, initialState = null) {
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
-  return {
-    async nextState() {
-      while (true) {
-        const boundary = buffer.indexOf("\n\n");
-        if (boundary >= 0) {
-          const block = buffer.slice(0, boundary);
-          buffer = buffer.slice(boundary + 2);
-          const type = block.match(/^event: (.+)$/m)?.[1] || "message";
-          const data = block.match(/^data: (.+)$/m)?.[1] || "";
-          if (type === "state") return JSON.parse(data);
-          continue;
-        }
-        const chunk = await reader.read();
-        if (chunk.done) throw new Error("实时状态连接提前结束");
-        buffer += decoder.decode(chunk.value, { stream: true });
+  let currentState = initialState;
+  async function nextUpdate() {
+    while (true) {
+      const boundary = buffer.indexOf("\n\n");
+      if (boundary >= 0) {
+        const block = buffer.slice(0, boundary);
+        buffer = buffer.slice(boundary + 2);
+        const type = block.match(/^event: (.+)$/m)?.[1] || "message";
+        const data = block.match(/^data: (.+)$/m)?.[1] || "";
+        if (type === "state") currentState = JSON.parse(data);
+        else if (type === "patch") currentState = applyStatePatch(currentState, JSON.parse(data));
+        else continue;
+        if (!currentState) throw new Error("收到无法应用的实时状态补丁");
+        return { type, state: currentState, bytes: Buffer.byteLength(block) + 2 };
       }
+      const chunk = await reader.read();
+      if (chunk.done) throw new Error("实时状态连接提前结束");
+      buffer += decoder.decode(chunk.value, { stream: true });
+    }
+  }
+  return {
+    nextUpdate,
+    async nextState() {
+      return (await nextUpdate()).state;
     },
     close() {
       return reader.cancel();
@@ -108,27 +118,32 @@ test("room snapshots stay monotonic and visual assets are cached", async (t) => 
   const events = createSseReader(eventResponse);
   t.after(() => events.close());
 
-  const initialState = await withTimeout(events.nextState(), "没有收到初始房间状态");
-  const secondEventResponse = await fetch(`${server.baseUrl}/events?${eventParams.toString()}`);
+  const initialUpdate = await withTimeout(events.nextUpdate(), "没有收到初始房间状态");
+  const initialState = initialUpdate.state;
+  assert.equal(initialUpdate.type, "state");
+  const resumedEventParams = new URLSearchParams({
+    ...credentials,
+    roomId: created.roomId,
+    snapshotVersion: String(initialState.snapshotVersion)
+  });
+  const secondEventResponse = await fetch(`${server.baseUrl}/events?${resumedEventParams.toString()}`);
   assert.equal(secondEventResponse.status, 200);
-  const secondEvents = createSseReader(secondEventResponse);
+  const secondEvents = createSseReader(secondEventResponse, initialState);
   t.after(() => secondEvents.close());
-  const [firstConnectionState, secondConnectionState] = await withTimeout(
-    Promise.all([events.nextState(), secondEvents.nextState()]),
-    "第二个连接没有收到一致的房间状态"
-  );
-  assert.ok(firstConnectionState.snapshotVersion > initialState.snapshotVersion);
-  assert.equal(firstConnectionState.snapshotVersion, secondConnectionState.snapshotVersion);
 
   const robotResponse = await jsonRequest(`${server.baseUrl}/api/rooms/${created.roomId}/robot`, {
     method: "POST",
     body: JSON.stringify(credentials)
   });
-  const [pushedState, secondPushedState] = await withTimeout(
-    Promise.all([events.nextState(), secondEvents.nextState()]),
+  const [pushedUpdate, secondPushedUpdate] = await withTimeout(
+    Promise.all([events.nextUpdate(), secondEvents.nextUpdate()]),
     "添加机器人后没有收到实时状态"
   );
-  assert.ok(pushedState.snapshotVersion > firstConnectionState.snapshotVersion);
+  const pushedState = pushedUpdate.state;
+  const secondPushedState = secondPushedUpdate.state;
+  assert.equal(pushedUpdate.type, "patch");
+  assert.equal(secondPushedUpdate.type, "patch");
+  assert.ok(pushedState.snapshotVersion > initialState.snapshotVersion);
   assert.equal(pushedState.snapshotVersion, secondPushedState.snapshotVersion);
   assert.equal(pushedState.players.length, 2);
   assert.equal(robotResponse.snapshotVersion, pushedState.snapshotVersion);
@@ -137,6 +152,7 @@ test("room snapshots stay monotonic and visual assets are cached", async (t) => 
   const refreshedState = await jsonRequest(`${server.baseUrl}/api/rooms/${created.roomId}/state?${stateParams.toString()}`);
   assert.equal(refreshedState.snapshotVersion, pushedState.snapshotVersion);
   assert.equal(refreshedState.players.length, pushedState.players.length);
+  assert.ok(pushedUpdate.bytes < Buffer.byteLength(JSON.stringify(refreshedState)));
 
   const assetResponse = await fetch(`${server.baseUrl}/assets/avatars/benlei.png`);
   assert.equal(assetResponse.status, 200);
@@ -156,10 +172,12 @@ test("room snapshots stay monotonic and visual assets are cached", async (t) => 
     method: "POST",
     body: JSON.stringify({ ...credentials, ready: true })
   });
-  const started = await jsonRequest(`${server.baseUrl}/api/rooms/${created.roomId}/start`, {
+  const startedAck = await jsonRequest(`${server.baseUrl}/api/rooms/${created.roomId}/start`, {
     method: "POST",
     body: JSON.stringify(credentials)
   });
+  const started = await jsonRequest(`${server.baseUrl}/api/rooms/${created.roomId}/state?${stateParams.toString()}`);
+  assert.equal(startedAck.snapshotVersion, started.snapshotVersion);
   assert.equal(started.stage, "bidding", "开局请求应先返回，不应同步跑完机器人准备流程");
   assert.equal(started.kittySize, 5);
   assert.deepEqual(started.removedCards, []);
@@ -220,10 +238,13 @@ test("room snapshots stay monotonic and visual assets are cached", async (t) => 
       method: "POST",
       body: JSON.stringify({ ...countAuth, ready: true })
     });
-    const countStarted = await jsonRequest(`${server.baseUrl}/api/rooms/${countRoom.roomId}/start`, {
+    const countStartedAck = await jsonRequest(`${server.baseUrl}/api/rooms/${countRoom.roomId}/start`, {
       method: "POST",
       body: JSON.stringify(countAuth)
     });
+    const countStateParams = new URLSearchParams(countAuth);
+    const countStarted = await jsonRequest(`${server.baseUrl}/api/rooms/${countRoom.roomId}/state?${countStateParams.toString()}`);
+    assert.equal(countStartedAck.snapshotVersion, countStarted.snapshotVersion);
     assert.equal(countStarted.players.length, playerCount);
     const expectedKittySize = Math.min(playerCount, 6);
     const expectedRemovedCount = Math.max(0, playerCount - 6);

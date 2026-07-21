@@ -1,3 +1,5 @@
+import { applyStatePatch } from "./state-patch.js";
+
 const app = document.querySelector("#app");
 const storageKey = "chaoDipiOnlineSession";
 let session = loadSession();
@@ -34,6 +36,7 @@ let profilesLoading = false;
 let joinableRooms = [];
 let joinableRoomsLoaded = false;
 let joinableRoomsLoading = false;
+const stateVersionWaiters = new Set();
 const dragSelectThreshold = 8;
 
 function loadSession() {
@@ -74,6 +77,11 @@ function clearSession() {
   lastEventReceivedAt = 0;
   source = null;
   state = null;
+  for (const waiter of stateVersionWaiters) {
+    window.clearTimeout(waiter.timer);
+    waiter.resolve(false);
+  }
+  stateVersionWaiters.clear();
   throwDraftComponents = null;
   render();
 }
@@ -114,6 +122,7 @@ function applyState(nextState, options = {}) {
   captureGameplayEffects(previousState, nextState);
   const previousHandIds = new Set((state?.hand || []).map((card) => card.id));
   state = nextState;
+  resolveStateVersionWaiters();
   syncThrowDraftForState();
   scheduleThrowReveal(previousState);
   if (previousState?.roomId !== nextState.roomId || nextState.stage !== "finished") {
@@ -144,6 +153,29 @@ function applyState(nextState, options = {}) {
   if (!newCardIds.length) return false;
   selectedCardIds = new Set(newCardIds);
   return true;
+}
+
+function resolveStateVersionWaiters() {
+  const currentVersion = Number(state?.snapshotVersion || 0);
+  for (const waiter of stateVersionWaiters) {
+    if (currentVersion < waiter.version) continue;
+    window.clearTimeout(waiter.timer);
+    stateVersionWaiters.delete(waiter);
+    waiter.resolve(true);
+  }
+}
+
+function waitForStateVersion(version, timeoutMs = 1500) {
+  const targetVersion = Number(version || 0);
+  if (!targetVersion || Number(state?.snapshotVersion || 0) >= targetVersion) return Promise.resolve(true);
+  return new Promise((resolve) => {
+    const waiter = { version: targetVersion, resolve, timer: null };
+    waiter.timer = window.setTimeout(() => {
+      stateVersionWaiters.delete(waiter);
+      resolve(false);
+    }, timeoutMs);
+    stateVersionWaiters.add(waiter);
+  });
 }
 
 function snapshotTricks(snapshot) {
@@ -374,6 +406,24 @@ async function api(path, options = {}) {
   return data;
 }
 
+async function roomAction(path, options = {}) {
+  const activeSession = session ? { ...session } : null;
+  const response = await api(path, options);
+  if (response?.roomId) {
+    applyState(response);
+    render();
+    return state;
+  }
+  const targetVersion = Number(response?.snapshotVersion || 0);
+  if (!targetVersion || await waitForStateVersion(targetVersion)) return state;
+  if (!sameSessionIdentity(session, activeSession)) return state;
+  const nextState = await api(stateUrl(activeSession));
+  if (!sameSessionIdentity(session, activeSession)) return state;
+  applyState(nextState, { showTransitionNotice: false });
+  render();
+  return state;
+}
+
 function ensureProfiles() {
   if (profilesLoaded || profilesLoading) return;
   profilesLoading = true;
@@ -418,15 +468,26 @@ function connectEvents() {
   });
   if (session.spectator) params.set("spectatorId", session.spectatorId);
   else params.set("playerId", session.playerId);
+  if (state?.roomId === session.roomId) params.set("snapshotVersion", String(state.snapshotVersion || 0));
   source = new EventSource(`/events?${params.toString()}`);
   source.addEventListener("open", () => {
     lastEventReceivedAt = Date.now();
-    scheduleStateSync(0);
   });
   source.addEventListener("state", (event) => {
     try {
       lastEventReceivedAt = Date.now();
       applyState(JSON.parse(event.data));
+      render();
+    } catch {
+      scheduleStateSync(0);
+    }
+  });
+  source.addEventListener("patch", (event) => {
+    try {
+      lastEventReceivedAt = Date.now();
+      const nextState = applyStatePatch(state, JSON.parse(event.data));
+      if (!nextState) return scheduleStateSync(0);
+      applyState(nextState);
       render();
     } catch {
       scheduleStateSync(0);
@@ -602,10 +663,10 @@ async function updateProfile(event) {
 async function startGame() {
   if (!session) return;
   try {
-    applyState(await api(`/api/rooms/${session.roomId}/start`, {
+    await roomAction(`/api/rooms/${session.roomId}/start`, {
       method: "POST",
       body: JSON.stringify({ playerId: session.playerId, token: session.token })
-    }), { highlightNewKitty: false });
+    });
     setMessage("已发牌。每个玩家现在只会看到自己的手牌。");
   } catch (error) {
     setMessage(error.message, true);
@@ -615,10 +676,10 @@ async function startGame() {
 async function addRobot() {
   if (!session) return;
   try {
-    applyState(await api(`/api/rooms/${session.roomId}/robot`, {
+    await roomAction(`/api/rooms/${session.roomId}/robot`, {
       method: "POST",
       body: JSON.stringify({ playerId: session.playerId, token: session.token })
-    }), { highlightNewKitty: false });
+    });
     setMessage("已添加 1 个机器人。");
   } catch (error) {
     setMessage(error.message, true);
@@ -628,10 +689,10 @@ async function addRobot() {
 async function randomizeSeats() {
   if (!session) return;
   try {
-    applyState(await api(`/api/rooms/${session.roomId}/random-seats`, {
+    await roomAction(`/api/rooms/${session.roomId}/random-seats`, {
       method: "POST",
       body: JSON.stringify({ playerId: session.playerId, token: session.token })
-    }), { highlightNewKitty: false });
+    });
     setMessage("玩家座位已重新随机。");
   } catch (error) {
     setMessage(error.message, true);
@@ -641,10 +702,10 @@ async function randomizeSeats() {
 async function setDoglegCount(count) {
   if (!session) return;
   try {
-    applyState(await api(`/api/rooms/${session.roomId}/doglegs`, {
+    await roomAction(`/api/rooms/${session.roomId}/doglegs`, {
       method: "POST",
       body: JSON.stringify({ playerId: session.playerId, token: session.token, count })
-    }), { highlightNewKitty: false });
+    });
     setMessage(`本局狗腿数量已设为 ${state.setup?.doglegNeeded ?? count} 个。`);
   } catch (error) {
     setMessage(error.message, true);
@@ -654,11 +715,11 @@ async function setDoglegCount(count) {
 async function bidSelectedCards() {
   if (!session) return;
   try {
-    const highlighted = applyState(await api(`/api/rooms/${session.roomId}/bid`, {
+    await roomAction(`/api/rooms/${session.roomId}/bid`, {
       method: "POST",
       body: JSON.stringify({ playerId: session.playerId, token: session.token, cardIds: [...selectedCardIds] })
-    }));
-    clearSelectionUnlessKitty(highlighted);
+    });
+    clearSelectionUnlessKitty(false);
     activeDialog = null;
     setMessage(state.stage === "burying"
       ? `叫主成功：${state.setup?.bankerName || "庄家"} 成为庄家，已拿底等待贴底。`
@@ -675,11 +736,11 @@ async function passBid() {
   activeDialog = null;
   setMessage("正在提交“过”…", false, false);
   try {
-    const highlighted = applyState(await api(`/api/rooms/${session.roomId}/bid-pass`, {
+    await roomAction(`/api/rooms/${session.roomId}/bid-pass`, {
       method: "POST",
       body: JSON.stringify({ playerId: session.playerId, token: session.token })
-    }));
-    clearSelectionUnlessKitty(highlighted);
+    });
+    clearSelectionUnlessKitty(false);
     actionPassInFlight = false;
     temporarilyDismissActionDialog();
     setMessage(state.stage === "burying"
@@ -698,11 +759,11 @@ async function passBid() {
 async function randomBid() {
   if (!session) return;
   try {
-    const highlighted = applyState(await api(`/api/rooms/${session.roomId}/random-bid`, {
+    await roomAction(`/api/rooms/${session.roomId}/random-bid`, {
       method: "POST",
       body: JSON.stringify({ playerId: session.playerId, token: session.token })
-    }));
-    clearSelectionUnlessKitty(highlighted);
+    });
+    clearSelectionUnlessKitty(false);
     activeDialog = null;
     setMessage(state.stage === "burying"
       ? `叫主成功：${state.setup?.bankerName || "庄家"} 成为庄家，已拿底等待贴底。`
@@ -715,10 +776,10 @@ async function randomBid() {
 async function setCallMode(mode) {
   if (!session) return;
   try {
-    applyState(await api(`/api/rooms/${session.roomId}/call-mode`, {
+    await roomAction(`/api/rooms/${session.roomId}/call-mode`, {
       method: "POST",
       body: JSON.stringify({ playerId: session.playerId, token: session.token, mode })
-    }), { highlightNewKitty: false });
+    });
     setMessage(`已切换为${state.callModeName || "新的叫庄方式"}。`);
   } catch (error) {
     setMessage(error.message, true);
@@ -728,11 +789,11 @@ async function setCallMode(mode) {
 async function scoreBid(increment = 0) {
   if (!session) return;
   try {
-    const highlighted = applyState(await api(`/api/rooms/${session.roomId}/score-bid`, {
+    await roomAction(`/api/rooms/${session.roomId}/score-bid`, {
       method: "POST",
       body: JSON.stringify({ playerId: session.playerId, token: session.token, increment })
-    }));
-    clearSelectionUnlessKitty(highlighted);
+    });
+    clearSelectionUnlessKitty(false);
     setMessage(state.stage === "trump-selecting"
       ? `叫分结束：${state.setup?.bankerName || "庄家"} 成为庄家，等待亮2定主。`
       : "已提交叫分。");
@@ -744,11 +805,11 @@ async function scoreBid(increment = 0) {
 async function passScoreBid() {
   if (!session) return;
   try {
-    const highlighted = applyState(await api(`/api/rooms/${session.roomId}/score-pass`, {
+    await roomAction(`/api/rooms/${session.roomId}/score-pass`, {
       method: "POST",
       body: JSON.stringify({ playerId: session.playerId, token: session.token })
-    }));
-    clearSelectionUnlessKitty(highlighted);
+    });
+    clearSelectionUnlessKitty(false);
     setMessage(state.stage === "trump-selecting"
       ? `叫分结束：${state.setup?.bankerName || "庄家"} 成为庄家，等待亮2定主。`
       : "已过，不加分。");
@@ -760,11 +821,11 @@ async function passScoreBid() {
 async function revealTrumpSelectedCards() {
   if (!session) return;
   try {
-    const highlighted = applyState(await api(`/api/rooms/${session.roomId}/trump`, {
+    await roomAction(`/api/rooms/${session.roomId}/trump`, {
       method: "POST",
       body: JSON.stringify({ playerId: session.playerId, token: session.token, cardIds: [...selectedCardIds] })
-    }));
-    clearSelectionUnlessKitty(highlighted);
+    });
+    clearSelectionUnlessKitty(false);
     activeDialog = null;
     setMessage(`定主成功：${state.setup?.bankerName || "庄家"} 已拿底等待贴底。`);
   } catch (error) {
@@ -778,14 +839,13 @@ async function burySelectedCards() {
   buryInFlight = true;
   setMessage(`正在贴底（${cardIds.length} 张）…`, false, false);
   try {
-    applyState(await api(`/api/rooms/${session.roomId}/bury`, {
+    await roomAction(`/api/rooms/${session.roomId}/bury`, {
       method: "POST",
       body: JSON.stringify({ playerId: session.playerId, token: session.token, cardIds })
-    }));
+    });
     selectedCardIds = new Set();
     buryInFlight = false;
     setMessage(state.stage === "frying" ? "已贴底，进入炒底阶段。" : "已贴底。");
-    scheduleStateSync(0);
   } catch (error) {
     buryInFlight = false;
     setMessage(error.message, true);
@@ -795,11 +855,11 @@ async function burySelectedCards() {
 async function frySelectedCards() {
   if (!session) return;
   try {
-    const highlighted = applyState(await api(`/api/rooms/${session.roomId}/fry`, {
+    await roomAction(`/api/rooms/${session.roomId}/fry`, {
       method: "POST",
       body: JSON.stringify({ playerId: session.playerId, token: session.token, cardIds: [...selectedCardIds] })
-    }));
-    clearSelectionUnlessKitty(highlighted);
+    });
+    clearSelectionUnlessKitty(false);
     activeDialog = null;
     setMessage("已炒底，请选择同数量牌贴底。");
   } catch (error) {
@@ -814,11 +874,11 @@ async function passFry() {
   activeDialog = null;
   setMessage("正在提交“不炒”…", false, false);
   try {
-    const highlighted = applyState(await api(`/api/rooms/${session.roomId}/fry-pass`, {
+    await roomAction(`/api/rooms/${session.roomId}/fry-pass`, {
       method: "POST",
       body: JSON.stringify({ playerId: session.playerId, token: session.token })
-    }));
-    clearSelectionUnlessKitty(highlighted);
+    });
+    clearSelectionUnlessKitty(false);
     actionPassInFlight = false;
     temporarilyDismissActionDialog();
     setMessage(state.stage === "dogleg"
@@ -838,10 +898,10 @@ async function chooseDoglegSelectedCard() {
   if (!session) return;
   try {
     const doglegSelection = new Set(selectedCardIds);
-    applyState(await api(`/api/rooms/${session.roomId}/dogleg`, {
+    await roomAction(`/api/rooms/${session.roomId}/dogleg`, {
       method: "POST",
       body: JSON.stringify({ playerId: session.playerId, token: session.token, cardIds: [...selectedCardIds] })
-    }), { highlightNewKitty: false });
+    });
     if (viewerCanPlayCurrent()) {
       const handIds = new Set((state.hand || []).map((card) => card.id));
       selectedCardIds = new Set([...doglegSelection].filter((cardId) => handIds.has(cardId)));
@@ -858,10 +918,10 @@ async function playSelectedCards() {
   if (!session) return;
   try {
     const cardIds = [...selectedCardIds];
-    applyState(await api(`/api/rooms/${session.roomId}/play`, {
+    await roomAction(`/api/rooms/${session.roomId}/play`, {
       method: "POST",
       body: JSON.stringify({ playerId: session.playerId, token: session.token, cardIds, throwPlay: false })
-    }), { highlightNewKitty: false });
+    });
     const playedIds = new Set(cardIds);
     const handIds = new Set((state.hand || []).map((card) => card.id));
     selectedCardIds = new Set([...selectedCardIds].filter((cardId) => !playedIds.has(cardId) && handIds.has(cardId)));
@@ -878,7 +938,7 @@ async function playThrowDraft() {
   const components = throwDraftComponents.map((component) => [...component]);
   const cardIds = components.flat();
   try {
-    applyState(await api(`/api/rooms/${session.roomId}/play`, {
+    await roomAction(`/api/rooms/${session.roomId}/play`, {
       method: "POST",
       body: JSON.stringify({
         playerId: session.playerId,
@@ -887,7 +947,7 @@ async function playThrowDraft() {
         throwPlay: true,
         throwComponents: components
       })
-    }), { highlightNewKitty: false });
+    });
     throwDraftComponents = null;
     selectedCardIds = new Set();
     setMessage("甩牌已提交，结果以桌面和日志为准。");
@@ -899,10 +959,10 @@ async function playThrowDraft() {
 async function setReady(ready) {
   if (!session) return;
   try {
-    applyState(await api(`/api/rooms/${session.roomId}/ready`, {
+    await roomAction(`/api/rooms/${session.roomId}/ready`, {
       method: "POST",
       body: JSON.stringify({ playerId: session.playerId, token: session.token, ready })
-    }), { highlightNewKitty: false });
+    });
     if (state?.stage === "finished") {
       dismissedResultRoomId = ready ? state.roomId : null;
       activeDialog = null;
@@ -916,10 +976,10 @@ async function setReady(ready) {
 async function playAgain() {
   if (!session) return;
   try {
-    applyState(await api(`/api/rooms/${session.roomId}/again`, {
+    await roomAction(`/api/rooms/${session.roomId}/again`, {
       method: "POST",
       body: JSON.stringify({ playerId: session.playerId, token: session.token })
-    }), { highlightNewKitty: false });
+    });
     activeDialog = null;
     dismissedResultRoomId = state?.stage === "finished" ? state?.roomId || null : null;
     setMessage("已准备下一局，等待其他玩家确认。");
@@ -931,10 +991,10 @@ async function playAgain() {
 async function resetRoom() {
   if (!session) return;
   try {
-    applyState(await api(`/api/rooms/${session.roomId}/reset`, {
+    await roomAction(`/api/rooms/${session.roomId}/reset`, {
       method: "POST",
       body: JSON.stringify({ playerId: session.playerId, token: session.token })
-    }), { highlightNewKitty: false });
+    });
     setMessage("房间已重置，可以重新开始。");
   } catch (error) {
     setMessage(error.message, true);
@@ -973,10 +1033,10 @@ async function dissolveRoom() {
 async function kickPlayer(targetPlayerId) {
   if (!session || !targetPlayerId) return;
   try {
-    applyState(await api(`/api/rooms/${session.roomId}/kick`, {
+    await roomAction(`/api/rooms/${session.roomId}/kick`, {
       method: "POST",
       body: JSON.stringify({ playerId: session.playerId, token: session.token, targetPlayerId })
-    }), { highlightNewKitty: false });
+    });
     setMessage("已移出玩家。");
   } catch (error) {
     setMessage(error.message, true);

@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { randomBytes, randomInt, randomUUID } from "node:crypto";
 
 import { buildGameEvaluations } from "./game-evaluations.js";
+import { createStatePatch } from "./public/state-patch.js";
 import {
   gameHistoryStatus,
   initializeGameHistory,
@@ -98,8 +99,7 @@ function now() {
 }
 
 function addEvent(room, text) {
-  room.events.unshift({ id: id(6), at: now(), text });
-  room.events = room.events.slice(0, MAX_GAME_EVENTS);
+  room.events = [{ id: id(6), at: now(), text }, ...room.events].slice(0, MAX_GAME_EVENTS);
 }
 
 function publicProfile(profile) {
@@ -528,7 +528,7 @@ function publicScoreBid(room, scoreBid) {
     currentPlayerId: current?.playerId || null,
     currentPlayerName: current?.playerId ? playerName(room, current.playerId) : "",
     deadlineAt: scoreBid.deadlineAt || null,
-    passIds: scoreBid.passIds || [],
+    passIds: [...(scoreBid.passIds || [])],
     history: (scoreBid.history || []).map((item) => ({
       playerId: item.playerId,
       playerName: playerName(room, item.playerId),
@@ -561,13 +561,13 @@ function setupSnapshot(room) {
     currentTrumpSuit: currentSuit,
     currentTrumpSuitName: currentSuit ? suitName(currentSuit) : "",
     doglegCard: room.doglegCard,
-    doglegPlayerIds: room.doglegPlayerIds || [],
+    doglegPlayerIds: [...(room.doglegPlayerIds || [])],
     doglegPlayerNames: (room.doglegPlayerIds || []).map((playerId) => playerName(room, playerId)),
     doglegNeeded: room.doglegNeeded || 0,
     doglegMax: maxDoglegCount(room.players.length),
     bid: publicBid(room, room.setup?.bid),
     bidHistory: (room.setup?.bidHistory || []).map((bid) => publicBid(room, bid)),
-    bidPassIds: room.setup?.passIds || [],
+    bidPassIds: [...(room.setup?.passIds || [])],
     scoreBid: publicScoreBid(room, room.setup?.scoreBid),
     biddingTurnPlayerId: room.setup?.biddingTurnPlayerId || null,
     biddingTurnPlayerName: room.setup?.biddingTurnPlayerId ? playerName(room, room.setup.biddingTurnPlayerId) : "",
@@ -581,7 +581,7 @@ function setupSnapshot(room) {
           pendingBid: publicBid(room, fry.pendingBid),
           history: (fry.history || []).map((bid) => publicBid(room, bid)),
           passesSinceLast: fry.passesSinceLast,
-          passIds: fry.passIds || []
+          passIds: [...(fry.passIds || [])]
         }
       : null
   };
@@ -717,12 +717,10 @@ function roomSnapshot(room, viewer = null) {
     })),
     hand: viewer ? viewerHandForSnapshot(room, viewer).map(publicCard) : [],
     currentTrick: trickSnapshot(room, room.currentTrick),
-    trickHistory: room.stage === "finished" && room.settledTrickHistory?.length
-      ? room.settledTrickHistory
-      : room.trickHistory.map((trick) => trickSnapshot(room, trick)),
+    trickHistory: [...(room.settledTrickHistory || [])],
     playedProtectedFives: playedProtectedFiveCounts(room),
     result: room.result,
-    events: room.events
+    events: [...room.events]
   };
 }
 
@@ -972,7 +970,9 @@ function finishGame(room, completedTrick) {
       draggedDiamondFives: bottomDraggedDiamondFives
     }
   });
-  room.settledTrickHistory = room.trickHistory.map((trick) => trickSnapshot(room, trick));
+  if (!room.settledTrickHistory?.length) {
+    room.settledTrickHistory = room.trickHistory.map((trick) => trickSnapshot(room, trick));
+  }
 
   room.status = "lobby";
   room.stage = "finished";
@@ -1053,6 +1053,7 @@ function completeCurrentTrick(room) {
   const winner = room.players.find((player) => player.id === outcome.winnerId);
   if (winner) winner.score = (winner.score || 0) + outcome.points;
   room.trickHistory.push(completed);
+  room.settledTrickHistory = [...room.settledTrickHistory, trickSnapshot(room, completed)];
   addEvent(room, `第 ${completed.number} 轮结束：${outcome.winnerName} 获得 ${outcome.points} 分，下轮先出`);
   if (room.players.every((player) => player.hand.length === 0)) {
     finishGame(room, completed);
@@ -3259,7 +3260,11 @@ function sendLatestState(room, client) {
     : room.players.find((player) => player.id === client.playerId) || null;
   const snapshot = spectator ? spectatorSnapshot(room, spectator) : roomSnapshot(room, viewer);
   if (!snapshot) return;
-  const payload = `id: ${room.snapshotVersion || 0}\nevent: state\ndata: ${JSON.stringify(snapshot)}\n\n`;
+  const isInitialState = !client.lastSnapshot;
+  const data = isInitialState ? snapshot : createStatePatch(client.lastSnapshot, snapshot);
+  const eventName = isInitialState ? "state" : "patch";
+  const payload = `id: ${room.snapshotVersion || 0}\nevent: ${eventName}\ndata: ${JSON.stringify(data)}\n\n`;
+  client.lastSnapshot = snapshot;
   if (client.res.write(payload)) return;
   client.backpressured = true;
   client.res.once("drain", () => {
@@ -3272,9 +3277,19 @@ function sendLatestState(room, client) {
 
 function updateConnection(room, playerId, connected) {
   const player = room.players.find((item) => item.id === playerId);
-  if (!player) return;
+  if (!player) return false;
+  const wasConnected = player.connected;
   const hasOtherClient = [...room.clients].some((client) => client.playerId === playerId);
   player.connected = connected || hasOtherClient;
+  return wasConnected !== player.connected;
+}
+
+function roomStateAck(room, extra = {}) {
+  return {
+    ok: true,
+    snapshotVersion: room.snapshotVersion || 0,
+    ...extra
+  };
 }
 
 async function handleApi(req, res, pathParts, url) {
@@ -3486,7 +3501,7 @@ async function handleApi(req, res, pathParts, url) {
       }
       if (removed) addEvent(room, `房主将 ${removed.name} 移出了房间`);
       broadcast(room);
-      return writeJson(res, 200, roomSnapshot(room, viewer));
+      return writeJson(res, 200, roomStateAck(room));
     }
 
     if (req.method === "POST" && pathParts[3] === "call-mode") {
@@ -3501,7 +3516,7 @@ async function handleApi(req, res, pathParts, url) {
         addEvent(room, `房主切换叫庄方式为${callModeName(nextMode)}`);
       }
       broadcast(room);
-      return writeJson(res, 200, roomSnapshot(room, viewer));
+      return writeJson(res, 200, roomStateAck(room));
     }
 
     if (req.method === "POST" && pathParts[3] === "doglegs") {
@@ -3515,7 +3530,7 @@ async function handleApi(req, res, pathParts, url) {
       room.doglegConfigured = true;
       addEvent(room, `房主将本局狗腿数量设置为 ${nextCount} 个`);
       broadcast(room);
-      return writeJson(res, 200, roomSnapshot(room, viewer));
+      return writeJson(res, 200, roomStateAck(room));
     }
 
     if (req.method === "POST" && pathParts[3] === "random-seats") {
@@ -3534,7 +3549,7 @@ async function handleApi(req, res, pathParts, url) {
       room.players = nextOrder;
       addEvent(room, "房主重新随机了玩家座位");
       broadcast(room);
-      return writeJson(res, 200, roomSnapshot(room, viewer));
+      return writeJson(res, 200, roomStateAck(room));
     }
 
     if (req.method === "POST" && pathParts[3] === "robot") {
@@ -3550,7 +3565,7 @@ async function handleApi(req, res, pathParts, url) {
       syncLobbyDoglegCount(room);
       addEvent(room, `房主添加了机器人 ${robot.name}`);
       broadcast(room);
-      return writeJson(res, 200, roomSnapshot(room, viewer));
+      return writeJson(res, 200, roomStateAck(room));
     }
 
     if (req.method === "POST" && pathParts[3] === "test-players") {
@@ -3571,7 +3586,7 @@ async function handleApi(req, res, pathParts, url) {
       syncLobbyDoglegCount(room);
       if (added) addEvent(room, `房主添加了 ${added} 个机器人`);
       broadcast(room);
-      return writeJson(res, 200, roomSnapshot(room, viewer));
+      return writeJson(res, 200, roomStateAck(room));
     }
 
     if (req.method === "POST" && pathParts[3] === "ready") {
@@ -3585,7 +3600,7 @@ async function handleApi(req, res, pathParts, url) {
         addEvent(room, `${viewer.name} ${nextReady ? "已准备" : "取消准备"}`);
       }
       broadcast(room);
-      return writeJson(res, 200, roomSnapshot(room, viewer));
+      return writeJson(res, 200, roomStateAck(room));
     }
 
     if (req.method === "POST" && pathParts[3] === "start") {
@@ -3605,7 +3620,7 @@ async function handleApi(req, res, pathParts, url) {
       room.gameRecordId = randomUUID();
       addEvent(room, `房主开始牌局：${room.players.length} 人，每人 ${HAND_SIZE} 张，底牌 ${room.kitty.length} 张`);
       broadcastAndContinueAutomation(room);
-      return writeJson(res, 200, roomSnapshot(room, viewer));
+      return writeJson(res, 200, roomStateAck(room));
     }
 
     if (req.method === "POST" && pathParts[3] === "bid") {
@@ -3615,7 +3630,7 @@ async function handleApi(req, res, pathParts, url) {
       const result = submitBid(room, viewer, body.cardIds);
       if (result.error) return writeJson(res, result.status, { error: result.error });
       broadcastAndContinueAutomation(room);
-      return writeJson(res, 200, roomSnapshot(room, viewer));
+      return writeJson(res, 200, roomStateAck(room));
     }
 
     if (req.method === "POST" && pathParts[3] === "bid-pass") {
@@ -3625,7 +3640,7 @@ async function handleApi(req, res, pathParts, url) {
       const result = passBid(room, viewer);
       if (result.error) return writeJson(res, result.status, { error: result.error });
       broadcastAndContinueAutomation(room);
-      return writeJson(res, 200, roomSnapshot(room, viewer));
+      return writeJson(res, 200, roomStateAck(room));
     }
 
     if (req.method === "POST" && pathParts[3] === "random-bid") {
@@ -3636,7 +3651,7 @@ async function handleApi(req, res, pathParts, url) {
       const result = randomDeclare(room);
       if (result.error) return writeJson(res, result.status, { error: result.error });
       broadcastAndContinueAutomation(room);
-      return writeJson(res, 200, roomSnapshot(room, viewer));
+      return writeJson(res, 200, roomStateAck(room));
     }
 
     if (req.method === "POST" && pathParts[3] === "score-bid") {
@@ -3646,7 +3661,7 @@ async function handleApi(req, res, pathParts, url) {
       const result = submitScoreBid(room, viewer, body.increment);
       if (result.error) return writeJson(res, result.status, { error: result.error });
       broadcastAndContinueAutomation(room);
-      return writeJson(res, 200, roomSnapshot(room, viewer));
+      return writeJson(res, 200, roomStateAck(room));
     }
 
     if (req.method === "POST" && pathParts[3] === "score-pass") {
@@ -3656,7 +3671,7 @@ async function handleApi(req, res, pathParts, url) {
       const result = passScoreBid(room, viewer);
       if (result.error) return writeJson(res, result.status, { error: result.error });
       broadcastAndContinueAutomation(room);
-      return writeJson(res, 200, roomSnapshot(room, viewer));
+      return writeJson(res, 200, roomStateAck(room));
     }
 
     if (req.method === "POST" && pathParts[3] === "trump") {
@@ -3666,7 +3681,7 @@ async function handleApi(req, res, pathParts, url) {
       const result = revealTrumpCards(room, viewer, body.cardIds);
       if (result.error) return writeJson(res, result.status, { error: result.error });
       broadcastAndContinueAutomation(room);
-      return writeJson(res, 200, roomSnapshot(room, viewer));
+      return writeJson(res, 200, roomStateAck(room));
     }
 
     if (req.method === "POST" && pathParts[3] === "bury") {
@@ -3676,7 +3691,7 @@ async function handleApi(req, res, pathParts, url) {
       const result = buryCards(room, viewer, body.cardIds);
       if (result.error) return writeJson(res, result.status, { error: result.error });
       broadcastAndContinueAutomation(room);
-      return writeJson(res, 200, roomSnapshot(room, viewer));
+      return writeJson(res, 200, roomStateAck(room));
     }
 
     if (req.method === "POST" && pathParts[3] === "test-setup") {
@@ -3691,7 +3706,7 @@ async function handleApi(req, res, pathParts, url) {
       const autoActions = autoProgressTestSetup(room, 1);
       if (!autoActions) return writeJson(res, 409, { error: "当前没有可自动推进的机器人" });
       broadcastAndContinueAutomation(room);
-      return writeJson(res, 200, roomSnapshot(room, viewer));
+      return writeJson(res, 200, roomStateAck(room));
     }
 
     if (req.method === "POST" && pathParts[3] === "fry") {
@@ -3701,7 +3716,7 @@ async function handleApi(req, res, pathParts, url) {
       const result = submitFry(room, viewer, body.cardIds);
       if (result.error) return writeJson(res, result.status, { error: result.error });
       broadcastAndContinueAutomation(room);
-      return writeJson(res, 200, roomSnapshot(room, viewer));
+      return writeJson(res, 200, roomStateAck(room));
     }
 
     if (req.method === "POST" && pathParts[3] === "fry-pass") {
@@ -3711,7 +3726,7 @@ async function handleApi(req, res, pathParts, url) {
       const result = passFry(room, viewer);
       if (result.error) return writeJson(res, result.status, { error: result.error });
       broadcastAndContinueAutomation(room);
-      return writeJson(res, 200, roomSnapshot(room, viewer));
+      return writeJson(res, 200, roomStateAck(room));
     }
 
     if (req.method === "POST" && pathParts[3] === "dogleg") {
@@ -3721,7 +3736,7 @@ async function handleApi(req, res, pathParts, url) {
       const result = selectDogleg(room, viewer, body.cardIds);
       if (result.error) return writeJson(res, result.status, { error: result.error });
       broadcastAndContinueAutomation(room);
-      return writeJson(res, 200, roomSnapshot(room, viewer));
+      return writeJson(res, 200, roomStateAck(room));
     }
 
     if (req.method === "POST" && pathParts[3] === "play") {
@@ -3762,11 +3777,11 @@ async function handleApi(req, res, pathParts, url) {
           broadcast(activeRoom);
           scheduleNextAiPlay(activeRoom);
         }, Math.max(0, new Date(resumeAt).getTime() - Date.now()) + 20);
-        return writeJson(res, 200, roomSnapshot(room, viewer));
+        return writeJson(res, 200, roomStateAck(room));
       }
       broadcast(room);
       scheduleNextAiPlay(room);
-      return writeJson(res, 200, roomSnapshot(room, viewer));
+      return writeJson(res, 200, roomStateAck(room));
     }
 
     if (req.method === "POST" && pathParts[3] === "test-play-round") {
@@ -3784,7 +3799,7 @@ async function handleApi(req, res, pathParts, url) {
       }
 
       if (!scheduleNextAiPlay(room)) return writeJson(res, 409, { error: "机器人没有可出的牌" });
-      return writeJson(res, 200, roomSnapshot(room, viewer));
+      return writeJson(res, 200, roomStateAck(room));
     }
 
     if (req.method === "POST" && pathParts[3] === "reset") {
@@ -3795,7 +3810,7 @@ async function handleApi(req, res, pathParts, url) {
       resetRoomToLobby(room);
       addEvent(room, "房主把房间重置到等待状态");
       broadcast(room);
-      return writeJson(res, 200, roomSnapshot(room, viewer));
+      return writeJson(res, 200, roomStateAck(room));
     }
 
     if (req.method === "POST" && pathParts[3] === "again") {
@@ -3809,7 +3824,7 @@ async function handleApi(req, res, pathParts, url) {
         return writeJson(res, 409, { error: "本局还未结束，暂不能再来一局" });
       }
       broadcast(room);
-      return writeJson(res, 200, roomSnapshot(room, viewer));
+      return writeJson(res, 200, roomStateAck(room));
     }
   }
 
@@ -3833,6 +3848,10 @@ function handleEvents(req, res, url) {
     res.end("unauthorized");
     return;
   }
+  const knownVersionText = url.searchParams.get("snapshotVersion");
+  const knownVersion = knownVersionText == null ? null : Number(knownVersionText);
+  const canResumeFromKnownState = Number.isFinite(knownVersion)
+    && knownVersion === Number(room.snapshotVersion || 0);
 
   res.writeHead(200, {
     "content-type": "text/event-stream; charset=utf-8",
@@ -3840,19 +3859,22 @@ function handleEvents(req, res, url) {
     connection: "keep-alive",
     "x-accel-buffering": "no"
   });
+  res.flushHeaders?.();
   const client = {
     res,
     playerId: spectator ? null : viewer.id,
     spectatorId: spectator?.id || null,
     backpressured: false,
-    pendingState: false
+    pendingState: false,
+    lastSnapshot: canResumeFromKnownState
+      ? (spectator ? spectatorSnapshot(room, spectator) : roomSnapshot(room, viewer))
+      : null
   };
   room.clients.add(client);
-  if (spectator) sendLatestState(room, client);
-  else {
-    viewer.connected = true;
-    broadcast(room);
-  }
+  if (spectator) {
+    if (!client.lastSnapshot) sendLatestState(room, client);
+  } else if (updateConnection(room, viewer.id, true)) broadcast(room);
+  else if (!client.lastSnapshot) sendLatestState(room, client);
 
   const keepAlive = setInterval(() => {
     if (!client.backpressured) res.write(`event: heartbeat\ndata: ${room.snapshotVersion || 0}\n\n`);
@@ -3861,10 +3883,7 @@ function handleEvents(req, res, url) {
   req.on("close", () => {
     clearInterval(keepAlive);
     room.clients.delete(client);
-    if (!spectator) {
-      updateConnection(room, viewer.id, false);
-      broadcast(room);
-    }
+    if (!spectator && updateConnection(room, viewer.id, false)) broadcast(room);
   });
 }
 
