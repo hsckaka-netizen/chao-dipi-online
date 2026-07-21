@@ -3922,8 +3922,9 @@ const server = createServer(async (req, res) => {
   }
 });
 
-await initializeGameHistory();
-
 server.listen(port, () => {
   console.log(`炒地皮在线版已启动：http://localhost:${port}`);
+  void initializeGameHistory().catch((error) => {
+    console.error("[game-history] background initialization failed", error.message);
+  });
 });

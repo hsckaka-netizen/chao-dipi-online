@@ -15,11 +15,11 @@ function withTimeout(promise, message, timeoutMs = 5000) {
   ]).finally(() => clearTimeout(timer));
 }
 
-async function startServer() {
+async function startServer(env = {}) {
   const port = 43000 + Math.floor(Math.random() * 1000);
   const child = spawn(process.execPath, ["server.js"], {
     cwd: projectDir,
-    env: { ...process.env, PORT: String(port), AI_SETUP_DELAY_MS: "5000", AI_PLAY_DELAY_MS: "5000" },
+    env: { ...process.env, PORT: String(port), AI_SETUP_DELAY_MS: "5000", AI_PLAY_DELAY_MS: "5000", ...env },
     stdio: ["ignore", "pipe", "pipe"]
   });
   let output = "";
@@ -76,6 +76,14 @@ function createSseReader(response) {
     }
   };
 }
+
+test("web server starts even when the history database URL is invalid", async (t) => {
+  const server = await startServer({ DATABASE_URL: "not-a-database-url" });
+  t.after(() => server.child.kill());
+
+  const response = await fetch(`${server.baseUrl}/`);
+  assert.equal(response.status, 200);
+});
 
 test("room snapshots stay monotonic and visual assets are cached", async (t) => {
   const server = await startServer();
