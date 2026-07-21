@@ -22,7 +22,7 @@ export function validateUsername(value) {
 
 export function validatePassword(value) {
   const password = String(value || "");
-  if (password.length < 8 || password.length > 72) return { error: "密码需为 8-72 位" };
+  if (password.length < 6 || password.length > 72) return { error: "密码需为 6-72 位" };
   return { password };
 }
 

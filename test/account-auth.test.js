@@ -16,8 +16,8 @@ test("account usernames are normalized and restricted", () => {
   assert.deepEqual(validateUsername("BenLei_01"), { username: "benlei_01" });
   assert.match(validateUsername("中 文").error, /用户名/);
   assert.match(validateUsername("ab").error, /3-24/);
-  assert.equal(validatePassword("12345678").password, "12345678");
-  assert.match(validatePassword("1234567").error, /8-72/);
+  assert.equal(validatePassword("123456").password, "123456");
+  assert.match(validatePassword("12345").error, /6-72/);
 });
 
 test("internal auth emails are unique and do not expose a real mailbox", () => {

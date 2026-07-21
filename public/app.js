@@ -2167,8 +2167,8 @@ function renderAccountSettings() {
         <h2>修改密码</h2>
         <form class="form" data-form="change-password">
           <label>当前密码<input type="password" name="currentPassword" autocomplete="current-password" required maxlength="72"></label>
-          <label>新密码<input type="password" name="newPassword" autocomplete="new-password" required minlength="8" maxlength="72"></label>
-          <label>确认新密码<input type="password" name="confirmPassword" autocomplete="new-password" required minlength="8" maxlength="72"></label>
+          <label>新密码<input type="password" name="newPassword" autocomplete="new-password" required minlength="6" maxlength="72"></label>
+          <label>确认新密码<input type="password" name="confirmPassword" autocomplete="new-password" required minlength="6" maxlength="72"></label>
           <button type="submit">保存新密码</button>
         </form>
       </section>
@@ -2186,7 +2186,7 @@ function renderManagedAccount(account) {
       </div>
       <span class="tag ${account.enabled ? "good" : ""}">${account.enabled ? "已启用" : "已停用"}</span>
       ${account.role === "player" ? `
-        <label>重置密码<input name="password" type="password" minlength="8" maxlength="72" placeholder="输入新密码" required></label>
+        <label>重置密码<input name="password" type="password" minlength="6" maxlength="72" placeholder="输入新密码" required></label>
         <button type="submit" class="secondary compact-button">重置</button>
         <button type="button" class="${account.enabled ? "danger" : "secondary"} compact-button" data-action="toggle-account" data-account-id="${escapeHtml(account.id)}" data-enabled="${account.enabled ? "false" : "true"}">${account.enabled ? "停用" : "启用"}</button>
       ` : `<span class="tag accent">管理员</span>`}
@@ -2217,7 +2217,7 @@ function renderProfileManager() {
           </select>
         </label>
         <label>登录用户名<input name="username" required minlength="3" maxlength="24" pattern="[a-z0-9_-]+" placeholder="例如 benlei"></label>
-        <label>初始密码<input name="password" type="password" required minlength="8" maxlength="72"></label>
+        <label>初始密码<input name="password" type="password" required minlength="6" maxlength="72"></label>
         <button type="submit" ${!unboundProfiles.length ? "disabled" : ""}>创建账号</button>
       </form>
     </section>
