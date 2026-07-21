@@ -12,7 +12,8 @@ import {
   loadStoredAccounts,
   loadStoredPlayerProfiles,
   queueGameRecord,
-  saveStoredPlayerProfile
+  saveStoredPlayerProfile,
+  updateStoredAccount
 } from "../game-history.js";
 
 function settledRoom() {
@@ -206,6 +207,9 @@ test("player profile persistence remains optional when no database is configured
     authEmail: "cdp.benlei@example.invalid",
     role: "player",
     profileId: "player-benlei"
+  }), { status: "unavailable" });
+  assert.deepEqual(await updateStoredAccount("3d173ad8-a44f-44f6-8896-4139b7de9611", {
+    username: "benlei-new"
   }), { status: "unavailable" });
 });
 

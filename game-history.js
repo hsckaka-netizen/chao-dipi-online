@@ -321,23 +321,30 @@ export async function createStoredAccount(account, profile = null) {
   }
 }
 
-export async function setStoredAccountEnabled(accountId, enabled) {
+export async function updateStoredAccount(accountId, { enabled, username } = {}) {
   if (!pool || !status.connected || !status.accountStorageReady) return { status: "unavailable" };
   try {
     const result = await pool.query(
       `UPDATE cdp_accounts
-       SET enabled = $2, updated_at = now()
+       SET
+         enabled = coalesce($2, enabled),
+         username = coalesce($3, username),
+         updated_at = now()
        WHERE account_id = $1
        RETURNING account_id, username, auth_email, role, profile_id, enabled,
          created_by, created_at, updated_at, last_login_at`,
-      [accountId, Boolean(enabled)]
+      [
+        accountId,
+        typeof enabled === "boolean" ? enabled : null,
+        username || null
+      ]
     );
     return result.rows[0]
       ? { status: "saved", account: publicStoredAccount(result.rows[0]) }
       : { status: "missing" };
   } catch (error) {
     rememberError(error);
-    console.error(`[accounts] status update failed for ${accountId}`, error.message);
+    console.error(`[accounts] update failed for ${accountId}`, error.message);
     return { status: "failed" };
   }
 }

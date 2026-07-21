@@ -597,7 +597,7 @@ async function createManagedAccount(event) {
     const data = await api("/api/admin/accounts", {
       method: "POST",
       body: JSON.stringify({
-        profileId: form.get("profileId"),
+        displayName: form.get("displayName"),
         username: form.get("username"),
         password: form.get("password")
       })
@@ -2202,23 +2202,17 @@ function renderProfileManager() {
   ensureAdminData();
   const managedProfiles = adminData?.profiles || [];
   const managedAccounts = adminData?.accounts || [];
-  const unboundProfiles = managedProfiles.filter((profile) => !profile.account);
   renderShell(`
     <section class="panel stack admin-account-create">
       <div class="section-head">
-        <div><h2>创建玩家账号</h2><div class="meta">账号必须绑定一个尚未绑定账号的玩家身份。</div></div>
+        <div><h2>创建玩家账号</h2><div class="meta">创建账号时会同时生成对应的玩家资料。</div></div>
         <button type="button" class="secondary compact-button" data-action="show-rooms">返回房间</button>
       </div>
       <form class="admin-create-form" data-form="create-account">
-        <label>绑定玩家
-          <select name="profileId" required>
-            <option value="">请选择玩家</option>
-            ${unboundProfiles.map((profile) => `<option value="${escapeHtml(profile.id)}">${escapeHtml(profile.name)}</option>`).join("")}
-          </select>
-        </label>
+        <label>玩家昵称<input name="displayName" required maxlength="16" placeholder="例如 新玩家"></label>
         <label>登录用户名<input name="username" required minlength="3" maxlength="24" pattern="[a-z0-9_-]+" placeholder="例如 benlei"></label>
         <label>初始密码<input name="password" type="password" required minlength="6" maxlength="72"></label>
-        <button type="submit" ${!unboundProfiles.length ? "disabled" : ""}>创建账号</button>
+        <button type="submit">创建账号</button>
       </form>
     </section>
 

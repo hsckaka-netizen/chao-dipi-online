@@ -34,7 +34,7 @@ import {
   recordStoredAccountLogin,
   createStoredAccount,
   saveStoredPlayerProfile,
-  setStoredAccountEnabled
+  updateStoredAccount
 } from "./game-history.js";
 
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
@@ -166,6 +166,10 @@ function publicProfile(profile) {
 }
 
 function storeAccount(account) {
+  const previous = accounts.get(account.id);
+  if (previous?.username && previous.username.toLowerCase() !== String(account.username || "").toLowerCase()) {
+    accountIdsByUsername.delete(previous.username.toLowerCase());
+  }
   accounts.set(account.id, account);
   accountIdsByUsername.set(String(account.username || "").toLowerCase(), account.id);
   if (account.profileId) {
@@ -381,8 +385,17 @@ async function initializePersistence() {
   if (!databaseStatus.connected || !databaseStatus.profileStorageReady) return;
   const storedProfiles = await loadStoredPlayerProfiles();
   storedProfiles.forEach((stored) => {
-    const profile = profileForId(stored.id);
-    if (!profile) return;
+    const profile = profileForId(stored.id) || {
+      id: stored.id,
+      name: stored.name,
+      avatarUrl: "",
+      avatarVersion: 0,
+      avatarUpdatedAt: null,
+      avatarFrame: "",
+      playEffect: "",
+      builtIn: false,
+      updatedAt: stored.updatedAt || now()
+    };
     const storedName = cleanName(stored.name);
     if (storedName && !profileNameTaken(storedName, profile.id)) profile.name = storedName;
     profile.accountId = stored.accountId || null;
@@ -483,11 +496,20 @@ async function createPlayerAccount(admin, body) {
   const passwordCheck = validatePassword(body.password);
   if (passwordCheck.error) throw Object.assign(new Error(passwordCheck.error), { status: 400 });
   if (accountForUsername(usernameCheck.username)) throw Object.assign(new Error("用户名已经存在"), { status: 409 });
-  const profile = profileForId(body.profileId);
-  if (!profile) throw Object.assign(new Error("请选择要绑定的玩家"), { status: 400 });
-  if ([...accounts.values()].some((account) => account.profileId === profile.id)) {
-    throw Object.assign(new Error("这个玩家已经绑定账号"), { status: 409 });
-  }
+  const displayName = cleanName(body.displayName);
+  if (!displayName) throw Object.assign(new Error("请输入玩家昵称"), { status: 400 });
+  if (profileNameTaken(displayName)) throw Object.assign(new Error("这个玩家名称已经存在"), { status: 409 });
+  const profile = {
+    id: `player-${randomUUID()}`,
+    name: displayName,
+    avatarUrl: "",
+    avatarVersion: 0,
+    avatarUpdatedAt: null,
+    avatarFrame: "",
+    playEffect: "",
+    builtIn: false,
+    updatedAt: now()
+  };
 
   const email = authEmailForUsername(usernameCheck.username);
   let authUser = null;
@@ -3695,8 +3717,19 @@ async function handleApi(req, res, pathParts, url) {
       if (!target) return writeJson(res, 404, { error: "账号不存在" });
       if (target.role !== "player") return writeJson(res, 400, { error: "不能在这里停用管理员账号" });
       const body = await readJson(req);
-      const persistence = await setStoredAccountEnabled(target.id, Boolean(body.enabled));
-      if (persistence.status !== "saved") return writeJson(res, 503, { error: "账号状态保存失败" });
+      let username = null;
+      if (Object.hasOwn(body, "username")) {
+        const usernameCheck = validateUsername(body.username);
+        if (usernameCheck.error) return writeJson(res, 400, { error: usernameCheck.error });
+        const owner = accountForUsername(usernameCheck.username);
+        if (owner && owner.id !== target.id) return writeJson(res, 409, { error: "用户名已经存在" });
+        username = usernameCheck.username;
+      }
+      const persistence = await updateStoredAccount(target.id, {
+        enabled: Object.hasOwn(body, "enabled") ? Boolean(body.enabled) : undefined,
+        username
+      });
+      if (persistence.status !== "saved") return writeJson(res, 503, { error: "账号资料保存失败" });
       storeAccount(persistence.account);
       return writeJson(res, 200, adminAccountsPayload());
     }
