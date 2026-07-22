@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { detectNewLargePlayEffects } from "../public/gameplay-effects.js";
+import { detectNewDraggedFiveEffects, detectNewLargePlayEffects } from "../public/gameplay-effects.js";
 
 function playState(cardCount, options = {}) {
   return {
@@ -47,4 +47,60 @@ test("successful winning throws use their total played card count", () => {
     { cards: next.currentTrick.plays[0].cards.slice(6) }
   ];
   assert.equal(detectNewLargePlayEffects(playState(null), next, 2000)[0].until, 3800);
+});
+
+test("protected fives animate as soon as a later play overtakes them", () => {
+  const redFive = { id: "red-five", type: "normal", suit: "H", rank: "5" };
+  const before = {
+    roomId: "ROOM01",
+    trickHistory: [],
+    currentTrick: {
+      number: 4,
+      plays: [
+        { playerId: "lead", played: true, winning: true, cards: [redFive] },
+        { playerId: "follow", played: false, winning: false, cards: [] }
+      ]
+    }
+  };
+  const after = structuredClone(before);
+  after.currentTrick.plays[0].winning = false;
+  after.currentTrick.plays[1] = {
+    playerId: "follow",
+    played: true,
+    winning: true,
+    cards: [{ id: "winning-card", type: "normal", suit: "H", rank: "A" }]
+  };
+
+  assert.deepEqual(detectNewDraggedFiveEffects(before, after, 1000), [{
+    key: "4:lead:red-five",
+    trickNumber: 4,
+    playerId: "lead",
+    cardId: "red-five",
+    suit: "H",
+    until: 1900
+  }]);
+  assert.deepEqual(detectNewDraggedFiveEffects(after, after, 1000), []);
+});
+
+test("a protected five that cannot become current winner animates on its own play", () => {
+  const before = {
+    roomId: "ROOM01",
+    trickHistory: [],
+    currentTrick: {
+      number: 5,
+      plays: [{ playerId: "lead", played: true, winning: true, cards: [] }]
+    }
+  };
+  const after = structuredClone(before);
+  after.currentTrick.plays.push({
+    playerId: "follow",
+    played: true,
+    winning: false,
+    cards: [{ id: "diamond-five", type: "normal", suit: "D", rank: "5" }]
+  });
+
+  const [effect] = detectNewDraggedFiveEffects(before, after, 2000);
+  assert.equal(effect.cardId, "diamond-five");
+  assert.equal(effect.suit, "D");
+  assert.equal(effect.until, 2900);
 });

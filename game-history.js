@@ -659,20 +659,262 @@ function requirePool() {
   return pool;
 }
 
-export async function listPlayerStatistics() {
+function seasonError(message, statusCode = 400) {
+  const error = new Error(message);
+  error.status = statusCode;
+  return error;
+}
+
+function normalizedSeasonId(value) {
+  if (value === undefined || value === null || value === "" || value === "all") return null;
+  const text = String(value).trim();
+  if (!/^\d+$/.test(text)) throw seasonError("赛季编号无效");
+  return text;
+}
+
+function seasonValues(body = {}, current = null) {
+  const name = Object.hasOwn(body, "name") ? String(body.name || "").trim() : String(current?.name || "").trim();
+  const startsAtRaw = Object.hasOwn(body, "startsAt") ? body.startsAt : current?.starts_at;
+  const endsAtRaw = Object.hasOwn(body, "endsAt") ? body.endsAt : current?.ends_at;
+  const startsAt = startsAtRaw ? new Date(startsAtRaw) : null;
+  const endsAt = endsAtRaw ? new Date(endsAtRaw) : null;
+  const isActive = Object.hasOwn(body, "isActive") ? Boolean(body.isActive) : Boolean(current?.is_active);
+  if (!name) throw seasonError("请输入赛季名称");
+  if (name.length > 64) throw seasonError("赛季名称最多 64 个字");
+  if (!startsAt || Number.isNaN(startsAt.getTime())) throw seasonError("请输入有效的赛季开始时间");
+  if (endsAtRaw && (!endsAt || Number.isNaN(endsAt.getTime()))) throw seasonError("请输入有效的赛季结束时间");
+  if (endsAt && endsAt <= startsAt) throw seasonError("赛季结束时间必须晚于开始时间");
+  return {
+    name,
+    startsAt: startsAt.toISOString(),
+    endsAt: endsAt ? endsAt.toISOString() : null,
+    isActive
+  };
+}
+
+export async function listSeasons() {
   const result = await requirePool().query(`
+    SELECT season_id, name, starts_at, ends_at, is_active, created_at, updated_at
+    FROM cdp_seasons
+    ORDER BY is_active DESC, starts_at DESC, season_id DESC
+  `);
+  return result.rows;
+}
+
+export async function saveSeason(seasonId, body, administratorId) {
+  const database = requirePool();
+  const normalizedId = normalizedSeasonId(seasonId);
+  const client = await database.connect();
+  try {
+    await client.query("BEGIN");
+    let current = null;
+    if (normalizedId) {
+      const currentResult = await client.query(
+        "SELECT * FROM cdp_seasons WHERE season_id = $1::bigint FOR UPDATE",
+        [normalizedId]
+      );
+      current = currentResult.rows[0] || null;
+      if (!current) throw seasonError("赛季不存在", 404);
+    }
+    const values = seasonValues(body, current);
+    if (values.isActive) {
+      await client.query(
+        "UPDATE cdp_seasons SET is_active = false, updated_at = now() WHERE is_active AND ($1::bigint IS NULL OR season_id <> $1::bigint)",
+        [normalizedId]
+      );
+    }
+    const result = normalizedId
+      ? await client.query(
+        `UPDATE cdp_seasons
+         SET name = $2, starts_at = $3::timestamptz, ends_at = $4::timestamptz,
+             is_active = $5, updated_at = now()
+         WHERE season_id = $1::bigint
+         RETURNING season_id, name, starts_at, ends_at, is_active, created_at, updated_at`,
+        [normalizedId, values.name, values.startsAt, values.endsAt, values.isActive]
+      )
+      : await client.query(
+        `INSERT INTO cdp_seasons(name, starts_at, ends_at, is_active, created_by)
+         VALUES ($1, $2::timestamptz, $3::timestamptz, $4, $5::uuid)
+         RETURNING season_id, name, starts_at, ends_at, is_active, created_at, updated_at`,
+        [values.name, values.startsAt, values.endsAt, values.isActive, administratorId]
+      );
+    await client.query("COMMIT");
+    return result.rows[0];
+  } catch (error) {
+    await client.query("ROLLBACK");
+    if (error.code === "23505") throw seasonError("赛季名称已经存在", 409);
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+async function seasonPeriod(database, seasonId) {
+  const normalizedId = normalizedSeasonId(seasonId);
+  if (!normalizedId) return null;
+  const result = await database.query(
+    "SELECT season_id, name, starts_at, ends_at, is_active FROM cdp_seasons WHERE season_id = $1::bigint",
+    [normalizedId]
+  );
+  if (!result.rows[0]) throw seasonError("赛季不存在", 404);
+  return result.rows[0];
+}
+
+const PERIOD_STATISTICS_SQL = `
+  WITH identified_players AS (
+    SELECT
+      player.*,
+      game.finished_at,
+      jsonb_array_length(game.trick_history) AS game_tricks,
+      coalesce(player.account_id::text, 'profile:' || player.profile_id) AS identity_key
+    FROM cdp_game_players player
+    JOIN cdp_games game ON game.game_id = player.game_id
+    WHERE NOT player.is_ai
+      AND (player.account_id IS NOT NULL OR player.profile_id IS NOT NULL)
+      AND game.finished_at >= $1::timestamptz
+      AND ($2::timestamptz IS NULL OR game.finished_at < $2::timestamptz)
+      AND ($3::uuid IS NULL OR player.account_id = $3::uuid)
+  ),
+  latest_identity AS (
+    SELECT DISTINCT ON (player.identity_key)
+      player.identity_key,
+      player.account_id,
+      player.profile_id,
+      player.name_snapshot,
+      player.avatar_url_snapshot
+    FROM identified_players player
+    ORDER BY player.identity_key, player.finished_at DESC, player.game_id DESC
+  ),
+  base AS (
+    SELECT
+      player.identity_key,
+      count(*)::integer AS games_played,
+      count(*) FILTER (WHERE player.won)::integer AS wins,
+      count(*) FILTER (WHERE NOT player.won)::integer AS losses,
+      coalesce(sum(player.game_score), 0)::numeric(12, 2) AS total_score,
+      coalesce(avg(player.game_score), 0)::numeric(12, 2) AS average_score,
+      coalesce(sum(player.trick_score), 0)::integer AS total_trick_score,
+      count(*) FILTER (WHERE player.role = '庄家')::integer AS banker_games,
+      count(*) FILTER (WHERE player.role = '庄家' AND player.won)::integer AS banker_wins,
+      coalesce(sum(player.game_score) FILTER (WHERE player.role = '庄家'), 0)::numeric(12, 2) AS banker_score,
+      count(*) FILTER (WHERE player.role = '狗腿')::integer AS dogleg_games,
+      count(*) FILTER (WHERE player.role = '狗腿' AND player.won)::integer AS dogleg_wins,
+      coalesce(sum(player.game_score) FILTER (WHERE player.role = '狗腿'), 0)::numeric(12, 2) AS dogleg_score,
+      count(*) FILTER (WHERE player.role = '闲家')::integer AS idle_games,
+      count(*) FILTER (WHERE player.role = '闲家' AND player.won)::integer AS idle_wins,
+      coalesce(sum(player.game_score) FILTER (WHERE player.role = '闲家'), 0)::numeric(12, 2) AS idle_score,
+      coalesce(sum(player.dragged_red_fives), 0)::integer AS dragged_red_fives,
+      coalesce(sum(player.dragged_diamond_fives), 0)::integer AS dragged_diamond_fives,
+      coalesce(sum(player.throw_failures), 0)::integer AS throw_failures,
+      coalesce(sum(coalesce(nullif(player.evaluation_data ->> 'enemyDraggedRedFives', '')::numeric, 0)), 0)::integer AS opponent_dragged_red_fives,
+      coalesce(sum(coalesce(nullif(player.evaluation_data ->> 'enemyDraggedDiamondFives', '')::numeric, 0)), 0)::integer AS opponent_dragged_diamond_fives,
+      coalesce(sum(coalesce(nullif(player.evaluation_data ->> 'teammateDraggedRedFives', '')::numeric, 0)), 0)::integer AS teammate_dragged_red_fives,
+      coalesce(sum(coalesce(nullif(player.evaluation_data ->> 'teammateDraggedDiamondFives', '')::numeric, 0)), 0)::integer AS teammate_dragged_diamond_fives,
+      coalesce(sum(coalesce(nullif(player.evaluation_data ->> 'wonTricks', '')::numeric, 0)), 0)::integer AS won_tricks,
+      coalesce(sum(player.game_tricks), 0)::integer AS total_tricks,
+      count(*) FILTER (WHERE game.bottom_winner_room_player_id = player.room_player_id)::integer AS bottom_wins
+    FROM identified_players player
+    JOIN cdp_games game ON game.game_id = player.game_id
+    GROUP BY player.identity_key
+  ),
+  tag_totals AS (
+    SELECT
+      player.identity_key,
+      count(*) FILTER (WHERE tag.tag_code = 'mvp')::integer AS mvp_count,
+      count(*) FILTER (WHERE tag.tag_code = 'couch')::integer AS couch_count,
+      count(*) FILTER (WHERE tag.tag_code = 'pit')::integer AS pit_count,
+      count(*) FILTER (WHERE tag.tag_code = 'support')::integer AS support_count,
+      count(*) FILTER (WHERE tag.tag_code = 'stiff')::integer AS stiff_count,
+      count(*) FILTER (WHERE tag.tag_code = 'stiffest')::integer AS stiffest_count,
+      count(*) FILTER (WHERE tag.tag_code = 'thunder')::integer AS thunder_count,
+      count(*) FILTER (WHERE tag.tag_code = 'precision')::integer AS precision_count,
+      count(*) FILTER (WHERE tag.tag_code = 'god')::integer AS god_count,
+      count(*) FILTER (WHERE tag.tag_code = 'heaven')::integer AS heaven_count,
+      count(*) FILTER (WHERE tag.tag_code = 'god-pit')::integer AS god_pit_count,
+      count(*) FILTER (WHERE tag.tag_code = 'exhausted')::integer AS exhausted_count,
+      count(*) FILTER (WHERE tag.tag_code = 'pillar')::integer AS pillar_count
+    FROM cdp_game_tags tag
+    JOIN identified_players player
+      ON player.game_id = tag.game_id AND player.room_player_id = tag.room_player_id
+    GROUP BY player.identity_key
+  )
+  SELECT
+    latest.account_id,
+    latest.profile_id,
+    account.username,
+    latest.name_snapshot AS latest_name,
+    latest.avatar_url_snapshot AS latest_avatar_url,
+    profile.avatar_frame,
+    base.games_played,
+    base.wins,
+    base.losses,
+    CASE WHEN base.games_played > 0 THEN round(base.wins::numeric * 100 / base.games_played, 2) ELSE 0 END AS win_rate,
+    base.total_score,
+    base.average_score,
+    base.total_trick_score,
+    base.banker_games,
+    base.banker_wins,
+    base.banker_score,
+    base.dogleg_games,
+    base.dogleg_wins,
+    base.dogleg_score,
+    base.idle_games,
+    base.idle_wins,
+    base.idle_score,
+    base.dragged_red_fives,
+    base.dragged_diamond_fives,
+    base.throw_failures,
+    base.opponent_dragged_red_fives,
+    base.opponent_dragged_diamond_fives,
+    base.teammate_dragged_red_fives,
+    base.teammate_dragged_diamond_fives,
+    base.won_tricks,
+    base.total_tricks,
+    base.bottom_wins,
+    coalesce(tags.mvp_count, 0) AS mvp_count,
+    coalesce(tags.couch_count, 0) AS couch_count,
+    coalesce(tags.pit_count, 0) AS pit_count,
+    coalesce(tags.support_count, 0) AS support_count,
+    coalesce(tags.stiff_count, 0) AS stiff_count,
+    coalesce(tags.stiffest_count, 0) AS stiffest_count,
+    coalesce(tags.thunder_count, 0) AS thunder_count,
+    coalesce(tags.precision_count, 0) AS precision_count,
+    coalesce(tags.god_count, 0) AS god_count,
+    coalesce(tags.heaven_count, 0) AS heaven_count,
+    coalesce(tags.god_pit_count, 0) AS god_pit_count,
+    coalesce(tags.exhausted_count, 0) AS exhausted_count,
+    coalesce(tags.pillar_count, 0) AS pillar_count
+  FROM base
+  JOIN latest_identity latest ON latest.identity_key = base.identity_key
+  LEFT JOIN cdp_accounts account ON account.account_id = latest.account_id
+  LEFT JOIN cdp_player_profiles profile ON profile.profile_id = latest.profile_id
+  LEFT JOIN tag_totals tags ON tags.identity_key = base.identity_key
+`;
+
+export async function listPlayerStatistics(seasonId = null) {
+  const database = requirePool();
+  const period = await seasonPeriod(database, seasonId);
+  const result = period
+    ? await database.query(
+      `${PERIOD_STATISTICS_SQL} ORDER BY total_score DESC, wins DESC, games_played DESC, latest_name ASC`,
+      [period.starts_at, period.ends_at, null]
+    )
+    : await database.query(`
     SELECT * FROM cdp_player_statistics
     ORDER BY total_score DESC, wins DESC, games_played DESC, latest_name ASC
   `);
   return result.rows;
 }
 
-export async function getPlayerStatistics(accountId) {
+export async function getPlayerStatistics(accountId, seasonId = null) {
   const database = requirePool();
-  const statisticsResult = await database.query(
-    "SELECT * FROM cdp_player_statistics WHERE account_id = $1::uuid",
-    [accountId]
-  );
+  const period = await seasonPeriod(database, seasonId);
+  const statisticsResult = period
+    ? await database.query(PERIOD_STATISTICS_SQL, [period.starts_at, period.ends_at, accountId])
+    : await database.query(
+      "SELECT * FROM cdp_player_statistics WHERE account_id = $1::uuid",
+      [accountId]
+    );
   const player = statisticsResult.rows[0] || null;
   if (!player) return null;
   const trendResult = await database.query(
@@ -688,6 +930,8 @@ export async function getPlayerStatistics(accountId) {
       FROM cdp_game_players player
       JOIN cdp_games game ON game.game_id = player.game_id
       WHERE player.account_id = $1::uuid
+        AND ($2::timestamptz IS NULL OR game.finished_at >= $2::timestamptz)
+        AND ($3::timestamptz IS NULL OR game.finished_at < $3::timestamptz)
     ), recent_games AS (
       SELECT * FROM scored_games
       ORDER BY finished_at DESC, game_id DESC
@@ -696,7 +940,7 @@ export async function getPlayerStatistics(accountId) {
     SELECT game_id, finished_at, game_score, running_score
     FROM recent_games
     ORDER BY finished_at, game_id`,
-    [accountId]
+    [accountId, period?.starts_at || null, period?.ends_at || null]
   );
   return { player, trend: trendResult.rows };
 }

@@ -95,6 +95,64 @@ test("web server starts even when the history database URL is invalid", async (t
   assert.equal(response.status, 200);
 });
 
+test("players can leave the lobby and reclaim their active-game seat", async (t) => {
+  const server = await startServer();
+  t.after(() => server.child.kill());
+
+  const lobby = await jsonRequest(`${server.baseUrl}/api/rooms`, {
+    method: "POST",
+    body: JSON.stringify({ profileId: "player-benlei" })
+  });
+  const secondPlayer = await jsonRequest(`${server.baseUrl}/api/rooms/${lobby.roomId}/join`, {
+    method: "POST",
+    body: JSON.stringify({ profileId: "player-biesan" })
+  });
+  await jsonRequest(`${server.baseUrl}/api/rooms/${lobby.roomId}/leave-room`, {
+    method: "POST",
+    body: JSON.stringify({ playerId: lobby.playerId, token: lobby.token })
+  });
+
+  const afterLeave = await jsonRequest(`${server.baseUrl}/api/rooms`);
+  const listedLobby = afterLeave.rooms.find((room) => room.roomId === lobby.roomId);
+  assert.ok(listedLobby);
+  assert.equal(listedLobby.players.some((player) => player.profileId === "player-benlei"), false);
+  assert.equal(listedLobby.hostName, "瘪三");
+
+  const freshJoin = await jsonRequest(`${server.baseUrl}/api/rooms/${lobby.roomId}/join`, {
+    method: "POST",
+    body: JSON.stringify({ profileId: "player-benlei" })
+  });
+  assert.notEqual(freshJoin.playerId, lobby.playerId);
+  assert.equal(freshJoin.snapshot.players.filter((player) => player.profileId === "player-benlei").length, 1);
+
+  await jsonRequest(`${server.baseUrl}/api/rooms/${lobby.roomId}/test-players`, {
+    method: "POST",
+    body: JSON.stringify({ playerId: secondPlayer.playerId, token: secondPlayer.token, targetCount: 5 })
+  });
+  await jsonRequest(`${server.baseUrl}/api/rooms/${lobby.roomId}/ready`, {
+    method: "POST",
+    body: JSON.stringify({ playerId: freshJoin.playerId, token: freshJoin.token, ready: true })
+  });
+  await jsonRequest(`${server.baseUrl}/api/rooms/${lobby.roomId}/ready`, {
+    method: "POST",
+    body: JSON.stringify({ playerId: secondPlayer.playerId, token: secondPlayer.token, ready: true })
+  });
+  await jsonRequest(`${server.baseUrl}/api/rooms/${lobby.roomId}/start`, {
+    method: "POST",
+    body: JSON.stringify({ playerId: secondPlayer.playerId, token: secondPlayer.token })
+  });
+
+  const reconnected = await jsonRequest(`${server.baseUrl}/api/rooms/${lobby.roomId}/join`, {
+    method: "POST",
+    body: JSON.stringify({ profileId: "player-benlei" })
+  });
+  assert.equal(reconnected.reconnected, true);
+  assert.equal(reconnected.playerId, freshJoin.playerId);
+  assert.equal(reconnected.token, freshJoin.token);
+  assert.equal(reconnected.snapshot.players.filter((player) => player.profileId === "player-benlei").length, 1);
+  assert.equal(reconnected.snapshot.hand.length, 53);
+});
+
 test("room snapshots stay monotonic and visual assets are cached", async (t) => {
   const server = await startServer();
   t.after(() => server.child.kill());
@@ -174,10 +232,12 @@ test("room snapshots stay monotonic and visual assets are cached", async (t) => 
   assert.equal(unversionedAssetResponse.status, 200);
   assert.equal(unversionedAssetResponse.headers.get("cache-control"), "no-cache");
 
-  const effectModuleResponse = await fetch(`${server.baseUrl}/gameplay-effects.js?v=d2368568e06d`);
+  const effectModuleResponse = await fetch(`${server.baseUrl}/gameplay-effects.js?v=14791e626d30`);
   assert.equal(effectModuleResponse.status, 200);
   assert.equal(effectModuleResponse.headers.get("cache-control"), "public, max-age=31536000, immutable");
-  assert.match(await effectModuleResponse.text(), /detectNewLargePlayEffects/);
+  const effectModuleSource = await effectModuleResponse.text();
+  assert.match(effectModuleSource, /detectNewLargePlayEffects/);
+  assert.match(effectModuleSource, /detectNewDraggedFiveEffects/);
 
   const indexResponse = await fetch(`${server.baseUrl}/`);
   assert.equal(indexResponse.status, 200);
@@ -201,6 +261,7 @@ test("room snapshots stay monotonic and visual assets are cached", async (t) => 
   assert.equal(started.stage, "bidding", "开局请求应先返回，不应同步跑完机器人准备流程");
   assert.equal(started.kittySize, 5);
   assert.deepEqual(started.removedCards, []);
+  assert.ok(started.currentTrick === null || started.currentTrick.plays.every((play) => Object.hasOwn(play, "avatarFrame")));
 
   const spectate = await jsonRequest(`${server.baseUrl}/api/rooms/${created.roomId}/spectate`, {
     method: "POST",

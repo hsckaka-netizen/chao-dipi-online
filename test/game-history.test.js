@@ -250,6 +250,17 @@ test("account statistics migration adds seasons and account-based aggregation", 
   assert.match(migration, /CREATE VIEW cdp_player_statistics/);
 });
 
+test("season statistics filter existing settlements without adding per-game writes", async () => {
+  const sourcePath = fileURLToPath(new URL("../game-history.js", import.meta.url));
+  const source = await readFile(sourcePath, "utf8");
+  assert.match(source, /export async function listSeasons/);
+  assert.match(source, /export async function saveSeason/);
+  assert.match(source, /game\.finished_at >= \$1::timestamptz/);
+  assert.match(source, /game\.finished_at < \$2::timestamptz/);
+  const gameInsertColumns = source.match(/INSERT INTO cdp_games \(([\s\S]*?)\) VALUES/)?.[1] || "";
+  assert.doesNotMatch(gameInsertColumns, /season_id/);
+});
+
 test("player cosmetics migration separates avatar frames from card skins", async () => {
   const migrationPath = fileURLToPath(new URL("../db/migrations/006_player_cosmetics.sql", import.meta.url));
   const migration = await readFile(migrationPath, "utf8");

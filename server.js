@@ -30,11 +30,13 @@ import {
   initializeGameHistory,
   listPlayerStatistics,
   listRecentGames,
+  listSeasons,
   loadStoredAccounts,
   loadStoredPlayerProfiles,
   queueGameRecord,
   recordStoredAccountLogin,
   createStoredAccount,
+  saveSeason,
   saveStoredPlayerProfile,
   updateStoredAccount
 } from "./game-history.js";
@@ -969,6 +971,9 @@ function trickSnapshot(room, trick) {
         playerId: player.id,
         playerName: player.name,
         avatarUrl: player.avatarUrl || "",
+        avatarFrame: normalizeAvatarFrame(player.avatarFrame),
+        cardSkin: normalizeCardSkin(player.cardSkin),
+        playEffect: normalizePlayEffect(player.playEffect),
         role: playerRole(room, player.id),
         played: Boolean(play),
         lead: trick.leaderId === player.id,
@@ -3786,6 +3791,19 @@ async function handleApi(req, res, pathParts, url) {
       await updateSupabasePassword(target.id, passwordCheck.password);
       return writeJson(res, 200, { ok: true });
     }
+    if (pathParts[2] === "seasons" && pathParts.length === 3 && req.method === "GET") {
+      return writeJson(res, 200, { seasons: await listSeasons() });
+    }
+    if (pathParts[2] === "seasons" && pathParts.length === 3 && req.method === "POST") {
+      const body = await readJson(req);
+      const season = await saveSeason(null, body, admin.id);
+      return writeJson(res, 201, { season, seasons: await listSeasons() });
+    }
+    if (pathParts[2] === "seasons" && pathParts[3] && pathParts.length === 4 && req.method === "PATCH") {
+      const body = await readJson(req);
+      const season = await saveSeason(pathParts[3], body, admin.id);
+      return writeJson(res, 200, { season, seasons: await listSeasons() });
+    }
     if (pathParts[2] === "profiles" && pathParts[3] && pathParts[4] === "avatar" && req.method === "POST") {
       const profile = profileForId(pathParts[3]);
       if (!profile) return writeJson(res, 404, { error: "玩家不存在" });
@@ -3800,11 +3818,14 @@ async function handleApi(req, res, pathParts, url) {
     if (pathParts[2] === "status") {
       return writeJson(res, 200, gameHistoryStatus());
     }
+    if (pathParts[2] === "seasons") {
+      return writeJson(res, 200, { seasons: await listSeasons() });
+    }
     if (pathParts[2] === "statistics") {
-      return writeJson(res, 200, { players: await listPlayerStatistics() });
+      return writeJson(res, 200, { players: await listPlayerStatistics(url.searchParams.get("seasonId")) });
     }
     if (pathParts[2] === "players" && pathParts[3]) {
-      const detail = await getPlayerStatistics(pathParts[3]);
+      const detail = await getPlayerStatistics(pathParts[3], url.searchParams.get("seasonId"));
       return detail
         ? writeJson(res, 200, detail)
         : writeJson(res, 404, { error: "暂无该玩家的牌局数据" });
@@ -3969,14 +3990,26 @@ async function handleApi(req, res, pathParts, url) {
 
     if (req.method === "POST" && pathParts[3] === "join") {
       const body = await readJson(req);
-      const selectedProfile = playerProfileFromBody(body, accountForRequest(req));
+      const joiningAccount = accountForRequest(req);
+      const selectedProfile = playerProfileFromBody(body, joiningAccount);
       if (selectedProfile.error) return writeJson(res, selectedProfile.status, { error: selectedProfile.error });
       const profile = selectedProfile.profile;
+      const existingPlayer = room.players.find((player) => player.profileId === profile.id) || null;
+      if (existingPlayer) {
+        if (accountAuthStatus().configured && (!joiningAccount || joiningAccount.profileId !== profile.id)) {
+          return writeJson(res, 409, { error: "这个玩家已经在房间里" });
+        }
+        if (joiningAccount) existingPlayer.accountId = joiningAccount.id;
+        return writeJson(res, 200, {
+          roomId: room.id,
+          playerId: existingPlayer.id,
+          token: existingPlayer.token,
+          reconnected: true,
+          snapshot: roomSnapshot(room, existingPlayer)
+        });
+      }
       if (room.status !== "lobby") return writeJson(res, 409, { error: "牌局已经开始，暂不能加入" });
       if (room.players.length >= MAX_PLAYERS) return writeJson(res, 409, { error: "房间已满" });
-      if (room.players.some((player) => player.profileId === profile.id)) {
-        return writeJson(res, 409, { error: "这个玩家已经在房间里" });
-      }
 
       const player = createPlayer(profile, false);
       room.players.push(player);
@@ -4436,6 +4469,7 @@ async function serveStatic(req, res, url) {
     ".png": "image/png",
     ".jpg": "image/jpeg",
     ".jpeg": "image/jpeg",
+    ".gif": "image/gif",
     ".webp": "image/webp"
   }[extension] || "application/octet-stream";
   const versionedStaticFile = url.searchParams.has("v");

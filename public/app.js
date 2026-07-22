@@ -1,5 +1,5 @@
 import { applyStatePatch } from "./state-patch.js?v=9330552c7e1e";
-import { detectNewLargePlayEffects } from "./gameplay-effects.js?v=d2368568e06d";
+import { detectNewDraggedFiveEffects, detectNewLargePlayEffects } from "./gameplay-effects.js?v=14791e626d30";
 import { ASSET_URLS } from "./asset-versions.js?v=b62e391a838d";
 
 const app = document.querySelector("#app");
@@ -91,6 +91,9 @@ let statisticsSortDirection = "desc";
 let statisticsSelectedAccountId = "";
 let statisticsPlayerDetailLoadingId = "";
 const statisticsPlayerDetails = new Map();
+let statisticsSeasonId = "all";
+let statisticsSeasons = [];
+let statisticsSeasonsLoaded = false;
 let joinableRooms = [];
 let joinableRoomsLoaded = false;
 let joinableRoomsLoading = false;
@@ -272,6 +275,7 @@ function captureGameplayEffects(previousState, nextState) {
     const activeKeys = new Set(largePlayEffects.map((effect) => effect.key));
     largePlayEffects.push(...detectNewLargePlayEffects(previousState, nextState, nowMs)
       .filter((effect) => !activeKeys.has(effect.key)));
+    const newDraggedFiveEffects = detectNewDraggedFiveEffects(previousState, nextState, nowMs);
 
     const previousDoglegs = new Set(previousState.setup?.doglegPlayerIds || []);
     const doglegCard = nextState.setup?.doglegCard;
@@ -292,19 +296,17 @@ function captureGameplayEffects(previousState, nextState) {
       if (nextRoundStarted || nextState.status === "lobby") draggedFiveEffect = null;
     }
 
-    const previousCompleted = new Set((previousState.trickHistory || []).map((trick) => trick.number));
-    const newlyCompleted = (nextState.trickHistory || []).filter((trick) => !previousCompleted.has(trick.number));
-    const completed = newlyCompleted[newlyCompleted.length - 1];
-    if (completed) {
-      const entries = (completed.plays || []).flatMap((play) => {
-        if (!play.played || play.playerId === completed.winnerId) return [];
-        return (play.cards || [])
-          .filter((card) => card.type === "normal" && card.rank === "5" && (card.suit === "H" || card.suit === "D"))
-          .map((card) => ({ playerId: play.playerId, cardId: card.id, suit: card.suit }));
-      });
-      if (entries.length) {
-        draggedFiveEffect = { trickNumber: completed.number, entries, animateUntil: nowMs + 900 };
-      }
+    if (newDraggedFiveEffects.length && nextState.status !== "lobby") {
+      const trickNumber = Math.max(...newDraggedFiveEffects.map((effect) => effect.trickNumber));
+      const latestEffects = newDraggedFiveEffects.filter((effect) => effect.trickNumber === trickNumber);
+      const previousEntries = draggedFiveEffect?.trickNumber === trickNumber ? draggedFiveEffect.entries : [];
+      const entriesByKey = new Map(previousEntries.map((entry) => [`${entry.playerId}:${entry.cardId}`, entry]));
+      latestEffects.forEach((effect) => entriesByKey.set(`${effect.playerId}:${effect.cardId}`, effect));
+      draggedFiveEffect = {
+        trickNumber,
+        entries: [...entriesByKey.values()],
+        animateUntil: Math.max(...latestEffects.map((effect) => effect.until))
+      };
     }
   } else {
     doglegRevealEffects = [];
@@ -699,6 +701,35 @@ async function resetManagedPassword(event) {
   }
 }
 
+async function saveSeasonForm(event) {
+  event.preventDefault();
+  const formEl = event.target.closest("form");
+  const form = new FormData(formEl);
+  const seasonId = formEl.dataset.seasonId || "";
+  const startsAt = String(form.get("startsAt") || "");
+  const endsAt = String(form.get("endsAt") || "");
+  try {
+    const data = await api(seasonId ? `/api/admin/seasons/${encodeURIComponent(seasonId)}` : "/api/admin/seasons", {
+      method: seasonId ? "PATCH" : "POST",
+      body: JSON.stringify({
+        name: form.get("name"),
+        startsAt: startsAt ? new Date(startsAt).toISOString() : "",
+        endsAt: endsAt ? new Date(endsAt).toISOString() : null,
+        isActive: form.get("isActive") === "on"
+      })
+    });
+    statisticsSeasons = data.seasons || [];
+    statisticsSeasonsLoaded = true;
+    playerStatisticsLoaded = false;
+    statisticsPlayerDetails.clear();
+    if (!seasonId) formEl.reset();
+    setMessage(seasonId ? "赛季设置已更新。" : "赛季已创建。", false);
+    render();
+  } catch (error) {
+    setMessage(error.message, true);
+  }
+}
+
 async function roomAction(path, options = {}) {
   const activeSession = session ? { ...session } : null;
   const response = await api(path, options);
@@ -733,19 +764,31 @@ function ensureProfiles() {
     });
 }
 
-function ensurePlayerStatistics() {
-  if (playerStatisticsLoaded || playerStatisticsLoading) return;
+function ensurePlayerStatistics(force = false) {
+  if ((!force && playerStatisticsLoaded) || playerStatisticsLoading) return;
   playerStatisticsLoading = true;
+  const requestedSeasonId = statisticsSeasonId;
   Promise.all([
-    api("/api/history/statistics"),
+    api(`/api/history/statistics?seasonId=${encodeURIComponent(requestedSeasonId)}`),
+    statisticsSeasonsLoaded
+      ? Promise.resolve({ seasons: statisticsSeasons })
+      : api("/api/history/seasons").catch(() => ({ seasons: [] })),
     api("/api/history/status").catch(() => null)
   ])
-    .then(([data, status]) => {
+    .then(([data, seasonData, status]) => {
+      if (requestedSeasonId !== statisticsSeasonId) {
+        playerStatisticsLoading = false;
+        return ensurePlayerStatistics(true);
+      }
       playerStatisticsRows = data.players || [];
-      playerStatistics = new Map(playerStatisticsRows.map((row) => [row.profile_id, {
-        games: Number(row.games_played) || 0,
-        score: Number(row.total_score) || 0
-      }]));
+      if (requestedSeasonId === "all") {
+        playerStatistics = new Map(playerStatisticsRows.map((row) => [row.profile_id, {
+          games: Number(row.games_played) || 0,
+          score: Number(row.total_score) || 0
+        }]));
+      }
+      statisticsSeasons = seasonData.seasons || [];
+      statisticsSeasonsLoaded = true;
       historyStatus = status;
       playerStatisticsLoaded = true;
       playerStatisticsLoading = false;
@@ -754,6 +797,10 @@ function ensurePlayerStatistics() {
     .catch(() => {
       playerStatisticsLoaded = true;
       playerStatisticsLoading = false;
+      if (requestedSeasonId !== statisticsSeasonId) {
+        playerStatisticsLoaded = false;
+        return ensurePlayerStatistics(true);
+      }
       render();
     });
 }
@@ -2047,6 +2094,7 @@ function lobbyEmptyText(waitingNextRound) {
 function renderShell(content) {
   const account = authState.account;
   const accountLabel = account?.profile?.name || account?.username || "";
+  const canLeaveCurrentRoom = Boolean(session && !session.spectator && state?.status === "lobby");
   app.innerHTML = `
     <div class="page">
       <header class="topbar">
@@ -2064,7 +2112,7 @@ function renderShell(content) {
             ${!session ? `<button class="secondary compact-button" data-action="${account.role === "admin" ? "show-admin" : "show-account"}">${account.role === "admin" ? "管理后台" : "我的资料"}</button>` : ""}
             ${!session ? `<button class="secondary compact-button" data-action="logout-account">退出登录</button>` : ""}
           ` : `<button class="secondary compact-button" data-action="show-login">玩家登录</button>`}
-          ${session ? `<button class="secondary compact-button" data-action="${session.spectator ? "leave-spectating" : "leave"}">${session.spectator ? "退出观战" : "退出本机身份"}</button>` : ""}
+          ${session ? `<button class="secondary compact-button" data-action="${session.spectator ? "leave-spectating" : canLeaveCurrentRoom ? "room-leave" : "leave"}" ${!session.spectator && !canLeaveCurrentRoom ? `title="席位会保留，可使用同一账号重新进入"` : ""}>${session.spectator ? "退出观战" : canLeaveCurrentRoom ? "退出房间" : "暂离牌桌"}</button>` : ""}
         </div>
       </header>
       ${message ? `<div class="status toast ${messageBad ? "bad" : ""}" role="status">${escapeHtml(message)}</div>` : ""}
@@ -2156,7 +2204,7 @@ function renderJoinableRooms() {
       <div class="section-head">
         <div>
           <h2>当前房间</h2>
-          <div class="meta">等待中的房间可加入；进行中的房间可选择任意玩家视角观战。</div>
+          <div class="meta">等待中的房间可加入；进行中的玩家可返回原席位，其他玩家可选择视角观战。</div>
         </div>
         <button type="button" class="secondary compact-button" data-action="refresh-rooms" ${joinableRoomsLoading ? "disabled" : ""}>
           ${joinableRoomsLoading ? "刷新中" : "刷新"}
@@ -2170,6 +2218,8 @@ function renderJoinableRooms() {
 function renderJoinableRoom(room) {
   const players = room.players || [];
   const joinable = Boolean(room.joinable);
+  const currentProfileId = authState.account?.profile?.id || authState.account?.profileId || "";
+  const rejoinable = Boolean(currentProfileId && players.some((player) => player.profileId === currentProfileId));
   return `
     <article class="joinable-room-card ${joinable ? "" : "in-progress"}">
       <div class="joinable-room-main">
@@ -2188,28 +2238,35 @@ function renderJoinableRoom(room) {
         </div>
       </div>
       <div class="joinable-room-players">
-        ${players.map((player) => room.status === "dealt" ? `
+        ${players.map((player) => {
+          const ownSeat = Boolean(currentProfileId && player.profileId === currentProfileId);
+          return room.status === "dealt" ? `
           <button
             type="button"
-            class="joinable-room-player spectate-player"
-            data-action="spectate-player"
+            class="joinable-room-player spectate-player ${ownSeat ? "own-seat" : ""}"
+            data-action="${ownSeat ? "join-listed-room" : "spectate-player"}"
             data-room-id="${escapeHtml(room.roomId)}"
             data-player-id="${escapeHtml(player.id)}"
-            title="以${escapeHtml(player.name)}的视角观战"
+            title="${ownSeat ? "返回自己的牌桌席位" : `以${escapeHtml(player.name)}的视角观战`}"
           >
             ${avatarHtml(player.name, player.avatarUrl, "normal", player.avatarFrame)}
             <span class="joinable-room-player-name">${escapeHtml(player.name)}</span>
-            <span class="spectate-player-label">${authState.account ? "观战" : "登录后观战"}</span>
+            <span class="spectate-player-label">${ownSeat ? "返回" : authState.account ? "观战" : "登录后观战"}</span>
           </button>
         ` : `
-          <span class="joinable-room-player ${player.ready ? "ready" : ""}">
+          <span class="joinable-room-player ${player.ready ? "ready" : ""} ${ownSeat ? "own-seat" : ""}">
             ${avatarHtml(player.name, player.avatarUrl, "normal", player.avatarFrame)}
             <span class="joinable-room-player-name">${escapeHtml(player.name)}</span>
           </span>
-        `).join("")}
+        `;
+        }).join("")}
       </div>
       <div class="joinable-room-actions">
-        ${joinable ? `
+        ${rejoinable ? `
+          <button type="button" data-action="join-listed-room" data-room-id="${escapeHtml(room.roomId)}">
+            ${room.status === "dealt" ? "返回牌桌" : "返回房间"}
+          </button>
+        ` : joinable ? `
           <button type="button" data-action="join-listed-room" data-room-id="${escapeHtml(room.roomId)}">
             ${authState.account?.profile ? "加入房间" : "登录后加入"}
           </button>
@@ -2230,6 +2287,8 @@ function renderHomeStatistics() {
   const rows = sortedStatisticsRows();
   const appearances = rows.reduce((sum, row) => sum + (Number(row.games_played) || 0), 0);
   const recordedState = historyStatus?.enabled ? "记录中" : "未开启";
+  const selectedSeason = statisticsSeasons.find((season) => String(season.season_id) === statisticsSeasonId) || null;
+  const rankingTitle = selectedSeason ? `${selectedSeason.name}数据榜` : "历史数据总榜";
   const currentColumn = statisticsColumns().find((column) => column.key === statisticsSortKey) || statisticsColumns()[0];
   const body = playerStatisticsLoading && !playerStatisticsLoaded
     ? `<div class="empty">正在加载数据...</div>`
@@ -2238,10 +2297,18 @@ function renderHomeStatistics() {
     <section class="panel stack statistics-panel">
       <div class="section-head">
         <div>
-          <h2>历史数据总榜</h2>
+          <h2>${escapeHtml(rankingTitle)}</h2>
           <div class="meta">列顺序保持固定；点击任意参数名称即可排行，再次点击切换升序或降序。</div>
         </div>
-        <div class="statistics-sort-status"><span>当前排序</span><strong>${escapeHtml(currentColumn.label)} ${statisticsSortDirection === "desc" ? "↓" : "↑"}</strong></div>
+        <div class="statistics-header-tools">
+          <label>统计范围
+            <select data-action="select-statistics-season">
+              <option value="all" ${statisticsSeasonId === "all" ? "selected" : ""}>历史总榜</option>
+              ${statisticsSeasons.map((season) => `<option value="${escapeHtml(season.season_id)}" ${String(season.season_id) === statisticsSeasonId ? "selected" : ""}>${escapeHtml(season.name)}${season.is_active ? "（当前）" : ""}</option>`).join("")}
+            </select>
+          </label>
+          <div class="statistics-sort-status"><span>当前排序</span><strong>${escapeHtml(currentColumn.label)} ${statisticsSortDirection === "desc" ? "↓" : "↑"}</strong></div>
+        </div>
       </div>
       <div class="statistics-summary statistics-summary-wide">
         <div class="statistics-current-leader">
@@ -2250,7 +2317,7 @@ function renderHomeStatistics() {
         </div>
         <div><span>上榜玩家</span><strong>${rows.length}</strong></div>
         <div><span>参赛人次</span><strong>${appearances}</strong></div>
-        <div><span>记录状态</span><strong class="${historyStatus?.enabled ? "positive" : ""}">${recordedState}</strong></div>
+        <div><span>${selectedSeason ? "赛季时间" : "记录状态"}</span><strong class="${!selectedSeason && historyStatus?.enabled ? "positive" : ""}">${selectedSeason ? escapeHtml(seasonDateRange(selectedSeason)) : recordedState}</strong></div>
       </div>
       ${!historyStatus?.enabled && historyStatus ? `<div class="status bad">线上牌局记录开关尚未开启，当前结算不会写入统计。</div>` : ""}
       ${body}
@@ -2260,6 +2327,26 @@ function renderHomeStatistics() {
 
 function statisticNumber(value) {
   return Number(value) || 0;
+}
+
+function shortDate(value) {
+  const date = value ? new Date(value) : null;
+  if (!date || Number.isNaN(date.getTime())) return "未设置";
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}.${month}.${day}`;
+}
+
+function seasonDateRange(season) {
+  return `${shortDate(season?.starts_at)} - ${season?.ends_at ? shortDate(season.ends_at) : "进行中"}`;
+}
+
+function dateTimeLocalValue(value) {
+  const date = value ? new Date(value) : null;
+  if (!date || Number.isNaN(date.getTime())) return "";
+  const local = new Date(date.getTime() - date.getTimezoneOffset() * 60_000);
+  return local.toISOString().slice(0, 16);
 }
 
 function statisticDecimal(value, digits = 2) {
@@ -2377,21 +2464,26 @@ function renderStatisticsTable(rows) {
   `;
 }
 
+function statisticsPlayerDetailKey(accountId) {
+  return `${statisticsSeasonId}:${accountId}`;
+}
+
 function showPlayerStatistics(accountId) {
   if (!accountId) return;
+  const detailKey = statisticsPlayerDetailKey(accountId);
   statisticsSelectedAccountId = accountId;
   render();
-  if (statisticsPlayerDetails.has(accountId) || statisticsPlayerDetailLoadingId === accountId) return;
-  statisticsPlayerDetailLoadingId = accountId;
-  api(`/api/history/players/${encodeURIComponent(accountId)}`)
+  if (statisticsPlayerDetails.has(detailKey) || statisticsPlayerDetailLoadingId === detailKey) return;
+  statisticsPlayerDetailLoadingId = detailKey;
+  api(`/api/history/players/${encodeURIComponent(accountId)}?seasonId=${encodeURIComponent(statisticsSeasonId)}`)
     .then((detail) => {
-      statisticsPlayerDetails.set(accountId, detail);
+      statisticsPlayerDetails.set(detailKey, detail);
     })
     .catch((error) => {
       setMessage(error.message || "玩家数据加载失败", true);
     })
     .finally(() => {
-      if (statisticsPlayerDetailLoadingId === accountId) statisticsPlayerDetailLoadingId = "";
+      if (statisticsPlayerDetailLoadingId === detailKey) statisticsPlayerDetailLoadingId = "";
       render();
     });
 }
@@ -2434,7 +2526,8 @@ function renderStatisticsTrend(trend = []) {
 }
 
 function renderPlayerStatisticsDetail(baseRow) {
-  const detail = statisticsPlayerDetails.get(baseRow.account_id);
+  const detailKey = statisticsPlayerDetailKey(baseRow.account_id);
+  const detail = statisticsPlayerDetails.get(detailKey);
   const row = { ...baseRow, ...(detail?.player || {}) };
   const trend = detail?.trend || [];
   const rank = [...playerStatisticsRows].sort((left, right) => statisticNumber(right.total_score) - statisticNumber(left.total_score)).findIndex((item) => item.account_id === row.account_id) + 1;
@@ -2444,6 +2537,7 @@ function renderPlayerStatisticsDetail(baseRow) {
   const teammateDragged = statisticNumber(row.teammate_dragged_red_fives) + statisticNumber(row.teammate_dragged_diamond_fives);
   const wonTricks = statisticNumber(row.won_tricks);
   const totalTricks = statisticNumber(row.total_tricks);
+  const selectedSeason = statisticsSeasons.find((season) => String(season.season_id) === statisticsSeasonId) || null;
   const titleItems = [
     ["MVP", "mvp_count"], ["辅", "support_count"], ["躺", "couch_count"], ["坑", "pit_count"],
     ["僵", "stiff_count"], ["僵中僵", "stiffest_count"], ["雷", "thunder_count"], ["精", "precision_count"],
@@ -2455,7 +2549,7 @@ function renderPlayerStatisticsDetail(baseRow) {
       <section class="statistics-detail-hero">
         <div class="statistics-detail-identity">
           ${avatarHtml(row.latest_name || "玩家", row.latest_avatar_url || "", "large", row.avatar_frame || "")}
-          <div><span>历史总榜第 ${rank || "-"} 名</span><h2>${escapeHtml(row.latest_name || "玩家")}</h2><small>@${escapeHtml(row.username || "player")} · ${games} 场全真人牌局</small></div>
+          <div><span>${escapeHtml(selectedSeason?.name || "历史总榜")}第 ${rank || "-"} 名</span><h2>${escapeHtml(row.latest_name || "玩家")}</h2><small>@${escapeHtml(row.username || "player")} · ${games} 场全真人牌局</small></div>
         </div>
         <div class="statistics-headline"><span>总积分</span><strong class="${statisticNumber(row.total_score) > 0 ? "positive" : statisticNumber(row.total_score) < 0 ? "negative" : ""}">${statisticSigned(row.total_score)}</strong><small>场均 ${statisticSigned(row.average_score)}</small></div>
         <div class="statistics-headline"><span>胜率</span><strong>${statisticPercent(row.win_rate)}</strong><small>${statisticNumber(row.wins)} 胜 / ${statisticNumber(row.losses)} 负</small></div>
@@ -2464,7 +2558,7 @@ function renderPlayerStatisticsDetail(baseRow) {
       <div class="statistics-detail-grid">
         <div>
           <section class="statistics-detail-section">
-            <header><h3>积分走势</h3><span>${statisticsPlayerDetailLoadingId === row.account_id ? "读取中" : `最近 ${trend.length} 场`}</span></header>
+            <header><h3>积分走势</h3><span>${statisticsPlayerDetailLoadingId === detailKey ? "读取中" : `最近 ${trend.length} 场`}</span></header>
             <div class="statistics-trend-wrap">${renderStatisticsTrend(trend)}<div><span>较早</span><span>当前 ${statisticSigned(row.total_score)} 分</span></div></div>
           </section>
           <section class="statistics-detail-section">
@@ -2571,6 +2665,38 @@ function renderManagedAccount(account) {
   `;
 }
 
+function renderSeasonForm(season = null) {
+  const seasonId = season?.season_id ? String(season.season_id) : "";
+  return `
+    <form class="season-form ${season ? "" : "season-create-form"}" data-form="save-season" data-season-id="${escapeHtml(seasonId)}">
+      <label>赛季名称<input name="name" required maxlength="64" value="${escapeHtml(season?.name || "")}" placeholder="例如 2026 夏季赛"></label>
+      <label>开始时间<input name="startsAt" type="datetime-local" required value="${escapeHtml(dateTimeLocalValue(season?.starts_at || new Date()))}"></label>
+      <label>结束时间<input name="endsAt" type="datetime-local" value="${escapeHtml(dateTimeLocalValue(season?.ends_at))}"></label>
+      <label class="season-active-field"><input name="isActive" type="checkbox" ${season?.is_active ? "checked" : ""}><span>设为当前赛季</span></label>
+      <div class="season-form-action">
+        ${season ? `<span class="tag ${season.is_active ? "good" : ""}">${season.is_active ? "当前赛季" : seasonDateRange(season)}</span>` : `<span class="meta">结束时间可留空</span>`}
+        <button type="submit" class="${season ? "secondary" : ""}">${season ? "保存" : "创建赛季"}</button>
+      </div>
+    </form>
+  `;
+}
+
+function renderSeasonManager() {
+  return `
+    <section class="panel stack season-manager">
+      <div class="section-head">
+        <div><h2>赛季管理</h2><div class="meta">排行榜按牌局结束时间归入赛季；调整时间不会修改原始牌局记录。</div></div>
+      </div>
+      ${renderSeasonForm()}
+      <div class="season-list">
+        ${statisticsSeasonsLoaded
+          ? statisticsSeasons.map((season) => renderSeasonForm(season)).join("") || `<div class="empty">暂无赛季，先创建一个赛季。</div>`
+          : `<div class="empty">正在读取赛季...</div>`}
+      </div>
+    </section>
+  `;
+}
+
 function renderProfileManager() {
   if (authState.account?.role !== "admin") {
     homeView = "login";
@@ -2592,6 +2718,8 @@ function renderProfileManager() {
         <button type="submit">保存新密码</button>
       </form>
     </section>
+
+    ${renderSeasonManager()}
 
     <section class="panel stack admin-account-create">
       <div class="section-head">
@@ -4429,6 +4557,21 @@ document.addEventListener("submit", (event) => {
   if (form.dataset.form === "own-avatar") return uploadOwnAvatar(event);
   if (form.dataset.form === "create-account") return createManagedAccount(event);
   if (form.dataset.form === "reset-password") return resetManagedPassword(event);
+  if (form.dataset.form === "save-season") return saveSeasonForm(event);
+});
+
+document.addEventListener("change", (event) => {
+  const target = event.target.closest('[data-action="select-statistics-season"]');
+  if (!target) return;
+  const nextSeasonId = target.value || "all";
+  const valid = nextSeasonId === "all" || statisticsSeasons.some((season) => String(season.season_id) === nextSeasonId);
+  if (!valid || nextSeasonId === statisticsSeasonId) return;
+  statisticsSeasonId = nextSeasonId;
+  statisticsSelectedAccountId = "";
+  playerStatisticsRows = [];
+  playerStatisticsLoaded = false;
+  ensurePlayerStatistics(true);
+  render();
 });
 
 document.addEventListener("click", (event) => {
