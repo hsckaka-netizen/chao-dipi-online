@@ -1,6 +1,6 @@
 import { applyStatePatch } from "./state-patch.js?v=9330552c7e1e";
 import { detectNewLargePlayEffects } from "./gameplay-effects.js?v=d2368568e06d";
-import { ASSET_URLS } from "./asset-versions.js?v=ed81fd3729f8";
+import { ASSET_URLS } from "./asset-versions.js?v=4acd3811b17b";
 
 const app = document.querySelector("#app");
 document.documentElement.style.setProperty("--joker-face-image", `url("${ASSET_URLS.jokerFace}")`);
@@ -39,6 +39,9 @@ let homeView = "rooms";
 let profiles = [];
 let profilesLoaded = false;
 let profilesLoading = false;
+let playerStatistics = new Map();
+let playerStatisticsLoaded = false;
+let playerStatisticsLoading = false;
 let joinableRooms = [];
 let joinableRoomsLoaded = false;
 let joinableRoomsLoading = false;
@@ -677,6 +680,26 @@ function ensureProfiles() {
     .catch((error) => {
       profilesLoading = false;
       setMessage(error.message || "玩家列表加载失败", true);
+    });
+}
+
+function ensurePlayerStatistics() {
+  if (playerStatisticsLoaded || playerStatisticsLoading) return;
+  playerStatisticsLoading = true;
+  api("/api/history/statistics")
+    .then((data) => {
+      playerStatistics = new Map((data.players || []).map((row) => [row.profile_id, {
+        games: Number(row.games_played) || 0,
+        score: Number(row.total_score) || 0
+      }]));
+      playerStatisticsLoaded = true;
+      playerStatisticsLoading = false;
+      render();
+    })
+    .catch(() => {
+      playerStatisticsLoaded = true;
+      playerStatisticsLoading = false;
+      render();
     });
 }
 
@@ -2251,7 +2274,7 @@ function renderProfileRow(profile) {
           头像框
           <select name="avatarFrame">
             <option value="" ${profile.avatarFrame ? "" : "selected"}>默认</option>
-            <option value="vip" ${profile.avatarFrame === "vip" ? "selected" : ""}>VIP 羽翼</option>
+            <option value="vip" ${profile.avatarFrame === "vip" ? "selected" : ""}>VIP 方形框</option>
           </select>
         </label>
         <label>
@@ -2275,6 +2298,7 @@ function renderProfileRow(profile) {
 }
 
 function renderRoom() {
+  ensurePlayerStatistics();
   const viewer = viewerPlayer();
   const spectating = isSpectating();
   const waitingNextRound = !spectating && state.stage === "finished" && Boolean(viewer?.ready);
@@ -3173,19 +3197,31 @@ function renderSeatHand(action, play, trick, index, options = {}) {
   const statusText = playStatusText(trick, play, index, true, options);
   const statusTone = playStatusTone(trick, play, true, options);
   const myTurn = state.stage === "playing" && viewerCanPlayCurrent();
+  const roomPlayer = state.players.find((player) => player.id === play.playerId) || play;
   return `
     <div class="seat-hand ${myTurn ? "is-my-turn" : ""}" data-action="clear-selection">
-      <div class="seat-hand-head">
-        <div class="seat-hand-player">
-          <div class="seat-hand-player-line">
-            <strong>${playerNameWithRole(play)}</strong>
-            <span class="seat-status ${escapeHtml(statusTone)}">${escapeHtml(statusText)}</span>
+      <div class="seat-hand-layout">
+        <aside class="seat-hand-profile-card">
+          <div class="seat-hand-avatar-stage" tabindex="0" aria-label="查看${escapeHtml(play.playerName)}的历史数据">
+            ${avatarHtml(play.playerName, play.avatarUrl, "seat-profile", play.avatarFrame || roomPlayer.avatarFrame)}
+            ${renderPlayerHistoryMini(play.playerId, { overlay: true })}
           </div>
+          <div class="seat-hand-profile-copy">
+            <div class="seat-hand-player-line">
+              <strong><span class="seat-hand-name">${escapeHtml(play.playerName)}</span>${roleMark(play.role, play.playerId)}</strong>
+              <span class="seat-status ${escapeHtml(statusTone)}">${escapeHtml(statusText)}</span>
+            </div>
+          </div>
+        </aside>
+        <div class="seat-hand-main">
+          <div class="seat-hand-head">
+            ${renderCompactPlayerStats(play, { handCount: state.hand.length })}
+            ${renderHandControls(action)}
+          </div>
+          ${renderThrowDraft()}
+          ${renderHand(state.hand, { compact: true })}
         </div>
-        ${renderHandControls(action)}
       </div>
-      ${renderThrowDraft()}
-      ${renderHand(state.hand, { compact: true, stats: play })}
     </div>
   `;
 }
@@ -3245,15 +3281,14 @@ function renderTrick(trick, current, options = {}) {
           const playEffect = setupTable ? "" : renderLargePlayEffect(play, trick.number);
           const playerCard = `
             <div class="trick-player ${roleClass(play.role)} ${play.played ? "played" : ""} ${play.lead ? "lead" : ""} ${play.currentTurn ? "current-turn" : ""} ${play.winning ? "winning" : ""}">
-              <div class="trick-name">
-                <strong>${playerNameWithRole(play)}</strong>
-                <span class="seat-status ${escapeHtml(statusTone)}">${escapeHtml(statusText)}</span>
+              <div class="trick-player-profile-section">
+                <div class="trick-name">
+                  <strong>${tablePlayerIdentity(play)}</strong>
+                  <span class="seat-status ${escapeHtml(statusTone)}">${escapeHtml(statusText)}</span>
+                </div>
               </div>
-              <div class="trick-player-stats">
-                <span>牌分 <b>${play.score || 0}</b></span>
-                <span>红五 <b>${play.draggedRedFives || 0}</b></span>
-                <span>方五 <b>${play.draggedDiamondFives || 0}</b></span>
-                <span>甩失 <b>${play.throwFailures || 0}</b></span>
+              <div class="trick-player-game-section">
+                ${renderCompactPlayerStats(play)}
               </div>
               ${!current && play.played ? renderPlayedCards(play, playCards, trick.number) : ""}
             </div>
@@ -3351,6 +3386,48 @@ function playerNameWithRole(play) {
   return playerIdentity(play.playerName, play.role, play.avatarUrl, "", play.playerId, play.avatarFrame || player?.avatarFrame);
 }
 
+function tablePlayerIdentity(play) {
+  const player = state?.players?.find((item) => item.id === play.playerId);
+  const avatarFrame = play.avatarFrame || player?.avatarFrame || "";
+  return `
+    <span class="player-identity table-player-identity">
+      <span class="table-player-avatar-stage ${avatarFrame === "vip" ? "has-vip-frame" : ""}" tabindex="0" aria-label="查看${escapeHtml(play.playerName)}的历史数据">
+        ${avatarHtml(play.playerName, play.avatarUrl, "small", avatarFrame)}
+        ${renderPlayerHistoryMini(play.playerId, { overlay: true })}
+      </span>
+      ${roleMark(play.role, play.playerId)}
+      <span class="name-text">${escapeHtml(play.playerName)}</span>
+    </span>
+  `;
+}
+
+function renderPlayerHistoryMini(roomPlayerId, { overlay = false } = {}) {
+  const player = state?.players?.find((item) => item.id === roomPlayerId);
+  const className = `player-history-mini${overlay ? " overlay" : ""}`;
+  if (!player || player.test) return `<div class="${className} unavailable">AI 不计历史</div>`;
+  if (playerStatisticsLoading) return `<div class="${className} unavailable">历史读取中</div>`;
+  const statistics = player.profileId ? playerStatistics.get(player.profileId) : null;
+  if (!statistics) return `<div class="${className} unavailable">暂无历史</div>`;
+  return `
+    <div class="${className}" title="仅统计全真人牌局">
+      <span><i>${overlay ? "局" : "总局"}</i><b>${statistics.games}</b></span>
+      <span><i>${overlay ? "分" : "积分"}</i><b class="${statistics.score > 0 ? "positive" : statistics.score < 0 ? "negative" : ""}">${signedScore(null, statistics.score)}</b></span>
+    </div>
+  `;
+}
+
+function renderCompactPlayerStats(play, { handCount = null } = {}) {
+  return `
+    <div class="trick-player-stats ${handCount === null ? "" : "with-hand-count"}" aria-label="${escapeHtml(`${play.playerName || "玩家"}本局表现`)}">
+      <span class="player-stat-score" title="本局获得牌分"><i>牌</i><b>${play.score || 0}</b></span>
+      <span class="player-stat-red" title="被拖红五"><i>红</i><b>${play.draggedRedFives || 0}</b></span>
+      <span class="player-stat-diamond" title="被拖方五"><i>方</i><b>${play.draggedDiamondFives || 0}</b></span>
+      <span class="player-stat-throw" title="甩牌失败"><i>甩</i><b>${play.throwFailures || 0}</b></span>
+      ${handCount === null ? "" : `<span class="player-stat-hand" title="当前手牌"><i>手</i><b>${handCount}</b></span>`}
+    </div>
+  `;
+}
+
 function seatStyle(index, total) {
   if (index === 0) return "--seat-x:50%;--seat-y:100%;";
   const counts = sideSeatCounts(total);
@@ -3369,7 +3446,7 @@ function seatStyle(index, total) {
 }
 
 function sideSeatY(slot, count, reverse = false) {
-  const positions = count <= 1 ? [42] : [39, 58];
+  const positions = count <= 1 ? [42] : [35, 54];
   const positionIndex = reverse ? positions.length - 1 - slot : slot;
   return positions[Math.max(0, Math.min(positionIndex, positions.length - 1))];
 }
@@ -3883,6 +3960,18 @@ function endDragSelect(event) {
   render();
 }
 
+function clearSelectionFromPageClick(event) {
+  if (!selectedCardIds.size) return false;
+  const target = event.target;
+  if (!(target instanceof Element)) return false;
+  if (target.closest('[data-card-id], button, a, input, select, textarea, label, [role="button"], [contenteditable="true"]')) {
+    return false;
+  }
+  selectedCardIds = new Set();
+  render();
+  return true;
+}
+
 const mutatingActions = new Set([
   "room-leave", "dissolve-room", "call-mode-two", "call-mode-score", "dogleg-count",
   "add-robot", "random-seats", "start", "ready-on", "ready-off", "bid-selected",
@@ -3915,7 +4004,10 @@ document.addEventListener("submit", (event) => {
 
 document.addEventListener("click", (event) => {
   const action = event.target.closest("[data-action]")?.dataset.action;
-  if (!action) return;
+  if (!action) {
+    clearSelectionFromPageClick(event);
+    return;
+  }
   if (isSpectating() && !new Set([
     "leave-spectating",
     "copy",

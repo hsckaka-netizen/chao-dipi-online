@@ -1,7 +1,7 @@
 export const ASSET_VERSIONS = Object.freeze({
   "/assets/joker-face-small.png": "f16ffbe9a2eb",
   "/assets/joker-face.png": "298272a943e8",
-  "/assets/vip-avatar-frame.png": "3947030799fd",
+  "/assets/vip-avatar-frame.png": "ae1781546208",
   "/assets/avatars/benlei.png": "d699949c7781",
   "/assets/avatars/biesan.png": "a66d00372b8e",
   "/assets/avatars/chenran.png": "b4222318b1f0",
