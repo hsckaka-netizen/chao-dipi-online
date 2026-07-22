@@ -1238,7 +1238,7 @@ button.joinable-room-player.spectate-player {
   overflow: hidden;
   border: 0;
   border-radius: 7px;
-  background: var(--vip-avatar-frame-image) center / cover no-repeat;
+  background: var(--avatar-frame-vip-image) center / cover no-repeat;
   margin-right: 0;
   padding: 0;
   box-shadow: 0 3px 8px rgba(64, 43, 96, 0.28);
@@ -1258,6 +1258,62 @@ button.joinable-room-player.spectate-player {
 
 .avatar.avatar-frame-vip::after {
   content: none;
+}
+
+.avatar.avatar-frame-emerald,
+.avatar.avatar-frame-violet,
+.avatar.avatar-frame-champion,
+.avatar.avatar-frame-stormwind,
+.avatar.avatar-frame-idol,
+.avatar.avatar-frame-hellfire,
+.avatar.avatar-frame-blood-elf {
+  overflow: hidden;
+  border: 2px solid var(--avatar-frame-accent);
+  background: var(--avatar-frame-base);
+  padding: 3px;
+  box-shadow: inset 0 0 0 1px var(--avatar-frame-highlight), 0 3px 8px rgba(31, 45, 38, 0.18);
+}
+
+.avatar.avatar-frame-emerald {
+  --avatar-frame-accent: #178065;
+  --avatar-frame-base: #d9efe6;
+  --avatar-frame-highlight: #d7ad52;
+}
+
+.avatar.avatar-frame-violet {
+  --avatar-frame-accent: #6f45a8;
+  --avatar-frame-base: #ebe5f4;
+  --avatar-frame-highlight: #b8afc7;
+}
+
+.avatar.avatar-frame-champion {
+  --avatar-frame-accent: #9a2c22;
+  --avatar-frame-base: #f3e5dc;
+  --avatar-frame-highlight: #d8a946;
+}
+
+.avatar.avatar-frame-stormwind {
+  --avatar-frame-accent: #285ca0;
+  --avatar-frame-base: #e2ebf6;
+  --avatar-frame-highlight: #d1a74c;
+}
+
+.avatar.avatar-frame-idol {
+  --avatar-frame-accent: #c84f88;
+  --avatar-frame-base: #f8e7ef;
+  --avatar-frame-highlight: #c5b8cc;
+}
+
+.avatar.avatar-frame-hellfire {
+  --avatar-frame-accent: #69221e;
+  --avatar-frame-base: #e9dfdc;
+  --avatar-frame-highlight: #b64b2f;
+}
+
+.avatar.avatar-frame-blood-elf {
+  --avatar-frame-accent: #9d2738;
+  --avatar-frame-base: #f2e1e5;
+  --avatar-frame-highlight: #cf9f3e;
 }
 
 .role-mark {
@@ -1380,7 +1436,7 @@ button.joinable-room-player.spectate-player {
 
 .profile-fields {
   display: grid;
-  grid-template-columns: minmax(140px, 1.1fr) minmax(120px, .7fr) minmax(170px, 1fr) minmax(190px, 1fr);
+  grid-template-columns: minmax(140px, 1.1fr) repeat(2, minmax(120px, .7fr)) minmax(170px, 1fr) minmax(190px, 1fr);
   gap: 10px;
 }
 
@@ -1514,6 +1570,58 @@ button.joinable-room-player.spectate-player {
   border-color: var(--primary);
   box-shadow: 0 8px 16px rgba(26, 76, 59, 0.16);
   transform: translateY(-11px);
+}
+
+.card.card-skin,
+.mini-card.card-skin {
+  border-color: transparent;
+}
+
+.card-skin-emerald {
+  --card-skin-outer: #18785f;
+  --card-skin-inner: #d4a84a;
+}
+
+.card-skin-violet {
+  --card-skin-outer: #65409a;
+  --card-skin-inner: #aaa3b8;
+}
+
+.card-skin-champion {
+  --card-skin-outer: #8d261d;
+  --card-skin-inner: #d5a13a;
+}
+
+.card-skin-stormwind {
+  --card-skin-outer: #285ca0;
+  --card-skin-inner: #d1a74c;
+}
+
+.card-skin-idol {
+  --card-skin-outer: #c84f88;
+  --card-skin-inner: #c5b8cc;
+}
+
+.card-skin-hellfire {
+  --card-skin-outer: #69221e;
+  --card-skin-inner: #b64b2f;
+}
+
+.card-skin-blood-elf {
+  --card-skin-outer: #9d2738;
+  --card-skin-inner: #cf9f3e;
+}
+
+.card.card-skin::before,
+.mini-card.card-skin::before {
+  content: "";
+  position: absolute;
+  inset: -1px;
+  z-index: 3;
+  border-radius: inherit;
+  border: 2px solid var(--card-skin-outer);
+  box-shadow: inset 0 0 0 1px var(--card-skin-inner);
+  pointer-events: none;
 }
 
 .card.static {
@@ -2750,6 +2858,10 @@ button.joinable-room-player.spectate-player {
   font-size: 15px;
   font-weight: 800;
   box-shadow: 0 4px 12px rgba(26, 38, 32, 0.09);
+}
+
+.mini-card.card-skin {
+  border-color: transparent;
 }
 
 .mini-card:first-child {

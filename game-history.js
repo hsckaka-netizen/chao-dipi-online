@@ -25,6 +25,10 @@ const MIGRATIONS = [
   {
     version: 5,
     path: fileURLToPath(new URL("./db/migrations/005_account_statistics_and_seasons.sql", import.meta.url))
+  },
+  {
+    version: 6,
+    path: fileURLToPath(new URL("./db/migrations/006_player_cosmetics.sql", import.meta.url))
   }
 ];
 const HISTORY_ENABLED = String(process.env.GAME_HISTORY_ENABLED || "").toLowerCase() === "true";
@@ -156,7 +160,7 @@ export async function loadStoredPlayerProfiles() {
     const result = await pool.query(`
       SELECT
         profile_id, account_id, display_name, avatar_url, avatar_version,
-        avatar_frame, play_effect, avatar_updated_at, updated_at
+        avatar_frame, card_skin, play_effect, avatar_updated_at, updated_at
       FROM cdp_player_profiles
       ORDER BY profile_id
     `);
@@ -170,6 +174,7 @@ export async function loadStoredPlayerProfiles() {
       avatarUrl: row.avatar_url || "",
       avatarVersion: Number(row.avatar_version) || 0,
       avatarFrame: row.avatar_frame || "",
+      cardSkin: row.card_skin || "",
       playEffect: row.play_effect || "",
       avatarUpdatedAt: row.avatar_updated_at ? new Date(row.avatar_updated_at).toISOString() : null,
       updatedAt: row.updated_at ? new Date(row.updated_at).toISOString() : null
@@ -187,14 +192,15 @@ export async function saveStoredPlayerProfile(profile) {
     const result = await pool.query(
       `INSERT INTO cdp_player_profiles (
         profile_id, account_id, display_name, avatar_url, avatar_version,
-        avatar_frame, play_effect, avatar_updated_at, updated_at
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        avatar_frame, card_skin, play_effect, avatar_updated_at, updated_at
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
       ON CONFLICT (profile_id) DO UPDATE SET
         account_id = excluded.account_id,
         display_name = excluded.display_name,
         avatar_url = excluded.avatar_url,
         avatar_version = excluded.avatar_version,
         avatar_frame = excluded.avatar_frame,
+        card_skin = excluded.card_skin,
         play_effect = excluded.play_effect,
         avatar_updated_at = excluded.avatar_updated_at,
         updated_at = excluded.updated_at
@@ -206,6 +212,7 @@ export async function saveStoredPlayerProfile(profile) {
         profile.avatarUrl || "",
         Number(profile.avatarVersion) || 0,
         profile.avatarFrame || "",
+        profile.cardSkin || "",
         profile.playEffect || "",
         profile.avatarUpdatedAt || null,
         profile.updatedAt || new Date().toISOString()
@@ -268,14 +275,15 @@ export async function createStoredAccount(account, profile = null) {
       await client.query(
         `INSERT INTO cdp_player_profiles (
           profile_id, account_id, display_name, avatar_url, avatar_version,
-          avatar_frame, play_effect, avatar_updated_at, updated_at
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+          avatar_frame, card_skin, play_effect, avatar_updated_at, updated_at
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
         ON CONFLICT (profile_id) DO UPDATE SET
           account_id = excluded.account_id,
           display_name = excluded.display_name,
           avatar_url = excluded.avatar_url,
           avatar_version = excluded.avatar_version,
           avatar_frame = excluded.avatar_frame,
+          card_skin = excluded.card_skin,
           play_effect = excluded.play_effect,
           avatar_updated_at = excluded.avatar_updated_at,
           updated_at = excluded.updated_at`,
@@ -286,6 +294,7 @@ export async function createStoredAccount(account, profile = null) {
           profile.avatarUrl || "",
           Number(profile.avatarVersion) || 0,
           profile.avatarFrame || "",
+          profile.cardSkin || "",
           profile.playEffect || "",
           profile.avatarUpdatedAt || null,
           profile.updatedAt || new Date().toISOString()

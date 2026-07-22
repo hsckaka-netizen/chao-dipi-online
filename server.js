@@ -48,7 +48,8 @@ const HAND_SIZE = 53;
 const CALL_MODE_TWO = "two";
 const CALL_MODE_SCORE = "score";
 const SCORE_BID_SECONDS = 20;
-const AVATAR_FRAMES = new Set(["", "vip"]);
+const AVATAR_FRAMES = new Set(["", "vip", "emerald", "champion", "violet", "stormwind", "idol", "hellfire", "blood-elf"]);
+const CARD_SKINS = new Set(["", "emerald", "champion", "violet", "stormwind", "idol", "hellfire", "blood-elf"]);
 const PLAY_EFFECTS = new Set(["", "fireworks"]);
 const configuredAiSetupDelay = Number(process.env.AI_SETUP_DELAY_MS || 450);
 const AI_SETUP_DELAY_MS = Number.isFinite(configuredAiSetupDelay) ? Math.max(0, configuredAiSetupDelay) : 450;
@@ -114,6 +115,7 @@ const playerProfiles = new Map(initialPlayerProfiles.map((profile) => [
     avatarVersion: Number(profile.avatarVersion) || 0,
     avatarUpdatedAt: profile.avatarUpdatedAt || null,
     avatarFrame: AVATAR_FRAMES.has(profile.avatarFrame) ? profile.avatarFrame : "",
+    cardSkin: CARD_SKINS.has(profile.cardSkin) ? profile.cardSkin : "",
     playEffect: PLAY_EFFECTS.has(profile.playEffect) ? profile.playEffect : "",
     builtIn: true,
     updatedAt: now()
@@ -140,6 +142,11 @@ function normalizeAvatarFrame(value) {
   return AVATAR_FRAMES.has(normalized) ? normalized : "";
 }
 
+function normalizeCardSkin(value) {
+  const normalized = String(value || "");
+  return CARD_SKINS.has(normalized) ? normalized : "";
+}
+
 function normalizePlayEffect(value) {
   const normalized = String(value || "");
   return PLAY_EFFECTS.has(normalized) ? normalized : "";
@@ -160,6 +167,7 @@ function publicProfile(profile) {
     avatarUrl: versionedAssetUrl(profile.avatarUrl || ""),
     avatarVersion: Number(profile.avatarVersion) || 0,
     avatarFrame: normalizeAvatarFrame(profile.avatarFrame),
+    cardSkin: normalizeCardSkin(profile.cardSkin),
     playEffect: normalizePlayEffect(profile.playEffect),
     builtIn: Boolean(profile.builtIn),
     updatedAt: profile.updatedAt
@@ -315,6 +323,7 @@ function joinableRoomsList() {
         name: player.name,
         avatarUrl: player.avatarUrl || "",
         avatarFrame: normalizeAvatarFrame(player.avatarFrame),
+        cardSkin: normalizeCardSkin(player.cardSkin),
         host: player.host,
         ready: Boolean(player.ready)
       }))
@@ -337,6 +346,7 @@ function createPlayer(profileOrName, host = false, test = false) {
     accountId: profile?.accountId || null,
     avatarUrl: profile?.avatarUrl || "",
     avatarFrame: normalizeAvatarFrame(profile?.avatarFrame),
+    cardSkin: normalizeCardSkin(profile?.cardSkin),
     playEffect: normalizePlayEffect(profile?.playEffect),
     host,
     test,
@@ -362,6 +372,7 @@ function createAiTestPlayer(room, fallbackIndex) {
   const player = createPlayer(`${profile?.name || `机器人${fallbackIndex}`}（AI）`, false, true);
   player.avatarUrl = profile?.avatarUrl || "";
   player.avatarFrame = normalizeAvatarFrame(profile?.avatarFrame);
+  player.cardSkin = normalizeCardSkin(profile?.cardSkin);
   player.playEffect = normalizePlayEffect(profile?.playEffect);
   return player;
 }
@@ -374,6 +385,7 @@ function syncProfileToRooms(profile) {
       player.name = profile.name;
       player.avatarUrl = profile.avatarUrl || "";
       player.avatarFrame = normalizeAvatarFrame(profile.avatarFrame);
+      player.cardSkin = normalizeCardSkin(profile.cardSkin);
       player.playEffect = normalizePlayEffect(profile.playEffect);
       changed = true;
     });
@@ -393,6 +405,7 @@ async function initializePersistence() {
       avatarVersion: 0,
       avatarUpdatedAt: null,
       avatarFrame: "",
+      cardSkin: "",
       playEffect: "",
       builtIn: false,
       updatedAt: stored.updatedAt || now()
@@ -404,6 +417,7 @@ async function initializePersistence() {
     profile.avatarVersion = Number(stored.avatarVersion) || 0;
     profile.avatarUpdatedAt = stored.avatarUpdatedAt || null;
     profile.avatarFrame = normalizeAvatarFrame(stored.avatarFrame);
+    profile.cardSkin = normalizeCardSkin(stored.cardSkin);
     profile.playEffect = normalizePlayEffect(stored.playEffect);
     profile.updatedAt = stored.updatedAt || profile.updatedAt;
     playerProfiles.set(profile.id, profile);
@@ -512,6 +526,7 @@ async function createPlayerAccount(admin, body) {
     avatarVersion: 0,
     avatarUpdatedAt: null,
     avatarFrame: "",
+    cardSkin: "",
     playEffect: "",
     builtIn: false,
     updatedAt: now()
@@ -1047,6 +1062,7 @@ function roomSnapshot(room, viewer = null) {
       name: player.name,
       avatarUrl: player.avatarUrl || "",
       avatarFrame: normalizeAvatarFrame(player.avatarFrame),
+      cardSkin: normalizeCardSkin(player.cardSkin),
       playEffect: normalizePlayEffect(player.playEffect),
       host: player.host,
       test: player.test,
@@ -3808,6 +3824,7 @@ async function handleApi(req, res, pathParts, url) {
       if (profileNameTaken(name, profile.id)) return writeJson(res, 409, { error: "这个玩家名称已经存在" });
       profile.name = name;
       if (Object.hasOwn(body, "avatarFrame")) profile.avatarFrame = normalizeAvatarFrame(body.avatarFrame);
+      if (Object.hasOwn(body, "cardSkin")) profile.cardSkin = normalizeCardSkin(body.cardSkin);
       if (Object.hasOwn(body, "playEffect")) profile.playEffect = normalizePlayEffect(body.playEffect);
       profile.updatedAt = now();
       playerProfiles.set(profile.id, profile);

@@ -5,7 +5,30 @@ import { ASSET_URLS } from "./asset-versions.js?v=4acd3811b17b";
 const app = document.querySelector("#app");
 document.documentElement.style.setProperty("--joker-face-image", `url("${ASSET_URLS.jokerFace}")`);
 document.documentElement.style.setProperty("--joker-face-small-image", `url("${ASSET_URLS.jokerFaceSmall}")`);
-document.documentElement.style.setProperty("--vip-avatar-frame-image", `url("${ASSET_URLS.vipAvatarFrame}")`);
+document.documentElement.style.setProperty("--avatar-frame-vip-image", `url("${ASSET_URLS.vipAvatarFrame}")`);
+const AVATAR_FRAME_OPTIONS = [
+  { value: "", label: "默认方框" },
+  { value: "vip", label: "经典 VIP" },
+  { value: "emerald", label: "翡翠" },
+  { value: "violet", label: "紫晶" },
+  { value: "champion", label: "冠军" },
+  { value: "stormwind", label: "皇家蓝城邦（暴风城主题）" },
+  { value: "idol", label: "剧场偶像（AKB48 主题）" },
+  { value: "hellfire", label: "暗黑地狱（暗黑主题）" },
+  { value: "blood-elf", label: "血精灵奥术" }
+];
+const CARD_SKIN_OPTIONS = [
+  { value: "", label: "默认牌框" },
+  { value: "emerald", label: "翡翠" },
+  { value: "violet", label: "紫晶" },
+  { value: "champion", label: "冠军" },
+  { value: "stormwind", label: "皇家蓝城邦（暴风城主题）" },
+  { value: "idol", label: "剧场偶像（AKB48 主题）" },
+  { value: "hellfire", label: "暗黑地狱（暗黑主题）" },
+  { value: "blood-elf", label: "血精灵奥术" }
+];
+const AVATAR_FRAME_VALUES = new Set(AVATAR_FRAME_OPTIONS.map((option) => option.value));
+const CARD_SKIN_VALUES = new Set(CARD_SKIN_OPTIONS.map((option) => option.value));
 const storageKey = "chaoDipiOnlineSession";
 let session = loadSession();
 let source = null;
@@ -945,6 +968,7 @@ async function updateProfile(event) {
       body: JSON.stringify({
         name: form.get("name"),
         avatarFrame: form.get("avatarFrame"),
+        cardSkin: form.get("cardSkin"),
         playEffect: form.get("playEffect")
       })
     });
@@ -2334,7 +2358,7 @@ function renderProfileManager() {
 
     <section class="panel stack">
       <div class="section-head">
-        <div><h2>玩家资料</h2><div class="meta">昵称、VIP 头像框和出牌特效由管理员管理；玩家可每 7 天自助更换头像一次。</div></div>
+        <div><h2>玩家资料</h2><div class="meta">昵称、头像框、牌面边框和出牌特效由管理员管理；玩家可每 7 天自助更换头像一次。</div></div>
       </div>
       <div class="profile-list">
         ${managedProfiles.length ? managedProfiles.map(renderProfileRow).join("") : `<div class="empty">暂无玩家。</div>`}
@@ -2355,8 +2379,13 @@ function renderProfileRow(profile) {
         <label>
           头像框
           <select name="avatarFrame">
-            <option value="" ${profile.avatarFrame ? "" : "selected"}>默认</option>
-            <option value="vip" ${profile.avatarFrame === "vip" ? "selected" : ""}>VIP 方形框</option>
+            ${AVATAR_FRAME_OPTIONS.map((option) => `<option value="${escapeHtml(option.value)}" ${profile.avatarFrame === option.value ? "selected" : ""}>${escapeHtml(option.label)}</option>`).join("")}
+          </select>
+        </label>
+        <label>
+          牌面边框
+          <select name="cardSkin">
+            ${CARD_SKIN_OPTIONS.map((option) => `<option value="${escapeHtml(option.value)}" ${profile.cardSkin === option.value ? "selected" : ""}>${escapeHtml(option.label)}</option>`).join("")}
           </select>
         </label>
         <label>
@@ -3044,7 +3073,7 @@ function renderTwoCardChoices(cards) {
             ${group.cards.map((card, index) => `
               <button
                 type="button"
-                class="card choice-card ${card.color} ${cardSuitClass(card)} ${selectedCardIds.has(card.id) ? "selected" : ""}"
+                class="card choice-card ${card.color} ${cardSuitClass(card)} ${cardSkinClass(viewerCardSkin())} ${selectedCardIds.has(card.id) ? "selected" : ""}"
                 style="--i:${index}"
                 title="${escapeHtml(displayCardLabel(card))}"
                 aria-pressed="${selectedCardIds.has(card.id) ? "true" : "false"}"
@@ -3063,7 +3092,7 @@ function renderTwoCardChoices(cards) {
 
 function renderStaticCard(card) {
   return `
-    <div class="card static ${card.color} ${cardSuitClass(card)}" title="${escapeHtml(displayCardLabel(card))}">
+    <div class="card static ${card.color} ${cardSuitClass(card)} ${cardSkinClass(viewerCardSkin())}" title="${escapeHtml(displayCardLabel(card))}">
       ${cardCorner(card)}
     </div>
   `;
@@ -3301,14 +3330,14 @@ function setupActionsForPlayer(playerId) {
     }));
 }
 
-function renderSetupActionTrail(actions) {
+function renderSetupActionTrail(actions, cardSkin = "") {
   if (!actions?.length) return "";
   return `
     <div class="setup-action-trail">
       ${actions.map((action) => `
         <div class="setup-action ${action.current ? "current" : ""}">
           <span>${escapeHtml(action.kind === "score" ? `${action.score}分` : `${action.count}张${action.suitName}2${action.random ? " 随机" : ""}`)}</span>
-          ${action.cards?.length ? renderMiniCards(action.cards) : ""}
+          ${action.cards?.length ? renderMiniCards(action.cards, { cardSkin }) : ""}
         </div>
       `).join("")}
     </div>
@@ -3394,7 +3423,7 @@ function renderTrick(trick, current, options = {}) {
         ` : ""}
         ${displayPlays.map((play, index) => {
           const playCards = displayedPlayCards(play);
-          const playContent = setupTable ? renderSetupActionTrail(play.setupActions) : (play.played ? renderPlayedCards(play, playCards, trick.number) : "");
+          const playContent = setupTable ? renderSetupActionTrail(play.setupActions, play.cardSkin || cardSkinForPlayer(play.playerId)) : (play.played ? renderPlayedCards(play, playCards, trick.number) : "");
           const isViewerSeat = current && play.playerId === state.viewer?.id;
           const showViewerHand = isViewerSeat && !finishedResult;
           const playIndex = play.turnIndex ?? index;
@@ -3487,11 +3516,29 @@ function roleClass(role) {
 
 function avatarHtml(name, avatarUrl = "", size = "normal", avatarFrame = "") {
   const initial = String(name || "玩").trim().slice(0, 1) || "玩";
-  const frameClass = avatarFrame === "vip" ? "avatar-frame-vip" : "";
+  const frameKey = AVATAR_FRAME_VALUES.has(avatarFrame) ? avatarFrame : "";
+  const frameClass = frameKey ? `avatar-frame avatar-frame-${frameKey}` : "";
   const content = avatarUrl
     ? `<img src="${escapeHtml(avatarUrl)}" alt="" decoding="async" draggable="false">`
     : escapeHtml(initial);
   return `<span class="avatar ${size} ${frameClass}" title="${escapeHtml(name)}"><span class="avatar-core">${content}</span></span>`;
+}
+
+function normalizedCardSkin(value) {
+  return CARD_SKIN_VALUES.has(value) ? value : "";
+}
+
+function cardSkinClass(value) {
+  const skin = normalizedCardSkin(value);
+  return skin ? `card-skin card-skin-${skin}` : "";
+}
+
+function cardSkinForPlayer(playerId) {
+  return normalizedCardSkin(state?.players?.find((player) => player.id === playerId)?.cardSkin || "");
+}
+
+function viewerCardSkin() {
+  return cardSkinForPlayer(state?.viewer?.id);
 }
 
 function playerIdentity(name, role, avatarUrl = "", suffix = "", playerId = "", avatarFrame = "") {
@@ -3514,7 +3561,7 @@ function tablePlayerIdentity(play) {
   const avatarFrame = play.avatarFrame || player?.avatarFrame || "";
   return `
     <span class="player-identity table-player-identity">
-      <span class="table-player-avatar-stage ${avatarFrame === "vip" ? "has-vip-frame" : ""}" tabindex="0" aria-label="查看${escapeHtml(play.playerName)}的历史数据">
+      <span class="table-player-avatar-stage" tabindex="0" aria-label="查看${escapeHtml(play.playerName)}的历史数据">
         ${avatarHtml(play.playerName, play.avatarUrl, "small", avatarFrame)}
         ${renderPlayerHistoryMini(play.playerId, { overlay: true })}
       </span>
@@ -3850,7 +3897,7 @@ function renderHand(hand, options = {}) {
           ${compactCards.map((card, index) => `
             <button
               type="button"
-              class="card ${card.color} ${cardSuitClass(card)} ${selectedCardIds.has(card.id) ? "selected" : ""} ${isThrowDraftCard(card.id) ? "throw-queued" : ""}"
+              class="card ${card.color} ${cardSuitClass(card)} ${cardSkinClass(viewerCardSkin())} ${selectedCardIds.has(card.id) ? "selected" : ""} ${isThrowDraftCard(card.id) ? "throw-queued" : ""}"
               style="--i:${index}"
               title="${escapeHtml(displayCardLabel(card))}"
               aria-pressed="${selectedCardIds.has(card.id) ? "true" : "false"}"
@@ -3878,7 +3925,7 @@ function renderHand(hand, options = {}) {
             ${group.cards.map((card, index) => `
               <button
                 type="button"
-                class="card ${card.color} ${cardSuitClass(card)} ${selectedCardIds.has(card.id) ? "selected" : ""} ${isThrowDraftCard(card.id) ? "throw-queued" : ""}"
+                class="card ${card.color} ${cardSuitClass(card)} ${cardSkinClass(viewerCardSkin())} ${selectedCardIds.has(card.id) ? "selected" : ""} ${isThrowDraftCard(card.id) ? "throw-queued" : ""}"
                 style="--i:${index}"
                 title="${escapeHtml(displayCardLabel(card))}"
                 aria-pressed="${selectedCardIds.has(card.id) ? "true" : "false"}"
@@ -3918,10 +3965,13 @@ function playedCardEffectClass(play, card, trickNumber) {
 function renderMiniCards(cards, options = {}) {
   if (!cards.length) return `<div class="meta">未出牌</div>`;
   const sortedCards = sortCardsForPlay(cards);
+  const skin = options.cardSkin
+    ?? options.play?.cardSkin
+    ?? (options.play?.playerId ? cardSkinForPlayer(options.play.playerId) : viewerCardSkin());
   return `
     <div class="mini-cards">
       ${sortedCards.map((card, index) => `
-        <span class="mini-card ${card.color} ${cardSuitClass(card)} ${playedCardEffectClass(options.play, card, options.trickNumber)}" style="--i:${index}" title="${escapeHtml(displayCardLabel(card))}">${cardCorner(card)}</span>
+        <span class="mini-card ${card.color} ${cardSuitClass(card)} ${cardSkinClass(skin)} ${playedCardEffectClass(options.play, card, options.trickNumber)}" style="--i:${index}" title="${escapeHtml(displayCardLabel(card))}">${cardCorner(card)}</span>
       `).join("")}
     </div>
   `;

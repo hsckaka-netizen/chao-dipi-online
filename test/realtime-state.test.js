@@ -117,6 +117,7 @@ test("room snapshots stay monotonic and visual assets are cached", async (t) => 
   });
   assert.equal(created.snapshot.viewer.avatarUrl, "/assets/avatars/benlei.png?v=d699949c7781");
   assert.equal(created.snapshot.players[0].avatarFrame, "");
+  assert.equal(created.snapshot.players[0].cardSkin, "");
   assert.equal(created.snapshot.players[0].playEffect, "");
   const credentials = {
     playerId: created.playerId,

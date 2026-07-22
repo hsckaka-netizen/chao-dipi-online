@@ -199,6 +199,7 @@ test("player profile persistence remains optional when no database is configured
     id: "player-benlei",
     name: "奔雷",
     avatarFrame: "vip",
+    cardSkin: "emerald",
     playEffect: "fireworks"
   }), { status: "unavailable" });
   assert.deepEqual(await loadStoredAccounts(), []);
@@ -247,4 +248,12 @@ test("account statistics migration adds seasons and account-based aggregation", 
   assert.match(migration, /UPDATE cdp_game_players player/);
   assert.match(migration, /player\.account_id/);
   assert.match(migration, /CREATE VIEW cdp_player_statistics/);
+});
+
+test("player cosmetics migration separates avatar frames from card skins", async () => {
+  const migrationPath = fileURLToPath(new URL("../db/migrations/006_player_cosmetics.sql", import.meta.url));
+  const migration = await readFile(migrationPath, "utf8");
+  assert.match(migration, /ADD COLUMN IF NOT EXISTS card_skin/);
+  assert.match(migration, /avatar_frame IN \([^)]*'vip'[^)]*'blood-elf'[^)]*\)/);
+  assert.match(migration, /card_skin IN \([^)]*'emerald'[^)]*'blood-elf'[^)]*\)/);
 });
