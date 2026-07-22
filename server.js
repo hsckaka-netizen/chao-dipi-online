@@ -239,7 +239,7 @@ function authStatusPayload(req) {
     initialized: authRuntime.initialized,
     avatarStorageReady: authRuntime.avatarStorageReady,
     bootstrapRequired: authRuntime.bootstrapRequired,
-    legacyProfileSelection: true,
+    legacyProfileSelection: !service.configured || !authRuntime.initialized,
     account: publicAccount(accountForRequest(req))
   };
 }
@@ -465,6 +465,11 @@ function playerProfileFromBody(body, authAccount = null) {
     const accountProfile = profileForId(authAccount.profileId);
     if (!accountProfile) return { error: "账号绑定的玩家不存在", status: 409 };
     return { profile: accountProfile };
+  }
+  if (accountAuthStatus().configured) {
+    return authRuntime.initialized
+      ? { error: "请先登录玩家账号", status: 401 }
+      : { error: "账号服务正在初始化，请稍后重试", status: 503 };
   }
   const profile = profileForId(body.profileId);
   if (!profile) return { error: "请选择玩家列表里的玩家", status: 400 };
@@ -1029,6 +1034,7 @@ function roomSnapshot(room, viewer = null) {
     setup: setupSnapshot(room),
     viewer: viewer ? {
       id: viewer.id,
+      accountId: viewer.accountId || null,
       name: viewer.name,
       avatarUrl: viewer.avatarUrl || "",
       host: viewer.host,
@@ -1036,6 +1042,7 @@ function roomSnapshot(room, viewer = null) {
     } : null,
     players: room.players.map((player) => ({
       id: player.id,
+      accountId: player.accountId || null,
       profileId: player.profileId || null,
       name: player.name,
       avatarUrl: player.avatarUrl || "",
@@ -1052,6 +1059,7 @@ function roomSnapshot(room, viewer = null) {
       throwFailures: player.throwFailures || 0,
       cardCount: player.hand.length
     })),
+    spectators: publicRoomSpectators(room),
     hand: viewer ? viewerHandForSnapshot(room, viewer).map(publicCard) : [],
     currentTrick: trickSnapshot(room, room.currentTrick),
     trickHistory: [...(room.settledTrickHistory || [])],
@@ -1064,6 +1072,20 @@ function roomSnapshot(room, viewer = null) {
 function roomSpectators(room) {
   if (!(room.spectators instanceof Map)) room.spectators = new Map();
   return room.spectators;
+}
+
+function publicRoomSpectators(room) {
+  return [...roomSpectators(room).values()]
+    .map((spectator) => ({
+      id: spectator.id,
+      name: spectator.name || "路人",
+      avatarUrl: spectator.avatarUrl || "",
+      avatarFrame: normalizeAvatarFrame(spectator.avatarFrame),
+      targetPlayerId: spectator.targetPlayerId,
+      targetPlayerName: playerName(room, spectator.targetPlayerId),
+      joinedAt: spectator.createdAt
+    }))
+    .sort((left, right) => new Date(left.joinedAt).getTime() - new Date(right.joinedAt).getTime());
 }
 
 function spectatorFor(room, spectatorId, token) {
@@ -3885,13 +3907,23 @@ async function handleApi(req, res, pathParts, url) {
       if (room.status !== "dealt") return writeJson(res, 409, { error: "只有进行中的牌局可以观战" });
       const target = playerById(room, body.targetPlayerId);
       if (!target) return writeJson(res, 404, { error: "要观战的玩家不存在" });
+      const spectatorAccount = accountForRequest(req);
+      if (accountAuthStatus().configured && !spectatorAccount) {
+        return writeJson(res, 401, { error: "请先登录账号再观战" });
+      }
+      const spectatorProfile = spectatorAccount?.profileId ? profileForId(spectatorAccount.profileId) : null;
       const spectator = {
         id: id(9),
         token: id(18),
         targetPlayerId: target.id,
+        accountId: spectatorAccount?.id || null,
+        name: spectatorProfile?.name || spectatorAccount?.username || "路人",
+        avatarUrl: spectatorProfile?.avatarUrl || "",
+        avatarFrame: normalizeAvatarFrame(spectatorProfile?.avatarFrame),
         createdAt: now()
       };
       roomSpectators(room).set(spectator.id, spectator);
+      broadcast(room);
       return writeJson(res, 201, {
         roomId: room.id,
         spectatorId: spectator.id,
@@ -3907,6 +3939,7 @@ async function handleApi(req, res, pathParts, url) {
       if (!spectator) return writeJson(res, 401, { error: "观战身份已失效" });
       disconnectSpectatorClients(room, spectator.id);
       roomSpectators(room).delete(spectator.id);
+      broadcast(room);
       return writeJson(res, 200, { ok: true });
     }
 

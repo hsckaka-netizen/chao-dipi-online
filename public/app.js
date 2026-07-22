@@ -40,8 +40,10 @@ let profiles = [];
 let profilesLoaded = false;
 let profilesLoading = false;
 let playerStatistics = new Map();
+let playerStatisticsRows = [];
 let playerStatisticsLoaded = false;
 let playerStatisticsLoading = false;
+let historyStatus = null;
 let joinableRooms = [];
 let joinableRoomsLoaded = false;
 let joinableRoomsLoading = false;
@@ -55,6 +57,7 @@ let authState = {
 };
 let adminData = null;
 let adminDataLoading = false;
+let homeJoinOpen = Boolean(roomFromUrl());
 const stateVersionWaiters = new Set();
 const dragSelectThreshold = 8;
 
@@ -686,12 +689,17 @@ function ensureProfiles() {
 function ensurePlayerStatistics() {
   if (playerStatisticsLoaded || playerStatisticsLoading) return;
   playerStatisticsLoading = true;
-  api("/api/history/statistics")
-    .then((data) => {
-      playerStatistics = new Map((data.players || []).map((row) => [row.profile_id, {
+  Promise.all([
+    api("/api/history/statistics"),
+    api("/api/history/status").catch(() => null)
+  ])
+    .then(([data, status]) => {
+      playerStatisticsRows = data.players || [];
+      playerStatistics = new Map(playerStatisticsRows.map((row) => [row.profile_id, {
         games: Number(row.games_played) || 0,
         score: Number(row.total_score) || 0
       }]));
+      historyStatus = status;
       playerStatisticsLoaded = true;
       playerStatisticsLoading = false;
       render();
@@ -826,13 +834,12 @@ function startStateWatchdog() {
 }
 
 async function createRoom(event) {
-  event.preventDefault();
-  const formEl = event.target.closest("form");
-  const form = new FormData(formEl);
+  event?.preventDefault();
+  if (!requirePlayerLogin()) return;
   try {
     const data = await api("/api/rooms", {
       method: "POST",
-      body: JSON.stringify({ profileId: form.get("profileId") })
+      body: JSON.stringify({})
     });
     saveSession({ roomId: data.roomId, playerId: data.playerId, token: data.token });
     history.replaceState(null, "", `?room=${data.roomId}`);
@@ -846,20 +853,37 @@ async function createRoom(event) {
 }
 
 async function joinRoom(event) {
-  event.preventDefault();
-  const formEl = event.target.closest("form");
-  const form = new FormData(formEl);
-  const roomId = String(form.get("roomId") || "").trim().toUpperCase();
+  event?.preventDefault();
+  const formEl = event?.target.closest("form");
+  const form = formEl ? new FormData(formEl) : null;
+  const roomId = String(form?.get("roomId") || "").trim().toUpperCase();
+  if (!requirePlayerLogin()) return;
+  await joinRoomById(roomId);
+}
+
+function requirePlayerLogin() {
+  if (authState.account?.role === "player" && authState.account.profile) return true;
+  homeJoinOpen = false;
+  homeView = "login";
+  setMessage(authState.account?.role === "admin" ? "管理员账号不能加入牌局" : "请先登录玩家账号", true);
+  return false;
+}
+
+async function joinRoomById(roomId) {
+  const normalizedRoomId = String(roomId || "").trim().toUpperCase();
+  if (!normalizedRoomId) return setMessage("请输入房间号", true);
+  if (!requirePlayerLogin()) return;
   try {
-    const data = await api(`/api/rooms/${encodeURIComponent(roomId)}/join`, {
+    const data = await api(`/api/rooms/${encodeURIComponent(normalizedRoomId)}/join`, {
       method: "POST",
-      body: JSON.stringify({ profileId: form.get("profileId") })
+      body: JSON.stringify({})
     });
     saveSession({ roomId: data.roomId, playerId: data.playerId, token: data.token });
     history.replaceState(null, "", `?room=${data.roomId}`);
     applyState(data.snapshot, { highlightNewKitty: false });
     message = "";
     connectEvents();
+    homeJoinOpen = false;
     render();
   } catch (error) {
     setMessage(error.message, true);
@@ -867,6 +891,11 @@ async function joinRoom(event) {
 }
 
 async function spectatePlayer(roomId, targetPlayerId) {
+  if (!authState.account) {
+    homeView = "login";
+    setMessage("请先登录账号再观战", true);
+    return;
+  }
   try {
     const data = await api(`/api/rooms/${encodeURIComponent(roomId)}/spectate`, {
       method: "POST",
@@ -1984,9 +2013,9 @@ function renderShell(content) {
               <span>${escapeHtml(accountLabel)}</span>
               ${account.role === "admin" ? `<b>管理员</b>` : ""}
             </span>
-            ${!session ? `<button class="secondary compact-button" data-action="${account.role === "admin" ? "show-admin" : "show-account"}">${account.role === "admin" ? "管理后台" : "账号设置"}</button>` : ""}
+            ${!session ? `<button class="secondary compact-button" data-action="${account.role === "admin" ? "show-admin" : "show-account"}">${account.role === "admin" ? "管理后台" : "我的资料"}</button>` : ""}
             ${!session ? `<button class="secondary compact-button" data-action="logout-account">退出登录</button>` : ""}
-          ` : `<button class="secondary compact-button" data-action="show-login">账号登录</button>`}
+          ` : `<button class="secondary compact-button" data-action="show-login">玩家登录</button>`}
           ${session ? `<button class="secondary compact-button" data-action="${session.spectator ? "leave-spectating" : "leave"}">${session.spectator ? "退出观战" : "退出本机身份"}</button>` : ""}
         </div>
       </header>
@@ -1998,60 +2027,72 @@ function renderShell(content) {
 
 function renderHome() {
   ensureAuth();
-  ensureProfiles();
   ensureJoinableRooms();
+  ensurePlayerStatistics();
   if (homeView === "login") return renderLogin();
   if (homeView === "account") return renderAccountSettings();
   if (homeView === "admin" || homeView === "players") return renderProfileManager();
-  const hintedRoom = roomFromUrl();
   renderShell(`
-    ${renderSignedInIdentity()}
-    ${renderJoinableRooms()}
-    <div class="grid">
-      <section class="panel">
-        <h2>创建房间</h2>
-        <form class="form" data-form="create">
-          ${renderProfileIdentityField("profileId")}
-          <button type="submit" ${authState.account?.role === "admin" ? "disabled" : ""}>创建房间</button>
-        </form>
-      </section>
-      <section class="panel">
-        <h2>加入房间</h2>
+    <section class="home-toolbar">
+      <div class="segmented home-tabs" role="tablist" aria-label="首页模块">
+        <button type="button" class="${homeView === "rooms" ? "active" : "secondary"}" data-action="show-rooms">房间</button>
+        <button type="button" class="${homeView === "stats" ? "active" : "secondary"}" data-action="show-statistics">数据</button>
+      </div>
+      ${homeView === "rooms" ? `
+        <div class="home-room-actions">
+          <button type="button" data-action="quick-create-room">创建房间</button>
+          <button type="button" class="secondary" data-action="open-join-room">加入房间</button>
+        </div>
+      ` : ""}
+    </section>
+    ${homeView === "stats" ? renderHomeStatistics() : `
+      ${renderSignedInIdentity()}
+      ${renderJoinableRooms()}
+    `}
+    ${homeJoinOpen ? renderHomeJoinDialog() : ""}
+  `);
+}
+
+function renderHomeJoinDialog() {
+  const account = authState.account;
+  return `
+    <div class="modal-backdrop">
+      <section class="modal-card home-join-modal" role="dialog" aria-modal="true" aria-label="加入房间">
+        <div class="section-head">
+          <div>
+            <h2>加入房间</h2>
+            <div class="meta">输入朋友分享的 6 位房间号</div>
+          </div>
+          <button type="button" class="secondary compact-button" data-action="close-home-dialog">关闭</button>
+        </div>
         <form class="form" data-form="join">
           <label>
             房间号
-            <input name="roomId" maxlength="6" required value="${escapeHtml(hintedRoom)}" placeholder="例如：A7K2QD">
+            <input name="roomId" maxlength="6" required autofocus value="${escapeHtml(roomFromUrl())}" placeholder="例如：A7K2QD">
           </label>
-          ${renderProfileIdentityField("profileId")}
-          <button type="submit" ${authState.account?.role === "admin" ? "disabled" : ""}>加入房间</button>
+          ${account?.profile ? `
+            <div class="home-join-player">
+              ${avatarHtml(account.profile.name, account.profile.avatarUrl, "normal", account.profile.avatarFrame)}
+              <span>将以 <b>${escapeHtml(account.profile.name)}</b> 加入</span>
+            </div>
+          ` : `<div class="status bad">需要先登录玩家账号。</div>`}
+          <button type="submit">${account?.profile ? "加入房间" : "前往登录"}</button>
         </form>
       </section>
     </div>
-  `);
+  `;
 }
 
 function renderSignedInIdentity() {
   const account = authState.account;
   if (!account?.profile) return account?.role === "admin"
     ? `<section class="account-banner admin"><b>管理员模式</b><span>管理员账号不绑定牌桌身份，可管理玩家或进行观战。</span></section>`
-    : "";
+    : `<section class="account-banner login-required"><b>登录后参与牌局</b><span>未登录可以查看房间和数据；创建、加入和观战均需登录。</span><button type="button" data-action="show-login">玩家登录</button></section>`;
   return `
     <section class="account-banner">
       ${avatarHtml(account.profile.name, account.profile.avatarUrl, "normal", account.profile.avatarFrame)}
-      <div><b>${escapeHtml(account.profile.name)}</b><span>已使用账号 ${escapeHtml(account.username)} 登录，创建和加入房间时固定使用此身份。</span></div>
+      <div><b>${escapeHtml(account.profile.name)}</b><span>玩家账号 ${escapeHtml(account.username)}</span></div>
     </section>
-  `;
-}
-
-function renderProfileIdentityField(name) {
-  const account = authState.account;
-  if (account?.profile) return `<div class="fixed-profile-field"><span>玩家身份</span><b>${escapeHtml(account.profile.name)}</b></div>`;
-  if (account?.role === "admin") return `<div class="fixed-profile-field blocked"><span>玩家身份</span><b>管理员账号未绑定玩家</b></div>`;
-  return `
-    <label>
-      备用身份选择
-      ${renderProfileSelect(name)}
-    </label>
   `;
 }
 
@@ -2082,8 +2123,7 @@ function renderJoinableRoom(room) {
   const players = room.players || [];
   const joinable = Boolean(room.joinable);
   return `
-    <form class="joinable-room-card ${joinable ? "" : "in-progress"}" data-form="join">
-      <input type="hidden" name="roomId" value="${escapeHtml(room.roomId)}">
+    <article class="joinable-room-card ${joinable ? "" : "in-progress"}">
       <div class="joinable-room-main">
         <div>
           <div class="meta">房间号</div>
@@ -2111,7 +2151,7 @@ function renderJoinableRoom(room) {
           >
             ${avatarHtml(player.name, player.avatarUrl, "normal", player.avatarFrame)}
             <span class="joinable-room-player-name">${escapeHtml(player.name)}</span>
-            <span class="spectate-player-label">观战</span>
+            <span class="spectate-player-label">${authState.account ? "观战" : "登录后观战"}</span>
           </button>
         ` : `
           <span class="joinable-room-player ${player.ready ? "ready" : ""}">
@@ -2122,24 +2162,66 @@ function renderJoinableRoom(room) {
       </div>
       <div class="joinable-room-actions">
         ${joinable ? `
-          ${renderProfileIdentityField("profileId")}
-          <button type="submit" ${authState.account?.role === "admin" ? "disabled" : ""}>加入此房间</button>
+          <button type="button" data-action="join-listed-room" data-room-id="${escapeHtml(room.roomId)}">
+            ${authState.account?.profile ? "加入房间" : "登录后加入"}
+          </button>
         ` : `
           <div class="meta">牌局已开始，点击上方玩家即可观战。</div>
         `}
       </div>
-    </form>
+    </article>
   `;
 }
 
-function renderProfileSelect(name) {
-  if (profilesLoading && !profilesLoaded) return `<select name="${name}" required disabled><option>玩家列表加载中</option></select>`;
-  if (!profiles.length) return `<select name="${name}" required disabled><option>暂无预置玩家</option></select>`;
+function renderHomeStatistics() {
+  const rows = playerStatisticsRows;
+  const appearances = rows.reduce((sum, row) => sum + (Number(row.games_played) || 0), 0);
+  const recordedState = historyStatus?.enabled ? "记录中" : "未开启";
+  const body = playerStatisticsLoading && !playerStatisticsLoaded
+    ? `<div class="empty">正在加载数据...</div>`
+    : rows.length ? `
+      <div class="statistics-table-wrap">
+        <table class="statistics-table">
+          <thead><tr><th>排名</th><th>玩家</th><th>积分</th><th>场次</th><th>胜场</th><th>胜率</th><th>场均积分</th><th>累计牌分</th></tr></thead>
+          <tbody>
+            ${rows.map((row, index) => `
+              <tr>
+                <td><span class="rank-number rank-${index + 1}">${index + 1}</span></td>
+                <td>
+                  <span class="statistics-player">
+                    ${avatarHtml(row.latest_name || "玩家", row.latest_avatar_url || "", "normal", row.avatar_frame || "")}
+                    <b>${escapeHtml(row.latest_name || "玩家")}</b>
+                  </span>
+                </td>
+                <td class="statistics-score">${escapeHtml(signedScore(null, Number(row.total_score) || 0))}</td>
+                <td>${escapeHtml(row.games_played || 0)}</td>
+                <td>${escapeHtml(row.wins || 0)}</td>
+                <td>${escapeHtml(Number(row.win_rate || 0).toFixed(1))}%</td>
+                <td>${escapeHtml(Number(row.average_score || 0).toFixed(2))}</td>
+                <td>${escapeHtml(row.total_trick_score || 0)}</td>
+              </tr>
+            `).join("")}
+          </tbody>
+        </table>
+      </div>
+    ` : `<div class="empty">暂无已记录的全真人牌局。记录开启后，结算数据会自动出现在这里。</div>`;
   return `
-    <select name="${name}" required>
-      <option value="">请选择玩家</option>
-      ${profiles.map((profile) => `<option value="${escapeHtml(profile.id)}">${escapeHtml(profile.name)}</option>`).join("")}
-    </select>
+    <section class="panel stack statistics-panel">
+      <div class="section-head">
+        <div>
+          <h2>玩家数据</h2>
+          <div class="meta">当前为历史总榜，赛季筛选将在赛季功能启用后开放。</div>
+        </div>
+        <span class="tag ${historyStatus?.enabled ? "good" : ""}">牌局记录 ${recordedState}</span>
+      </div>
+      <div class="statistics-summary">
+        <div><span>上榜玩家</span><strong>${rows.length}</strong></div>
+        <div><span>参赛人次</span><strong>${appearances}</strong></div>
+        <div><span>记录规则</span><strong>全真人局</strong></div>
+      </div>
+      ${!historyStatus?.enabled && historyStatus ? `<div class="status bad">线上牌局记录开关尚未开启，当前结算不会写入统计。</div>` : ""}
+      ${body}
+    </section>
   `;
 }
 
@@ -2148,7 +2230,7 @@ function renderLogin() {
     <div class="auth-page-grid">
       <section class="panel stack auth-panel">
         <div class="section-head">
-          <h2>账号登录</h2>
+          <h2>玩家登录</h2>
           <button type="button" class="secondary compact-button" data-action="show-rooms">返回房间</button>
         </div>
         ${authState.bootstrapRequired ? `<div class="status bad">管理员账号尚未创建，请先完成服务器初始化设置。</div>` : ""}
@@ -2361,6 +2443,7 @@ function renderRoom() {
         ${!showTable ? `<section class="panel"><div class="empty">${escapeHtml(lobbyEmptyText(waitingNextRound))}</div></section>` : ""}
       </div>
     </div>
+    ${renderSpectatorIndicator()}
     ${renderActiveDialog()}
   `);
 }
@@ -2683,8 +2766,48 @@ function renderActiveDialog() {
   if (activeDialog === "history") return renderHistoryDialog();
   if (activeDialog === "players") return renderPlayersDialog();
   if (activeDialog === "events") return renderEventsDialog();
+  if (activeDialog === "spectators") return renderSpectatorsDialog();
   if (activeDialog === "result" && state.stage === "finished") return renderResultPanel();
   return "";
+}
+
+function renderSpectatorIndicator() {
+  const spectators = state.spectators || [];
+  if (!spectators.length) return "";
+  return `
+    <button type="button" class="spectator-indicator" data-action="open-spectators" title="查看观战玩家" aria-label="${spectators.length} 人正在观战">
+      <span class="spectator-eye" aria-hidden="true"></span>
+      <span class="spectator-count">${spectators.length}</span>
+    </button>
+  `;
+}
+
+function renderSpectatorsDialog() {
+  const spectators = state.spectators || [];
+  return `
+    <div class="modal-backdrop">
+      <section class="modal-card spectators-modal" role="dialog" aria-modal="true" aria-label="观战玩家">
+        <div class="section-head">
+          <div>
+            <h2>观战玩家</h2>
+            <div class="meta">${spectators.length} 人正在观看本局</div>
+          </div>
+          <button type="button" class="secondary compact-button" data-action="close-dialog">关闭</button>
+        </div>
+        <div class="spectator-list">
+          ${spectators.length ? spectators.map((spectator) => `
+            <div class="spectator-list-item">
+              ${avatarHtml(spectator.name || "路人", spectator.avatarUrl || "", "normal", spectator.avatarFrame || "")}
+              <div>
+                <strong>${escapeHtml(spectator.name || "路人")}</strong>
+                <span>正在观看 ${escapeHtml(spectator.targetPlayerName || "玩家")}</span>
+              </div>
+            </div>
+          `).join("") : `<div class="empty">当前没有人观战</div>`}
+        </div>
+      </section>
+    </div>
+  `;
 }
 
 function renderLobbyPlayersPanel() {
@@ -4015,6 +4138,7 @@ document.addEventListener("click", (event) => {
     "open-history",
     "open-players",
     "open-events",
+    "open-spectators",
     "open-result",
     "close-dialog",
     "clear-selection"
@@ -4047,7 +4171,26 @@ document.addEventListener("click", (event) => {
   }
   if (action === "show-rooms") {
     homeView = "rooms";
+    homeJoinOpen = false;
     render();
+  }
+  if (action === "show-statistics") {
+    homeView = "stats";
+    homeJoinOpen = false;
+    render();
+  }
+  if (action === "quick-create-room") createRoom();
+  if (action === "open-join-room") {
+    homeJoinOpen = true;
+    render();
+  }
+  if (action === "close-home-dialog") {
+    homeJoinOpen = false;
+    render();
+  }
+  if (action === "join-listed-room") {
+    const target = event.target.closest("[data-room-id]");
+    joinRoomById(target?.dataset.roomId || "");
   }
   if (action === "refresh-rooms") refreshJoinableRooms();
   if (action === "spectate-player") {
@@ -4104,6 +4247,10 @@ document.addEventListener("click", (event) => {
   }
   if (action === "open-players") {
     activeDialog = "players";
+    render();
+  }
+  if (action === "open-spectators") {
+    activeDialog = "spectators";
     render();
   }
   if (action === "open-events") {

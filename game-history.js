@@ -21,6 +21,10 @@ const MIGRATIONS = [
   {
     version: 4,
     path: fileURLToPath(new URL("./db/migrations/004_accounts.sql", import.meta.url))
+  },
+  {
+    version: 5,
+    path: fileURLToPath(new URL("./db/migrations/005_account_statistics_and_seasons.sql", import.meta.url))
   }
 ];
 const HISTORY_ENABLED = String(process.env.GAME_HISTORY_ENABLED || "").toLowerCase() === "true";
@@ -34,7 +38,7 @@ const pendingRecords = new Map();
 const status = {
   configured: Boolean(DATABASE_URL),
   enabled: HISTORY_ENABLED,
-  recordPolicy: "human-only-settlement",
+  recordPolicy: "logged-in-human-only-settlement",
   connected: false,
   migrationVersion: 0,
   profileStorageReady: false,
@@ -464,7 +468,8 @@ export function buildGameRecord(room) {
 }
 
 export function isHumanOnlyGame(room) {
-  return Boolean(room?.players?.length) && room.players.every((player) => !player.test);
+  return Boolean(room?.players?.length)
+    && room.players.every((player) => !player.test && Boolean(player.accountId));
 }
 
 async function saveGameRecord(record) {

@@ -208,6 +208,15 @@ test("room snapshots stay monotonic and visual assets are cached", async (t) => 
   assert.equal(spectate.snapshot.spectator.targetPlayerId, created.playerId);
   assert.equal(spectate.snapshot.viewer.id, created.playerId);
   assert.equal(spectate.snapshot.hand.length, 53);
+  assert.equal(spectate.snapshot.spectators.length, 1);
+  assert.equal(spectate.snapshot.spectators[0].name, "路人");
+  assert.equal(Object.hasOwn(spectate.snapshot.spectators[0], "token"), false);
+  assert.equal(Object.hasOwn(spectate.snapshot.spectators[0], "accountId"), false);
+
+  const playerStateWithSpectator = await jsonRequest(
+    `${server.baseUrl}/api/rooms/${created.roomId}/state?${stateParams.toString()}`
+  );
+  assert.equal(playerStateWithSpectator.spectators.length, 1);
 
   const spectatorParams = new URLSearchParams({
     spectatorId: spectate.spectatorId,
@@ -242,6 +251,10 @@ test("room snapshots stay monotonic and visual assets are cached", async (t) => 
     method: "POST",
     body: JSON.stringify({ spectatorId: spectate.spectatorId, token: spectate.token })
   });
+  const playerStateAfterSpectatorLeft = await jsonRequest(
+    `${server.baseUrl}/api/rooms/${created.roomId}/state?${stateParams.toString()}`
+  );
+  assert.deepEqual(playerStateAfterSpectatorLeft.spectators, []);
 
   for (const playerCount of [6, 7, 8, 9]) {
     const countRoom = await jsonRequest(`${server.baseUrl}/api/rooms`, {

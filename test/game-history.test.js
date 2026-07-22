@@ -178,7 +178,7 @@ test("settled game is converted to an immutable history record", () => {
 
 test("history queue remains a no-op when the feature flag is disabled", () => {
   assert.equal(gameHistoryStatus().enabled, false);
-  assert.equal(gameHistoryStatus().recordPolicy, "human-only-settlement");
+  assert.equal(gameHistoryStatus().recordPolicy, "logged-in-human-only-settlement");
   assert.deepEqual(queueGameRecord(settledRoom()), { status: "disabled" });
 });
 
@@ -186,8 +186,9 @@ test("only all-human games are eligible for history persistence", () => {
   const room = settledRoom();
   assert.equal(isHumanOnlyGame(room), false);
 
-  room.players.forEach((player) => {
+  room.players.forEach((player, index) => {
     player.test = false;
+    player.accountId = `3d173ad8-a44f-44f6-8896-4139b7de${String(9600 + index)}`;
   });
   assert.equal(isHumanOnlyGame(room), true);
 });
@@ -237,4 +238,13 @@ test("account migration adds login identities and avatar cooldown timestamps", a
   assert.match(migration, /account_id uuid PRIMARY KEY/);
   assert.match(migration, /profile_id text UNIQUE REFERENCES cdp_player_profiles/);
   assert.match(migration, /ENABLE ROW LEVEL SECURITY/);
+});
+
+test("account statistics migration adds seasons and account-based aggregation", async () => {
+  const migrationPath = fileURLToPath(new URL("../db/migrations/005_account_statistics_and_seasons.sql", import.meta.url));
+  const migration = await readFile(migrationPath, "utf8");
+  assert.match(migration, /CREATE TABLE IF NOT EXISTS cdp_seasons/);
+  assert.match(migration, /UPDATE cdp_game_players player/);
+  assert.match(migration, /player\.account_id/);
+  assert.match(migration, /CREATE VIEW cdp_player_statistics/);
 });
