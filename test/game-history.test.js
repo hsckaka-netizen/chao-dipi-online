@@ -257,3 +257,21 @@ test("player cosmetics migration separates avatar frames from card skins", async
   assert.match(migration, /avatar_frame IN \([^)]*'vip'[^)]*'blood-elf'[^)]*\)/);
   assert.match(migration, /card_skin IN \([^)]*'emerald'[^)]*'blood-elf'[^)]*\)/);
 });
+
+test("leaderboard migration derives advanced metrics from compact game records", async () => {
+  const migrationPath = fileURLToPath(new URL("../db/migrations/007_leaderboard_metrics.sql", import.meta.url));
+  const migration = await readFile(migrationPath, "utf8");
+  assert.match(migration, /enemyDraggedRedFives/);
+  assert.match(migration, /teammateDraggedRedFives/);
+  assert.match(migration, /wonTricks/);
+  assert.match(migration, /jsonb_array_length\(game\.trick_history\)/);
+  assert.match(migration, /bottom_wins/);
+  assert.match(migration, /CREATE VIEW cdp_player_statistics/);
+});
+
+test("additional cosmetics migration expands both cosmetic constraints", async () => {
+  const migrationPath = fileURLToPath(new URL("../db/migrations/008_more_player_cosmetics.sql", import.meta.url));
+  const migration = await readFile(migrationPath, "utf8");
+  assert.match(migration, /avatar_frame IN \([^)]*'endless-winter'[^)]*'cr7'[^)]*'paladin'[^)]*'vip-legend'[^)]*\)/);
+  assert.match(migration, /card_skin IN \([^)]*'endless-winter'[^)]*'cr7'[^)]*'paladin'[^)]*'vip-legend'[^)]*\)/);
+});

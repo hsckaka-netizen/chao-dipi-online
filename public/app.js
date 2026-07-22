@@ -1,6 +1,6 @@
 import { applyStatePatch } from "./state-patch.js?v=9330552c7e1e";
 import { detectNewLargePlayEffects } from "./gameplay-effects.js?v=d2368568e06d";
-import { ASSET_URLS } from "./asset-versions.js?v=3de3762e0169";
+import { ASSET_URLS } from "./asset-versions.js?v=b62e391a838d";
 
 const app = document.querySelector("#app");
 document.documentElement.style.setProperty("--joker-face-image", `url("${ASSET_URLS.jokerFace}")`);
@@ -11,6 +11,12 @@ Object.entries(ASSET_URLS.avatarFrames).forEach(([key, url]) => {
 Object.entries(ASSET_URLS.cardFrames).forEach(([key, url]) => {
   document.documentElement.style.setProperty(`--card-frame-${key}-image`, `url("${url}")`);
 });
+Object.entries(ASSET_URLS.staticAvatarFrames).forEach(([key, url]) => {
+  document.documentElement.style.setProperty(`--avatar-frame-${key}-static-image`, `url("${url}")`);
+});
+Object.entries(ASSET_URLS.staticCardFrames).forEach(([key, url]) => {
+  document.documentElement.style.setProperty(`--card-frame-${key}-static-image`, `url("${url}")`);
+});
 const AVATAR_FRAME_OPTIONS = [
   { value: "", label: "默认方框" },
   { value: "vip", label: "经典 VIP" },
@@ -20,7 +26,11 @@ const AVATAR_FRAME_OPTIONS = [
   { value: "stormwind", label: "皇家蓝城邦（暴风城主题）" },
   { value: "idol", label: "剧场偶像（AKB48 主题）" },
   { value: "hellfire", label: "暗黑地狱（暗黑主题）" },
-  { value: "blood-elf", label: "血精灵奥术" }
+  { value: "blood-elf", label: "血精灵奥术" },
+  { value: "endless-winter", label: "无尽冬日（冰雪熔炉）" },
+  { value: "cr7", label: "7号传奇（C罗主题）" },
+  { value: "paladin", label: "圣光骑士（魔兽圣骑士主题）" },
+  { value: "vip-legend", label: "至尊星耀 VIP（动态）" }
 ];
 const CARD_SKIN_OPTIONS = [
   { value: "", label: "默认牌框" },
@@ -30,7 +40,11 @@ const CARD_SKIN_OPTIONS = [
   { value: "stormwind", label: "皇家蓝城邦（暴风城主题）" },
   { value: "idol", label: "剧场偶像（AKB48 主题）" },
   { value: "hellfire", label: "暗黑地狱（暗黑主题）" },
-  { value: "blood-elf", label: "血精灵奥术" }
+  { value: "blood-elf", label: "血精灵奥术" },
+  { value: "endless-winter", label: "无尽冬日（冰雪熔炉）" },
+  { value: "cr7", label: "7号传奇（C罗主题）" },
+  { value: "paladin", label: "圣光骑士（魔兽圣骑士主题）" },
+  { value: "vip-legend", label: "至尊星耀 VIP（动态）" }
 ];
 const AVATAR_FRAME_VALUES = new Set(AVATAR_FRAME_OPTIONS.map((option) => option.value));
 const CARD_SKIN_VALUES = new Set(CARD_SKIN_OPTIONS.map((option) => option.value));
@@ -72,6 +86,11 @@ let playerStatisticsRows = [];
 let playerStatisticsLoaded = false;
 let playerStatisticsLoading = false;
 let historyStatus = null;
+let statisticsSortKey = "total_score";
+let statisticsSortDirection = "desc";
+let statisticsSelectedAccountId = "";
+let statisticsPlayerDetailLoadingId = "";
+const statisticsPlayerDetails = new Map();
 let joinableRooms = [];
 let joinableRoomsLoaded = false;
 let joinableRoomsLoading = false;
@@ -2203,54 +2222,274 @@ function renderJoinableRoom(room) {
 }
 
 function renderHomeStatistics() {
-  const rows = playerStatisticsRows;
+  const selectedRow = statisticsSelectedAccountId
+    ? playerStatisticsRows.find((row) => row.account_id === statisticsSelectedAccountId)
+    : null;
+  if (selectedRow) return renderPlayerStatisticsDetail(selectedRow);
+
+  const rows = sortedStatisticsRows();
   const appearances = rows.reduce((sum, row) => sum + (Number(row.games_played) || 0), 0);
   const recordedState = historyStatus?.enabled ? "记录中" : "未开启";
+  const currentColumn = statisticsColumns().find((column) => column.key === statisticsSortKey) || statisticsColumns()[0];
   const body = playerStatisticsLoading && !playerStatisticsLoaded
     ? `<div class="empty">正在加载数据...</div>`
-    : rows.length ? `
-      <div class="statistics-table-wrap">
-        <table class="statistics-table">
-          <thead><tr><th>排名</th><th>玩家</th><th>积分</th><th>场次</th><th>胜场</th><th>胜率</th><th>场均积分</th><th>累计牌分</th></tr></thead>
-          <tbody>
-            ${rows.map((row, index) => `
-              <tr>
-                <td><span class="rank-number rank-${index + 1}">${index + 1}</span></td>
-                <td>
-                  <span class="statistics-player">
-                    ${avatarHtml(row.latest_name || "玩家", row.latest_avatar_url || "", "normal", row.avatar_frame || "")}
-                    <b>${escapeHtml(row.latest_name || "玩家")}</b>
-                  </span>
-                </td>
-                <td class="statistics-score">${escapeHtml(signedScore(null, Number(row.total_score) || 0))}</td>
-                <td>${escapeHtml(row.games_played || 0)}</td>
-                <td>${escapeHtml(row.wins || 0)}</td>
-                <td>${escapeHtml(Number(row.win_rate || 0).toFixed(1))}%</td>
-                <td>${escapeHtml(Number(row.average_score || 0).toFixed(2))}</td>
-                <td>${escapeHtml(row.total_trick_score || 0)}</td>
-              </tr>
-            `).join("")}
-          </tbody>
-        </table>
-      </div>
-    ` : `<div class="empty">暂无已记录的全真人牌局。记录开启后，结算数据会自动出现在这里。</div>`;
+    : rows.length ? renderStatisticsTable(rows) : `<div class="empty">暂无已记录的全真人牌局。记录开启后，结算数据会自动出现在这里。</div>`;
   return `
     <section class="panel stack statistics-panel">
       <div class="section-head">
         <div>
-          <h2>玩家数据</h2>
-          <div class="meta">当前为历史总榜，赛季筛选将在赛季功能启用后开放。</div>
+          <h2>历史数据总榜</h2>
+          <div class="meta">列顺序保持固定；点击任意参数名称即可排行，再次点击切换升序或降序。</div>
         </div>
-        <span class="tag ${historyStatus?.enabled ? "good" : ""}">牌局记录 ${recordedState}</span>
+        <div class="statistics-sort-status"><span>当前排序</span><strong>${escapeHtml(currentColumn.label)} ${statisticsSortDirection === "desc" ? "↓" : "↑"}</strong></div>
       </div>
-      <div class="statistics-summary">
+      <div class="statistics-summary statistics-summary-wide">
+        <div class="statistics-current-leader">
+          ${rows[0] ? avatarHtml(rows[0].latest_name || "玩家", rows[0].latest_avatar_url || "", "normal", rows[0].avatar_frame || "") : ""}
+          <span><i>当前排名第一</i><b>${escapeHtml(rows[0]?.latest_name || "暂无")}</b><em>${rows[0] ? escapeHtml(currentColumn.format(currentColumn.value(rows[0]))) : "-"}</em></span>
+        </div>
         <div><span>上榜玩家</span><strong>${rows.length}</strong></div>
         <div><span>参赛人次</span><strong>${appearances}</strong></div>
-        <div><span>记录规则</span><strong>全真人局</strong></div>
+        <div><span>记录状态</span><strong class="${historyStatus?.enabled ? "positive" : ""}">${recordedState}</strong></div>
       </div>
       ${!historyStatus?.enabled && historyStatus ? `<div class="status bad">线上牌局记录开关尚未开启，当前结算不会写入统计。</div>` : ""}
       ${body}
     </section>
+  `;
+}
+
+function statisticNumber(value) {
+  return Number(value) || 0;
+}
+
+function statisticDecimal(value, digits = 2) {
+  return statisticNumber(value).toFixed(digits).replace(/\.0+$/, "").replace(/(\.\d*?)0+$/, "$1");
+}
+
+function statisticSigned(value, digits = 2) {
+  const numeric = statisticNumber(value);
+  return signedScore(statisticDecimal(numeric, digits), numeric);
+}
+
+function statisticPercent(value) {
+  return `${statisticNumber(value).toFixed(1)}%`;
+}
+
+function statisticRate(wins, games) {
+  const total = statisticNumber(games);
+  return total ? statisticNumber(wins) * 100 / total : 0;
+}
+
+function statisticsColumns() {
+  const column = (key, label, group, value, format = (item) => statisticDecimal(item, 0), signed = false) => ({ key, label, group, value, format, signed });
+  const roleColumn = (key, label, group, field, format, signed = false) => column(key, label, group, (row) => statisticNumber(row[field]), format, signed);
+  return [
+    column("total_score", "总积分", "综合", (row) => statisticNumber(row.total_score), (value) => statisticSigned(value), true),
+    column("games_played", "场次", "综合", (row) => statisticNumber(row.games_played)),
+    column("wins", "胜场", "综合", (row) => statisticNumber(row.wins)),
+    column("win_rate", "胜率", "综合", (row) => statisticNumber(row.win_rate), statisticPercent),
+    column("average_score", "场均积分", "综合", (row) => statisticNumber(row.average_score), (value) => statisticSigned(value), true),
+    roleColumn("banker_games", "庄家场次", "庄家", "banker_games"),
+    roleColumn("banker_score", "庄家积分", "庄家", "banker_score", (value) => statisticSigned(value), true),
+    column("banker_win_rate", "庄家胜率", "庄家", (row) => statisticRate(row.banker_wins, row.banker_games), statisticPercent),
+    roleColumn("dogleg_games", "狗腿场次", "狗腿", "dogleg_games"),
+    roleColumn("dogleg_score", "狗腿积分", "狗腿", "dogleg_score", (value) => statisticSigned(value), true),
+    column("dogleg_win_rate", "狗腿胜率", "狗腿", (row) => statisticRate(row.dogleg_wins, row.dogleg_games), statisticPercent),
+    roleColumn("idle_games", "闲家场次", "闲家", "idle_games"),
+    roleColumn("idle_score", "闲家积分", "闲家", "idle_score", (value) => statisticSigned(value), true),
+    column("idle_win_rate", "闲家胜率", "闲家", (row) => statisticRate(row.idle_wins, row.idle_games), statisticPercent),
+    column("dragged_fives", "被拖红方五", "牌局", (row) => statisticNumber(row.dragged_red_fives) + statisticNumber(row.dragged_diamond_fives)),
+    column("dragged_average", "场均被拖", "牌局", (row) => statisticNumber(row.games_played) ? (statisticNumber(row.dragged_red_fives) + statisticNumber(row.dragged_diamond_fives)) / statisticNumber(row.games_played) : 0, statisticDecimal),
+    column("total_trick_score", "累计牌分", "牌局", (row) => statisticNumber(row.total_trick_score)),
+    column("trick_score_average", "场均牌分", "牌局", (row) => statisticNumber(row.games_played) ? statisticNumber(row.total_trick_score) / statisticNumber(row.games_played) : 0, statisticDecimal),
+    column("opponent_dragged_fives", "拖对方红方五", "牌局", (row) => statisticNumber(row.opponent_dragged_red_fives) + statisticNumber(row.opponent_dragged_diamond_fives)),
+    column("opponent_dragged_average", "场均拖对方", "牌局", (row) => statisticNumber(row.games_played) ? (statisticNumber(row.opponent_dragged_red_fives) + statisticNumber(row.opponent_dragged_diamond_fives)) / statisticNumber(row.games_played) : 0, statisticDecimal),
+    column("teammate_dragged_fives", "拖队友红方五", "牌局", (row) => statisticNumber(row.teammate_dragged_red_fives) + statisticNumber(row.teammate_dragged_diamond_fives)),
+    column("teammate_dragged_average", "场均拖队友", "牌局", (row) => statisticNumber(row.games_played) ? (statisticNumber(row.teammate_dragged_red_fives) + statisticNumber(row.teammate_dragged_diamond_fives)) / statisticNumber(row.games_played) : 0, statisticDecimal),
+    column("won_tricks", "获胜轮次", "牌局", (row) => statisticNumber(row.won_tricks)),
+    column("total_tricks", "总轮次", "牌局", (row) => statisticNumber(row.total_tricks)),
+    column("round_win_rate", "轮次胜率", "牌局", (row) => statisticRate(row.won_tricks, row.total_tricks), statisticPercent),
+    column("bottom_wins", "保底数", "牌局", (row) => statisticNumber(row.bottom_wins))
+  ];
+}
+
+function sortedStatisticsRows() {
+  const column = statisticsColumns().find((item) => item.key === statisticsSortKey) || statisticsColumns()[0];
+  const direction = statisticsSortDirection === "asc" ? 1 : -1;
+  return [...playerStatisticsRows].sort((left, right) => {
+    const difference = column.value(left) - column.value(right);
+    if (difference) return difference * direction;
+    const scoreDifference = statisticNumber(right.total_score) - statisticNumber(left.total_score);
+    if (scoreDifference) return scoreDifference;
+    return String(left.latest_name || "").localeCompare(String(right.latest_name || ""), "zh-CN");
+  });
+}
+
+function statisticsSectionStart(columns, index) {
+  return index > 0 && columns[index - 1].group !== columns[index].group;
+}
+
+function renderStatisticsTable(rows) {
+  const columns = statisticsColumns();
+  return `
+    <div class="statistics-table-note"><span>当前按 <b>${escapeHtml(columns.find((column) => column.key === statisticsSortKey)?.label || "总积分")}</b> ${statisticsSortDirection === "desc" ? "从高到低" : "从低到高"}排列</span><span>横向滑动可查看全部 ${columns.length} 项数据</span></div>
+    <div class="statistics-table-wrap">
+      <table class="statistics-table statistics-data-table">
+        <thead><tr>
+          <th>排名</th><th>玩家</th>
+          ${columns.map((column, index) => `
+            <th class="${column.key === statisticsSortKey ? "selected-column" : ""} ${statisticsSectionStart(columns, index) ? "section-start" : ""}" ${column.key === statisticsSortKey ? `aria-sort="${statisticsSortDirection === "desc" ? "descending" : "ascending"}"` : ""}>
+              <button type="button" class="statistics-column-button" data-action="sort-statistics" data-stat-key="${column.key}" title="按${escapeHtml(column.label)}排行">
+                <span>${escapeHtml(column.label)}</span><i>${column.key === statisticsSortKey ? (statisticsSortDirection === "desc" ? "↓" : "↑") : ""}</i>
+              </button>
+            </th>
+          `).join("")}
+          <th></th>
+        </tr></thead>
+        <tbody>
+          ${rows.map((row, rowIndex) => `
+            <tr>
+              <td><span class="rank-number rank-${rowIndex + 1}">${rowIndex + 1}</span></td>
+              <td>
+                ${row.account_id ? `
+                  <button type="button" class="statistics-player-button" data-action="show-player-statistics" data-account-id="${escapeHtml(row.account_id)}">
+                    ${avatarHtml(row.latest_name || "玩家", row.latest_avatar_url || "", "normal", row.avatar_frame || "")}
+                    <span><b>${escapeHtml(row.latest_name || "玩家")}</b><small>@${escapeHtml(row.username || "player")}</small></span>
+                  </button>
+                ` : `
+                  <span class="statistics-player">
+                    ${avatarHtml(row.latest_name || "玩家", row.latest_avatar_url || "", "normal", row.avatar_frame || "")}
+                    <b>${escapeHtml(row.latest_name || "玩家")}</b>
+                  </span>
+                `}
+              </td>
+              ${columns.map((column, columnIndex) => {
+                const value = column.value(row);
+                const tone = column.signed && value > 0 ? "positive" : column.signed && value < 0 ? "negative" : "";
+                return `<td class="${column.key === statisticsSortKey ? "selected-column statistics-score" : ""} ${statisticsSectionStart(columns, columnIndex) ? "section-start" : ""} ${tone}">${escapeHtml(column.format(value))}</td>`;
+              }).join("")}
+              <td>${row.account_id ? `<button type="button" class="secondary compact-button" data-action="show-player-statistics" data-account-id="${escapeHtml(row.account_id)}">查看</button>` : ""}</td>
+            </tr>
+          `).join("")}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+function showPlayerStatistics(accountId) {
+  if (!accountId) return;
+  statisticsSelectedAccountId = accountId;
+  render();
+  if (statisticsPlayerDetails.has(accountId) || statisticsPlayerDetailLoadingId === accountId) return;
+  statisticsPlayerDetailLoadingId = accountId;
+  api(`/api/history/players/${encodeURIComponent(accountId)}`)
+    .then((detail) => {
+      statisticsPlayerDetails.set(accountId, detail);
+    })
+    .catch((error) => {
+      setMessage(error.message || "玩家数据加载失败", true);
+    })
+    .finally(() => {
+      if (statisticsPlayerDetailLoadingId === accountId) statisticsPlayerDetailLoadingId = "";
+      render();
+    });
+}
+
+function statisticsRoleRow(row, key, label) {
+  const games = statisticNumber(row[`${key}_games`]);
+  const wins = statisticNumber(row[`${key}_wins`]);
+  const score = statisticNumber(row[`${key}_score`]);
+  return `<tr><td><span class="statistics-role-label role-${key}">${label}</span></td><td>${games}</td><td>${wins}</td><td>${statisticPercent(statisticRate(wins, games))}</td><td class="${score > 0 ? "positive" : score < 0 ? "negative" : ""}">${statisticSigned(score)}</td><td>${statisticSigned(games ? score / games : 0)}</td></tr>`;
+}
+
+function statisticsPerformanceItem(label, value, note) {
+  return `<div class="statistics-performance-item"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong><small>${escapeHtml(note)}</small></div>`;
+}
+
+function renderStatisticsTrend(trend = []) {
+  const values = trend.map((item) => statisticNumber(item.running_score));
+  if (!values.length) return `<div class="empty">暂无积分走势</div>`;
+  const width = 760;
+  const height = 210;
+  const padding = 18;
+  const minimum = Math.min(...values, 0);
+  const maximum = Math.max(...values, 0);
+  const range = Math.max(1, maximum - minimum);
+  const points = values.map((value, index) => {
+    const x = padding + index * ((width - padding * 2) / Math.max(1, values.length - 1));
+    const y = height - padding - (value - minimum) / range * (height - padding * 2);
+    return [x, y];
+  });
+  const pointString = points.map(([x, y]) => `${x.toFixed(1)},${y.toFixed(1)}`).join(" ");
+  const areaPoints = `${padding},${height - padding} ${pointString} ${width - padding},${height - padding}`;
+  const grid = [0.2, 0.5, 0.8].map((ratio) => `<line x1="${padding}" y1="${height * ratio}" x2="${width - padding}" y2="${height * ratio}"></line>`).join("");
+  const dots = points.map(([x, y], index) => index === points.length - 1 || index === 0 || index % Math.max(1, Math.ceil(points.length / 8)) === 0 ? `<circle cx="${x}" cy="${y}" r="4"></circle>` : "").join("");
+  return `
+    <svg class="statistics-trend-chart" viewBox="0 0 ${width} ${height}" preserveAspectRatio="none" role="img" aria-label="积分走势">
+      <defs><linearGradient id="statistics-trend-fill" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#1d8a6d" stop-opacity="0.24"></stop><stop offset="1" stop-color="#1d8a6d" stop-opacity="0.02"></stop></linearGradient></defs>
+      <g class="chart-grid">${grid}</g><polygon class="chart-area" points="${areaPoints}"></polygon><polyline class="chart-line" points="${pointString}"></polyline><g class="chart-dots">${dots}</g>
+    </svg>
+  `;
+}
+
+function renderPlayerStatisticsDetail(baseRow) {
+  const detail = statisticsPlayerDetails.get(baseRow.account_id);
+  const row = { ...baseRow, ...(detail?.player || {}) };
+  const trend = detail?.trend || [];
+  const rank = [...playerStatisticsRows].sort((left, right) => statisticNumber(right.total_score) - statisticNumber(left.total_score)).findIndex((item) => item.account_id === row.account_id) + 1;
+  const games = statisticNumber(row.games_played);
+  const dragged = statisticNumber(row.dragged_red_fives) + statisticNumber(row.dragged_diamond_fives);
+  const opponentDragged = statisticNumber(row.opponent_dragged_red_fives) + statisticNumber(row.opponent_dragged_diamond_fives);
+  const teammateDragged = statisticNumber(row.teammate_dragged_red_fives) + statisticNumber(row.teammate_dragged_diamond_fives);
+  const wonTricks = statisticNumber(row.won_tricks);
+  const totalTricks = statisticNumber(row.total_tricks);
+  const titleItems = [
+    ["MVP", "mvp_count"], ["辅", "support_count"], ["躺", "couch_count"], ["坑", "pit_count"],
+    ["僵", "stiff_count"], ["僵中僵", "stiffest_count"], ["雷", "thunder_count"], ["精", "precision_count"],
+    ["神", "god_count"], ["天之上", "heaven_count"], ["神坑", "god_pit_count"], ["尽", "exhausted_count"], ["擎", "pillar_count"]
+  ].filter(([, key]) => statisticNumber(row[key]) > 0);
+  return `
+    <div class="statistics-detail-page">
+      <button type="button" class="secondary statistics-back-button" data-action="back-statistics">返回排行榜</button>
+      <section class="statistics-detail-hero">
+        <div class="statistics-detail-identity">
+          ${avatarHtml(row.latest_name || "玩家", row.latest_avatar_url || "", "large", row.avatar_frame || "")}
+          <div><span>历史总榜第 ${rank || "-"} 名</span><h2>${escapeHtml(row.latest_name || "玩家")}</h2><small>@${escapeHtml(row.username || "player")} · ${games} 场全真人牌局</small></div>
+        </div>
+        <div class="statistics-headline"><span>总积分</span><strong class="${statisticNumber(row.total_score) > 0 ? "positive" : statisticNumber(row.total_score) < 0 ? "negative" : ""}">${statisticSigned(row.total_score)}</strong><small>场均 ${statisticSigned(row.average_score)}</small></div>
+        <div class="statistics-headline"><span>胜率</span><strong>${statisticPercent(row.win_rate)}</strong><small>${statisticNumber(row.wins)} 胜 / ${statisticNumber(row.losses)} 负</small></div>
+        <div class="statistics-headline"><span>累计牌分</span><strong>${statisticNumber(row.total_trick_score)}</strong><small>场均 ${statisticDecimal(games ? statisticNumber(row.total_trick_score) / games : 0, 1)}</small></div>
+      </section>
+      <div class="statistics-detail-grid">
+        <div>
+          <section class="statistics-detail-section">
+            <header><h3>积分走势</h3><span>${statisticsPlayerDetailLoadingId === row.account_id ? "读取中" : `最近 ${trend.length} 场`}</span></header>
+            <div class="statistics-trend-wrap">${renderStatisticsTrend(trend)}<div><span>较早</span><span>当前 ${statisticSigned(row.total_score)} 分</span></div></div>
+          </section>
+          <section class="statistics-detail-section">
+            <header><h3>身份表现</h3><span>积分、场次与胜率独立计算</span></header>
+            <div class="statistics-role-table-wrap"><table class="statistics-role-table"><thead><tr><th>身份</th><th>场次</th><th>胜场</th><th>胜率</th><th>积分</th><th>场均</th></tr></thead><tbody>${statisticsRoleRow(row, "banker", "庄家")}${statisticsRoleRow(row, "dogleg", "狗腿")}${statisticsRoleRow(row, "idle", "闲家")}</tbody></table></div>
+          </section>
+        </div>
+        <div>
+          <section class="statistics-detail-section">
+            <header><h3>牌局表现</h3><span>历史累计 / 场均</span></header>
+            <div class="statistics-performance-grid">
+              ${statisticsPerformanceItem("被拖红方五", dragged, `${statisticDecimal(games ? dragged / games : 0)} / 场`)}
+              ${statisticsPerformanceItem("拖对方红方五", opponentDragged, `${statisticDecimal(games ? opponentDragged / games : 0)} / 场`)}
+              ${statisticsPerformanceItem("拖队友红方五", teammateDragged, `${statisticDecimal(games ? teammateDragged / games : 0)} / 场`)}
+              ${statisticsPerformanceItem("获胜轮次", wonTricks, `总轮次 ${totalTricks} · 轮次胜率 ${statisticPercent(statisticRate(wonTricks, totalTricks))}`)}
+              ${statisticsPerformanceItem("保底", statisticNumber(row.bottom_wins), `${statisticDecimal(games ? statisticNumber(row.bottom_wins) / games : 0)} / 场`)}
+            </div>
+          </section>
+          <section class="statistics-detail-section">
+            <header><h3>称号记录</h3><span>可同时获得多个称号</span></header>
+            ${titleItems.length ? `<div class="statistics-title-list">${titleItems.map(([label, key]) => `<div><span>${label}</span><b>${statisticNumber(row[key])}</b></div>`).join("")}</div>` : `<div class="empty">暂无称号记录</div>`}
+          </section>
+        </div>
+      </div>
+    </div>
   `;
 }
 
@@ -2341,10 +2580,22 @@ function renderProfileManager() {
   const managedProfiles = adminData?.profiles || [];
   const managedAccounts = adminData?.accounts || [];
   renderShell(`
+    <section class="panel stack admin-own-password">
+      <div class="section-head">
+        <div><h2>管理员密码</h2><div class="meta">修改当前登录管理员账号的密码。</div></div>
+        <button type="button" class="secondary compact-button" data-action="show-rooms">返回房间</button>
+      </div>
+      <form class="admin-password-form" data-form="change-password">
+        <label>当前密码<input type="password" name="currentPassword" autocomplete="current-password" required maxlength="72"></label>
+        <label>新密码<input type="password" name="newPassword" autocomplete="new-password" required minlength="6" maxlength="72"></label>
+        <label>确认新密码<input type="password" name="confirmPassword" autocomplete="new-password" required minlength="6" maxlength="72"></label>
+        <button type="submit">保存新密码</button>
+      </form>
+    </section>
+
     <section class="panel stack admin-account-create">
       <div class="section-head">
         <div><h2>创建玩家账号</h2><div class="meta">创建账号时会同时生成对应的玩家资料。</div></div>
-        <button type="button" class="secondary compact-button" data-action="show-rooms">返回房间</button>
       </div>
       <form class="admin-create-form" data-form="create-account">
         <label>玩家昵称<input name="displayName" required maxlength="16" placeholder="例如 新玩家"></label>
@@ -4232,6 +4483,24 @@ document.addEventListener("click", (event) => {
   if (action === "show-statistics") {
     homeView = "stats";
     homeJoinOpen = false;
+    render();
+  }
+  if (action === "sort-statistics") {
+    const key = event.target.closest("[data-stat-key]")?.dataset.statKey || "";
+    if (statisticsColumns().some((column) => column.key === key)) {
+      if (statisticsSortKey === key) statisticsSortDirection = statisticsSortDirection === "desc" ? "asc" : "desc";
+      else {
+        statisticsSortKey = key;
+        statisticsSortDirection = "desc";
+      }
+      render();
+    }
+  }
+  if (action === "show-player-statistics") {
+    showPlayerStatistics(event.target.closest("[data-account-id]")?.dataset.accountId || "");
+  }
+  if (action === "back-statistics") {
+    statisticsSelectedAccountId = "";
     render();
   }
   if (action === "quick-create-room") createRoom();

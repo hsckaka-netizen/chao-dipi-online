@@ -26,6 +26,7 @@ import { versionedAssetUrl } from "./public/asset-versions.js";
 import { createStatePatch } from "./public/state-patch.js";
 import {
   gameHistoryStatus,
+  getPlayerStatistics,
   initializeGameHistory,
   listPlayerStatistics,
   listRecentGames,
@@ -48,8 +49,8 @@ const HAND_SIZE = 53;
 const CALL_MODE_TWO = "two";
 const CALL_MODE_SCORE = "score";
 const SCORE_BID_SECONDS = 20;
-const AVATAR_FRAMES = new Set(["", "vip", "emerald", "champion", "violet", "stormwind", "idol", "hellfire", "blood-elf"]);
-const CARD_SKINS = new Set(["", "emerald", "champion", "violet", "stormwind", "idol", "hellfire", "blood-elf"]);
+const AVATAR_FRAMES = new Set(["", "vip", "emerald", "champion", "violet", "stormwind", "idol", "hellfire", "blood-elf", "endless-winter", "cr7", "paladin", "vip-legend"]);
+const CARD_SKINS = new Set(["", "emerald", "champion", "violet", "stormwind", "idol", "hellfire", "blood-elf", "endless-winter", "cr7", "paladin", "vip-legend"]);
 const PLAY_EFFECTS = new Set(["", "fireworks"]);
 const configuredAiSetupDelay = Number(process.env.AI_SETUP_DELAY_MS || 450);
 const AI_SETUP_DELAY_MS = Number.isFinite(configuredAiSetupDelay) ? Math.max(0, configuredAiSetupDelay) : 450;
@@ -3801,6 +3802,12 @@ async function handleApi(req, res, pathParts, url) {
     }
     if (pathParts[2] === "statistics") {
       return writeJson(res, 200, { players: await listPlayerStatistics() });
+    }
+    if (pathParts[2] === "players" && pathParts[3]) {
+      const detail = await getPlayerStatistics(pathParts[3]);
+      return detail
+        ? writeJson(res, 200, detail)
+        : writeJson(res, 404, { error: "暂无该玩家的牌局数据" });
     }
     if (pathParts[2] === "games") {
       return writeJson(res, 200, { games: await listRecentGames(url.searchParams.get("limit")) });

@@ -4,17 +4,27 @@ export const ASSET_VERSIONS = Object.freeze({
   "/assets/vip-avatar-frame.png": "ae1781546208",
   "/assets/cosmetics/avatar-frame-blood-elf.png": "5fc885896d09",
   "/assets/cosmetics/avatar-frame-champion.png": "73c38acd8663",
+  "/assets/cosmetics/avatar-frame-cr7.png": "a04b8c0621db",
   "/assets/cosmetics/avatar-frame-emerald.png": "5c08b6afbf83",
+  "/assets/cosmetics/avatar-frame-endless-winter.png": "d5780074e781",
   "/assets/cosmetics/avatar-frame-hellfire.png": "7843cf593d98",
   "/assets/cosmetics/avatar-frame-idol.png": "efac6f2dc0a2",
+  "/assets/cosmetics/avatar-frame-paladin.png": "b11bf0818e36",
   "/assets/cosmetics/avatar-frame-stormwind.png": "ccce9c8057aa",
+  "/assets/cosmetics/avatar-frame-vip-legend.gif": "12092c0cabba",
+  "/assets/cosmetics/avatar-frame-vip-legend.png": "90f5bfc0b6ec",
   "/assets/cosmetics/avatar-frame-violet.png": "3809ee7328a8",
   "/assets/cosmetics/card-frame-blood-elf.svg": "6a1cae96500c",
   "/assets/cosmetics/card-frame-champion.svg": "d3f762619feb",
+  "/assets/cosmetics/card-frame-cr7.svg": "5597d59e2319",
   "/assets/cosmetics/card-frame-emerald.svg": "ecef883eb50e",
+  "/assets/cosmetics/card-frame-endless-winter.svg": "136ce09cef66",
   "/assets/cosmetics/card-frame-hellfire.svg": "a353f739f20a",
   "/assets/cosmetics/card-frame-idol.svg": "c5093c865a32",
+  "/assets/cosmetics/card-frame-paladin.svg": "c88c2a3e6440",
   "/assets/cosmetics/card-frame-stormwind.svg": "f28983af29bf",
+  "/assets/cosmetics/card-frame-vip-legend.gif": "45b14f7f7d24",
+  "/assets/cosmetics/card-frame-vip-legend.svg": "f5e9f712a290",
   "/assets/cosmetics/card-frame-violet.svg": "c104495e5b58",
   "/assets/avatars/benlei.png": "d699949c7781",
   "/assets/avatars/biesan.png": "a66d00372b8e",
@@ -48,7 +58,11 @@ export const ASSET_URLS = Object.freeze({
     stormwind: versionedAssetUrl("/assets/cosmetics/avatar-frame-stormwind.png"),
     idol: versionedAssetUrl("/assets/cosmetics/avatar-frame-idol.png"),
     hellfire: versionedAssetUrl("/assets/cosmetics/avatar-frame-hellfire.png"),
-    "blood-elf": versionedAssetUrl("/assets/cosmetics/avatar-frame-blood-elf.png")
+    "blood-elf": versionedAssetUrl("/assets/cosmetics/avatar-frame-blood-elf.png"),
+    "endless-winter": versionedAssetUrl("/assets/cosmetics/avatar-frame-endless-winter.png"),
+    cr7: versionedAssetUrl("/assets/cosmetics/avatar-frame-cr7.png"),
+    paladin: versionedAssetUrl("/assets/cosmetics/avatar-frame-paladin.png"),
+    "vip-legend": versionedAssetUrl("/assets/cosmetics/avatar-frame-vip-legend.gif")
   }),
   cardFrames: Object.freeze({
     emerald: versionedAssetUrl("/assets/cosmetics/card-frame-emerald.svg"),
@@ -57,6 +71,16 @@ export const ASSET_URLS = Object.freeze({
     stormwind: versionedAssetUrl("/assets/cosmetics/card-frame-stormwind.svg"),
     idol: versionedAssetUrl("/assets/cosmetics/card-frame-idol.svg"),
     hellfire: versionedAssetUrl("/assets/cosmetics/card-frame-hellfire.svg"),
-    "blood-elf": versionedAssetUrl("/assets/cosmetics/card-frame-blood-elf.svg")
+    "blood-elf": versionedAssetUrl("/assets/cosmetics/card-frame-blood-elf.svg"),
+    "endless-winter": versionedAssetUrl("/assets/cosmetics/card-frame-endless-winter.svg"),
+    cr7: versionedAssetUrl("/assets/cosmetics/card-frame-cr7.svg"),
+    paladin: versionedAssetUrl("/assets/cosmetics/card-frame-paladin.svg"),
+    "vip-legend": versionedAssetUrl("/assets/cosmetics/card-frame-vip-legend.gif")
+  }),
+  staticAvatarFrames: Object.freeze({
+    "vip-legend": versionedAssetUrl("/assets/cosmetics/avatar-frame-vip-legend.png")
+  }),
+  staticCardFrames: Object.freeze({
+    "vip-legend": versionedAssetUrl("/assets/cosmetics/card-frame-vip-legend.svg")
   })
 });

@@ -29,6 +29,14 @@ const MIGRATIONS = [
   {
     version: 6,
     path: fileURLToPath(new URL("./db/migrations/006_player_cosmetics.sql", import.meta.url))
+  },
+  {
+    version: 7,
+    path: fileURLToPath(new URL("./db/migrations/007_leaderboard_metrics.sql", import.meta.url))
+  },
+  {
+    version: 8,
+    path: fileURLToPath(new URL("./db/migrations/008_more_player_cosmetics.sql", import.meta.url))
   }
 ];
 const HISTORY_ENABLED = String(process.env.GAME_HISTORY_ENABLED || "").toLowerCase() === "true";
@@ -657,6 +665,40 @@ export async function listPlayerStatistics() {
     ORDER BY total_score DESC, wins DESC, games_played DESC, latest_name ASC
   `);
   return result.rows;
+}
+
+export async function getPlayerStatistics(accountId) {
+  const database = requirePool();
+  const statisticsResult = await database.query(
+    "SELECT * FROM cdp_player_statistics WHERE account_id = $1::uuid",
+    [accountId]
+  );
+  const player = statisticsResult.rows[0] || null;
+  if (!player) return null;
+  const trendResult = await database.query(
+    `WITH scored_games AS (
+      SELECT
+        game.game_id,
+        game.finished_at,
+        player.game_score,
+        sum(player.game_score) OVER (
+          ORDER BY game.finished_at, game.game_id
+          ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+        ) AS running_score
+      FROM cdp_game_players player
+      JOIN cdp_games game ON game.game_id = player.game_id
+      WHERE player.account_id = $1::uuid
+    ), recent_games AS (
+      SELECT * FROM scored_games
+      ORDER BY finished_at DESC, game_id DESC
+      LIMIT 100
+    )
+    SELECT game_id, finished_at, game_score, running_score
+    FROM recent_games
+    ORDER BY finished_at, game_id`,
+    [accountId]
+  );
+  return { player, trend: trendResult.rows };
 }
 
 export async function listRecentGames(limit = 30) {
