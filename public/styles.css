@@ -1235,10 +1235,11 @@ button.joinable-room-player.spectate-player {
 }
 
 .avatar.avatar-frame-vip {
+  --avatar-frame-image: var(--avatar-frame-vip-image);
   overflow: hidden;
   border: 0;
   border-radius: 7px;
-  background: var(--avatar-frame-vip-image) center / cover no-repeat;
+  background: transparent;
   margin-right: 0;
   padding: 0;
   box-shadow: 0 3px 8px rgba(64, 43, 96, 0.28);
@@ -1254,10 +1255,17 @@ button.joinable-room-player.spectate-player {
   border-radius: 2px;
   background: #e8eee9;
   box-shadow: 0 0 0 1px rgba(30, 25, 39, 0.45);
+  z-index: 1;
 }
 
-.avatar.avatar-frame-vip::after {
-  content: none;
+.avatar.avatar-frame::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  border-radius: inherit;
+  background: var(--avatar-frame-image) center / cover no-repeat;
+  pointer-events: none;
 }
 
 .avatar.avatar-frame-emerald,
@@ -1270,7 +1278,7 @@ button.joinable-room-player.spectate-player {
   overflow: hidden;
   border: 0;
   border-radius: 7px;
-  background: var(--avatar-frame-image) center / cover no-repeat;
+  background: transparent;
   padding: 0;
   box-shadow: 0 3px 8px var(--avatar-frame-shadow, rgba(31, 45, 38, 0.22));
 }
@@ -1320,6 +1328,7 @@ button.joinable-room-player.spectate-player {
   border-radius: 3px;
   background: #e8eee9;
   box-shadow: 0 0 0 1px rgba(30, 25, 39, 0.35);
+  z-index: 1;
 }
 
 .role-mark {
