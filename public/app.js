@@ -1,11 +1,16 @@
 import { applyStatePatch } from "./state-patch.js?v=9330552c7e1e";
 import { detectNewLargePlayEffects } from "./gameplay-effects.js?v=d2368568e06d";
-import { ASSET_URLS } from "./asset-versions.js?v=4acd3811b17b";
+import { ASSET_URLS } from "./asset-versions.js?v=3de3762e0169";
 
 const app = document.querySelector("#app");
 document.documentElement.style.setProperty("--joker-face-image", `url("${ASSET_URLS.jokerFace}")`);
 document.documentElement.style.setProperty("--joker-face-small-image", `url("${ASSET_URLS.jokerFaceSmall}")`);
-document.documentElement.style.setProperty("--avatar-frame-vip-image", `url("${ASSET_URLS.vipAvatarFrame}")`);
+Object.entries(ASSET_URLS.avatarFrames).forEach(([key, url]) => {
+  document.documentElement.style.setProperty(`--avatar-frame-${key}-image`, `url("${url}")`);
+});
+Object.entries(ASSET_URLS.cardFrames).forEach(([key, url]) => {
+  document.documentElement.style.setProperty(`--card-frame-${key}-image`, `url("${url}")`);
+});
 const AVATAR_FRAME_OPTIONS = [
   { value: "", label: "默认方框" },
   { value: "vip", label: "经典 VIP" },
