@@ -326,3 +326,14 @@ test("leaderboard keeps red and diamond five statistics separate", async () => {
   assert.match(source, /column\("teammate_dragged_diamond_fives", "拖队友方五"/);
   assert.doesNotMatch(source, /column\("dragged_fives"/);
 });
+
+test("leaderboard keeps a compact user column visible while scrolling", async () => {
+  const appPath = fileURLToPath(new URL("../public/app.js", import.meta.url));
+  const stylesPath = fileURLToPath(new URL("../public/styles.css", import.meta.url));
+  const [source, styles] = await Promise.all([readFile(appPath, "utf8"), readFile(stylesPath, "utf8")]);
+  assert.match(source, /<th class="statistics-user-column">排名 · 玩家<\/th>/);
+  assert.doesNotMatch(source, /<th>排名<\/th><th>玩家<\/th>/);
+  assert.match(styles, /--statistics-user-column-width: 164px/);
+  assert.match(styles, /\.statistics-data-table th:first-child,[\s\S]*?position: sticky/);
+  assert.match(styles, /--statistics-user-column-width: 142px/);
+});

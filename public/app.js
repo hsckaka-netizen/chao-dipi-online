@@ -2430,7 +2430,7 @@ function renderStatisticsTable(rows) {
     <div class="statistics-table-wrap">
       <table class="statistics-table statistics-data-table">
         <thead><tr>
-          <th>排名</th><th>玩家</th>
+          <th class="statistics-user-column">排名 · 玩家</th>
           ${columns.map((column, index) => `
             <th class="${column.key === statisticsSortKey ? "selected-column" : ""} ${statisticsSectionStart(columns, index) ? "section-start" : ""}" ${column.key === statisticsSortKey ? `aria-sort="${statisticsSortDirection === "desc" ? "descending" : "ascending"}"` : ""}>
               <button type="button" class="statistics-column-button" data-action="sort-statistics" data-stat-key="${column.key}" title="按${escapeHtml(column.label)}排行">
@@ -2443,19 +2443,21 @@ function renderStatisticsTable(rows) {
         <tbody>
           ${rows.map((row, rowIndex) => `
             <tr>
-              <td><span class="rank-number rank-${rowIndex + 1}">${rowIndex + 1}</span></td>
-              <td>
+              <td class="statistics-user-column">
+                <div class="statistics-user-cell">
+                  <span class="rank-number rank-${rowIndex + 1}">${rowIndex + 1}</span>
                 ${row.account_id ? `
-                  <button type="button" class="statistics-player-button" data-action="show-player-statistics" data-account-id="${escapeHtml(row.account_id)}">
-                    ${avatarHtml(row.latest_name || "玩家", row.latest_avatar_url || "", "normal", row.avatar_frame || "")}
-                    <span><b>${escapeHtml(row.latest_name || "玩家")}</b><small>@${escapeHtml(row.username || "player")}</small></span>
+                  <button type="button" class="statistics-player-button" data-action="show-player-statistics" data-account-id="${escapeHtml(row.account_id)}" title="${escapeHtml(row.latest_name || "玩家")} · @${escapeHtml(row.username || "player")}">
+                    ${avatarHtml(row.latest_name || "玩家", row.latest_avatar_url || "", "small", row.avatar_frame || "")}
+                    <b>${escapeHtml(row.latest_name || "玩家")}</b>
                   </button>
                 ` : `
                   <span class="statistics-player">
-                    ${avatarHtml(row.latest_name || "玩家", row.latest_avatar_url || "", "normal", row.avatar_frame || "")}
+                    ${avatarHtml(row.latest_name || "玩家", row.latest_avatar_url || "", "small", row.avatar_frame || "")}
                     <b>${escapeHtml(row.latest_name || "玩家")}</b>
                   </span>
                 `}
+                </div>
               </td>
               ${columns.map((column, columnIndex) => {
                 const value = column.value(row);
