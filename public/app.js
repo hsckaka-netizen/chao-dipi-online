@@ -2313,7 +2313,7 @@ function renderHomeStatistics() {
       <div class="statistics-summary statistics-summary-wide">
         <div class="statistics-current-leader">
           ${rows[0] ? avatarHtml(rows[0].latest_name || "玩家", rows[0].latest_avatar_url || "", "normal", rows[0].avatar_frame || "") : ""}
-          <span><i>当前排名第一</i><b>${escapeHtml(rows[0]?.latest_name || "暂无")}</b><em>${rows[0] ? escapeHtml(currentColumn.format(currentColumn.value(rows[0]))) : "-"}</em></span>
+          <span><i>当前排名第一</i><b>${escapeHtml(rows[0]?.latest_name || "暂无")}</b><em>${rows[0] ? escapeHtml(currentColumn.format(currentColumn.value(rows[0]), rows[0])) : "-"}</em></span>
         </div>
         <div><span>上榜玩家</span><strong>${rows.length}</strong></div>
         <div><span>参赛人次</span><strong>${appearances}</strong></div>

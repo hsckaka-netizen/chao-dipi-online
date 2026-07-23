@@ -323,6 +323,7 @@ test("leaderboard displays red and diamond fives together but sorts by weighted 
   assert.match(source, /fiveColumn\("teammate_dragged_fives", "拖队友红五\/方五"/);
   assert.match(source, /statisticNumber\(row\[redField\]\) \* 2 \+ statisticNumber\(row\[diamondField\]\)/);
   assert.match(source, /红五×2 \+ 方五×1/);
+  assert.match(source, /currentColumn\.format\(currentColumn\.value\(rows\[0\]\), rows\[0\]\)/);
   assert.match(source, /column\.format\(value, row\)/);
 });
 
