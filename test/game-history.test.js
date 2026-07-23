@@ -315,16 +315,15 @@ test("leaderboard exposes MVP count as a sortable statistic", async () => {
   assert.match(source, /column\("mvp_count", "MVP次数"/);
 });
 
-test("leaderboard keeps red and diamond five statistics separate", async () => {
+test("leaderboard displays red and diamond fives together but sorts by weighted points", async () => {
   const appPath = fileURLToPath(new URL("../public/app.js", import.meta.url));
   const source = await readFile(appPath, "utf8");
-  assert.match(source, /column\("dragged_red_fives", "被拖红五"/);
-  assert.match(source, /column\("dragged_diamond_fives", "被拖方五"/);
-  assert.match(source, /column\("opponent_dragged_red_fives", "拖对方红五"/);
-  assert.match(source, /column\("opponent_dragged_diamond_fives", "拖对方方五"/);
-  assert.match(source, /column\("teammate_dragged_red_fives", "拖队友红五"/);
-  assert.match(source, /column\("teammate_dragged_diamond_fives", "拖队友方五"/);
-  assert.doesNotMatch(source, /column\("dragged_fives"/);
+  assert.match(source, /fiveColumn\("dragged_fives", "被拖红五\/方五"/);
+  assert.match(source, /fiveColumn\("opponent_dragged_fives", "拖对方红五\/方五"/);
+  assert.match(source, /fiveColumn\("teammate_dragged_fives", "拖队友红五\/方五"/);
+  assert.match(source, /statisticNumber\(row\[redField\]\) \* 2 \+ statisticNumber\(row\[diamondField\]\)/);
+  assert.match(source, /红五×2 \+ 方五×1/);
+  assert.match(source, /column\.format\(value, row\)/);
 });
 
 test("leaderboard keeps a compact user column visible while scrolling", async () => {

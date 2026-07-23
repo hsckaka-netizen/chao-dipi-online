@@ -2368,8 +2368,27 @@ function statisticRate(wins, games) {
 }
 
 function statisticsColumns() {
-  const column = (key, label, group, value, format = (item) => statisticDecimal(item, 0), signed = false) => ({ key, label, group, value, format, signed });
+  const column = (key, label, group, value, format = (item) => statisticDecimal(item, 0), signed = false, sortTitle = "") => ({ key, label, group, value, format, signed, sortTitle });
   const roleColumn = (key, label, group, field, format, signed = false) => column(key, label, group, (row) => statisticNumber(row[field]), format, signed);
+  const fivePoints = (row, redField, diamondField, average = false) => {
+    const points = statisticNumber(row[redField]) * 2 + statisticNumber(row[diamondField]);
+    return average && statisticNumber(row.games_played) ? points / statisticNumber(row.games_played) : average ? 0 : points;
+  };
+  const fivePair = (row, redField, diamondField, average = false) => {
+    const games = statisticNumber(row.games_played);
+    const divisor = average && games ? games : 1;
+    const digits = average ? 2 : 0;
+    return `${statisticDecimal(statisticNumber(row[redField]) / divisor, digits)}/${statisticDecimal(statisticNumber(row[diamondField]) / divisor, digits)}`;
+  };
+  const fiveColumn = (key, label, redField, diamondField, average = false) => column(
+    key,
+    label,
+    "牌局",
+    (row) => fivePoints(row, redField, diamondField, average),
+    (_value, row) => fivePair(row, redField, diamondField, average),
+    false,
+    `按${label}积分排行（红五×2 + 方五×1）`
+  );
   return [
     column("total_score", "总积分", "综合", (row) => statisticNumber(row.total_score), (value) => statisticSigned(value), true),
     column("games_played", "场次", "综合", (row) => statisticNumber(row.games_played)),
@@ -2386,20 +2405,14 @@ function statisticsColumns() {
     roleColumn("idle_games", "闲家场次", "闲家", "idle_games"),
     roleColumn("idle_score", "闲家积分", "闲家", "idle_score", (value) => statisticSigned(value), true),
     column("idle_win_rate", "闲家胜率", "闲家", (row) => statisticRate(row.idle_wins, row.idle_games), statisticPercent),
-    column("dragged_red_fives", "被拖红五", "牌局", (row) => statisticNumber(row.dragged_red_fives)),
-    column("dragged_red_average", "场均被拖红五", "牌局", (row) => statisticNumber(row.games_played) ? statisticNumber(row.dragged_red_fives) / statisticNumber(row.games_played) : 0, statisticDecimal),
-    column("dragged_diamond_fives", "被拖方五", "牌局", (row) => statisticNumber(row.dragged_diamond_fives)),
-    column("dragged_diamond_average", "场均被拖方五", "牌局", (row) => statisticNumber(row.games_played) ? statisticNumber(row.dragged_diamond_fives) / statisticNumber(row.games_played) : 0, statisticDecimal),
+    fiveColumn("dragged_fives", "被拖红五/方五", "dragged_red_fives", "dragged_diamond_fives"),
+    fiveColumn("dragged_average", "场均被拖红五/方五", "dragged_red_fives", "dragged_diamond_fives", true),
     column("total_trick_score", "累计牌分", "牌局", (row) => statisticNumber(row.total_trick_score)),
     column("trick_score_average", "场均牌分", "牌局", (row) => statisticNumber(row.games_played) ? statisticNumber(row.total_trick_score) / statisticNumber(row.games_played) : 0, statisticDecimal),
-    column("opponent_dragged_red_fives", "拖对方红五", "牌局", (row) => statisticNumber(row.opponent_dragged_red_fives)),
-    column("opponent_dragged_red_average", "场均拖对方红五", "牌局", (row) => statisticNumber(row.games_played) ? statisticNumber(row.opponent_dragged_red_fives) / statisticNumber(row.games_played) : 0, statisticDecimal),
-    column("opponent_dragged_diamond_fives", "拖对方方五", "牌局", (row) => statisticNumber(row.opponent_dragged_diamond_fives)),
-    column("opponent_dragged_diamond_average", "场均拖对方方五", "牌局", (row) => statisticNumber(row.games_played) ? statisticNumber(row.opponent_dragged_diamond_fives) / statisticNumber(row.games_played) : 0, statisticDecimal),
-    column("teammate_dragged_red_fives", "拖队友红五", "牌局", (row) => statisticNumber(row.teammate_dragged_red_fives)),
-    column("teammate_dragged_red_average", "场均拖队友红五", "牌局", (row) => statisticNumber(row.games_played) ? statisticNumber(row.teammate_dragged_red_fives) / statisticNumber(row.games_played) : 0, statisticDecimal),
-    column("teammate_dragged_diamond_fives", "拖队友方五", "牌局", (row) => statisticNumber(row.teammate_dragged_diamond_fives)),
-    column("teammate_dragged_diamond_average", "场均拖队友方五", "牌局", (row) => statisticNumber(row.games_played) ? statisticNumber(row.teammate_dragged_diamond_fives) / statisticNumber(row.games_played) : 0, statisticDecimal),
+    fiveColumn("opponent_dragged_fives", "拖对方红五/方五", "opponent_dragged_red_fives", "opponent_dragged_diamond_fives"),
+    fiveColumn("opponent_dragged_average", "场均拖对方红五/方五", "opponent_dragged_red_fives", "opponent_dragged_diamond_fives", true),
+    fiveColumn("teammate_dragged_fives", "拖队友红五/方五", "teammate_dragged_red_fives", "teammate_dragged_diamond_fives"),
+    fiveColumn("teammate_dragged_average", "场均拖队友红五/方五", "teammate_dragged_red_fives", "teammate_dragged_diamond_fives", true),
     column("won_tricks", "获胜轮次", "牌局", (row) => statisticNumber(row.won_tricks)),
     column("total_tricks", "总轮次", "牌局", (row) => statisticNumber(row.total_tricks)),
     column("round_win_rate", "轮次胜率", "牌局", (row) => statisticRate(row.won_tricks, row.total_tricks), statisticPercent),
@@ -2433,7 +2446,7 @@ function renderStatisticsTable(rows) {
           <th class="statistics-user-column">排名 · 玩家</th>
           ${columns.map((column, index) => `
             <th class="${column.key === statisticsSortKey ? "selected-column" : ""} ${statisticsSectionStart(columns, index) ? "section-start" : ""}" ${column.key === statisticsSortKey ? `aria-sort="${statisticsSortDirection === "desc" ? "descending" : "ascending"}"` : ""}>
-              <button type="button" class="statistics-column-button" data-action="sort-statistics" data-stat-key="${column.key}" title="按${escapeHtml(column.label)}排行">
+              <button type="button" class="statistics-column-button" data-action="sort-statistics" data-stat-key="${column.key}" title="${escapeHtml(column.sortTitle || `按${column.label}排行`)}">
                 <span>${escapeHtml(column.label)}</span><i>${column.key === statisticsSortKey ? (statisticsSortDirection === "desc" ? "↓" : "↑") : ""}</i>
               </button>
             </th>
@@ -2462,7 +2475,7 @@ function renderStatisticsTable(rows) {
               ${columns.map((column, columnIndex) => {
                 const value = column.value(row);
                 const tone = column.signed && value > 0 ? "positive" : column.signed && value < 0 ? "negative" : "";
-                return `<td class="${column.key === statisticsSortKey ? "selected-column statistics-score" : ""} ${statisticsSectionStart(columns, columnIndex) ? "section-start" : ""} ${tone}">${escapeHtml(column.format(value))}</td>`;
+                return `<td class="${column.key === statisticsSortKey ? "selected-column statistics-score" : ""} ${statisticsSectionStart(columns, columnIndex) ? "section-start" : ""} ${tone}">${escapeHtml(column.format(value, row))}</td>`;
               }).join("")}
               <td>${row.account_id ? `<button type="button" class="secondary compact-button" data-action="show-player-statistics" data-account-id="${escapeHtml(row.account_id)}">查看</button>` : ""}</td>
             </tr>
