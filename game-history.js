@@ -37,6 +37,10 @@ const MIGRATIONS = [
   {
     version: 8,
     path: fileURLToPath(new URL("./db/migrations/008_more_player_cosmetics.sql", import.meta.url))
+  },
+  {
+    version: 9,
+    path: fileURLToPath(new URL("./db/migrations/009_integral_wins.sql", import.meta.url))
   }
 ];
 const HISTORY_ENABLED = String(process.env.GAME_HISTORY_ENABLED || "").toLowerCase() === "true";
@@ -429,6 +433,7 @@ export function buildGameRecord(room) {
   const players = (result.playerResults || []).map((playerResult, seatIndex) => {
     const roomPlayer = playersById.get(playerResult.playerId);
     const tags = jsonValue(playerResult.evaluationTags, []);
+    const gameScore = Number(playerResult.gameScore) || 0;
     return {
       roomPlayerId: playerResult.playerId,
       profileId: roomPlayer?.profileId || null,
@@ -439,9 +444,9 @@ export function buildGameRecord(room) {
       avatarUrl: roomPlayer?.avatarUrl || "",
       role: playerResult.role || "",
       team: playerResult.team,
-      won: playerResult.team === result.winnerTeam,
+      won: gameScore > 0,
       trickScore: Number(playerResult.trickScore) || 0,
-      gameScore: Number(playerResult.gameScore) || 0,
+      gameScore,
       draggedRedFives: Number(playerResult.draggedRedFives) || 0,
       draggedDiamondFives: Number(playerResult.draggedDiamondFives) || 0,
       throwFailures: Number(playerResult.throwFailures) || 0,

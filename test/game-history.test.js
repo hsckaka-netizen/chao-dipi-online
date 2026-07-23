@@ -176,6 +176,20 @@ test("settled game is converted to an immutable history record", () => {
   assert.equal(record.players[2].name, "陈然");
 });
 
+test("leaderboard wins follow final settlement score instead of card-score team", () => {
+  const room = settledRoom();
+  room.result.playerResults[0].gameScore = 1.5;
+  room.result.playerResults[2].gameScore = -1.5;
+
+  const record = buildGameRecord(room);
+
+  assert.equal(record.result.winnerTeam, "idle");
+  assert.equal(record.players[0].team, "banker");
+  assert.equal(record.players[0].won, true);
+  assert.equal(record.players[2].team, "idle");
+  assert.equal(record.players[2].won, false);
+});
+
 test("history queue remains a no-op when the feature flag is disabled", () => {
   assert.equal(gameHistoryStatus().enabled, false);
   assert.equal(gameHistoryStatus().recordPolicy, "logged-in-human-only-settlement");
@@ -285,4 +299,30 @@ test("additional cosmetics migration expands both cosmetic constraints", async (
   const migration = await readFile(migrationPath, "utf8");
   assert.match(migration, /avatar_frame IN \([^)]*'endless-winter'[^)]*'cr7'[^)]*'paladin'[^)]*'vip-legend'[^)]*\)/);
   assert.match(migration, /card_skin IN \([^)]*'endless-winter'[^)]*'cr7'[^)]*'paladin'[^)]*'vip-legend'[^)]*\)/);
+});
+
+test("integral win migration backfills historical leaderboard results", async () => {
+  const migrationPath = fileURLToPath(new URL("../db/migrations/009_integral_wins.sql", import.meta.url));
+  const migration = await readFile(migrationPath, "utf8");
+  assert.match(migration, /UPDATE cdp_game_players/);
+  assert.match(migration, /SET won = \(game_score > 0\)/);
+  assert.match(migration, /won IS DISTINCT FROM \(game_score > 0\)/);
+});
+
+test("leaderboard exposes MVP count as a sortable statistic", async () => {
+  const appPath = fileURLToPath(new URL("../public/app.js", import.meta.url));
+  const source = await readFile(appPath, "utf8");
+  assert.match(source, /column\("mvp_count", "MVP次数"/);
+});
+
+test("leaderboard keeps red and diamond five statistics separate", async () => {
+  const appPath = fileURLToPath(new URL("../public/app.js", import.meta.url));
+  const source = await readFile(appPath, "utf8");
+  assert.match(source, /column\("dragged_red_fives", "被拖红五"/);
+  assert.match(source, /column\("dragged_diamond_fives", "被拖方五"/);
+  assert.match(source, /column\("opponent_dragged_red_fives", "拖对方红五"/);
+  assert.match(source, /column\("opponent_dragged_diamond_fives", "拖对方方五"/);
+  assert.match(source, /column\("teammate_dragged_red_fives", "拖队友红五"/);
+  assert.match(source, /column\("teammate_dragged_diamond_fives", "拖队友方五"/);
+  assert.doesNotMatch(source, /column\("dragged_fives"/);
 });
