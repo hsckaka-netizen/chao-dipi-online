@@ -931,6 +931,76 @@ export async function listPlayerStatistics(seasonId = null) {
   return result.rows;
 }
 
+async function getPlayerRelationships(database, accountId, period) {
+  const result = await database.query(
+    `WITH target_games AS (
+      SELECT
+        target.game_id,
+        target.room_player_id,
+        target.team,
+        target.game_score
+      FROM cdp_game_players target
+      JOIN cdp_games game ON game.game_id = target.game_id
+      WHERE target.account_id = $1::uuid
+        AND ($2::timestamptz IS NULL OR game.finished_at >= $2::timestamptz)
+        AND ($3::timestamptz IS NULL OR game.finished_at < $3::timestamptz)
+    ), paired_games AS (
+      SELECT
+        coalesce(other.account_id::text, 'profile:' || other.profile_id) AS identity_key,
+        other.account_id,
+        other.profile_id,
+        other.name_snapshot,
+        other.avatar_url_snapshot,
+        game.finished_at,
+        target.team = other.team AS same_team,
+        target.game_score AS own_score
+      FROM target_games target
+      JOIN cdp_game_players other ON other.game_id = target.game_id
+      JOIN cdp_games game ON game.game_id = target.game_id
+      WHERE other.room_player_id <> target.room_player_id
+        AND NOT other.is_ai
+        AND (other.account_id IS NOT NULL OR other.profile_id IS NOT NULL)
+    ), latest_identity AS (
+      SELECT DISTINCT ON (paired.identity_key)
+        paired.identity_key,
+        paired.account_id,
+        paired.profile_id,
+        paired.name_snapshot,
+        paired.avatar_url_snapshot
+      FROM paired_games paired
+      ORDER BY paired.identity_key, paired.finished_at DESC
+    ), totals AS (
+      SELECT
+        paired.identity_key,
+        paired.same_team,
+        count(*)::integer AS games_played,
+        coalesce(sum(paired.own_score), 0)::numeric(12, 2) AS own_score
+      FROM paired_games paired
+      GROUP BY paired.identity_key, paired.same_team
+    )
+    SELECT
+      latest.account_id,
+      latest.profile_id,
+      account.username,
+      latest.name_snapshot AS latest_name,
+      latest.avatar_url_snapshot AS latest_avatar_url,
+      profile.avatar_frame,
+      totals.same_team,
+      totals.games_played,
+      totals.own_score
+    FROM totals
+    JOIN latest_identity latest ON latest.identity_key = totals.identity_key
+    LEFT JOIN cdp_accounts account ON account.account_id = latest.account_id
+    LEFT JOIN cdp_player_profiles profile ON profile.profile_id = latest.profile_id
+    ORDER BY totals.same_team DESC, totals.games_played DESC, totals.own_score DESC, latest.name_snapshot ASC`,
+    [accountId, period?.starts_at || null, period?.ends_at || null]
+  );
+  return {
+    bonds: result.rows.filter((row) => row.same_team),
+    opponents: result.rows.filter((row) => !row.same_team)
+  };
+}
+
 export async function getPlayerStatistics(accountId, seasonId = null) {
   const database = requirePool();
   const period = await seasonPeriod(database, seasonId);
@@ -942,32 +1012,35 @@ export async function getPlayerStatistics(accountId, seasonId = null) {
     );
   const player = statisticsResult.rows[0] || null;
   if (!player) return null;
-  const trendResult = await database.query(
-    `WITH scored_games AS (
-      SELECT
-        game.game_id,
-        game.finished_at,
-        player.game_score,
-        sum(player.game_score) OVER (
-          ORDER BY game.finished_at, game.game_id
-          ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
-        ) AS running_score
-      FROM cdp_game_players player
-      JOIN cdp_games game ON game.game_id = player.game_id
-      WHERE player.account_id = $1::uuid
-        AND ($2::timestamptz IS NULL OR game.finished_at >= $2::timestamptz)
-        AND ($3::timestamptz IS NULL OR game.finished_at < $3::timestamptz)
-    ), recent_games AS (
-      SELECT * FROM scored_games
-      ORDER BY finished_at DESC, game_id DESC
-      LIMIT 100
-    )
-    SELECT game_id, finished_at, game_score, running_score
-    FROM recent_games
-    ORDER BY finished_at, game_id`,
-    [accountId, period?.starts_at || null, period?.ends_at || null]
-  );
-  return { player, trend: trendResult.rows };
+  const [trendResult, relationships] = await Promise.all([
+    database.query(
+      `WITH scored_games AS (
+        SELECT
+          game.game_id,
+          game.finished_at,
+          player.game_score,
+          sum(player.game_score) OVER (
+            ORDER BY game.finished_at, game.game_id
+            ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+          ) AS running_score
+        FROM cdp_game_players player
+        JOIN cdp_games game ON game.game_id = player.game_id
+        WHERE player.account_id = $1::uuid
+          AND ($2::timestamptz IS NULL OR game.finished_at >= $2::timestamptz)
+          AND ($3::timestamptz IS NULL OR game.finished_at < $3::timestamptz)
+      ), recent_games AS (
+        SELECT * FROM scored_games
+        ORDER BY finished_at DESC, game_id DESC
+        LIMIT 100
+      )
+      SELECT game_id, finished_at, game_score, running_score
+      FROM recent_games
+      ORDER BY finished_at, game_id`,
+      [accountId, period?.starts_at || null, period?.ends_at || null]
+    ),
+    getPlayerRelationships(database, accountId, period)
+  ]);
+  return { player, trend: trendResult.rows, relationships };
 }
 
 export async function listRecentGames(limit = 30) {

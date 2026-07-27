@@ -94,6 +94,10 @@ let statisticsSortDirection = "desc";
 let statisticsSelectedAccountId = "";
 let statisticsPlayerDetailLoadingId = "";
 const statisticsPlayerDetails = new Map();
+const statisticsRelationshipSorts = {
+  bonds: { key: "games_played", direction: "desc" },
+  opponents: { key: "games_played", direction: "desc" }
+};
 let statisticsSeasonId = "all";
 let statisticsSeasons = [];
 let statisticsSeasonsLoaded = false;
@@ -935,10 +939,11 @@ function startStateWatchdog() {
 async function createRoom(event) {
   event?.preventDefault();
   if (!requirePlayerLogin()) return;
+  const profileId = authState.legacyProfileSelection && !authState.account ? "player-benlei" : null;
   try {
     const data = await api("/api/rooms", {
       method: "POST",
-      body: JSON.stringify({})
+      body: JSON.stringify(profileId ? { profileId } : {})
     });
     saveSession({ roomId: data.roomId, playerId: data.playerId, token: data.token });
     history.replaceState(null, "", `?room=${data.roomId}`);
@@ -962,6 +967,7 @@ async function joinRoom(event) {
 
 function requirePlayerLogin() {
   if (authState.account?.role === "player" && authState.account.profile) return true;
+  if (authState.legacyProfileSelection) return true;
   homeJoinOpen = false;
   homeView = "login";
   setMessage(authState.account?.role === "admin" ? "管理员账号不能加入牌局" : "请先登录玩家账号", true);
@@ -972,10 +978,11 @@ async function joinRoomById(roomId) {
   const normalizedRoomId = String(roomId || "").trim().toUpperCase();
   if (!normalizedRoomId) return setMessage("请输入房间号", true);
   if (!requirePlayerLogin()) return;
+  const profileId = authState.legacyProfileSelection && !authState.account ? "player-benlei" : null;
   try {
     const data = await api(`/api/rooms/${encodeURIComponent(normalizedRoomId)}/join`, {
       method: "POST",
-      body: JSON.stringify({})
+      body: JSON.stringify(profileId ? { profileId } : {})
     });
     saveSession({ roomId: data.roomId, playerId: data.playerId, token: data.token });
     history.replaceState(null, "", `?room=${data.roomId}`);
@@ -2585,9 +2592,12 @@ function showPlayerStatistics(accountId) {
   if (!accountId) return;
   const detailKey = statisticsPlayerDetailKey(accountId);
   statisticsSelectedAccountId = accountId;
-  render();
-  if (statisticsPlayerDetails.has(detailKey) || statisticsPlayerDetailLoadingId === detailKey) return;
+  if (statisticsPlayerDetails.has(detailKey) || statisticsPlayerDetailLoadingId === detailKey) {
+    render();
+    return;
+  }
   statisticsPlayerDetailLoadingId = detailKey;
+  render();
   api(`/api/history/players/${encodeURIComponent(accountId)}?seasonId=${encodeURIComponent(statisticsSeasonId)}`)
     .then((detail) => {
       statisticsPlayerDetails.set(detailKey, detail);
@@ -2638,11 +2648,84 @@ function renderStatisticsTrend(trend = []) {
   `;
 }
 
+function sortedPlayerRelationships(type, rows = []) {
+  const sort = statisticsRelationshipSorts[type] || statisticsRelationshipSorts.bonds;
+  const direction = sort.direction === "asc" ? 1 : -1;
+  return [...rows].sort((left, right) => {
+    const difference = statisticNumber(left[sort.key]) - statisticNumber(right[sort.key]);
+    if (difference) return difference * direction;
+    const gamesDifference = statisticNumber(right.games_played) - statisticNumber(left.games_played);
+    if (gamesDifference) return gamesDifference;
+    const scoreDifference = statisticNumber(right.own_score) - statisticNumber(left.own_score);
+    if (scoreDifference) return scoreDifference;
+    return String(left.latest_name || "").localeCompare(String(right.latest_name || ""), "zh-CN");
+  });
+}
+
+function relationshipSortButton(type, key, label) {
+  const sort = statisticsRelationshipSorts[type];
+  const selected = sort.key === key;
+  return `
+    <button
+      type="button"
+      class="statistics-relationship-sort ${selected ? "selected" : ""}"
+      data-action="sort-player-relationships"
+      data-relationship-type="${type}"
+      data-stat-key="${key}"
+      ${selected ? `aria-sort="${sort.direction === "desc" ? "descending" : "ascending"}"` : ""}
+    >${escapeHtml(label)} <i>${selected ? (sort.direction === "desc" ? "↓" : "↑") : ""}</i></button>
+  `;
+}
+
+function renderPlayerRelationshipBoard(type, rows = [], loading = false) {
+  const isBond = type === "bonds";
+  const sortedRows = sortedPlayerRelationships(type, rows);
+  const title = isBond ? "羁绊榜" : "对手榜";
+  const note = isBond ? "最终阵营相同的牌局" : "最终阵营不同的牌局";
+  return `
+    <section class="statistics-detail-section statistics-relationship-section">
+      <header>
+        <div><h3>${title}</h3><span>${note}</span></div>
+        <div class="statistics-relationship-sorters">
+          ${relationshipSortButton(type, "games_played", "场数")}
+          ${relationshipSortButton(type, "own_score", "本人积分")}
+        </div>
+      </header>
+      ${loading ? `<div class="empty">正在读取...</div>` : sortedRows.length ? `
+        <div class="statistics-relationship-table-wrap">
+          <table class="statistics-relationship-table">
+            <thead><tr><th>玩家</th><th>场数</th><th>本人积分</th></tr></thead>
+            <tbody>${sortedRows.map((relationship) => {
+              const score = statisticNumber(relationship.own_score);
+              const identity = `
+                ${avatarHtml(relationship.latest_name || "玩家", relationship.latest_avatar_url || "", "small", relationship.avatar_frame || "")}
+                <b>${escapeHtml(relationship.latest_name || "玩家")}</b>
+              `;
+              return `
+                <tr>
+                  <td>${relationship.account_id ? `
+                    <button type="button" class="statistics-player-button" data-action="show-player-statistics" data-account-id="${escapeHtml(relationship.account_id)}">
+                      ${identity}
+                    </button>
+                  ` : `<span class="statistics-player">${identity}</span>`}</td>
+                  <td>${statisticNumber(relationship.games_played)}</td>
+                  <td class="${score > 0 ? "positive" : score < 0 ? "negative" : ""}">${statisticSigned(score)}</td>
+                </tr>
+              `;
+            }).join("")}</tbody>
+          </table>
+        </div>
+      ` : `<div class="empty">${isBond ? "暂无同队记录" : "暂无对阵记录"}</div>`}
+    </section>
+  `;
+}
+
 function renderPlayerStatisticsDetail(baseRow) {
   const detailKey = statisticsPlayerDetailKey(baseRow.account_id);
   const detail = statisticsPlayerDetails.get(detailKey);
   const row = { ...baseRow, ...(detail?.player || {}) };
   const trend = detail?.trend || [];
+  const relationships = detail?.relationships || {};
   const rank = [...playerStatisticsRows].sort((left, right) => statisticNumber(right.total_score) - statisticNumber(left.total_score)).findIndex((item) => item.account_id === row.account_id) + 1;
   const games = statisticNumber(row.games_played);
   const dragged = statisticNumber(row.dragged_red_fives) + statisticNumber(row.dragged_diamond_fives);
@@ -2699,6 +2782,10 @@ function renderPlayerStatisticsDetail(baseRow) {
             ${titleItems.length ? `<div class="statistics-title-list">${titleItems.map(([label, key]) => `<div><span>${label}</span><b>${statisticNumber(row[key])}</b></div>`).join("")}</div>` : `<div class="empty">暂无称号记录</div>`}
           </section>
         </div>
+      </div>
+      <div class="statistics-relationship-grid">
+        ${renderPlayerRelationshipBoard("bonds", relationships.bonds || [], statisticsPlayerDetailLoadingId === detailKey)}
+        ${renderPlayerRelationshipBoard("opponents", relationships.opponents || [], statisticsPlayerDetailLoadingId === detailKey)}
       </div>
     </div>
   `;
@@ -3913,15 +4000,7 @@ function renderTrick(trick, current, options = {}) {
           const playEffect = setupTable ? "" : renderLargePlayEffect(play, trick.number);
           const playerCard = `
             <div class="trick-player ${roleClass(play.role)} ${play.played ? "played" : ""} ${play.lead ? "lead" : ""} ${play.currentTurn ? "current-turn" : ""} ${play.winning ? "winning" : ""}">
-              <div class="trick-player-profile-section">
-                <div class="trick-name">
-                  <strong>${tablePlayerIdentity(play)}</strong>
-                  <span class="seat-status ${escapeHtml(statusTone)}">${escapeHtml(statusText)}</span>
-                </div>
-              </div>
-              <div class="trick-player-game-section">
-                ${renderCompactPlayerStats(play)}
-              </div>
+              ${renderTablePlayerSummary(play, statusText, statusTone)}
               ${!current && play.played ? renderPlayedCards(play, playCards, trick.number) : ""}
             </div>
           `;
@@ -3982,13 +4061,14 @@ function orientPlaysForViewer(plays) {
 
 function roleMark(role, playerId = "") {
   if (!role) return "";
-  const text = role === "狗腿" ? "腿" : role === "庄家" || role === "主" ? "庄" : "闲";
-  const tone = role === "庄家" || role === "主" || role === "狗腿" ? "accent" : "idle";
+  const text = role === "狗腿" ? "狗腿" : role === "庄家" || role === "主" ? "庄" : "闲";
+  const tone = role === "狗腿" ? "dogleg" : role === "庄家" || role === "主" ? "accent" : "idle";
   const reveal = role === "狗腿" && doglegRevealEffects.some((effect) => effect.playerId === playerId && effect.until > Date.now());
   return `<span class="role-mark ${tone} ${reveal ? "dogleg-role-reveal" : ""}" title="${escapeHtml(role)}">${escapeHtml(text)}</span>`;
 }
 
 function roleClass(role) {
+  if (role === "狗腿") return "banker-team dogleg-team";
   if (role === "庄家" || role === "狗腿" || role === "主") return "banker-team";
   if (role === "闲家") return "idle-team";
   return "";
@@ -4048,6 +4128,27 @@ function tablePlayerIdentity(play) {
       ${roleMark(play.role, play.playerId)}
       <span class="name-text">${escapeHtml(play.playerName)}</span>
     </span>
+  `;
+}
+
+function renderTablePlayerSummary(play, statusText, statusTone) {
+  const player = state?.players?.find((item) => item.id === play.playerId);
+  const avatarFrame = play.avatarFrame || player?.avatarFrame || "";
+  return `
+    <div class="trick-player-main">
+      <span class="table-player-avatar-stage" tabindex="0" aria-label="查看${escapeHtml(play.playerName)}的历史数据">
+        ${avatarHtml(play.playerName, play.avatarUrl, "small", avatarFrame)}
+        ${renderPlayerHistoryMini(play.playerId, { overlay: true })}
+      </span>
+      <span class="trick-player-summary">
+        <span class="trick-player-line">
+          <strong class="trick-player-display-name">${escapeHtml(play.playerName)}</strong>
+          ${roleMark(play.role, play.playerId)}
+          <span class="seat-status ${escapeHtml(statusTone)}">${escapeHtml(statusText)}</span>
+        </span>
+        ${renderCompactPlayerStats(play)}
+      </span>
+    </div>
   `;
 }
 
@@ -4736,6 +4837,20 @@ document.addEventListener("click", (event) => {
       else {
         statisticsSortKey = key;
         statisticsSortDirection = "desc";
+      }
+      render();
+    }
+  }
+  if (action === "sort-player-relationships") {
+    const target = event.target.closest("[data-relationship-type][data-stat-key]");
+    const type = target?.dataset.relationshipType || "";
+    const key = target?.dataset.statKey || "";
+    const sort = statisticsRelationshipSorts[type];
+    if (sort && new Set(["games_played", "own_score"]).has(key)) {
+      if (sort.key === key) sort.direction = sort.direction === "desc" ? "asc" : "desc";
+      else {
+        sort.key = key;
+        sort.direction = "desc";
       }
       render();
     }

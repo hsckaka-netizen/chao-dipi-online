@@ -960,6 +960,88 @@ label {
   color: var(--muted);
 }
 
+.statistics-relationship-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.statistics-relationship-section > header {
+  align-items: flex-start;
+}
+
+.statistics-relationship-section > header > div:first-child {
+  display: grid;
+  gap: 3px;
+}
+
+.statistics-relationship-sorters {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.statistics-relationship-sort {
+  min-height: 30px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: #fff;
+  padding: 5px 9px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.statistics-relationship-sort.selected {
+  border-color: #91b8a4;
+  background: #eaf5ef;
+  color: var(--primary);
+}
+
+.statistics-relationship-sort i {
+  display: inline-block;
+  min-width: 8px;
+  font-style: normal;
+}
+
+.statistics-relationship-table-wrap {
+  overflow-x: auto;
+}
+
+.statistics-relationship-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.statistics-relationship-table th,
+.statistics-relationship-table td {
+  height: 48px;
+  border-bottom: 1px solid var(--line);
+  padding: 7px 12px;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.statistics-relationship-table th {
+  background: #f8faf8;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.statistics-relationship-table th:first-child,
+.statistics-relationship-table td:first-child {
+  text-align: left;
+}
+
+.statistics-relationship-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.statistics-relationship-table .statistics-player-button,
+.statistics-relationship-table .statistics-player {
+  max-width: 220px;
+}
+
 .admin-password-form {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr)) auto;
@@ -1928,13 +2010,15 @@ button.joinable-room-player.spectate-player {
 
 .role-mark {
   flex: 0 0 auto;
-  display: inline-grid;
-  place-items: center;
-  width: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
   height: 18px;
-  border-radius: 50%;
+  border-radius: 999px;
   background: #e7eee9;
   color: var(--muted);
+  padding: 0 5px;
   font-size: 11px;
   font-weight: 900;
   line-height: 1;
@@ -1948,6 +2032,12 @@ button.joinable-room-player.spectate-player {
 .role-mark.idle {
   background: #e5f4ec;
   color: var(--good);
+}
+
+.role-mark.dogleg {
+  background: #17834f;
+  color: #fff;
+  box-shadow: 0 0 0 2px rgba(23, 131, 79, 0.16), 0 0 10px rgba(23, 131, 79, 0.24);
 }
 
 .role-mark.dogleg-role-reveal {
@@ -2513,28 +2603,28 @@ button.joinable-room-player.spectate-player {
 }
 
 .table-seats-5 {
-  --seat-width: 270px;
-  --seat-height: 130px;
+  --seat-width: 224px;
+  --seat-height: 64px;
 }
 
 .table-seats-6 {
-  --seat-width: 258px;
-  --seat-height: 128px;
+  --seat-width: 214px;
+  --seat-height: 64px;
 }
 
 .table-seats-7 {
-  --seat-width: 244px;
-  --seat-height: 126px;
+  --seat-width: 204px;
+  --seat-height: 62px;
 }
 
 .table-seats-8 {
-  --seat-width: 232px;
-  --seat-height: 124px;
+  --seat-width: 194px;
+  --seat-height: 60px;
 }
 
 .table-seats-9 {
-  --seat-width: 220px;
-  --seat-height: 122px;
+  --seat-width: 184px;
+  --seat-height: 58px;
 }
 
 .table-center {
@@ -2664,12 +2754,14 @@ button.joinable-room-player.spectate-player {
 
 .table-circle .trick-player {
   width: 100%;
-  height: var(--seat-height, 112px);
+  height: auto;
   min-height: 0;
-  grid-template-rows: minmax(0, 1fr) auto;
+  grid-template-rows: minmax(0, 1fr);
   overflow: visible;
-  box-shadow: 0 8px 22px rgba(31, 45, 38, 0.11);
-  padding: 8px 9px 6px;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  padding: 0;
 }
 
 .table-circle .trick-seat.viewer-seat {
@@ -2685,37 +2777,10 @@ button.joinable-room-player.spectate-player {
   transform: translateX(-50%);
 }
 
-.table-circle .trick-name {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-}
-
-.table-circle .trick-name strong {
-  max-width: none;
-  line-height: 1.16;
-  overflow: visible;
-}
-
-.table-circle .player-identity {
-  width: 100%;
-  min-height: 82px;
-  gap: 6px;
-  overflow: visible;
-}
-
-.table-circle .name-text {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 14px;
-  font-weight: 900;
-}
-
 .table-circle .trick-player .avatar.small {
-  width: 82px;
-  height: 82px;
-  font-size: 18px;
+  width: 48px;
+  height: 48px;
+  font-size: 15px;
 }
 
 .table-player-identity {
@@ -2732,8 +2797,8 @@ button.joinable-room-player.spectate-player {
 
 .table-player-avatar-stage {
   display: inline-grid;
-  width: 82px;
-  height: 82px;
+  width: 48px;
+  height: 48px;
 }
 
 .table-player-avatar-stage .avatar.avatar-frame,
@@ -2741,28 +2806,67 @@ button.joinable-room-player.spectate-player {
   margin-inline-end: 0;
 }
 
-.table-player-avatar-stage:has(.avatar-frame) {
-  margin-inline-end: 12px;
-}
-
-.trick-player-profile-section {
+.trick-player-main {
   position: relative;
   z-index: 2;
   min-width: 0;
   display: grid;
-  gap: 2px;
-  align-content: start;
+  grid-template-columns: 48px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
 }
 
-.trick-player-game-section {
-  border-top: 1px solid #e1e7e3;
-  padding-top: 3px;
+.trick-player-summary {
+  min-width: 0;
+  display: grid;
+  gap: 5px;
+  align-content: center;
+}
+
+.trick-player-line {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.trick-player-display-name {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  font-weight: 900;
+  line-height: 1.1;
 }
 
 .table-circle .seat-status {
-  justify-self: end;
+  flex: 0 0 auto;
   font-size: 11px;
   line-height: 1.1;
+}
+
+.table-circle .trick-player.current-turn .trick-player-summary,
+.table-circle .trick-player.winning .trick-player-summary,
+.table-circle .trick-player.dogleg-team .trick-player-summary {
+  border-radius: 999px;
+  padding: 4px 7px;
+}
+
+.table-circle .trick-player.current-turn .trick-player-summary {
+  background: rgba(232, 246, 238, 0.96);
+  box-shadow: 0 0 0 2px rgba(63, 150, 104, 0.14);
+}
+
+.table-circle .trick-player.winning .trick-player-summary {
+  background: rgba(255, 248, 232, 0.96);
+  box-shadow: 0 0 0 2px rgba(209, 167, 70, 0.16);
+}
+
+.table-circle .trick-player.dogleg-team .table-player-avatar-stage {
+  border-radius: 10px;
+  box-shadow: 0 0 0 3px rgba(23, 131, 79, 0.2), 0 0 14px rgba(23, 131, 79, 0.26);
 }
 
 .trick-player-stats {
@@ -2809,6 +2913,33 @@ button.joinable-room-player.spectate-player {
 
 .trick-player-stats b {
   color: var(--text);
+  font-size: 11px;
+}
+
+.trick-player-summary .trick-player-stats {
+  width: auto;
+  gap: 0;
+  align-self: auto;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.trick-player-summary .trick-player-stats span {
+  flex: 0 0 auto;
+  min-height: 0;
+  border-inline-start: 0;
+  justify-content: flex-start;
+  gap: 2px;
+}
+
+.trick-player-summary .trick-player-stats span + span::before {
+  content: "·";
+  margin: 0 5px 0 3px;
+  color: #a5b0aa;
+  font-weight: 700;
+}
+
+.trick-player-summary .trick-player-stats b {
   font-size: 11px;
 }
 
@@ -3063,7 +3194,7 @@ button.joinable-room-player.spectate-player {
 
 .seat-hand-layout {
   display: grid;
-  grid-template-columns: 160px minmax(0, 1fr);
+  grid-template-columns: 132px minmax(0, 1fr);
   gap: 10px;
   min-width: 0;
 }
@@ -3079,14 +3210,14 @@ button.joinable-room-player.spectate-player {
 }
 
 .seat-hand-avatar-stage {
-  width: 126px;
-  height: 126px;
+  width: 104px;
+  height: 104px;
 }
 
 .avatar.seat-profile {
-  width: 126px;
-  height: 126px;
-  font-size: 26px;
+  width: 104px;
+  height: 104px;
+  font-size: 24px;
 }
 
 .seat-hand-profile-copy {
@@ -4096,6 +4227,10 @@ button.joinable-room-player.spectate-player {
     grid-template-columns: 1fr;
   }
 
+  .statistics-relationship-grid {
+    grid-template-columns: 1fr;
+  }
+
   .admin-password-form {
     grid-template-columns: 1fr;
   }
@@ -4130,6 +4265,18 @@ button.joinable-room-player.spectate-player {
 
   .statistics-headline {
     border-left: 0;
+  }
+
+  .statistics-relationship-section > header {
+    display: grid;
+  }
+
+  .statistics-relationship-sorters {
+    width: 100%;
+  }
+
+  .statistics-relationship-sort {
+    flex: 1;
   }
 
   .statistics-performance-grid,

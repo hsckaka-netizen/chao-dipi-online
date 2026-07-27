@@ -363,6 +363,20 @@ test("leaderboard keeps a compact user column visible while scrolling", async ()
   assert.match(styles, /--statistics-user-column-width: 142px/);
 });
 
+test("player detail exposes sortable bond and opponent boards", async () => {
+  const historyPath = fileURLToPath(new URL("../game-history.js", import.meta.url));
+  const appPath = fileURLToPath(new URL("../public/app.js", import.meta.url));
+  const [historySource, appSource] = await Promise.all([readFile(historyPath, "utf8"), readFile(appPath, "utf8")]);
+  assert.match(historySource, /target\.team = other\.team AS same_team/);
+  assert.match(historySource, /sum\(paired\.own_score\)/);
+  assert.match(historySource, /bonds: result\.rows\.filter\(\(row\) => row\.same_team\)/);
+  assert.match(historySource, /opponents: result\.rows\.filter\(\(row\) => !row\.same_team\)/);
+  assert.match(appSource, /renderPlayerRelationshipBoard\("bonds"/);
+  assert.match(appSource, /renderPlayerRelationshipBoard\("opponents"/);
+  assert.match(appSource, /data-action="sort-player-relationships"/);
+  assert.match(appSource, /new Set\(\["games_played", "own_score"\]\)/);
+});
+
 test("score bidding banker selects a trump suit without requiring twos", async () => {
   const serverPath = fileURLToPath(new URL("../server.js", import.meta.url));
   const appPath = fileURLToPath(new URL("../public/app.js", import.meta.url));
