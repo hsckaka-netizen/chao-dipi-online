@@ -71,6 +71,9 @@ let actionPassInFlight = false;
 let actionDialogTemporarilyBlocked = false;
 let buryInFlight = false;
 let scoreBidAutoPassTimer = null;
+let setupCountdownRenderTimer = null;
+let setupCountdownRenderKey = "";
+let setupCountdownExpiredSyncKey = "";
 let throwRevealTimer = null;
 let gameplayEffectTimer = null;
 let doglegRevealEffects = [];
@@ -129,6 +132,7 @@ function clearSession() {
   localStorage.removeItem(storageKey);
   if (source) source.close();
   if (scoreBidAutoPassTimer) window.clearTimeout(scoreBidAutoPassTimer);
+  clearSetupCountdownRenderTimer();
   if (throwRevealTimer) window.clearTimeout(throwRevealTimer);
   if (gameplayEffectTimer) window.clearTimeout(gameplayEffectTimer);
   if (stateSyncTimer) window.clearTimeout(stateSyncTimer);
@@ -219,6 +223,7 @@ function applyState(nextState, options = {}) {
   else if (throwNotice && options.showTransitionNotice !== false) setMessage(throwNotice, true, true);
   else if (notice && options.showTransitionNotice !== false) setMessage(notice);
   scheduleScoreBidAutoPass();
+  scheduleSetupCountdownRender();
   if (options.highlightNewKitty === false || !shouldHighlightNewKitty(nextState)) return false;
   const newCardIds = (nextState.hand || [])
     .filter((card) => !previousHandIds.has(card.id))
@@ -1520,10 +1525,38 @@ function viewerCanPassScoreBid() {
   return viewerCanScoreBid() && Boolean(state.setup?.scoreBid?.currentPlayerId);
 }
 
-function scoreBidSecondsLeft() {
-  const deadline = state?.setup?.scoreBid?.deadlineAt;
+function setupSecondsLeft(deadline) {
   if (!deadline) return null;
-  return Math.max(0, Math.ceil((new Date(deadline).getTime() - Date.now()) / 1000));
+  const deadlineMs = new Date(deadline).getTime();
+  if (!Number.isFinite(deadlineMs)) return null;
+  return Math.max(0, Math.ceil((deadlineMs - Date.now()) / 1000));
+}
+
+function setupCountdownText(deadline, suffix = "") {
+  const secondsLeft = setupSecondsLeft(deadline);
+  if (secondsLeft === null) return "";
+  return `${secondsLeft}s${suffix}`;
+}
+
+function setupCountdownTag(deadline, suffix = "") {
+  const text = setupCountdownText(deadline, suffix);
+  if (!text) return "";
+  return `<span class="tag" data-countdown-deadline="${escapeHtml(deadline)}" data-countdown-suffix="${escapeHtml(suffix)}">${escapeHtml(text)}</span>`;
+}
+
+function refreshSetupCountdownDisplays() {
+  document.querySelectorAll("[data-countdown-deadline]").forEach((element) => {
+    const text = setupCountdownText(element.dataset.countdownDeadline || "", element.dataset.countdownSuffix || "");
+    if (text) element.textContent = text;
+  });
+}
+
+function scoreBidSecondsLeft() {
+  return setupSecondsLeft(state?.setup?.scoreBid?.deadlineAt);
+}
+
+function frySecondsLeft() {
+  return setupSecondsLeft(state?.setup?.fry?.deadlineAt);
 }
 
 function scheduleScoreBidAutoPass() {
@@ -1537,6 +1570,51 @@ function scheduleScoreBidAutoPass() {
     scoreBidAutoPassTimer = null;
     if (viewerCanPassScoreBid()) passScoreBid();
   }, wait);
+}
+
+function currentSetupCountdownDeadline() {
+  if (state?.stage === "score-bidding") return state.setup?.scoreBid?.deadlineAt || null;
+  if (state?.stage === "frying") return state.setup?.fry?.deadlineAt || null;
+  return null;
+}
+
+function currentSetupCountdownKey() {
+  const deadline = currentSetupCountdownDeadline();
+  if (!deadline) return "";
+  return `${state?.roomId || ""}:${state?.stage || ""}:${deadline}`;
+}
+
+function clearSetupCountdownRenderTimer() {
+  if (setupCountdownRenderTimer) window.clearInterval(setupCountdownRenderTimer);
+  setupCountdownRenderTimer = null;
+  setupCountdownRenderKey = "";
+  setupCountdownExpiredSyncKey = "";
+}
+
+function scheduleSetupCountdownRender() {
+  const key = currentSetupCountdownKey();
+  if (!key) {
+    clearSetupCountdownRenderTimer();
+    return;
+  }
+  if (setupCountdownRenderTimer && setupCountdownRenderKey === key) return;
+  if (setupCountdownRenderTimer) window.clearInterval(setupCountdownRenderTimer);
+  setupCountdownRenderKey = key;
+  setupCountdownExpiredSyncKey = "";
+  refreshSetupCountdownDisplays();
+  setupCountdownRenderTimer = window.setInterval(() => {
+    const nextKey = currentSetupCountdownKey();
+    if (!nextKey) {
+      clearSetupCountdownRenderTimer();
+      return;
+    }
+    refreshSetupCountdownDisplays();
+    const secondsLeft = setupSecondsLeft(currentSetupCountdownDeadline());
+    if (secondsLeft === 0 && setupCountdownExpiredSyncKey !== nextKey) {
+      setupCountdownExpiredSyncKey = nextKey;
+      scheduleStateSync(0);
+    }
+  }, 1000);
 }
 
 function viewerCanBury() {
@@ -2904,16 +2982,15 @@ function scoreBidText(scoreBid) {
 
 function scoreBidActionButtons() {
   const scoreBidState = state.setup?.scoreBid || {};
+  const countdown = setupCountdownTag(scoreBidState.deadlineAt || "");
   if (!viewerCanScoreBid()) {
-    if (scoreBidState.currentPlayerId === state.viewer?.id) return `<div class="turn-waiting">你是当前最高叫分，等待其他玩家加分或过</div>`;
-    if ((scoreBidState.passIds || []).includes(state.viewer?.id)) return `<div class="turn-waiting">你已过，等待叫分结束</div>`;
-    return `<div class="turn-waiting">等待其他玩家叫分</div>`;
+    if (scoreBidState.currentPlayerId === state.viewer?.id) return `<div class="turn-waiting">你是当前最高叫分，等待其他玩家加分或过 ${countdown}</div>`;
+    if ((scoreBidState.passIds || []).includes(state.viewer?.id)) return `<div class="turn-waiting">你已过，等待叫分结束 ${countdown}</div>`;
+    return `<div class="turn-waiting">等待其他玩家叫分 ${countdown}</div>`;
   }
   if (!scoreBidState.currentPlayerId) {
     return `<button type="button" data-action="score-bid-start">以 ${escapeHtml(scoreBidState.minimum || 0)} 分叫庄</button>`;
   }
-  const secondsLeft = scoreBidSecondsLeft();
-  const countdown = secondsLeft === null ? "" : `<span class="tag">${secondsLeft}s</span>`;
   return `
     <span class="score-bid-actions">
       ${countdown}
@@ -3086,10 +3163,6 @@ function renderSetupCenter() {
           <div class="meta">最终叫分</div>
           <strong>${escapeHtml(setup.scoreBid?.currentScore || 0)} 分</strong>
         </div>
-        <div>
-          <div class="meta">当前动作</div>
-          <strong>庄家直接选择一个主花色</strong>
-        </div>
       </div>
       <div class="row">${trumpSuitActionButtons()}</div>
     `;
@@ -3113,6 +3186,7 @@ function renderSetupCenter() {
 
   if (stage === "frying") {
     const fry = setup.fry || {};
+    const countdown = setupCountdownTag(fry.deadlineAt || "", " 后自动不炒");
     body = `
       <div class="setup-grid">
         <div>
@@ -3130,6 +3204,7 @@ function renderSetupCenter() {
         ${currentTrumpBlock}
       </div>
       <div class="row">
+        ${countdown}
         ${viewerCanFry() ? `<button type="button" data-action="open-fry-dialog" ${actionPassInFlight ? "disabled" : ""}>选择2炒底</button>` : ""}
         ${viewerCanFry() ? `<button type="button" class="secondary" data-action="fry-pass" ${actionPassInFlight ? "disabled" : ""}>${actionPassInFlight ? "提交中…" : "不炒"}</button>` : ""}
       </div>
@@ -3175,7 +3250,6 @@ function renderSetupCenter() {
 
   return `
     <div class="setup-center-content">
-      <span class="tag accent">${escapeHtml(state.phase)}</span>
       ${body}
     </div>
   `;
@@ -3462,6 +3536,7 @@ function renderBidFryDialog(type) {
   const passAction = isBid ? "bid-pass" : "fry-pass";
   const passLabel = isBid ? "过" : "不炒";
   const canPass = isBid ? viewerCanPassBid() : viewerCanFry();
+  const countdown = isBid ? "" : setupCountdownTag(state.setup?.fry?.deadlineAt || "", " 后自动不炒");
   return `
     <div class="modal-backdrop">
       <section class="modal-card" role="dialog" aria-modal="true" aria-label="${escapeHtml(title)}">
@@ -3480,6 +3555,7 @@ function renderBidFryDialog(type) {
           ${twoCards.length ? renderTwoCardChoices(twoCards) : `<div class="empty">手里没有可用于${escapeHtml(title)}的 2。</div>`}
         </div>
         <div class="dialog-actions">
+          ${countdown}
           ${canPass ? `<button type="button" class="secondary" data-action="${passAction}">${passLabel}</button>` : `<button type="button" class="secondary" data-action="close-dialog">过</button>`}
           <button type="button" data-action="${isBid ? "bid-selected" : "fry-selected"}" ${validation.ok ? "" : "disabled"}>${escapeHtml(title)}</button>
           ${!validation.ok && validation.reason ? `<span class="action-reason">${escapeHtml(validation.reason)}</span>` : ""}
@@ -3851,7 +3927,7 @@ function renderTrick(trick, current, options = {}) {
         ${current ? `
           <div class="table-corner-stats">${renderPlayedFiveStats()}</div>
           <div class="table-center ${setupTable ? "setup-center" : ""} ${finishedResult ? "result-center" : ""}">
-            <strong>${finishedResult ? "本局结束" : setupTable ? "牌桌" : heldResult ? `第 ${trick.number} 轮结果` : `第 ${trick.number} 轮`}</strong>
+            ${setupTable ? "" : `<strong>${finishedResult ? "本局结束" : heldResult ? `第 ${trick.number} 轮结果` : `第 ${trick.number} 轮`}</strong>`}
             ${setupTable ? renderSetupCenter() : `<span>${escapeHtml(finishedResult ? `${state.result?.winnerTeamName || "胜方"}获胜` : titleMeta)}</span>`}
             ${finishedResult ? `<button type="button" data-action="open-result">查看结算</button>` : ""}
           </div>
@@ -4467,8 +4543,12 @@ function renderEvent(event) {
 }
 
 function render() {
-  if (!session || !state) return renderHome();
+  if (!session || !state) {
+    clearSetupCountdownRenderTimer();
+    return renderHome();
+  }
   renderRoom();
+  scheduleSetupCountdownRender();
 }
 
 function escapeHtml(value) {

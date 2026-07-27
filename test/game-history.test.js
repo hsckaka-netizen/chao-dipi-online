@@ -374,3 +374,18 @@ test("score bidding banker selects a trump suit without requiring twos", async (
   assert.match(appSource, /data-action="trump-suit-\$\{suit\.id\}"/);
   assert.doesNotMatch(appSource, /亮选中的2定主|等待亮2定主/);
 });
+
+test("setup countdowns refresh locally and expire on the server", async () => {
+  const serverPath = fileURLToPath(new URL("../server.js", import.meta.url));
+  const appPath = fileURLToPath(new URL("../public/app.js", import.meta.url));
+  const [serverSource, appSource] = await Promise.all([readFile(serverPath, "utf8"), readFile(appPath, "utf8")]);
+  assert.match(serverSource, /const SCORE_BID_SECONDS = 20/);
+  assert.match(serverSource, /const FRY_SECONDS = 20/);
+  assert.match(serverSource, /function scheduleScoreBidTimer/);
+  assert.match(serverSource, /function scheduleFryTimer/);
+  assert.match(serverSource, /function autoAdvanceExpiredFry/);
+  assert.match(serverSource, /passFry\(room, player, \{ automatic: true \}\)/);
+  assert.match(appSource, /function scheduleSetupCountdownRender/);
+  assert.match(appSource, /function frySecondsLeft/);
+  assert.match(appSource, /后自动不炒/);
+});

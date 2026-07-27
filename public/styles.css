@@ -2566,26 +2566,26 @@ button.joinable-room-player.spectate-player {
 
 .table-center.setup-center {
   z-index: 6;
-  width: min(520px, 44%);
-  max-width: 520px;
+  width: min(460px, 40%);
+  max-width: 460px;
 }
 
 .setup-center-content {
   display: grid;
-  gap: 8px;
+  gap: 6px;
   justify-items: center;
 }
 
 .setup-center-content .setup-grid {
   width: 100%;
-  grid-template-columns: repeat(auto-fit, minmax(112px, 1fr));
-  gap: 6px;
+  grid-template-columns: repeat(auto-fit, minmax(104px, 1fr));
+  gap: 5px;
   text-align: left;
 }
 
 .setup-center-content .setup-grid > div {
-  min-height: 48px;
-  padding: 6px 8px;
+  min-height: 42px;
+  padding: 5px 8px;
 }
 
 .setup-center-content .setup-grid strong {

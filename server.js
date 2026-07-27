@@ -51,6 +51,7 @@ const HAND_SIZE = 53;
 const CALL_MODE_TWO = "two";
 const CALL_MODE_SCORE = "score";
 const SCORE_BID_SECONDS = 20;
+const FRY_SECONDS = 20;
 const AVATAR_FRAMES = new Set(["", "vip", "emerald", "champion", "violet", "stormwind", "idol", "hellfire", "blood-elf", "endless-winter", "cr7", "paladin", "vip-legend"]);
 const CARD_SKINS = new Set(["", "emerald", "champion", "violet", "stormwind", "idol", "hellfire", "blood-elf", "endless-winter", "cr7", "paladin", "vip-legend"]);
 const PLAY_EFFECTS = new Set(["", "fireworks"]);
@@ -742,6 +743,8 @@ function sortHand(hand) {
 function deal(room) {
   clearAiSetupTimer(room);
   clearAiPlayTimer(room);
+  clearScoreBidTimer(room);
+  clearFryTimer(room);
   room.events = [];
   const count = room.players.length;
   const preparedDeck = deckForPlayerCount(count);
@@ -798,6 +801,8 @@ function allPlayersReady(room) {
 function resetRoomToLobby(room, options = {}) {
   clearAiSetupTimer(room);
   clearAiPlayTimer(room);
+  clearScoreBidTimer(room);
+  clearFryTimer(room);
   const readyPlayerId = options.readyPlayerId || null;
   const previousReady = new Map(room.players.map((player) => [player.id, Boolean(player.ready)]));
   room.status = "lobby";
@@ -934,6 +939,7 @@ function setupSnapshot(room) {
           pendingBid: publicBid(room, fry.pendingBid),
           history: (fry.history || []).map((bid) => publicBid(room, bid)),
           passesSinceLast: fry.passesSinceLast,
+          deadlineAt: fry.deadlineAt || null,
           passIds: [...(fry.passIds || [])]
         }
       : null
@@ -1024,6 +1030,7 @@ function playedProtectedFiveCounts(room) {
 
 function roomSnapshot(room, viewer = null) {
   autoAdvanceExpiredScoreBid(room);
+  autoAdvanceExpiredFry(room);
   const canViewKitty = Boolean(viewer && room.kitty.length && room.setup?.fry?.lastFryerId === viewer.id);
   const kittyViewerId = room.setup?.fry?.lastFryerId || null;
   const readyCount = readyPlayerCount(room);
@@ -1183,6 +1190,8 @@ function hasHumanPlayer(room) {
 function dissolveRoom(room, messageText) {
   clearAiSetupTimer(room);
   clearAiPlayTimer(room);
+  clearScoreBidTimer(room);
+  clearFryTimer(room);
   disconnectAllRoomClients(room, messageText);
   rooms.delete(room.id);
 }
@@ -1276,6 +1285,8 @@ function finishGame(room, completedTrick) {
   if (room.result) return;
   clearAiSetupTimer(room);
   clearAiPlayTimer(room);
+  clearScoreBidTimer(room);
+  clearFryTimer(room);
 
   const bankerIds = bankerTeamIds(room);
   const bankerIdSet = new Set(bankerIds);
@@ -1718,6 +1729,7 @@ function scoreBidOthersPassed(room) {
 }
 
 function finishScoreBidding(room) {
+  clearScoreBidTimer(room);
   const scoreBid = ensureScoreBidSetup(room);
   if (!scoreBid.current) return { error: "还没有玩家叫分抢庄", status: 409 };
   room.bankerId = scoreBid.current.playerId;
@@ -1781,7 +1793,8 @@ function autoAdvanceExpiredScoreBid(room) {
   if (room.stage !== "score-bidding") return false;
   const scoreBid = room.setup?.scoreBid;
   if (!scoreBid?.current?.playerId || !scoreBid.deadlineAt) return false;
-  if (new Date(scoreBid.deadlineAt).getTime() > Date.now()) return false;
+  const deadline = new Date(scoreBid.deadlineAt).getTime();
+  if (!Number.isFinite(deadline) || deadline > Date.now()) return false;
   room.players.forEach((player) => {
     if (player.id === scoreBid.current.playerId) return;
     if (!scoreBid.passIds.includes(player.id)) scoreBid.passIds.push(player.id);
@@ -1815,6 +1828,7 @@ function startFrying(room) {
     pendingBid: null,
     history: [],
     passesSinceLast: 0,
+    deadlineAt: new Date(Date.now() + FRY_SECONDS * 1000).toISOString(),
     passIds: []
   };
   addEvent(room, `开始炒底，当前底牌 ${room.kitty.length} 张`);
@@ -1828,6 +1842,7 @@ function continueFryingAfterBury(room, player) {
   fry.passesSinceLast = 0;
   fry.passIds = [];
   fry.currentPlayerId = nextPlayerId(room, player.id);
+  fry.deadlineAt = new Date(Date.now() + FRY_SECONDS * 1000).toISOString();
   room.stage = "frying";
   room.phase = `等待 ${playerName(room, fry.currentPlayerId)} 炒底或不炒`;
   addEvent(room, `${player.name} 完成炒底贴底，继续下一家`);
@@ -1835,6 +1850,8 @@ function continueFryingAfterBury(room, player) {
 
 function beginPlaying(room) {
   clearAiSetupTimer(room);
+  clearScoreBidTimer(room);
+  clearFryTimer(room);
   room.stage = "playing";
   room.phase = `打牌中，主牌为${suitName(room.trumpSuit)}`;
   room.currentTrick = createEmptyTrick(1, room.bankerId);
@@ -1842,7 +1859,9 @@ function beginPlaying(room) {
 }
 
 function finishFrying(room) {
+  clearFryTimer(room);
   const lastBid = room.setup.fry?.lastBid || room.setup.bid;
+  if (room.setup.fry) room.setup.fry.deadlineAt = null;
   room.trumpSuit = lastBid?.suit || randomSuitId();
   addEvent(room, `炒底结束，主牌确定为${suitName(room.trumpSuit)}`);
   if (!room.doglegNeeded) {
@@ -1880,7 +1899,7 @@ function buryCards(room, player, cardIds) {
   return { ok: true };
 }
 
-function passFry(room, player) {
+function passFry(room, player, options = {}) {
   if (room.stage !== "frying") return { error: "当前不能选择不炒", status: 409 };
   const fry = room.setup.fry;
   if (fry.currentPlayerId !== player.id) {
@@ -1889,12 +1908,13 @@ function passFry(room, player) {
   fry.passesSinceLast += 1;
   if (!fry.passIds) fry.passIds = [];
   if (!fry.passIds.includes(player.id)) fry.passIds.push(player.id);
-  addEvent(room, `${player.name} 选择不炒底`);
+  addEvent(room, options.automatic ? `${player.name} 炒底倒计时结束，自动不炒` : `${player.name} 选择不炒底`);
   if (fry.passesSinceLast >= room.players.length - 1) {
     finishFrying(room);
     return { ok: true };
   }
   fry.currentPlayerId = nextPlayerId(room, player.id);
+  fry.deadlineAt = new Date(Date.now() + FRY_SECONDS * 1000).toISOString();
   room.phase = `等待 ${playerName(room, fry.currentPlayerId)} 炒底或不炒`;
   return { ok: true };
 }
@@ -1914,12 +1934,25 @@ function submitFry(room, player, cardIds) {
   player.hand = sortHand([...player.hand, ...room.kitty]);
   room.kitty = [];
   fry.pendingBid = bid;
+  fry.deadlineAt = null;
   if (!fry.history) fry.history = [];
   fry.history.push(bid);
   room.stage = "fry-burying";
   room.phase = `${player.name} 炒底，等待贴底`;
   addEvent(room, `${player.name} 用 ${bid.count} 张${suitName(bid.suit)}2 炒底并拿入底牌`);
   return { ok: true };
+}
+
+function autoAdvanceExpiredFry(room) {
+  if (room.stage !== "frying") return false;
+  const fry = room.setup?.fry;
+  if (!fry?.currentPlayerId || !fry.deadlineAt) return false;
+  const deadline = new Date(fry.deadlineAt).getTime();
+  if (!Number.isFinite(deadline) || deadline > Date.now()) return false;
+  const player = playerById(room, fry.currentPlayerId);
+  if (!player) return false;
+  const result = passFry(room, player, { automatic: true });
+  return !result.error;
 }
 
 function cardColor(card) {
@@ -2556,6 +2589,7 @@ function autoProgressTestSetup(room, maxActions = Number.POSITIVE_INFINITY) {
   while (safety > 0 && actions < maxActions) {
     safety -= 1;
     autoAdvanceExpiredScoreBid(room);
+    autoAdvanceExpiredFry(room);
 
     if (room.stage === "score-bidding") {
       const scoreBid = ensureScoreBidSetup(room);
@@ -2671,6 +2705,48 @@ function clearAiSetupTimer(room) {
   room.aiSetupTimer = null;
 }
 
+function clearScoreBidTimer(room) {
+  if (!room?.scoreBidTimer) return;
+  clearTimeout(room.scoreBidTimer);
+  room.scoreBidTimer = null;
+}
+
+function clearFryTimer(room) {
+  if (!room?.fryTimer) return;
+  clearTimeout(room.fryTimer);
+  room.fryTimer = null;
+}
+
+function scheduleScoreBidTimer(room) {
+  clearScoreBidTimer(room);
+  const deadlineAt = room?.stage === "score-bidding" ? room.setup?.scoreBid?.deadlineAt : null;
+  if (!deadlineAt) return false;
+  const deadline = new Date(deadlineAt).getTime();
+  if (!Number.isFinite(deadline)) return false;
+  room.scoreBidTimer = setTimeout(() => {
+    room.scoreBidTimer = null;
+    if (rooms.get(room.id) !== room || room.status !== "dealt") return;
+    if (autoAdvanceExpiredScoreBid(room)) broadcastAndContinueAutomation(room);
+  }, Math.max(0, deadline - Date.now()) + 50);
+  room.scoreBidTimer.unref?.();
+  return true;
+}
+
+function scheduleFryTimer(room) {
+  clearFryTimer(room);
+  const deadlineAt = room?.stage === "frying" ? room.setup?.fry?.deadlineAt : null;
+  if (!deadlineAt) return false;
+  const deadline = new Date(deadlineAt).getTime();
+  if (!Number.isFinite(deadline)) return false;
+  room.fryTimer = setTimeout(() => {
+    room.fryTimer = null;
+    if (rooms.get(room.id) !== room || room.status !== "dealt") return;
+    if (autoAdvanceExpiredFry(room)) broadcastAndContinueAutomation(room);
+  }, Math.max(0, deadline - Date.now()) + 50);
+  room.fryTimer.unref?.();
+  return true;
+}
+
 function scheduleNextAiSetupAction(room, delayMs = AI_SETUP_DELAY_MS) {
   if (!room || room.aiSetupTimer || room.status !== "dealt" || room.stage === "playing" || room.stage === "finished") {
     return false;
@@ -2687,6 +2763,8 @@ function scheduleNextAiSetupAction(room, delayMs = AI_SETUP_DELAY_MS) {
 
 function broadcastAndContinueAutomation(room) {
   broadcast(room);
+  scheduleScoreBidTimer(room);
+  scheduleFryTimer(room);
   if (room.stage === "playing") scheduleNextAiPlay(room);
   else scheduleNextAiSetupAction(room);
 }
@@ -3962,6 +4040,8 @@ async function handleApi(req, res, pathParts, url) {
       playPauseUntil: null,
       aiSetupTimer: null,
       aiPlayTimer: null,
+      scoreBidTimer: null,
+      fryTimer: null,
       notice: null,
       events: [],
       clients: new Set(),
