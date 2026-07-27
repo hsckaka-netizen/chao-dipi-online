@@ -867,7 +867,8 @@ function publicBid(room, bid) {
     suit: bid.suit,
     suitName: suitName(bid.suit),
     cards: (bid.cards || []).map(publicCard),
-    random: Boolean(bid.random)
+    random: Boolean(bid.random),
+    direct: Boolean(bid.direct)
   };
 }
 
@@ -1591,6 +1592,23 @@ function bidFromCards(room, player, cardIds) {
   };
 }
 
+function bidFromSuit(room, player, suit) {
+  const suitId = String(suit || "").trim().toUpperCase();
+  if (!suitById.has(suitId)) {
+    return { error: "请选择有效的主花色", status: 400 };
+  }
+  return {
+    actionId: id(6),
+    playerId: player.id,
+    count: 0,
+    suit: suitId,
+    cards: [],
+    random: false,
+    direct: true,
+    at: now()
+  };
+}
+
 function bidBeats(current, next) {
   if (!current) return next.count >= 1;
   if (current.count === 1) return next.count >= 2;
@@ -1704,10 +1722,10 @@ function finishScoreBidding(room) {
   if (!scoreBid.current) return { error: "还没有玩家叫分抢庄", status: 409 };
   room.bankerId = scoreBid.current.playerId;
   room.stage = "trump-selecting";
-  room.phase = `${playerName(room, room.bankerId)} 以 ${scoreBid.current.score} 分成为庄家，等待亮2定主`;
+  room.phase = `${playerName(room, room.bankerId)} 以 ${scoreBid.current.score} 分成为庄家，等待选择主花色`;
   scoreBid.passIds = [];
   scoreBid.deadlineAt = null;
-  addEvent(room, `${playerName(room, room.bankerId)} 以 ${scoreBid.current.score} 分成为庄家，等待亮2确定主牌`);
+  addEvent(room, `${playerName(room, room.bankerId)} 以 ${scoreBid.current.score} 分成为庄家，等待选择主花色`);
   return { ok: true };
 }
 
@@ -1773,16 +1791,16 @@ function autoAdvanceExpiredScoreBid(room) {
   return true;
 }
 
-function revealTrumpCards(room, player, cardIds) {
-  if (room.stage !== "trump-selecting") return { error: "当前不能亮2定主", status: 409 };
-  if (player.id !== room.bankerId) return { error: "只有庄家可以亮2定主", status: 403 };
-  const bid = bidFromCards(room, player, cardIds);
+function selectTrumpSuit(room, player, suit) {
+  if (room.stage !== "trump-selecting") return { error: "当前不能选择主花色", status: 409 };
+  if (player.id !== room.bankerId) return { error: "只有庄家可以选择主花色", status: 403 };
+  const bid = bidFromSuit(room, player, suit);
   if (bid.error) return bid;
   room.setup.bid = bid;
   if (!room.setup.bidHistory) room.setup.bidHistory = [];
   room.setup.bidHistory.push(bid);
-  room.phase = `${player.name} 亮 ${bid.count} 张${suitName(bid.suit)}2 定主，等待贴底`;
-  addEvent(room, `${player.name} 亮 ${bid.count} 张${suitName(bid.suit)}2 定主`);
+  room.phase = `${player.name} 选择${suitName(bid.suit)}为主，等待贴底`;
+  addEvent(room, `${player.name} 选择${suitName(bid.suit)}为主`);
   beginBurying(room);
   return { ok: true };
 }
@@ -2023,6 +2041,7 @@ function tentativeTrumpCertainty(room) {
   if (room.trumpSuit) return 1;
   const bid = tentativeTrumpBid(room);
   if (!bid) return 0.18;
+  if (bid.direct) return 0.96;
   const count = bid.count || 1;
   const suitValue = suitStrength.get(bid.suit) ?? 0;
   const countValue = count <= 1 ? 0.18 : count === 2 ? 0.42 : count === 3 ? 0.68 : 0.86;
@@ -2094,7 +2113,8 @@ function cardShapeAssetCost(room, player, card) {
 
 function minimumBidCountToBeat(currentBid, suit) {
   if (!currentBid) return 1;
-  const currentCount = currentBid.count || 1;
+  const currentCount = Number(currentBid.count) || 0;
+  if (currentCount <= 0) return 1;
   if (currentCount === 1) return 2;
   if ((suitStrength.get(suit) ?? -1) > (suitStrength.get(currentBid.suit) ?? -1)) return currentCount;
   return currentCount + 1;
@@ -2438,8 +2458,39 @@ function bestTrumpRevealChoice(room, player) {
   })[0];
 }
 
+function trumpSuitChoiceScore(room, player, suit) {
+  const cards = player.hand;
+  const trumpNormalCount = cards.filter((card) => card.type === "normal" && card.suit === suit && !isCompareCard(card, suit)).length;
+  const mainCount = cards.filter((card) => isMainPlayCard(card, suit)).length;
+  const topMainCount = highMainCount(cards, suit, 8);
+  const pointLoad = cardsPoint(cards.filter((card) => isMainPlayCard(card, suit)));
+  const control = setupControlScore(cards, suit);
+  const shape = patternAssetScore(cards, suit);
+  const twoCount = twoCountForSuit(player, suit);
+  return control * 0.72
+    + mainCount * 2.2
+    + topMainCount * 8
+    + trumpNormalCount * 1.4
+    + pointLoad * 0.45
+    + shape * 0.22
+    + twoCount * 2.5
+    + (suitStrength.get(suit) ?? 0) * 1.6;
+}
+
+function bestTrumpSuitChoice(room, player) {
+  return suits
+    .map((suit) => ({
+      suit: suit.id,
+      count: 0,
+      score: trumpSuitChoiceScore(room, player, suit.id),
+      direct: true
+    }))
+    .sort((a, b) => b.score - a.score || (suitStrength.get(b.suit) ?? 0) - (suitStrength.get(a.suit) ?? 0))[0];
+}
+
 function trumpRevealCertainty(room, player, choice) {
   if (!choice) return 0;
+  if (choice.direct) return 0.96;
   const lock = bidLockValue(room, player, choice.suit, choice.count);
   const suitValue = suitStrength.get(choice.suit) ?? 0;
   const base = choice.count <= 1 ? 0.25 : choice.count === 2 ? 0.46 : choice.count === 3 ? 0.72 : 0.9;
@@ -2481,7 +2532,7 @@ function estimatedBankerScoreCapacity(room, player, trumpSuit, choice) {
 
 function bestAutoScoreBid(room, player) {
   const scoreBid = ensureScoreBidSetup(room);
-  const trumpChoice = bestTrumpRevealChoice(room, player);
+  const trumpChoice = bestTrumpSuitChoice(room, player);
   if (!trumpChoice) return null;
   const strength = trumpChoice.score + setupControlScore(player.hand, trumpChoice.suit) * 0.18;
   const capacity = estimatedBankerScoreCapacity(room, player, trumpChoice.suit, trumpChoice);
@@ -2536,9 +2587,9 @@ function autoProgressTestSetup(room, maxActions = Number.POSITIVE_INFINITY) {
     if (room.stage === "trump-selecting") {
       const player = playerById(room, room.bankerId);
       if (!player?.test) break;
-      const choice = bestTrumpRevealChoice(room, player);
+      const choice = bestTrumpSuitChoice(room, player);
       if (!choice) break;
-      const result = revealTrumpCards(room, player, choice.cardIds);
+      const result = selectTrumpSuit(room, player, choice.suit);
       if (result.error) break;
       actions += 1;
       continue;
@@ -4241,7 +4292,7 @@ async function handleApi(req, res, pathParts, url) {
       const body = await readJson(req);
       const viewer = requirePlayer(res, room, body.playerId, body.token);
       if (!viewer) return;
-      const result = revealTrumpCards(room, viewer, body.cardIds);
+      const result = selectTrumpSuit(room, viewer, body.suit);
       if (result.error) return writeJson(res, result.status, { error: result.error });
       broadcastAndContinueAutomation(room);
       return writeJson(res, 200, roomStateAck(room));

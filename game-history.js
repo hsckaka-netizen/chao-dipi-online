@@ -41,6 +41,10 @@ const MIGRATIONS = [
   {
     version: 9,
     path: fileURLToPath(new URL("./db/migrations/009_integral_wins.sql", import.meta.url))
+  },
+  {
+    version: 10,
+    path: fileURLToPath(new URL("./db/migrations/010_fry_and_won_card_statistics.sql", import.meta.url))
   }
 ];
 const HISTORY_ENABLED = String(process.env.GAME_HISTORY_ENABLED || "").toLowerCase() === "true";
@@ -817,6 +821,19 @@ const PERIOD_STATISTICS_SQL = `
       coalesce(sum(coalesce(nullif(player.evaluation_data ->> 'teammateDraggedDiamondFives', '')::numeric, 0)), 0)::integer AS teammate_dragged_diamond_fives,
       coalesce(sum(coalesce(nullif(player.evaluation_data ->> 'wonTricks', '')::numeric, 0)), 0)::integer AS won_tricks,
       coalesce(sum(player.game_tricks), 0)::integer AS total_tricks,
+      coalesce(sum((
+        SELECT count(*)::integer
+        FROM jsonb_array_elements(coalesce(game.setup_data #> '{fry,history}', '[]'::jsonb)) AS fry(action)
+        WHERE fry.action ->> 'playerId' = player.room_player_id
+      )), 0)::integer AS fry_count,
+      coalesce(sum((
+        SELECT coalesce(sum(jsonb_array_length(coalesce(play.action -> 'cards', '[]'::jsonb))), 0)::integer
+        FROM jsonb_array_elements(coalesce(game.trick_history, '[]'::jsonb)) AS trick(action)
+        CROSS JOIN LATERAL jsonb_array_elements(coalesce(trick.action -> 'plays', '[]'::jsonb)) AS play(action)
+        WHERE trick.action ->> 'winnerId' = player.room_player_id
+          AND play.action ->> 'playerId' = player.room_player_id
+      )), 0)::integer AS won_trick_cards,
+      (count(*) * 53)::integer AS total_hand_cards,
       count(*) FILTER (WHERE game.bottom_winner_room_player_id = player.room_player_id)::integer AS bottom_wins
     FROM identified_players player
     JOIN cdp_games game ON game.game_id = player.game_id
@@ -875,6 +892,9 @@ const PERIOD_STATISTICS_SQL = `
     base.teammate_dragged_diamond_fives,
     base.won_tricks,
     base.total_tricks,
+    base.fry_count,
+    base.won_trick_cards,
+    base.total_hand_cards,
     base.bottom_wins,
     coalesce(tags.mvp_count, 0) AS mvp_count,
     coalesce(tags.couch_count, 0) AS couch_count,

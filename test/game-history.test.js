@@ -294,6 +294,16 @@ test("leaderboard migration derives advanced metrics from compact game records",
   assert.match(migration, /CREATE VIEW cdp_player_statistics/);
 });
 
+test("leaderboard migration derives fry count and won-card ratio from compact records", async () => {
+  const migrationPath = fileURLToPath(new URL("../db/migrations/010_fry_and_won_card_statistics.sql", import.meta.url));
+  const migration = await readFile(migrationPath, "utf8");
+  assert.match(migration, /setup_data #> '\{fry,history\}'/);
+  assert.match(migration, /fry_count/);
+  assert.match(migration, /won_trick_cards/);
+  assert.match(migration, /total_hand_cards/);
+  assert.match(migration, /jsonb_array_length\(coalesce\(play\.action -> 'cards'/);
+});
+
 test("additional cosmetics migration expands both cosmetic constraints", async () => {
   const migrationPath = fileURLToPath(new URL("../db/migrations/008_more_player_cosmetics.sql", import.meta.url));
   const migration = await readFile(migrationPath, "utf8");
@@ -313,6 +323,14 @@ test("leaderboard exposes MVP count as a sortable statistic", async () => {
   const appPath = fileURLToPath(new URL("../public/app.js", import.meta.url));
   const source = await readFile(appPath, "utf8");
   assert.match(source, /column\("mvp_count", "MVP次数"/);
+});
+
+test("leaderboard exposes fry count and won-card ratio statistics", async () => {
+  const appPath = fileURLToPath(new URL("../public/app.js", import.meta.url));
+  const source = await readFile(appPath, "utf8");
+  assert.match(source, /column\("fry_count", "炒底次数"/);
+  assert.match(source, /column\("won_trick_card_rate", "获胜张数占比"/);
+  assert.match(source, /statisticRate\(row\.won_trick_cards, row\.total_hand_cards\)/);
 });
 
 test("leaderboard displays red and diamond fives together but sorts by weighted points", async () => {
@@ -336,4 +354,16 @@ test("leaderboard keeps a compact user column visible while scrolling", async ()
   assert.match(styles, /--statistics-user-column-width: 164px/);
   assert.match(styles, /\.statistics-data-table th:first-child,[\s\S]*?position: sticky/);
   assert.match(styles, /--statistics-user-column-width: 142px/);
+});
+
+test("score bidding banker selects a trump suit without requiring twos", async () => {
+  const serverPath = fileURLToPath(new URL("../server.js", import.meta.url));
+  const appPath = fileURLToPath(new URL("../public/app.js", import.meta.url));
+  const [serverSource, appSource] = await Promise.all([readFile(serverPath, "utf8"), readFile(appPath, "utf8")]);
+  assert.match(serverSource, /function selectTrumpSuit/);
+  assert.match(serverSource, /function bidFromSuit/);
+  assert.match(serverSource, /const result = selectTrumpSuit\(room, viewer, body\.suit\)/);
+  assert.doesNotMatch(serverSource, /revealTrumpCards/);
+  assert.match(appSource, /data-action="trump-suit-\$\{suit\.id\}"/);
+  assert.doesNotMatch(appSource, /亮选中的2定主|等待亮2定主/);
 });

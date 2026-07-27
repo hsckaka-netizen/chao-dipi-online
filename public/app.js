@@ -362,7 +362,7 @@ function transitionNotice(previousState, nextState) {
   }
   if (previousState.stage === "score-bidding" && nextState.stage === "trump-selecting") {
     const score = nextState.setup?.scoreBid?.currentScore || "";
-    return `叫分结束：${nextState.setup?.bankerName || "庄家"} ${score ? `以 ${score} 分` : ""}成为庄家，等待亮2定主。`;
+    return `叫分结束：${nextState.setup?.bankerName || "庄家"} ${score ? `以 ${score} 分` : ""}成为庄家，等待选择主花色。`;
   }
   if (previousState.stage === "trump-selecting" && nextState.stage === "burying") {
     return `定主成功：${nextState.setup?.bankerName || "庄家"} 已拿底等待贴底。`;
@@ -1196,7 +1196,7 @@ async function scoreBid(increment = 0) {
     });
     clearSelectionUnlessKitty(false);
     setMessage(state.stage === "trump-selecting"
-      ? `叫分结束：${state.setup?.bankerName || "庄家"} 成为庄家，等待亮2定主。`
+      ? `叫分结束：${state.setup?.bankerName || "庄家"} 成为庄家，等待选择主花色。`
       : "已提交叫分。");
   } catch (error) {
     setMessage(error.message, true);
@@ -1212,19 +1212,19 @@ async function passScoreBid() {
     });
     clearSelectionUnlessKitty(false);
     setMessage(state.stage === "trump-selecting"
-      ? `叫分结束：${state.setup?.bankerName || "庄家"} 成为庄家，等待亮2定主。`
+      ? `叫分结束：${state.setup?.bankerName || "庄家"} 成为庄家，等待选择主花色。`
       : "已过，不加分。");
   } catch (error) {
     setMessage(error.message, true);
   }
 }
 
-async function revealTrumpSelectedCards() {
+async function selectTrumpSuit(suit) {
   if (!session) return;
   try {
     await roomAction(`/api/rooms/${session.roomId}/trump`, {
       method: "POST",
-      body: JSON.stringify({ playerId: session.playerId, token: session.token, cardIds: [...selectedCardIds] })
+      body: JSON.stringify({ playerId: session.playerId, token: session.token, suit })
     });
     clearSelectionUnlessKitty(false);
     activeDialog = null;
@@ -1558,7 +1558,7 @@ function viewerCanRevealTrump() {
 }
 
 function viewerCanSelectCards() {
-  return !isSpectating() && (state?.stage === "playing" || viewerCanBid() || viewerCanRevealTrump() || viewerCanBury() || viewerCanFry() || viewerCanChooseDogleg());
+  return !isSpectating() && (state?.stage === "playing" || viewerCanBid() || viewerCanBury() || viewerCanFry() || viewerCanChooseDogleg());
 }
 
 function selectedCards() {
@@ -1755,7 +1755,7 @@ function bidBeats(current, next) {
 function validateBidLikeSelection(type) {
   if (type === "bid" && !viewerCanBid()) return { ok: false, reason: "还没轮到你叫主/抢主" };
   if (type === "fry" && !viewerCanFry()) return { ok: false, reason: "还没轮到你炒底" };
-  if (type === "trump" && !viewerCanRevealTrump()) return { ok: false, reason: "还没轮到你亮2定主" };
+  if (type === "trump" && !viewerCanRevealTrump()) return { ok: false, reason: "还没轮到你选择主花色" };
 
   const cards = selectedCards();
   if (!cards.length) return { ok: false, reason: "请选择同一花色的 2" };
@@ -1920,10 +1920,6 @@ function selectionAction() {
   if (viewerCanBid()) {
     const validation = validateBidLikeSelection("bid");
     return { action: "bid-selected", label: "亮选中的2叫/抢主", enabled: validation.ok, reason: validation.reason };
-  }
-  if (viewerCanRevealTrump()) {
-    const validation = validateBidLikeSelection("trump");
-    return { action: "trump-selected", label: "亮选中的2定主", enabled: validation.ok, reason: validation.reason };
   }
   if (viewerCanBury()) {
     const complete = selectedCardIds.size === state.kittySize;
@@ -2416,6 +2412,8 @@ function statisticsColumns() {
     column("won_tricks", "获胜轮次", "牌局", (row) => statisticNumber(row.won_tricks)),
     column("total_tricks", "总轮次", "牌局", (row) => statisticNumber(row.total_tricks)),
     column("round_win_rate", "轮次胜率", "牌局", (row) => statisticRate(row.won_tricks, row.total_tricks), statisticPercent),
+    column("fry_count", "炒底次数", "牌局", (row) => statisticNumber(row.fry_count)),
+    column("won_trick_card_rate", "获胜张数占比", "牌局", (row) => statisticRate(row.won_trick_cards, row.total_hand_cards), statisticPercent),
     column("bottom_wins", "保底数", "牌局", (row) => statisticNumber(row.bottom_wins))
   ];
 }
@@ -2559,6 +2557,8 @@ function renderPlayerStatisticsDetail(baseRow) {
   const teammateDragged = statisticNumber(row.teammate_dragged_red_fives) + statisticNumber(row.teammate_dragged_diamond_fives);
   const wonTricks = statisticNumber(row.won_tricks);
   const totalTricks = statisticNumber(row.total_tricks);
+  const wonTrickCards = statisticNumber(row.won_trick_cards);
+  const totalHandCards = statisticNumber(row.total_hand_cards);
   const selectedSeason = statisticsSeasons.find((season) => String(season.season_id) === statisticsSeasonId) || null;
   const titleItems = [
     ["MVP", "mvp_count"], ["辅", "support_count"], ["躺", "couch_count"], ["坑", "pit_count"],
@@ -2596,6 +2596,8 @@ function renderPlayerStatisticsDetail(baseRow) {
               ${statisticsPerformanceItem("拖对方红方五", opponentDragged, `${statisticDecimal(games ? opponentDragged / games : 0)} / 场`)}
               ${statisticsPerformanceItem("拖队友红方五", teammateDragged, `${statisticDecimal(games ? teammateDragged / games : 0)} / 场`)}
               ${statisticsPerformanceItem("获胜轮次", wonTricks, `总轮次 ${totalTricks} · 轮次胜率 ${statisticPercent(statisticRate(wonTricks, totalTricks))}`)}
+              ${statisticsPerformanceItem("获胜张数", wonTrickCards, `总手牌 ${totalHandCards} · 占比 ${statisticPercent(statisticRate(wonTrickCards, totalHandCards))}`)}
+              ${statisticsPerformanceItem("炒底次数", statisticNumber(row.fry_count), `${statisticDecimal(games ? statisticNumber(row.fry_count) / games : 0)} / 场`)}
               ${statisticsPerformanceItem("保底", statisticNumber(row.bottom_wins), `${statisticDecimal(games ? statisticNumber(row.bottom_wins) / games : 0)} / 场`)}
             </div>
           </section>
@@ -2885,6 +2887,7 @@ function renderRoom() {
 
 function bidText(bid) {
   if (!bid) return "暂无";
+  if (bid.direct) return `${bid.playerName}：${bid.suitName}主`;
   return `${bid.playerName}：${bid.count} 张${bid.suitName}2${bid.random ? "（随机）" : ""}`;
 }
 
@@ -2912,6 +2915,25 @@ function scoreBidActionButtons() {
       <button type="button" data-action="score-bid-20">+20</button>
       <button type="button" data-action="score-bid-30">+30</button>
       <button type="button" class="secondary" data-action="score-pass">过</button>
+    </span>
+  `;
+}
+
+function trumpSuitActionButtons() {
+  const options = [
+    { id: "S", label: "黑桃", symbol: "♠" },
+    { id: "H", label: "红桃", symbol: "♥" },
+    { id: "C", label: "草花", symbol: "♣" },
+    { id: "D", label: "方块", symbol: "♦" }
+  ];
+  if (!viewerCanRevealTrump()) return `<div class="turn-waiting">等待庄家选择主花色</div>`;
+  return `
+    <span class="trump-suit-actions">
+      ${options.map((suit) => `
+        <button type="button" class="secondary trump-suit-button suit-${suit.id}" data-action="trump-suit-${suit.id}">
+          <span>${escapeHtml(suit.symbol)}</span>${escapeHtml(suit.label)}
+        </button>
+      `).join("")}
     </span>
   `;
 }
@@ -3060,9 +3082,10 @@ function renderSetupCenter() {
         </div>
         <div>
           <div class="meta">当前动作</div>
-          <strong>庄家亮一张或多张同花色 2 定主</strong>
+          <strong>庄家直接选择一个主花色</strong>
         </div>
       </div>
+      <div class="row">${trumpSuitActionButtons()}</div>
     `;
   }
 
@@ -3679,7 +3702,7 @@ function setupSeatStatus(player) {
     return { text: scoreBidState.currentPlayerId ? "可加分/过" : "可起叫", tone: scoreBidState.currentPlayerId ? "good" : "" };
   }
   if (state.stage === "trump-selecting") {
-    if (setup.bankerId === player.id) return { text: "亮2定主", tone: "good" };
+    if (setup.bankerId === player.id) return { text: "选主花色", tone: "good" };
     return { text: "等待定主", tone: "" };
   }
   if (state.stage === "burying") {
@@ -3742,7 +3765,7 @@ function renderSetupActionTrail(actions, cardSkin = "") {
     <div class="setup-action-trail">
       ${actions.map((action) => `
         <div class="setup-action ${action.current ? "current" : ""}">
-          <span>${escapeHtml(action.kind === "score" ? `${action.score}分` : `${action.count}张${action.suitName}2${action.random ? " 随机" : ""}`)}</span>
+          <span>${escapeHtml(action.kind === "score" ? `${action.score}分` : action.direct ? `${action.suitName}主` : `${action.count}张${action.suitName}2${action.random ? " 随机" : ""}`)}</span>
           ${action.cards?.length ? renderMiniCards(action.cards, { cardSkin }) : ""}
         </div>
       `).join("")}
@@ -4555,7 +4578,8 @@ const mutatingActions = new Set([
   "room-leave", "dissolve-room", "call-mode-two", "call-mode-score", "dogleg-count",
   "add-robot", "random-seats", "start", "ready-on", "ready-off", "bid-selected",
   "bid-pass", "random-bid", "score-bid-start", "score-bid-10", "score-bid-20",
-  "score-bid-30", "score-pass", "trump-selected", "bury-selected", "fry-selected",
+  "score-bid-30", "score-pass", "trump-suit-S", "trump-suit-H", "trump-suit-C",
+  "trump-suit-D", "bury-selected", "fry-selected",
   "fry-pass", "dogleg-selected", "play-selected", "confirm-throw", "reset", "play-again",
   "kick-player"
 ]);
@@ -4703,7 +4727,7 @@ document.addEventListener("click", (event) => {
   if (action === "score-bid-20") scoreBid(20);
   if (action === "score-bid-30") scoreBid(30);
   if (action === "score-pass") passScoreBid();
-  if (action === "trump-selected") revealTrumpSelectedCards();
+  if (action.startsWith("trump-suit-")) selectTrumpSuit(action.slice("trump-suit-".length));
   if (action === "open-bid-dialog") {
     activeDialog = "bid";
     render();
