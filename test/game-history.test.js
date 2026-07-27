@@ -329,7 +329,11 @@ test("leaderboard exposes fry count and won-card ratio statistics", async () => 
   const appPath = fileURLToPath(new URL("../public/app.js", import.meta.url));
   const source = await readFile(appPath, "utf8");
   assert.match(source, /column\("fry_count", "炒底次数"/);
+  assert.match(source, /column\("fry_average", "场均炒底数"/);
   assert.match(source, /column\("won_trick_card_rate", "获胜张数占比"/);
+  assert.match(source, /column\("bottom_win_average", "场均保底数"/);
+  assert.match(source, /statisticNumber\(row\.fry_count\) \/ statisticNumber\(row\.games_played\)/);
+  assert.match(source, /statisticNumber\(row\.bottom_wins\) \/ statisticNumber\(row\.games_played\)/);
   assert.match(source, /statisticRate\(row\.won_trick_cards, row\.total_hand_cards\)/);
 });
 

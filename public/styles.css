@@ -549,7 +549,7 @@ label {
 
 .statistics-data-table {
   --statistics-user-column-width: 164px;
-  min-width: 3480px;
+  min-width: 3720px;
 }
 
 .statistics-data-table th:first-child,

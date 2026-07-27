@@ -2413,8 +2413,10 @@ function statisticsColumns() {
     column("total_tricks", "总轮次", "牌局", (row) => statisticNumber(row.total_tricks)),
     column("round_win_rate", "轮次胜率", "牌局", (row) => statisticRate(row.won_tricks, row.total_tricks), statisticPercent),
     column("fry_count", "炒底次数", "牌局", (row) => statisticNumber(row.fry_count)),
+    column("fry_average", "场均炒底数", "牌局", (row) => statisticNumber(row.games_played) ? statisticNumber(row.fry_count) / statisticNumber(row.games_played) : 0, statisticDecimal),
     column("won_trick_card_rate", "获胜张数占比", "牌局", (row) => statisticRate(row.won_trick_cards, row.total_hand_cards), statisticPercent),
-    column("bottom_wins", "保底数", "牌局", (row) => statisticNumber(row.bottom_wins))
+    column("bottom_wins", "保底数", "牌局", (row) => statisticNumber(row.bottom_wins)),
+    column("bottom_win_average", "场均保底数", "牌局", (row) => statisticNumber(row.games_played) ? statisticNumber(row.bottom_wins) / statisticNumber(row.games_played) : 0, statisticDecimal)
   ];
 }
 
