@@ -1532,21 +1532,30 @@ function setupSecondsLeft(deadline) {
   return Math.max(0, Math.ceil((deadlineMs - Date.now()) / 1000));
 }
 
-function setupCountdownText(deadline, suffix = "") {
+function setupCountdownText(deadline, suffix = "", prefix = "") {
   const secondsLeft = setupSecondsLeft(deadline);
   if (secondsLeft === null) return "";
-  return `${secondsLeft}s${suffix}`;
+  return `${prefix}${secondsLeft}s${suffix}`;
 }
 
-function setupCountdownTag(deadline, suffix = "") {
-  const text = setupCountdownText(deadline, suffix);
+function setupCountdownAttributes(deadline, suffix = "", prefix = "") {
+  if (!deadline) return "";
+  return `data-countdown-deadline="${escapeHtml(deadline)}" data-countdown-suffix="${escapeHtml(suffix)}" data-countdown-prefix="${escapeHtml(prefix)}"`;
+}
+
+function setupCountdownTag(deadline, suffix = "", prefix = "") {
+  const text = setupCountdownText(deadline, suffix, prefix);
   if (!text) return "";
-  return `<span class="tag" data-countdown-deadline="${escapeHtml(deadline)}" data-countdown-suffix="${escapeHtml(suffix)}">${escapeHtml(text)}</span>`;
+  return `<span class="tag" ${setupCountdownAttributes(deadline, suffix, prefix)}>${escapeHtml(text)}</span>`;
 }
 
 function refreshSetupCountdownDisplays() {
   document.querySelectorAll("[data-countdown-deadline]").forEach((element) => {
-    const text = setupCountdownText(element.dataset.countdownDeadline || "", element.dataset.countdownSuffix || "");
+    const text = setupCountdownText(
+      element.dataset.countdownDeadline || "",
+      element.dataset.countdownSuffix || "",
+      element.dataset.countdownPrefix || ""
+    );
     if (text) element.textContent = text;
   });
 }
@@ -2982,7 +2991,10 @@ function scoreBidText(scoreBid) {
 
 function scoreBidActionButtons() {
   const scoreBidState = state.setup?.scoreBid || {};
-  const countdown = setupCountdownTag(scoreBidState.deadlineAt || "");
+  const deadline = scoreBidState.deadlineAt || "";
+  const countdown = setupCountdownTag(deadline);
+  const passLabel = setupCountdownText(deadline, "）", "过（") || "过";
+  const passCountdownAttrs = setupCountdownAttributes(deadline, "）", "过（");
   if (!viewerCanScoreBid()) {
     if (scoreBidState.currentPlayerId === state.viewer?.id) return `<div class="turn-waiting">你是当前最高叫分，等待其他玩家加分或过 ${countdown}</div>`;
     if ((scoreBidState.passIds || []).includes(state.viewer?.id)) return `<div class="turn-waiting">你已过，等待叫分结束 ${countdown}</div>`;
@@ -2997,7 +3009,7 @@ function scoreBidActionButtons() {
       <button type="button" data-action="score-bid-10">+10</button>
       <button type="button" data-action="score-bid-20">+20</button>
       <button type="button" data-action="score-bid-30">+30</button>
-      <button type="button" class="secondary" data-action="score-pass">过</button>
+      <button type="button" class="secondary" data-action="score-pass" ${passCountdownAttrs}>${escapeHtml(passLabel)}</button>
     </span>
   `;
 }
@@ -3091,35 +3103,36 @@ function renderSetupPlayers(type) {
   `;
 }
 
+function renderSetupLines(items) {
+  const visibleItems = items.filter((item) => item?.value);
+  if (!visibleItems.length) return "";
+  return `
+    <div class="setup-lines">
+      ${visibleItems.map((item) => `
+        <span><em>${escapeHtml(item.label)}</em><strong>${item.value}</strong></span>
+      `).join("")}
+    </div>
+  `;
+}
+
 function renderSetupCenter() {
   const setup = state.setup || {};
   const stage = state.stage;
   let body = "";
-  const currentTrumpBlock = setup.currentTrumpSuitName
-    ? `
-      <div>
-        <div class="meta">当前主牌</div>
-        <strong>${escapeHtml(setup.currentTrumpSuitName)}</strong>
-      </div>
-    `
-    : "";
+  const currentTrumpItem = setup.currentTrumpSuitName
+    ? { label: "当前主牌", value: escapeHtml(setup.currentTrumpSuitName) }
+    : null;
 
   if (stage === "bidding") {
     const turnText = setup.bid
       ? `轮到 ${setup.biddingTurnPlayerName} 抢主或过`
       : "任意玩家可先亮 2 叫主";
     body = `
-      <div class="setup-grid">
-        <div>
-          <div class="meta">当前叫主</div>
-          <strong>${escapeHtml(bidText(setup.bid))}</strong>
-        </div>
-        <div>
-          <div class="meta">当前动作</div>
-          <strong>${escapeHtml(turnText)}</strong>
-        </div>
-        ${currentTrumpBlock}
-      </div>
+      ${renderSetupLines([
+        { label: "当前叫主", value: escapeHtml(bidText(setup.bid)) },
+        { label: "当前动作", value: escapeHtml(turnText) },
+        currentTrumpItem
+      ])}
       <div class="row">
         ${viewerCanBid() ? `<button type="button" data-action="open-bid-dialog" ${actionPassInFlight ? "disabled" : ""}>${setup.bid ? "选择2抢主" : "选择2叫主"}</button>` : ""}
         ${viewerCanPassBid() ? `<button type="button" class="secondary" data-action="bid-pass" ${actionPassInFlight ? "disabled" : ""}>${actionPassInFlight ? "提交中…" : "过"}</button>` : ""}
@@ -3134,79 +3147,50 @@ function renderSetupCenter() {
       ? (state.players.length * 100 - scoreBidState.currentScore)
       : (state.players.length * 100 - (scoreBidState.minimum || 0));
     body = `
-      <div class="setup-grid">
-        <div>
-          <div class="meta">当前叫分</div>
-          <strong>${escapeHtml(scoreBidText(scoreBidState))}</strong>
-        </div>
-        <div>
-          <div class="meta">闲家胜利线</div>
-          <strong>${escapeHtml(idleTarget)} 分</strong>
-        </div>
-        <div>
-          <div class="meta">叫庄方式</div>
-          <strong>叫分抢庄</strong>
-        </div>
-      </div>
+      ${renderSetupLines([
+        { label: "当前叫分", value: escapeHtml(scoreBidText(scoreBidState)) },
+        { label: "闲家线", value: `${escapeHtml(idleTarget)} 分` },
+        scoreBidState.deadlineAt ? { label: "倒计时", value: setupCountdownTag(scoreBidState.deadlineAt) } : null
+      ])}
       <div class="row">${scoreBidActionButtons()}</div>
     `;
   }
 
   if (stage === "trump-selecting") {
     body = `
-      <div class="setup-grid">
-        <div>
-          <div class="meta">庄家</div>
-          <strong>${escapeHtml(setup.bankerName)}</strong>
-        </div>
-        <div>
-          <div class="meta">最终叫分</div>
-          <strong>${escapeHtml(setup.scoreBid?.currentScore || 0)} 分</strong>
-        </div>
-      </div>
+      ${renderSetupLines([
+        { label: "庄家", value: escapeHtml(setup.bankerName) },
+        { label: "最终叫分", value: `${escapeHtml(setup.scoreBid?.currentScore || 0)} 分` }
+      ])}
       <div class="row">${trumpSuitActionButtons()}</div>
     `;
   }
 
   if (stage === "burying") {
     body = `
-      <div class="setup-grid">
-        <div>
-          <div class="meta">庄家</div>
-          <strong>${escapeHtml(setup.bankerName)}</strong>
-        </div>
-        <div>
-          <div class="meta">贴底要求</div>
-          <strong>选择 ${state.kittySize} 张牌放入底牌</strong>
-        </div>
-        ${currentTrumpBlock}
-      </div>
+      ${renderSetupLines([
+        { label: "庄家", value: escapeHtml(setup.bankerName) },
+        { label: "贴底", value: `选择 ${escapeHtml(state.kittySize)} 张` },
+        currentTrumpItem
+      ])}
     `;
   }
 
   if (stage === "frying") {
     const fry = setup.fry || {};
-    const countdown = setupCountdownTag(fry.deadlineAt || "", " 后自动不炒");
+    const deadline = fry.deadlineAt || "";
+    const passLabel = actionPassInFlight ? "提交中…" : (setupCountdownText(deadline, "）", "不炒（") || "不炒");
+    const passCountdownAttrs = actionPassInFlight ? "" : setupCountdownAttributes(deadline, "）", "不炒（");
     body = `
-      <div class="setup-grid">
-        <div>
-          <div class="meta">当前底牌控制</div>
-          <strong>${escapeHtml(fry.lastFryerName || setup.bankerName)}</strong>
-        </div>
-        <div>
-          <div class="meta">当前炒底门槛</div>
-          <strong>${escapeHtml(bidText(fry.lastBid))}</strong>
-        </div>
-        <div>
-          <div class="meta">当前动作</div>
-          <strong>轮到 ${escapeHtml(fry.currentPlayerName)} 炒底或不炒</strong>
-        </div>
-        ${currentTrumpBlock}
-      </div>
+      ${renderSetupLines([
+        { label: "控底", value: escapeHtml(fry.lastFryerName || setup.bankerName) },
+        { label: "门槛", value: escapeHtml(bidText(fry.lastBid)) },
+        { label: "当前", value: `轮到 ${escapeHtml(fry.currentPlayerName)} ${setupCountdownTag(deadline)}` },
+        currentTrumpItem
+      ])}
       <div class="row">
-        ${countdown}
         ${viewerCanFry() ? `<button type="button" data-action="open-fry-dialog" ${actionPassInFlight ? "disabled" : ""}>选择2炒底</button>` : ""}
-        ${viewerCanFry() ? `<button type="button" class="secondary" data-action="fry-pass" ${actionPassInFlight ? "disabled" : ""}>${actionPassInFlight ? "提交中…" : "不炒"}</button>` : ""}
+        ${viewerCanFry() ? `<button type="button" class="secondary" data-action="fry-pass" ${actionPassInFlight ? "disabled" : ""} ${passCountdownAttrs}>${escapeHtml(passLabel)}</button>` : ""}
       </div>
     `;
   }
@@ -3214,36 +3198,21 @@ function renderSetupCenter() {
   if (stage === "fry-burying") {
     const fry = setup.fry || {};
     body = `
-      <div class="setup-grid">
-        <div>
-          <div class="meta">炒底玩家</div>
-          <strong>${escapeHtml(fry.currentPlayerName)}</strong>
-        </div>
-        <div>
-          <div class="meta">贴底要求</div>
-          <strong>选择 ${state.kittySize} 张牌放入底牌</strong>
-        </div>
-        ${currentTrumpBlock}
-      </div>
+      ${renderSetupLines([
+        { label: "炒底玩家", value: escapeHtml(fry.currentPlayerName) },
+        { label: "贴底", value: `选择 ${escapeHtml(state.kittySize)} 张` },
+        currentTrumpItem
+      ])}
     `;
   }
 
   if (stage === "dogleg") {
     body = `
-      <div class="setup-grid">
-        <div>
-          <div class="meta">庄家</div>
-          <strong>${escapeHtml(setup.bankerName)}</strong>
-        </div>
-        <div>
-          <div class="meta">主牌</div>
-          <strong>${escapeHtml(setup.currentTrumpSuitName || setup.trumpSuitName)}</strong>
-        </div>
-        <div>
-          <div class="meta">狗腿数量</div>
-          <strong>${setup.doglegNeeded} 个</strong>
-        </div>
-      </div>
+      ${renderSetupLines([
+        { label: "庄家", value: escapeHtml(setup.bankerName) },
+        { label: "主牌", value: escapeHtml(setup.currentTrumpSuitName || setup.trumpSuitName) },
+        { label: "狗腿", value: `${escapeHtml(setup.doglegNeeded)} 个` }
+      ])}
       <div class="meta">庄家需要选择 1 张非比牌作为狗腿牌；打牌中最先打出该牌的玩家成为狗腿。</div>
     `;
   }
@@ -3534,9 +3503,10 @@ function renderBidFryDialog(type) {
   const currentBid = isBid ? state.setup?.bid : state.setup?.fry?.lastBid;
   const twoCards = sortCardsForGroup("rank", (state.hand || []).filter(isTwoCard));
   const passAction = isBid ? "bid-pass" : "fry-pass";
-  const passLabel = isBid ? "过" : "不炒";
   const canPass = isBid ? viewerCanPassBid() : viewerCanFry();
-  const countdown = isBid ? "" : setupCountdownTag(state.setup?.fry?.deadlineAt || "", " 后自动不炒");
+  const fryDeadline = state.setup?.fry?.deadlineAt || "";
+  const passLabel = isBid ? "过" : (setupCountdownText(fryDeadline, "）", "不炒（") || "不炒");
+  const passCountdownAttrs = isBid ? "" : setupCountdownAttributes(fryDeadline, "）", "不炒（");
   return `
     <div class="modal-backdrop">
       <section class="modal-card" role="dialog" aria-modal="true" aria-label="${escapeHtml(title)}">
@@ -3555,8 +3525,7 @@ function renderBidFryDialog(type) {
           ${twoCards.length ? renderTwoCardChoices(twoCards) : `<div class="empty">手里没有可用于${escapeHtml(title)}的 2。</div>`}
         </div>
         <div class="dialog-actions">
-          ${countdown}
-          ${canPass ? `<button type="button" class="secondary" data-action="${passAction}">${passLabel}</button>` : `<button type="button" class="secondary" data-action="close-dialog">过</button>`}
+          ${canPass ? `<button type="button" class="secondary" data-action="${passAction}" ${passCountdownAttrs}>${escapeHtml(passLabel)}</button>` : `<button type="button" class="secondary" data-action="close-dialog">过</button>`}
           <button type="button" data-action="${isBid ? "bid-selected" : "fry-selected"}" ${validation.ok ? "" : "disabled"}>${escapeHtml(title)}</button>
           ${!validation.ok && validation.reason ? `<span class="action-reason">${escapeHtml(validation.reason)}</span>` : ""}
         </div>

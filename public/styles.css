@@ -2566,14 +2566,41 @@ button.joinable-room-player.spectate-player {
 
 .table-center.setup-center {
   z-index: 6;
-  width: min(460px, 40%);
-  max-width: 460px;
+  width: min(520px, 46%);
+  max-width: 520px;
 }
 
 .setup-center-content {
   display: grid;
-  gap: 6px;
+  gap: 8px;
   justify-items: center;
+}
+
+.setup-lines {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: center;
+  gap: 6px 14px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.setup-lines span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+}
+
+.setup-lines em {
+  color: var(--muted);
+  font-style: normal;
+}
+
+.setup-lines strong {
+  color: var(--text);
+  font-size: 13px;
 }
 
 .setup-center-content .setup-grid {
