@@ -332,8 +332,11 @@ test("leaderboard exposes fry count and won-card ratio statistics", async () => 
   assert.match(source, /column\("fry_average", "场均炒底数"/);
   assert.match(source, /column\("won_trick_card_rate", "获胜张数占比"/);
   assert.match(source, /column\("bottom_win_average", "场均保底数"/);
+  assert.match(source, /function statisticFixed2/);
   assert.match(source, /statisticNumber\(row\.fry_count\) \/ statisticNumber\(row\.games_played\)/);
+  assert.match(source, /"场均炒底数"[\s\S]*?statisticFixed2/);
   assert.match(source, /statisticNumber\(row\.bottom_wins\) \/ statisticNumber\(row\.games_played\)/);
+  assert.match(source, /"场均保底数"[\s\S]*?statisticFixed2/);
   assert.match(source, /statisticRate\(row\.won_trick_cards, row\.total_hand_cards\)/);
 });
 
