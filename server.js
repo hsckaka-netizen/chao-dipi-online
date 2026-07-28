@@ -1800,6 +1800,7 @@ function bidFromSuit(room, player, suit) {
 
 function bidBeats(current, next) {
   if (!current) return next.count >= 1;
+  if (current.direct) return next.count >= 2;
   if (current.count === 1) return next.count >= 2;
   if (next.count > current.count) return true;
   if (next.count < current.count) return false;

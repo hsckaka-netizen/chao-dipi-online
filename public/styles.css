@@ -3006,8 +3006,8 @@ button.joinable-room-player.spectate-player {
 .trick-grid.table-circle {
   position: relative;
   display: block;
-  --table-info-band-top: clamp(172px, 19vw, 210px);
-  --table-info-band-bottom: clamp(204px, 23vh, 248px);
+  --table-info-band-top: clamp(224px, 24vw, 280px);
+  --table-info-band-bottom: clamp(300px, 34vh, 360px);
   min-height: clamp(780px, 60vw, 900px);
   margin: 2px 0 0;
   border: 0;
@@ -3193,7 +3193,7 @@ button.joinable-room-player.spectate-player {
 .table-circle .trick-seat.viewer-seat {
   left: 50%;
   top: auto;
-  bottom: -16px;
+  bottom: -32px;
   z-index: 5;
   display: grid;
   justify-items: center;
@@ -3644,19 +3644,19 @@ button.joinable-room-player.spectate-player {
 
 .seat-top .seat-play {
   left: calc(50% + var(--play-shift-x, 0px));
-  top: calc(100% - 10px);
+  top: calc(100% + 10px);
   bottom: auto;
   transform: translateX(-50%);
 }
 
 .seat-left .seat-play {
-  left: calc(100% + 2px);
+  left: calc(100% + 6px);
   top: 50%;
   transform: translateY(-50%);
 }
 
 .seat-right .seat-play {
-  right: calc(100% + 2px);
+  right: calc(100% + 6px);
   top: 50%;
   transform: translateY(-50%);
 }
@@ -3665,7 +3665,7 @@ button.joinable-room-player.spectate-player {
   left: 50%;
   top: auto;
   right: auto;
-  bottom: calc(100% - 10px);
+  bottom: calc(100% + 10px);
   width: min(460px, 92%);
   transform: translateX(-50%);
 }
@@ -3679,12 +3679,23 @@ button.joinable-room-player.spectate-player {
 
 .table-circle .seat-left .seat-play,
 .table-circle .seat-right .seat-play {
-  width: clamp(180px, 21vw, 230px);
+  width: max-content;
+  max-width: clamp(180px, 21vw, 230px);
 }
 
 .table-circle .seat-left .mini-cards,
 .table-circle .seat-right .mini-cards {
   --mini-card-overlap: -28px;
+}
+
+.table-circle .seat-left .seat-play .mini-cards,
+.table-circle .seat-left .setup-action-trail {
+  justify-content: flex-start;
+}
+
+.table-circle .seat-right .seat-play .mini-cards,
+.table-circle .seat-right .setup-action-trail {
+  justify-content: flex-end;
 }
 
 .table-seats-6 .seat-top .seat-play,
@@ -4612,7 +4623,7 @@ button.auto-play-toggle.active {
 
 @media (min-width: 981px) {
   .game-page .trick-grid.table-circle {
-    min-height: clamp(700px, calc(100vh - 118px), 820px);
+    min-height: clamp(820px, calc(100vh - 44px), 940px);
   }
 
   .table-circle .trick-seat.seat-top {

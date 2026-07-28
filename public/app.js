@@ -2024,6 +2024,7 @@ function patternKey(card, trumpSuit = currentTrumpSuit()) {
 function bidBeats(current, next) {
   const suitStrength = { D: 0, C: 1, H: 2, S: 3 };
   if (!current) return next.count >= 1;
+  if (current.direct) return next.count >= 2;
   if (current.count === 1) return next.count >= 2;
   if (next.count > current.count) return true;
   if (next.count < current.count) return false;
@@ -2044,6 +2045,7 @@ function validateBidLikeSelection(type) {
   const bid = { count: cards.length, suit: suits[0] };
   const current = type === "bid" ? state.setup?.bid : type === "fry" ? state.setup?.fry?.lastBid : null;
   if (!bidBeats(current, bid)) {
+    if (current?.direct) return { ok: false, reason: "定主后首轮炒底至少需要 2 张同花色 2" };
     if (current?.count === 1) return { ok: false, reason: "当前是 1 张叫主，至少 2 张 2 才能抢" };
     return { ok: false, reason: `需要比 ${bidText(current)} 更大` };
   }

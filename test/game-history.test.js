@@ -405,9 +405,11 @@ test("score bidding banker selects a trump suit without requiring twos", async (
   const [serverSource, appSource] = await Promise.all([readFile(serverPath, "utf8"), readFile(appPath, "utf8")]);
   assert.match(serverSource, /function selectTrumpSuit/);
   assert.match(serverSource, /function bidFromSuit/);
+  assert.match(serverSource, /if \(current\.direct\) return next\.count >= 2/);
   assert.match(serverSource, /const result = selectTrumpSuit\(room, viewer, body\.suit\)/);
   assert.doesNotMatch(serverSource, /revealTrumpCards/);
   assert.match(appSource, /data-action="trump-suit-\$\{suit\.id\}"/);
+  assert.match(appSource, /定主后首轮炒底至少需要 2 张同花色 2/);
   assert.doesNotMatch(appSource, /亮选中的2定主|等待亮2定主/);
 });
 
