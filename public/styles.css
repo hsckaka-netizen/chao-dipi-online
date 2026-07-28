@@ -3193,9 +3193,9 @@ button.joinable-room-player.spectate-player {
 }
 
 .table-circle .trick-player .avatar.small {
-  width: 64px;
-  height: 64px;
-  font-size: 18px;
+  width: 80px;
+  height: 80px;
+  font-size: 21px;
 }
 
 .table-player-identity {
@@ -3212,8 +3212,8 @@ button.joinable-room-player.spectate-player {
 
 .table-player-avatar-stage {
   display: inline-grid;
-  width: 64px;
-  height: 64px;
+  width: 80px;
+  height: 80px;
 }
 
 .player-taunt {
@@ -3281,7 +3281,7 @@ button.joinable-room-player.spectate-player {
   z-index: 2;
   min-width: 0;
   display: grid;
-  grid-template-columns: 64px minmax(0, 1fr);
+  grid-template-columns: 80px minmax(0, 1fr);
   align-items: center;
   gap: 8px;
 }
@@ -3346,11 +3346,11 @@ button.joinable-room-player.spectate-player {
   align-self: end;
   width: fit-content;
   max-width: 100%;
-  min-height: 24px;
-  border: 1px solid #dfe6e1;
-  border-radius: 7px;
-  background: rgba(248, 250, 248, 0.96);
-  padding: 2px 4px;
+  min-height: 16px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  padding: 0;
   color: var(--muted);
   font-size: 10px;
   line-height: 1;
@@ -3359,7 +3359,7 @@ button.joinable-room-player.spectate-player {
 .trick-player-stats span {
   flex: 0 0 auto;
   min-width: 0;
-  min-height: 18px;
+  min-height: 16px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -3368,8 +3368,15 @@ button.joinable-room-player.spectate-player {
 }
 
 .trick-player-stats span + span {
-  border-inline-start: 1px solid #dfe6e1;
-  padding-inline-start: 5px;
+  border-inline-start: 0;
+  padding-inline-start: 0;
+}
+
+.trick-player-stats span + span::before {
+  content: "·";
+  margin: 0 3px 0 1px;
+  color: #9da8a2;
+  font-weight: 900;
 }
 
 .trick-player-stats i {
@@ -3408,7 +3415,7 @@ button.joinable-room-player.spectate-player {
 }
 
 .trick-player-summary .trick-player-stats span + span::before {
-  content: none;
+  content: "·";
 }
 
 .trick-player-summary .trick-player-stats b {
@@ -4561,6 +4568,10 @@ button.auto-play-toggle.active {
 @media (min-width: 981px) {
   .game-page .trick-grid.table-circle {
     min-height: clamp(700px, calc(100vh - 118px), 820px);
+  }
+
+  .table-circle .trick-seat.seat-top {
+    width: clamp(208px, 17vw, 228px);
   }
 
   .table-circle .trick-seat.seat-left,
