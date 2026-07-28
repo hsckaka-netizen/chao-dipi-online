@@ -22,10 +22,15 @@ import {
   validateUsername
 } from "./account-auth.js";
 import { buildGameEvaluations, finalScoreWinnerTeam } from "./game-evaluations.js";
+import {
+  applyDiamondRewardPersistence,
+  attachDiamondRewards
+} from "./diamond-rewards.js";
 import { versionedAssetUrl } from "./public/asset-versions.js";
 import { createStatePatch } from "./public/state-patch.js";
 import {
   gameHistoryStatus,
+  getDiamondWallet,
   getGameHistory,
   getPlayerStatistics,
   initializeGameHistory,
@@ -33,15 +38,25 @@ import {
   listPlayerStatistics,
   listRecentGames,
   listSeasons,
+  loadStoredTauntPresets,
   loadStoredAccounts,
   loadStoredPlayerProfiles,
   queueGameRecord,
   recordStoredAccountLogin,
   createStoredAccount,
+  deleteStoredTauntPreset,
   saveSeason,
+  saveStoredTauntPreset,
   saveStoredPlayerProfile,
   updateStoredAccount
 } from "./game-history.js";
+import {
+  availableTauntPresets,
+  DEFAULT_TAUNT_PRESETS,
+  normalizeTauntPreset,
+  tauntAvailableToAccount,
+  validateTauntText
+} from "./taunt-presets.js";
 
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
 const publicDir = join(__dirname, "public");
@@ -54,6 +69,8 @@ const CALL_MODE_TWO = "two";
 const CALL_MODE_SCORE = "score";
 const SCORE_BID_SECONDS = 20;
 const FRY_SECONDS = 20;
+const TAUNT_DURATION_MS = Math.max(100, Number(process.env.TAUNT_DURATION_MS) || 4500);
+const TAUNT_COOLDOWN_MS = Math.max(0, Number(process.env.TAUNT_COOLDOWN_MS) || 1500);
 const AVATAR_FRAMES = new Set(["", "vip", "emerald", "champion", "violet", "stormwind", "idol", "hellfire", "blood-elf", "endless-winter", "cr7", "paladin", "vip-legend"]);
 const CARD_SKINS = new Set(["", "emerald", "champion", "violet", "stormwind", "idol", "hellfire", "blood-elf", "endless-winter", "cr7", "paladin", "vip-legend"]);
 const PLAY_EFFECTS = new Set(["", "fireworks"]);
@@ -93,6 +110,7 @@ const autoPlaySuitOrder = new Map([
 const rooms = new Map();
 const accounts = new Map();
 const accountIdsByUsername = new Map();
+let tauntPresets = DEFAULT_TAUNT_PRESETS.map(normalizeTauntPreset);
 const avatarUpdatesInFlight = new Set();
 const authRuntime = {
   initialized: false,
@@ -441,6 +459,8 @@ async function initializePersistence() {
 
   const storedAccounts = await loadStoredAccounts();
   storedAccounts.forEach(storeAccount);
+  const storedTaunts = await loadStoredTauntPresets();
+  if (storedTaunts.length) tauntPresets = storedTaunts.map(normalizeTauntPreset);
   if (accountAuthStatus().storageConfigured) {
     try {
       authRuntime.avatarStorageReady = Boolean((await ensureAvatarBucket()).ready);
@@ -523,6 +543,57 @@ function adminAccountsPayload() {
       };
     })
   };
+}
+
+function adminTauntsPayload() {
+  return {
+    taunts: tauntPresets
+      .map(normalizeTauntPreset)
+      .sort((left, right) => left.sortOrder - right.sortOrder || left.text.localeCompare(right.text, "zh-CN")),
+    accounts: [...accounts.values()]
+      .filter((account) => account.role === "player")
+      .map(publicAccount)
+      .sort((left, right) => {
+        const leftName = left.profile?.name || left.username;
+        const rightName = right.profile?.name || right.username;
+        return leftName.localeCompare(rightName, "zh-CN");
+      })
+  };
+}
+
+function adminTauntInput(body, current = null) {
+  const textCheck = validateTauntText(Object.hasOwn(body, "text") ? body.text : current?.text);
+  if (textCheck.error) return { error: textCheck.error, status: 400 };
+  const duplicate = tauntPresets.find((preset) =>
+    preset.id !== current?.id
+    && preset.text.toLocaleLowerCase("zh-CN") === textCheck.text.toLocaleLowerCase("zh-CN")
+  );
+  if (duplicate) return { error: "这条嘲讽词已经存在", status: 409 };
+
+  const availableToAll = Object.hasOwn(body, "availableToAll")
+    ? Boolean(body.availableToAll)
+    : current?.availableToAll !== false;
+  const requestedAccountIds = availableToAll
+    ? []
+    : [...new Set((Array.isArray(body.accountIds) ? body.accountIds : current?.availableAccountIds || [])
+      .map((accountId) => String(accountId || ""))
+      .filter(Boolean))];
+  const invalidAccountId = requestedAccountIds.find((accountId) => accounts.get(accountId)?.role !== "player");
+  if (invalidAccountId) return { error: "授权名单中包含无效玩家账号", status: 400 };
+  if (!availableToAll && !requestedAccountIds.length) {
+    return { error: "请选择至少一个可使用的玩家，或改为所有玩家可用", status: 400 };
+  }
+
+  return {
+    text: textCheck.text,
+    enabled: Object.hasOwn(body, "enabled") ? Boolean(body.enabled) : current?.enabled !== false,
+    availableToAll,
+    availableAccountIds: requestedAccountIds
+  };
+}
+
+function broadcastTauntPresetChanges() {
+  for (const room of rooms.values()) broadcast(room);
 }
 
 async function createPlayerAccount(admin, body) {
@@ -756,6 +827,7 @@ function deal(room) {
   clearAiPlayTimer(room);
   clearScoreBidTimer(room);
   clearFryTimer(room);
+  clearRoomTaunts(room);
   room.events = [];
   const count = room.players.length;
   const preparedDeck = deckForPlayerCount(count);
@@ -814,6 +886,7 @@ function resetRoomToLobby(room, options = {}) {
   clearAiPlayTimer(room);
   clearScoreBidTimer(room);
   clearFryTimer(room);
+  clearRoomTaunts(room);
   const readyPlayerId = options.readyPlayerId || null;
   const previousReady = new Map(room.players.map((player) => [player.id, Boolean(player.ready)]));
   room.status = "lobby";
@@ -1073,6 +1146,8 @@ function roomSnapshot(room, viewer = null) {
     readyCount,
     allReady,
     notice: room.notice?.expiresAt && Date.now() < new Date(room.notice.expiresAt).getTime() ? room.notice : null,
+    tauntPresets: availableTauntPresets(tauntPresets, viewer?.accountId || null),
+    taunts: activeTauntsSnapshot(room),
     hostId: room.hostId,
     setup: setupSnapshot(room),
     viewer: viewer ? {
@@ -1118,6 +1193,81 @@ function roomSnapshot(room, viewer = null) {
 function roomSpectators(room) {
   if (!(room.spectators instanceof Map)) room.spectators = new Map();
   return room.spectators;
+}
+
+function roomTaunts(room) {
+  if (!(room.taunts instanceof Map)) room.taunts = new Map();
+  return room.taunts;
+}
+
+function roomTauntTimers(room) {
+  if (!(room.tauntTimers instanceof Map)) room.tauntTimers = new Map();
+  return room.tauntTimers;
+}
+
+function roomTauntLastSentAt(room) {
+  if (!(room.tauntLastSentAt instanceof Map)) room.tauntLastSentAt = new Map();
+  return room.tauntLastSentAt;
+}
+
+function clearRoomTaunts(room) {
+  for (const timer of roomTauntTimers(room).values()) clearTimeout(timer);
+  roomTauntTimers(room).clear();
+  roomTaunts(room).clear();
+  roomTauntLastSentAt(room).clear();
+}
+
+function activeTauntsSnapshot(room) {
+  const currentTime = Date.now();
+  return [...roomTaunts(room).values()]
+    .filter((taunt) => new Date(taunt.expiresAt).getTime() > currentTime)
+    .sort((left, right) => new Date(left.sentAt).getTime() - new Date(right.sentAt).getTime());
+}
+
+function submitTaunt(room, player, presetId) {
+  if (room.status !== "dealt" || room.stage !== "playing") {
+    return { error: "只有打牌阶段可以发送嘲讽", status: 409 };
+  }
+  const preset = tauntPresets.find((item) => item.id === String(presetId || ""));
+  if (!preset) return { error: "请选择系统提供的嘲讽词", status: 400 };
+  if (!tauntAvailableToAccount(preset, player.accountId || null)) {
+    return { error: "你暂时不能使用这条嘲讽词", status: 403 };
+  }
+
+  const currentTime = Date.now();
+  const lastSentAt = roomTauntLastSentAt(room).get(player.id) || 0;
+  const retryAfterMs = TAUNT_COOLDOWN_MS - (currentTime - lastSentAt);
+  if (retryAfterMs > 0) {
+    return {
+      error: `操作太快了，请 ${Math.ceil(retryAfterMs / 1000)} 秒后再发`,
+      status: 429
+    };
+  }
+
+  const taunt = {
+    id: id(9),
+    playerId: player.id,
+    playerName: player.name,
+    presetId: preset.id,
+    text: preset.text,
+    sentAt: new Date(currentTime).toISOString(),
+    expiresAt: new Date(currentTime + TAUNT_DURATION_MS).toISOString()
+  };
+  roomTaunts(room).set(player.id, taunt);
+  roomTauntLastSentAt(room).set(player.id, currentTime);
+
+  const previousTimer = roomTauntTimers(room).get(player.id);
+  if (previousTimer) clearTimeout(previousTimer);
+  const timer = setTimeout(() => {
+    const activeRoom = rooms.get(room.id);
+    if (!activeRoom || roomTaunts(activeRoom).get(player.id)?.id !== taunt.id) return;
+    roomTaunts(activeRoom).delete(player.id);
+    roomTauntTimers(activeRoom).delete(player.id);
+    broadcast(activeRoom);
+  }, TAUNT_DURATION_MS + 20);
+  timer.unref?.();
+  roomTauntTimers(room).set(player.id, timer);
+  return { taunt };
 }
 
 function publicRoomSpectators(room) {
@@ -1208,6 +1358,7 @@ function dissolveRoom(room, messageText) {
   clearAiPlayTimer(room);
   clearScoreBidTimer(room);
   clearFryTimer(room);
+  clearRoomTaunts(room);
   disconnectAllRoomClients(room, messageText);
   rooms.delete(room.id);
 }
@@ -1457,6 +1608,7 @@ function finishGame(room, completedTrick) {
       };
     })
   };
+  attachDiamondRewards(room);
 
   addEvent(room, `本局结束：${teamName(winnerTeam)}牌局获胜，闲家 ${idleScore}/${threshold} 分，闲家每人 ${room.result.idleEachScoreText} 分，庄队每人 ${room.result.bankerEachScoreText} 分`);
 }
@@ -1473,7 +1625,14 @@ function completeCurrentTrick(room) {
   addEvent(room, `第 ${completed.number} 轮结束：${outcome.winnerName} 获得 ${outcome.points} 分，下轮先出`);
   if (room.players.every((player) => player.hand.length === 0)) {
     finishGame(room, completed);
-    queueGameRecord(room);
+    const finishedGameId = room.gameRecordId;
+    const persistence = queueGameRecord(room, (nextPersistence) => {
+      const currentRoom = rooms.get(room.id);
+      if (!currentRoom || currentRoom.gameRecordId !== finishedGameId) return;
+      applyDiamondRewardPersistence(currentRoom, nextPersistence);
+      broadcast(currentRoom);
+    });
+    applyDiamondRewardPersistence(room, persistence);
     return;
   }
   room.currentTrick = createEmptyTrick(completed.number + 1, outcome.winnerId);
@@ -3991,6 +4150,60 @@ async function handleApi(req, res, pathParts, url) {
       await updateSupabasePassword(target.id, passwordCheck.password);
       return writeJson(res, 200, { ok: true });
     }
+    if (pathParts[2] === "taunts" && pathParts.length === 3 && req.method === "GET") {
+      return writeJson(res, 200, adminTauntsPayload());
+    }
+    if (pathParts[2] === "taunts" && pathParts.length === 3 && req.method === "POST") {
+      const body = await readJson(req);
+      const input = adminTauntInput(body);
+      if (input.error) return writeJson(res, input.status, { error: input.error });
+      const sortOrder = Math.max(0, ...tauntPresets.map((preset) => preset.sortOrder || 0)) + 10;
+      const preset = normalizeTauntPreset({
+        id: `taunt-${randomUUID()}`,
+        ...input,
+        sortOrder
+      });
+      const persistence = await saveStoredTauntPreset(preset, { createdBy: admin.id });
+      if (persistence.status !== "saved") {
+        return writeJson(res, 503, { error: "嘲讽词保存失败，请确认数据库连接正常" });
+      }
+      tauntPresets.push(normalizeTauntPreset(persistence.preset));
+      broadcastTauntPresetChanges();
+      return writeJson(res, 201, adminTauntsPayload());
+    }
+    if (pathParts[2] === "taunts" && pathParts[3] && pathParts.length === 4 && req.method === "PATCH") {
+      const current = tauntPresets.find((preset) => preset.id === pathParts[3]);
+      if (!current) return writeJson(res, 404, { error: "嘲讽词不存在" });
+      const body = await readJson(req);
+      const input = adminTauntInput(body, current);
+      if (input.error) return writeJson(res, input.status, { error: input.error });
+      const nextPreset = normalizeTauntPreset({
+        ...current,
+        ...input
+      });
+      const persistence = await saveStoredTauntPreset(nextPreset);
+      if (persistence.status !== "saved") {
+        return writeJson(res, 503, { error: "嘲讽词保存失败，请确认数据库连接正常" });
+      }
+      tauntPresets = tauntPresets.map((preset) =>
+        preset.id === current.id ? normalizeTauntPreset(persistence.preset) : preset
+      );
+      broadcastTauntPresetChanges();
+      return writeJson(res, 200, adminTauntsPayload());
+    }
+    if (pathParts[2] === "taunts" && pathParts[3] && pathParts.length === 4 && req.method === "DELETE") {
+      const current = tauntPresets.find((preset) => preset.id === pathParts[3]);
+      if (!current) return writeJson(res, 404, { error: "嘲讽词不存在" });
+      const persistence = await deleteStoredTauntPreset(current.id);
+      if (persistence.status !== "deleted") {
+        return writeJson(res, persistence.status === "missing" ? 404 : 503, {
+          error: persistence.status === "missing" ? "嘲讽词不存在" : "嘲讽词删除失败，请确认数据库连接正常"
+        });
+      }
+      tauntPresets = tauntPresets.filter((preset) => preset.id !== current.id);
+      broadcastTauntPresetChanges();
+      return writeJson(res, 200, adminTauntsPayload());
+    }
     if (pathParts[2] === "seasons" && pathParts.length === 3 && req.method === "GET") {
       return writeJson(res, 200, { seasons: await listSeasons() });
     }
@@ -4049,6 +4262,13 @@ async function handleApi(req, res, pathParts, url) {
       return writeJson(res, 200, { games: await listRecentGames(url.searchParams.get("limit")) });
     }
     return writeJson(res, 404, { error: "历史记录接口不存在" });
+  }
+
+  if (pathParts[1] === "diamonds" && req.method === "GET" && pathParts[2] === "me") {
+    const account = requireAccount(res, req);
+    if (!account) return;
+    if (account.role !== "player") return writeJson(res, 403, { error: "管理员账号没有玩家钻石钱包" });
+    return writeJson(res, 200, await getDiamondWallet(account.id, url.searchParams.get("limit")));
   }
 
   if (pathParts[1] === "players") {
@@ -4132,6 +4352,9 @@ async function handleApi(req, res, pathParts, url) {
       events: [],
       clients: new Set(),
       spectators: new Map(),
+      taunts: new Map(),
+      tauntTimers: new Map(),
+      tauntLastSentAt: new Map(),
       snapshotVersion: 0
     };
     rooms.set(room.id, room);
@@ -4529,6 +4752,16 @@ async function handleApi(req, res, pathParts, url) {
       broadcast(room);
       scheduleNextAiPlay(room);
       return writeJson(res, 200, roomStateAck(room, { autoPlayEnabled: viewer.autoPlayEnabled }));
+    }
+
+    if (req.method === "POST" && pathParts[3] === "taunt") {
+      const body = await readJson(req);
+      const viewer = requirePlayer(res, room, body.playerId, body.token);
+      if (!viewer) return;
+      const result = submitTaunt(room, viewer, body.presetId);
+      if (result.error) return writeJson(res, result.status, { error: result.error });
+      broadcast(room);
+      return writeJson(res, 200, roomStateAck(room, { taunt: result.taunt }));
     }
 
     if (req.method === "POST" && pathParts[3] === "play") {

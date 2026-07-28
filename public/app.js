@@ -71,6 +71,7 @@ let actionDialogResumeTimer = null;
 let actionPassInFlight = false;
 let actionDialogTemporarilyBlocked = false;
 let buryInFlight = false;
+let tauntInFlight = false;
 let scoreBidAutoPassTimer = null;
 let setupCountdownRenderTimer = null;
 let setupCountdownRenderKey = "";
@@ -119,8 +120,13 @@ let authState = {
   bootstrapRequired: false,
   account: null
 };
+let diamondWallet = null;
+let diamondWalletLoading = false;
+let diamondWalletAccountId = "";
 let adminData = null;
 let adminDataLoading = false;
+let adminTaunts = null;
+let adminTauntsLoading = false;
 let homeJoinOpen = Boolean(roomFromUrl());
 const stateVersionWaiters = new Set();
 const dragSelectThreshold = 8;
@@ -161,6 +167,7 @@ function clearSession() {
   actionPassInFlight = false;
   actionDialogTemporarilyBlocked = false;
   buryInFlight = false;
+  tauntInFlight = false;
   stateSyncInFlight = false;
   lastEventReceivedAt = 0;
   source = null;
@@ -210,6 +217,16 @@ function applyState(nextState, options = {}) {
   captureGameplayEffects(previousState, nextState);
   const previousHandIds = new Set((state?.hand || []).map((card) => card.id));
   state = nextState;
+  const viewerReward = nextState?.result?.playerResults
+    ?.find((player) => player.playerId === nextState?.viewer?.id)
+    ?.diamondReward;
+  if (viewerReward?.status === "awarded" && Number.isFinite(Number(viewerReward.balanceAfter))) {
+    diamondWallet = {
+      ...(diamondWallet || {}),
+      balance: Number(viewerReward.balanceAfter),
+      rulesVersion: viewerReward.rulesVersion
+    };
+  }
   resolveStateVersionWaiters();
   syncThrowDraftForState();
   scheduleThrowReveal(previousState);
@@ -521,6 +538,40 @@ function ensureAuth(force = false) {
     });
 }
 
+function resetDiamondWallet() {
+  diamondWallet = null;
+  diamondWalletLoading = false;
+  diamondWalletAccountId = "";
+}
+
+function ensureDiamondWallet(force = false) {
+  const account = authState.account;
+  if (!account || account.role !== "player") {
+    if (diamondWalletAccountId) resetDiamondWallet();
+    return;
+  }
+  if (diamondWalletAccountId !== account.id) {
+    diamondWallet = null;
+    diamondWalletLoading = false;
+    diamondWalletAccountId = account.id;
+  }
+  if (diamondWalletLoading || (!force && diamondWallet)) return;
+  diamondWalletLoading = true;
+  api("/api/diamonds/me?limit=10")
+    .then((data) => {
+      if (authState.account?.id !== account.id) return;
+      diamondWallet = data;
+      diamondWalletLoading = false;
+      render();
+    })
+    .catch(() => {
+      if (authState.account?.id !== account.id) return;
+      diamondWalletLoading = false;
+      diamondWallet = { unavailable: true };
+      render();
+    });
+}
+
 async function refreshAuth() {
   const data = await api("/api/auth/status");
   authState = { ...data, loaded: true, loading: false };
@@ -544,6 +595,21 @@ function ensureAdminData(force = false) {
     });
 }
 
+function ensureAdminTaunts(force = false) {
+  if (authState.account?.role !== "admin" || adminTauntsLoading || (!force && adminTaunts)) return;
+  adminTauntsLoading = true;
+  api("/api/admin/taunts")
+    .then((data) => {
+      adminTaunts = data;
+      adminTauntsLoading = false;
+      render();
+    })
+    .catch((error) => {
+      adminTauntsLoading = false;
+      setMessage(error.message || "嘲讽词读取失败", true);
+    });
+}
+
 async function loginAccount(event) {
   event.preventDefault();
   const form = new FormData(event.target.closest("form"));
@@ -554,8 +620,10 @@ async function loginAccount(event) {
     });
     authState.account = data.account;
     authState.loaded = true;
+    resetDiamondWallet();
     homeView = data.account?.role === "admin" ? "admin" : "rooms";
     adminData = null;
+    adminTaunts = null;
     setMessage(`已登录：${data.account?.profile?.name || data.account?.username || "账号"}`);
     render();
   } catch (error) {
@@ -570,7 +638,10 @@ async function logoutAccount() {
     // Local account state can still be cleared if the service restarts.
   }
   authState.account = null;
+  resetDiamondWallet();
   adminData = null;
+  adminTaunts = null;
+  adminTauntsLoading = false;
   homeView = "rooms";
   setMessage("已退出账号。", false);
   render();
@@ -679,6 +750,7 @@ async function createManagedAccount(event) {
     });
     adminData = data;
     profiles = data.profiles || profiles;
+    adminTaunts = null;
     formEl.reset();
     setMessage("玩家账号已创建。", false);
     render();
@@ -687,12 +759,77 @@ async function createManagedAccount(event) {
   }
 }
 
+function tauntPayloadFromForm(formEl) {
+  const form = new FormData(formEl);
+  return {
+    text: form.get("text"),
+    enabled: form.get("enabled") === "on",
+    availableToAll: form.get("availableToAll") === "on",
+    accountIds: form.getAll("accountIds")
+  };
+}
+
+async function createManagedTaunt(event) {
+  event.preventDefault();
+  const formEl = event.target.closest("form");
+  try {
+    adminTaunts = await api("/api/admin/taunts", {
+      method: "POST",
+      body: JSON.stringify(tauntPayloadFromForm(formEl))
+    });
+    formEl.reset();
+    syncTauntAudienceInputs(formEl);
+    setMessage("嘲讽词已添加。", false);
+    render();
+  } catch (error) {
+    setMessage(error.message, true);
+  }
+}
+
+async function saveManagedTaunt(event) {
+  event.preventDefault();
+  const formEl = event.target.closest("form");
+  const tauntId = formEl.dataset.tauntId || "";
+  try {
+    adminTaunts = await api(`/api/admin/taunts/${encodeURIComponent(tauntId)}`, {
+      method: "PATCH",
+      body: JSON.stringify(tauntPayloadFromForm(formEl))
+    });
+    setMessage("嘲讽词设置已保存。", false);
+    render();
+  } catch (error) {
+    setMessage(error.message, true);
+  }
+}
+
+async function deleteManagedTaunt(tauntId) {
+  if (!tauntId || !window.confirm("确定删除这条嘲讽词吗？删除后所有玩家立即不可再用。")) return;
+  try {
+    adminTaunts = await api(`/api/admin/taunts/${encodeURIComponent(tauntId)}`, {
+      method: "DELETE"
+    });
+    setMessage("嘲讽词已删除。", false);
+    render();
+  } catch (error) {
+    setMessage(error.message, true);
+  }
+}
+
+function syncTauntAudienceInputs(formEl) {
+  if (!formEl) return;
+  const availableToAll = Boolean(formEl.querySelector('input[name="availableToAll"]')?.checked);
+  formEl.querySelectorAll('input[name="accountIds"]').forEach((input) => {
+    input.disabled = availableToAll;
+  });
+}
+
 async function toggleManagedAccount(accountId, enabled) {
   try {
     adminData = await api(`/api/admin/accounts/${encodeURIComponent(accountId)}`, {
       method: "PATCH",
       body: JSON.stringify({ enabled })
     });
+    adminTaunts = null;
     setMessage(enabled ? "账号已启用。" : "账号已停用。", false);
     render();
   } catch (error) {
@@ -1390,6 +1527,29 @@ async function setAutoPlay(enabled) {
     setMessage(enabled ? "已开启托管，轮到你时会从小到大自动出牌。" : "已取消托管。");
   } catch (error) {
     setMessage(error.message, true);
+  }
+}
+
+async function sendTaunt(presetId) {
+  if (!session || isSpectating() || tauntInFlight) return;
+  tauntInFlight = true;
+  render();
+  try {
+    await roomAction(`/api/rooms/${session.roomId}/taunt`, {
+      method: "POST",
+      body: JSON.stringify({
+        playerId: session.playerId,
+        token: session.token,
+        presetId
+      })
+    });
+    activeDialog = null;
+    setMessage("嘲讽已发送，牌桌上的玩家都能看到。");
+  } catch (error) {
+    setMessage(error.message, true);
+  } finally {
+    tauntInFlight = false;
+    render();
   }
 }
 
@@ -2110,6 +2270,19 @@ function renderAutoPlayMark(player) {
     : "";
 }
 
+function renderTauntControl() {
+  if (isSpectating() || state?.stage !== "playing") return "";
+  return `
+    <button
+      type="button"
+      class="secondary taunt-toggle"
+      data-action="open-taunts"
+      aria-haspopup="dialog"
+      title="发送一条预设嘲讽词"
+    >嘲讽</button>
+  `;
+}
+
 function renderHandControls(action) {
   if (action) {
     if (action.throwMode) {
@@ -2123,6 +2296,7 @@ function renderHandControls(action) {
           <button type="button" data-action="confirm-throw" ${action.throwEnabled ? "" : "disabled"}>确认甩牌</button>
           <button type="button" class="secondary" data-action="cancel-throw">取消</button>
           ${renderAutoPlayControl()}
+          ${renderTauntControl()}
           <span class="action-reason">${escapeHtml(reason)}</span>
         </div>
       `;
@@ -2139,6 +2313,7 @@ function renderHandControls(action) {
         <button type="button" data-action="${action.action}" ${action.enabled ? "" : "disabled"}>${escapeHtml(action.label)}</button>
         ${throwButton}
         ${renderAutoPlayControl()}
+        ${renderTauntControl()}
         <span class="action-reason">${escapeHtml(reason)}</span>
       </div>
     `;
@@ -2157,6 +2332,7 @@ function renderHandControls(action) {
       <span class="tag">${selectedCardIds.size} 张已选</span>
       <div class="turn-waiting">${escapeHtml(text)}</div>
       ${renderAutoPlayControl()}
+      ${renderTauntControl()}
     </div>
   `;
 }
@@ -2234,6 +2410,8 @@ function lobbyEmptyText(waitingNextRound) {
 
 function renderShell(content) {
   const account = authState.account;
+  const gameView = Boolean(state && state.stage !== "lobby");
+  ensureDiamondWallet();
   const accountLabel = account?.profile?.name || account?.username || "";
   const canLeaveCurrentRoom = Boolean(session && !session.spectator && state?.status === "lobby");
   const preservedScroll = new Map(
@@ -2243,8 +2421,8 @@ function renderShell(content) {
     ])
   );
   app.innerHTML = `
-    <div class="page">
-      <header class="topbar">
+    <div class="page ${gameView ? "game-page" : ""}">
+      <header class="topbar ${gameView ? "game-topbar" : ""}">
         <div class="brand">
           <h1>炒地皮在线房间</h1>
           <p>多人在线牌桌，支持真人和机器人同局参与。</p>
@@ -2256,6 +2434,7 @@ function renderShell(content) {
               <span>${escapeHtml(accountLabel)}</span>
               ${account.role === "admin" ? `<b>管理员</b>` : ""}
             </span>
+            ${account.role === "player" ? `<span class="diamond-balance" title="当前钻石余额">💎 ${diamondWallet?.unavailable ? "暂不可用" : diamondWallet ? escapeHtml(diamondWallet.balance) : "…"}</span>` : ""}
             ${!session ? `<button class="secondary compact-button" data-action="${account.role === "admin" ? "show-admin" : "show-account"}">${account.role === "admin" ? "管理后台" : "我的资料"}</button>` : ""}
             ${!session ? `<button class="secondary compact-button" data-action="logout-account">退出登录</button>` : ""}
           ` : `<button class="secondary compact-button" data-action="show-login">玩家登录</button>`}
@@ -3087,6 +3266,7 @@ function renderProfileManager() {
     return renderLogin();
   }
   ensureAdminData();
+  ensureAdminTaunts();
   const managedProfiles = adminData?.profiles || [];
   const managedAccounts = adminData?.accounts || [];
   renderShell(`
@@ -3124,6 +3304,8 @@ function renderProfileManager() {
       </div>
     </section>
 
+    ${renderTauntManager()}
+
     <section class="panel stack">
       <div class="section-head">
         <div><h2>玩家资料</h2><div class="meta">昵称、头像框、牌面边框和出牌特效由管理员管理；玩家可每 7 天自助更换头像一次。</div></div>
@@ -3133,6 +3315,105 @@ function renderProfileManager() {
       </div>
     </section>
   `);
+}
+
+function renderTauntManager() {
+  const accounts = adminTaunts?.accounts || [];
+  const taunts = adminTaunts?.taunts || [];
+  const loading = adminTauntsLoading && !adminTaunts;
+  return `
+    <section class="panel stack taunt-admin-manager">
+      <div class="section-head">
+        <div>
+          <h2>牌局嘲讽词</h2>
+          <div class="meta">新增或停用固定文案，并为每条嘲讽指定所有玩家或部分玩家可用。</div>
+        </div>
+        <span class="tag">${taunts.length} 条</span>
+      </div>
+      ${loading ? `<div class="empty">正在读取嘲讽词...</div>` : `
+        <form class="taunt-admin-card taunt-admin-create" data-form="create-taunt">
+          <div class="taunt-admin-head">
+            <label class="taunt-text-field">
+              新嘲讽词
+              <input name="text" required maxlength="40" placeholder="输入不超过 40 个字符的固定文案">
+            </label>
+            <label class="check-label">
+              <input type="checkbox" name="enabled" checked>
+              立即启用
+            </label>
+            <button type="submit">添加</button>
+          </div>
+          ${renderTauntAudienceControls(null, accounts)}
+        </form>
+        <div class="taunt-admin-list">
+          ${taunts.length
+            ? taunts.map((taunt) => renderTauntAdminRow(taunt, accounts)).join("")
+            : `<div class="empty">暂无嘲讽词，可以先添加一条。</div>`}
+        </div>
+      `}
+    </section>
+  `;
+}
+
+function renderTauntAudienceControls(taunt, accounts) {
+  const availableToAll = taunt?.availableToAll !== false;
+  const availableAccountIds = new Set(taunt?.availableAccountIds || []);
+  return `
+    <fieldset class="taunt-audience">
+      <legend>可使用玩家</legend>
+      <label class="check-label taunt-all-users">
+        <input
+          type="checkbox"
+          name="availableToAll"
+          data-action="taunt-all-users"
+          ${availableToAll ? "checked" : ""}
+        >
+        所有玩家可用
+      </label>
+      <div class="taunt-account-grid ${availableToAll ? "is-disabled" : ""}">
+        ${accounts.length ? accounts.map((account) => `
+          <label class="check-label">
+            <input
+              type="checkbox"
+              name="accountIds"
+              value="${escapeHtml(account.id)}"
+              ${availableAccountIds.has(account.id) ? "checked" : ""}
+              ${availableToAll ? "disabled" : ""}
+            >
+            <span>${escapeHtml(account.profile?.name || account.username)}</span>
+            <small>${escapeHtml(account.username)}${account.enabled ? "" : " · 已停用"}</small>
+          </label>
+        `).join("") : `<span class="meta">暂无玩家账号。</span>`}
+      </div>
+    </fieldset>
+  `;
+}
+
+function renderTauntAdminRow(taunt, accounts) {
+  return `
+    <form class="taunt-admin-card" data-form="save-taunt" data-taunt-id="${escapeHtml(taunt.id)}">
+      <div class="taunt-admin-head">
+        <label class="taunt-text-field">
+          嘲讽词
+          <input name="text" required maxlength="40" value="${escapeHtml(taunt.text)}">
+        </label>
+        <label class="check-label">
+          <input type="checkbox" name="enabled" ${taunt.enabled ? "checked" : ""}>
+          启用
+        </label>
+        <div class="taunt-admin-actions">
+          <button type="submit">保存</button>
+          <button
+            type="button"
+            class="secondary danger"
+            data-action="delete-taunt"
+            data-taunt-id="${escapeHtml(taunt.id)}"
+          >删除</button>
+        </div>
+      </div>
+      ${renderTauntAudienceControls(taunt, accounts)}
+    </form>
+  `;
 }
 
 function renderProfileRow(profile) {
@@ -3195,7 +3476,7 @@ function renderRoom() {
   renderShell(`
     <div class="room-layout ${spectating ? "spectator-mode" : ""}">
       <div class="stack room-main">
-        <section class="panel stack">
+        <section class="panel stack room-overview ${showTable ? "game-room-overview" : ""}">
           <div class="row" style="justify-content:space-between">
             <div>
               <div class="meta">房间号</div>
@@ -3234,7 +3515,6 @@ function renderRoom() {
         </section>
 
         ${!showTable ? renderLobbyPlayersPanel() : ""}
-        ${showTable && state.setup?.doglegCard ? renderDoglegPanel() : ""}
         ${showTable ? renderPlayTable() : ""}
         ${!showTable ? `<section class="panel"><div class="empty">${escapeHtml(lobbyEmptyText(waitingNextRound))}</div></section>` : ""}
       </div>
@@ -3535,6 +3815,7 @@ function temporarilyDismissActionDialog(delay = 900) {
 function renderActiveDialog() {
   if (activeDialog === "bid" && viewerCanBid()) return renderBidFryDialog("bid");
   if (activeDialog === "fry" && viewerCanFry()) return renderBidFryDialog("fry");
+  if (activeDialog === "taunts" && state.stage === "playing" && !isSpectating()) return renderTauntDialog();
   if (activeDialog === "kitty" && state.canViewKitty) return renderKittyDialog();
   if (activeDialog === "history") return renderHistoryDialog();
   if (activeDialog === "players") return renderPlayersDialog();
@@ -3542,6 +3823,34 @@ function renderActiveDialog() {
   if (activeDialog === "spectators") return renderSpectatorsDialog();
   if (activeDialog === "result" && state.stage === "finished") return renderResultPanel();
   return "";
+}
+
+function renderTauntDialog() {
+  const presets = state.tauntPresets || [];
+  return `
+    <div class="modal-backdrop">
+      <section class="modal-card taunt-modal" role="dialog" aria-modal="true" aria-label="发送嘲讽">
+        <div class="section-head">
+          <div>
+            <h2>发送嘲讽</h2>
+            <div class="meta">发送后会在你的头像上显示几秒，牌桌内所有人都能看到。</div>
+          </div>
+          <button type="button" class="secondary compact-button" data-action="close-dialog">关闭</button>
+        </div>
+        <div class="taunt-preset-list">
+          ${presets.map((preset) => `
+            <button
+              type="button"
+              class="secondary taunt-preset"
+              data-action="send-taunt"
+              data-preset-id="${escapeHtml(preset.id)}"
+              ${tauntInFlight ? "disabled" : ""}
+            >${escapeHtml(preset.text)}</button>
+          `).join("")}
+        </div>
+      </section>
+    </div>
+  `;
 }
 
 function renderSpectatorIndicator() {
@@ -3664,6 +3973,62 @@ function renderEvaluationTags(tags) {
   `;
 }
 
+function diamondRewardTitle(reward) {
+  if (!reward) return "";
+  const parts = [`基础 ${reward.baseAmount || 0}`];
+  if (reward.winBonus) parts.push(`胜利 +${reward.winBonus}`);
+  if (reward.titleBonus) {
+    const titles = (reward.titleRewards || []).map((item) => `${item.label} +${item.amount}`).join("、");
+    const capped = Number(reward.titleBonusBeforeCap) > Number(reward.titleBonus)
+      ? `，原合计 ${reward.titleBonusBeforeCap}，封顶 ${reward.titleBonus}`
+      : "";
+    parts.push(`称号 +${reward.titleBonus}${titles ? `（${titles}${capped}）` : ""}`);
+  }
+  return parts.join("，");
+}
+
+function renderDiamondReward(reward) {
+  if (!reward) return `<span class="result-diamond muted">💎 —</span>`;
+  const title = diamondRewardTitle(reward);
+  if (reward.status === "ineligible") {
+    return `<span class="result-diamond muted" title="含机器人、未登录或重复账号席位的牌局不发钻石">💎 不发放</span>`;
+  }
+  if (reward.status === "daily-capped") {
+    return `<span class="result-diamond capped" title="今日奖励局数已满">💎 今日已满</span>`;
+  }
+  if (reward.status === "awarded") {
+    return `<span class="result-diamond awarded" title="${escapeHtml(title)}">💎 +${escapeHtml(reward.awardedAmount ?? reward.totalAmount ?? 0)}</span>`;
+  }
+  if (reward.status === "pending") {
+    return `<span class="result-diamond pending" title="${escapeHtml(title)}">💎 +${escapeHtml(reward.totalAmount || 0)} 处理中</span>`;
+  }
+  return `<span class="result-diamond muted" title="钻石奖励暂未入账">💎 未入账</span>`;
+}
+
+function renderViewerDiamondSummary(result) {
+  const player = result?.playerResults?.find((item) => item.playerId === state?.viewer?.id);
+  const reward = player?.diamondReward;
+  if (!reward) return "";
+  if (reward.status === "ineligible") {
+    return `<div class="diamond-reward-summary muted"><strong>本局不发钻石</strong><span>只有全部席位均为已登录真人账号时才会发放。</span></div>`;
+  }
+  if (reward.status === "daily-capped") {
+    return `<div class="diamond-reward-summary capped"><strong>今日奖励局数已满</strong><span>本局原可获得 ${escapeHtml(reward.totalAmount || 0)} 钻石，牌局积分和称号仍正常记录。</span></div>`;
+  }
+  const amount = reward.status === "awarded"
+    ? reward.awardedAmount ?? reward.totalAmount ?? 0
+    : reward.totalAmount || 0;
+  const stateText = reward.status === "awarded"
+    ? `已入账，当前余额 ${escapeHtml(reward.balanceAfter ?? diamondWallet?.balance ?? "—")}`
+    : "正在写入钱包";
+  return `
+    <div class="diamond-reward-summary ${reward.status === "awarded" ? "awarded" : "pending"}">
+      <strong>💎 本局 ${reward.status === "awarded" ? "获得" : "预计获得"} +${escapeHtml(amount)}</strong>
+      <span>${escapeHtml(diamondRewardTitle(reward))} · ${stateText}</span>
+    </div>
+  `;
+}
+
 function renderResultPanel() {
   const result = state.result;
   if (!result) return `
@@ -3727,6 +4092,7 @@ function renderResultPanel() {
           <span class="tag">甩牌 ${signedScore(null, result.throwFailureDelta || 0)}</span>
           ${result.bottomDraggedRedFives || result.bottomDraggedDiamondFives ? `<span class="tag accent">底牌拖主：红五 ${result.bottomDraggedRedFives}，方五 ${result.bottomDraggedDiamondFives}</span>` : ""}
         </div>
+        ${renderViewerDiamondSummary(result)}
         <div class="result-bottom">
           <div class="section-head compact">
             <h3>底牌</h3>
@@ -3752,6 +4118,7 @@ function renderResultPanel() {
               <span>红五 ${player.draggedRedFives}</span>
               <span>方五 ${player.draggedDiamondFives}</span>
               <span>甩失 ${player.throwFailures || 0}</span>
+              ${renderDiamondReward(player.diamondReward)}
               <b>${signedScore(player.gameScoreText, player.gameScore)}</b>
             </div>
           `;
@@ -3907,19 +4274,57 @@ function renderGameInfoTags() {
   return tags.join("");
 }
 
+function renderDoglegTableTag() {
+  const setup = state.setup || {};
+  const card = setup.doglegCard;
+  if (!card) return "";
+  const names = setup.doglegPlayerNames || [];
+  const needed = Number(setup.doglegNeeded) || 0;
+  const revealText = names.length ? `已出现：${names.join("、")}` : "尚未出现";
+  return `
+    <span class="tag table-dogleg-tag" title="${escapeHtml(revealText)}">
+      狗腿牌 <strong class="${escapeHtml(card.color || suitColor(card.suit))}">${escapeHtml(doglegCardText(card))}</strong>
+      <i>${names.length}/${needed}</i>
+    </span>
+  `;
+}
+
+function renderTableToolbar(title, statusTag = "") {
+  const spectating = isSpectating();
+  const canReset = !spectating && state.viewer?.host && state.status === "dealt";
+  const canDissolve = !spectating && state.viewer?.host;
+  return `
+    <div class="game-table-toolbar">
+      <div class="game-table-heading">
+        <h2>${escapeHtml(title)}</h2>
+        <span class="table-room-code" title="房间号">#${escapeHtml(state.roomId)}</span>
+        <span class="tag accent">${state.players.length}/${state.maxPlayers} 人</span>
+        <span class="tag">${escapeHtml(state.phase)}</span>
+        ${spectating ? `<span class="tag good">观战 · ${escapeHtml(state.spectator?.targetPlayerName || state.viewer?.name || "玩家")}</span>` : ""}
+      </div>
+      <div class="game-table-status tags">
+        ${renderGameInfoTags()}
+        ${renderDoglegTableTag()}
+        ${statusTag}
+      </div>
+      <div class="game-table-actions">
+        <button type="button" class="secondary compact-button" data-action="copy">复制邀请</button>
+        <button type="button" class="secondary compact-button" data-action="open-players">玩家</button>
+        <button type="button" class="secondary compact-button" data-action="open-history">记录 ${state.trickHistory.length} 轮</button>
+        ${state.canViewKitty ? `<button type="button" class="secondary compact-button" data-action="open-kitty">底牌</button>` : ""}
+        ${canReset ? `<button type="button" class="secondary compact-button" data-action="reset">重开</button>` : ""}
+        ${canDissolve ? `<button type="button" class="danger compact-button" data-action="dissolve-room">解散</button>` : ""}
+      </div>
+    </div>
+  `;
+}
+
 function renderPlayTable() {
   if (state.stage === "finished") {
     const finalTrick = state.trickHistory?.[state.trickHistory.length - 1] || null;
     return `
-      <section class="panel stack">
-        <div class="section-head">
-          <h2>打牌桌面</h2>
-          <div class="tags">
-            ${renderGameInfoTags()}
-            <span class="tag accent">本局结束</span>
-            <button type="button" class="secondary compact-button" data-action="open-history">牌局记录 ${state.trickHistory.length} 轮</button>
-          </div>
-        </div>
+      <section class="panel stack game-table-panel">
+        ${renderTableToolbar("打牌桌面", `<span class="tag accent">本局结束</span>`)}
         ${finalTrick
           ? renderTrick(finalTrick, true, { heldResult: true, finishedResult: true })
           : `<div class="empty finished-result-empty"><span>本局已结束</span><button type="button" data-action="open-result">查看结算</button></div>`}
@@ -3933,15 +4338,8 @@ function renderPlayTable() {
   const tableTrick = visibleTableTrick();
   const holdingPreviousResult = tableTrick && tableTrick !== state.currentTrick;
   return `
-    <section class="panel stack">
-      <div class="section-head">
-        <h2>打牌桌面</h2>
-        <div class="tags">
-          ${renderGameInfoTags()}
-          <span class="tag good">${escapeHtml(holdingPreviousResult ? `${turnText}，上一轮结果暂留` : turnText)}</span>
-          <button type="button" class="secondary compact-button" data-action="open-history">牌局记录 ${state.trickHistory.length} 轮</button>
-        </div>
-      </div>
+    <section class="panel stack game-table-panel">
+      ${renderTableToolbar("打牌桌面", `<span class="tag good">${escapeHtml(holdingPreviousResult ? `${turnText}，上一轮结果暂留` : turnText)}</span>`)}
       ${renderTrick(tableTrick, true, { heldResult: holdingPreviousResult })}
     </section>
   `;
@@ -3990,13 +4388,8 @@ function renderSetupTable() {
     plays: seats
   };
   return `
-    <section class="panel stack setup-stage setup-stage-${escapeHtml(state.stage)}">
-      <div class="section-head">
-        <h2>${escapeHtml(titleByStage[state.stage] || "牌桌")}</h2>
-        <div class="tags">
-          ${renderGameInfoTags()}
-        </div>
-      </div>
+    <section class="panel stack game-table-panel setup-stage setup-stage-${escapeHtml(state.stage)}">
+      ${renderTableToolbar(titleByStage[state.stage] || "牌桌")}
       ${renderTrick(tableTrick, true, { setupTable: true })}
     </section>
   `;
@@ -4102,6 +4495,7 @@ function renderSeatHand(action, play, trick, index, options = {}) {
         <aside class="seat-hand-profile-card">
           <div class="seat-hand-avatar-stage" tabindex="0" aria-label="查看${escapeHtml(play.playerName)}的历史数据">
             ${avatarHtml(play.playerName, play.avatarUrl, "seat-profile", play.avatarFrame || roomPlayer.avatarFrame)}
+            ${renderTauntBubble(play.playerId, true)}
             ${renderPlayerHistoryMini(play.playerId, { overlay: true })}
           </div>
           <div class="seat-hand-profile-copy">
@@ -4172,6 +4566,7 @@ function renderTrick(trick, current, options = {}) {
           const playContent = setupTable ? renderSetupActionTrail(play.setupActions, play.cardSkin || cardSkinForPlayer(play.playerId)) : (play.played ? renderPlayedCards(play, playCards, trick.number) : "");
           const isViewerSeat = current && play.playerId === state.viewer?.id;
           const showViewerHand = isViewerSeat && !finishedResult;
+          const hasActiveTaunt = Boolean(activeTauntForPlayer(play.playerId));
           const playIndex = play.turnIndex ?? index;
           const statusText = playStatusText(trick, play, playIndex, current, { heldResult, setupTable });
           const statusTone = playStatusTone(trick, play, current, { heldResult, setupTable });
@@ -4185,7 +4580,7 @@ function renderTrick(trick, current, options = {}) {
           `;
           if (!current) return playerCard;
           return `
-            <div class="trick-seat ${seatZone(index, displayPlays.length)} ${isViewerSeat ? "viewer-seat" : ""}" style="${seatStyle(index, displayPlays.length)}">
+            <div class="trick-seat ${seatZone(index, displayPlays.length)} ${isViewerSeat ? "viewer-seat" : ""} ${hasActiveTaunt ? "taunt-active" : ""}" style="${seatStyle(index, displayPlays.length)}">
               ${showViewerHand ? "" : playerCard}
               ${playContent ? `<div class="seat-play ${playEffect ? "large-play-effect-active" : ""}">${playContent}${playEffect}</div>` : ""}
               ${seatHand}
@@ -4240,7 +4635,7 @@ function orientPlaysForViewer(plays) {
 
 function roleMark(role, playerId = "") {
   if (!role) return "";
-  const text = role === "狗腿" ? "狗腿" : role === "庄家" || role === "主" ? "庄" : "闲";
+  const text = role === "狗腿" ? "狗腿" : role === "庄家" || role === "主" ? "庄家" : "闲";
   const tone = role === "狗腿" ? "dogleg" : role === "庄家" || role === "主" ? "accent" : "idle";
   const reveal = role === "狗腿" && doglegRevealEffects.some((effect) => effect.playerId === playerId && effect.until > Date.now());
   return `<span class="role-mark ${tone} ${reveal ? "dogleg-role-reveal" : ""}" title="${escapeHtml(role)}">${escapeHtml(text)}</span>`;
@@ -4261,6 +4656,22 @@ function avatarHtml(name, avatarUrl = "", size = "normal", avatarFrame = "") {
     ? `<img src="${escapeHtml(avatarUrl)}" alt="" decoding="async" draggable="false">`
     : escapeHtml(initial);
   return `<span class="avatar ${size} ${frameClass}" title="${escapeHtml(name)}"><span class="avatar-core">${content}</span></span>`;
+}
+
+function activeTauntForPlayer(playerId) {
+  return (state?.taunts || []).find((item) =>
+    item.playerId === playerId && new Date(item.expiresAt).getTime() > Date.now()
+  );
+}
+
+function renderTauntBubble(playerId, large = false) {
+  const taunt = activeTauntForPlayer(playerId);
+  if (!taunt) return "";
+  return `
+    <span class="player-taunt ${large ? "large" : ""}" role="status" aria-live="polite">
+      ${escapeHtml(taunt.text)}
+    </span>
+  `;
 }
 
 function normalizedCardSkin(value) {
@@ -4302,6 +4713,7 @@ function tablePlayerIdentity(play) {
     <span class="player-identity table-player-identity">
       <span class="table-player-avatar-stage" tabindex="0" aria-label="查看${escapeHtml(play.playerName)}的历史数据">
         ${avatarHtml(play.playerName, play.avatarUrl, "small", avatarFrame)}
+        ${renderTauntBubble(play.playerId)}
         ${renderPlayerHistoryMini(play.playerId, { overlay: true })}
       </span>
       ${roleMark(play.role, play.playerId)}
@@ -4317,6 +4729,7 @@ function renderTablePlayerSummary(play, statusText, statusTone) {
     <div class="trick-player-main">
       <span class="table-player-avatar-stage" tabindex="0" aria-label="查看${escapeHtml(play.playerName)}的历史数据">
         ${avatarHtml(play.playerName, play.avatarUrl, "small", avatarFrame)}
+        ${renderTauntBubble(play.playerId)}
         ${renderPlayerHistoryMini(play.playerId, { overlay: true })}
       </span>
       <span class="trick-player-summary">
@@ -4348,12 +4761,15 @@ function renderPlayerHistoryMini(roomPlayerId, { overlay = false } = {}) {
 }
 
 function renderCompactPlayerStats(play, { handCount = null } = {}) {
+  const draggedRedFives = Number(play.draggedRedFives) || 0;
+  const draggedDiamondFives = Number(play.draggedDiamondFives) || 0;
+  const throwFailures = Number(play.throwFailures) || 0;
   return `
     <div class="trick-player-stats ${handCount === null ? "" : "with-hand-count"}" aria-label="${escapeHtml(`${play.playerName || "玩家"}本局表现`)}">
       <span class="player-stat-score" title="本局获得牌分"><i>牌</i><b>${play.score || 0}</b></span>
-      <span class="player-stat-red" title="被拖红五"><i>红</i><b>${play.draggedRedFives || 0}</b></span>
-      <span class="player-stat-diamond" title="被拖方五"><i>方</i><b>${play.draggedDiamondFives || 0}</b></span>
-      <span class="player-stat-throw" title="甩牌失败"><i>甩</i><b>${play.throwFailures || 0}</b></span>
+      ${draggedRedFives ? `<span class="player-stat-red" title="被拖红五"><i>红</i><b>${draggedRedFives}</b></span>` : ""}
+      ${draggedDiamondFives ? `<span class="player-stat-diamond" title="被拖方五"><i>方</i><b>${draggedDiamondFives}</b></span>` : ""}
+      ${throwFailures ? `<span class="player-stat-throw" title="甩牌失败"><i>甩</i><b>${throwFailures}</b></span>` : ""}
       ${handCount === null ? "" : `<span class="player-stat-hand" title="当前手牌"><i>手</i><b>${handCount}</b></span>`}
     </div>
   `;
@@ -4860,6 +5276,41 @@ function compactHandGroupLabel(group) {
   return ({ S: "♠", H: "♥", C: "♣", D: "♦" })[group.id] || group.label;
 }
 
+function renderCompactHandGroupLabel(group) {
+  if (group.id !== "rank" || state?.stage !== "playing") {
+    return escapeHtml(compactHandGroupLabel(group));
+  }
+  const trumpSuit = currentTrumpSuit();
+  const symbol = ({ S: "♠", H: "♥", C: "♣", D: "♦" })[trumpSuit] || "";
+  return `主牌${symbol ? `<em class="hand-trump-suit suit-${escapeHtml(trumpSuit)}">${escapeHtml(symbol)}</em>` : ""}`;
+}
+
+function isHiddenDoglegHandCard(card) {
+  const setup = state?.setup || {};
+  const doglegCard = setup.doglegCard;
+  const revealedIds = setup.doglegPlayerIds || [];
+  const needed = Number(setup.doglegNeeded) || 0;
+  const viewerId = state?.viewer?.id;
+  if (state?.stage !== "playing" || !doglegCard || !viewerId || !needed) return false;
+  if (revealedIds.length >= needed || viewerId === setup.bankerId || revealedIds.includes(viewerId)) return false;
+  return card?.type === "normal" && card.suit === doglegCard.suit && card.rank === doglegCard.rank;
+}
+
+function renderDoglegHandMark(card) {
+  if (!isHiddenDoglegHandCard(card)) return "";
+  return `
+    <span class="dogleg-hand-mark" aria-label="狗腿牌" title="狗腿牌">
+      <svg viewBox="0 0 32 30" aria-hidden="true" focusable="false">
+        <ellipse cx="16" cy="20" rx="8" ry="7"></ellipse>
+        <circle cx="6.5" cy="12" r="3.4"></circle>
+        <circle cx="12.5" cy="6" r="3.4"></circle>
+        <circle cx="20" cy="5.5" r="3.4"></circle>
+        <circle cx="26" cy="11.5" r="3.4"></circle>
+      </svg>
+    </span>
+  `;
+}
+
 function renderHand(hand, options = {}) {
   if (!hand.length) return `<div class="empty">暂无手牌</div>`;
   const groups = handGroups(hand);
@@ -4871,7 +5322,7 @@ function renderHand(hand, options = {}) {
           <div class="hand-counts">
             ${groups.map((group) => `
               <span class="hand-count-badge suit-${escapeHtml(group.id)}" title="${escapeHtml(group.label)}">
-                <span>${escapeHtml(compactHandGroupLabel(group))}</span>
+                <span>${renderCompactHandGroupLabel(group)}</span>
                 <strong>${group.cards.length}</strong>
               </span>
             `).join("")}
@@ -4890,9 +5341,9 @@ function renderHand(hand, options = {}) {
           ${compactCards.map((card, index) => `
             <button
               type="button"
-              class="card ${card.color} ${cardSuitClass(card)} ${cardSkinClass(viewerCardSkin())} ${selectedCardIds.has(card.id) ? "selected" : ""} ${isThrowDraftCard(card.id) ? "throw-queued" : ""}"
+              class="card ${card.color} ${cardSuitClass(card)} ${cardSkinClass(viewerCardSkin())} ${isHiddenDoglegHandCard(card) ? "dogleg-hand-card" : ""} ${selectedCardIds.has(card.id) ? "selected" : ""} ${isThrowDraftCard(card.id) ? "throw-queued" : ""}"
               style="--i:${index}"
-              title="${escapeHtml(displayCardLabel(card))}"
+              title="${escapeHtml(`${displayCardLabel(card)}${isHiddenDoglegHandCard(card) ? " · 狗腿牌" : ""}`)}"
               aria-pressed="${selectedCardIds.has(card.id) ? "true" : "false"}"
               aria-disabled="${isSpectating() || isThrowDraftCard(card.id) ? "true" : "false"}"
               ${isSpectating() ? 'tabindex="-1"' : ""}
@@ -4900,6 +5351,7 @@ function renderHand(hand, options = {}) {
               data-card-id="${escapeHtml(card.id)}"
             >
               ${cardCorner(card)}
+              ${renderDoglegHandMark(card)}
             </button>
           `).join("")}
         </div>
@@ -4918,9 +5370,9 @@ function renderHand(hand, options = {}) {
             ${group.cards.map((card, index) => `
               <button
                 type="button"
-                class="card ${card.color} ${cardSuitClass(card)} ${cardSkinClass(viewerCardSkin())} ${selectedCardIds.has(card.id) ? "selected" : ""} ${isThrowDraftCard(card.id) ? "throw-queued" : ""}"
+                class="card ${card.color} ${cardSuitClass(card)} ${cardSkinClass(viewerCardSkin())} ${isHiddenDoglegHandCard(card) ? "dogleg-hand-card" : ""} ${selectedCardIds.has(card.id) ? "selected" : ""} ${isThrowDraftCard(card.id) ? "throw-queued" : ""}"
                 style="--i:${index}"
-                title="${escapeHtml(displayCardLabel(card))}"
+                title="${escapeHtml(`${displayCardLabel(card)}${isHiddenDoglegHandCard(card) ? " · 狗腿牌" : ""}`)}"
                 aria-pressed="${selectedCardIds.has(card.id) ? "true" : "false"}"
                 aria-disabled="${isSpectating() || isThrowDraftCard(card.id) ? "true" : "false"}"
                 ${isSpectating() ? 'tabindex="-1"' : ""}
@@ -4928,6 +5380,7 @@ function renderHand(hand, options = {}) {
                 data-card-id="${escapeHtml(card.id)}"
               >
                 ${cardCorner(card)}
+                ${renderDoglegHandMark(card)}
               </button>
             `).join("")}
           </div>
@@ -4958,11 +5411,16 @@ function playedCardEffectClass(play, card, trickNumber) {
 function renderMiniCards(cards, options = {}) {
   if (!cards.length) return `<div class="meta">未出牌</div>`;
   const sortedCards = sortCardsForPlay(cards, options.trumpSuit ?? currentTrumpSuit());
+  const densityClass = sortedCards.length >= 10
+    ? "mini-cards-dense"
+    : sortedCards.length >= 6
+      ? "mini-cards-folded"
+      : "";
   const skin = options.cardSkin
     ?? options.play?.cardSkin
     ?? (options.play?.playerId ? cardSkinForPlayer(options.play.playerId) : viewerCardSkin());
   return `
-    <div class="mini-cards">
+    <div class="mini-cards ${densityClass}">
       ${sortedCards.map((card, index) => `
         <span class="mini-card ${card.color} ${cardSuitClass(card)} ${cardSkinClass(skin)} ${playedCardEffectClass(options.play, card, options.trickNumber)}" style="--i:${index}" title="${escapeHtml(displayCardLabel(card))}">${cardCorner(card)}</span>
       `).join("")}
@@ -5149,7 +5607,7 @@ const mutatingActions = new Set([
   "score-bid-30", "score-pass", "trump-suit-S", "trump-suit-H", "trump-suit-C",
   "trump-suit-D", "bury-selected", "fry-selected",
   "fry-pass", "dogleg-selected", "play-selected", "confirm-throw", "reset", "play-again",
-  "kick-player"
+  "send-taunt", "delete-taunt", "kick-player"
 ]);
 
 function isRapidMutatingAction(action) {
@@ -5170,11 +5628,20 @@ document.addEventListener("submit", (event) => {
   if (form.dataset.form === "change-password") return changeAccountPassword(event);
   if (form.dataset.form === "own-avatar") return uploadOwnAvatar(event);
   if (form.dataset.form === "create-account") return createManagedAccount(event);
+  if (form.dataset.form === "create-taunt") return createManagedTaunt(event);
+  if (form.dataset.form === "save-taunt") return saveManagedTaunt(event);
   if (form.dataset.form === "reset-password") return resetManagedPassword(event);
   if (form.dataset.form === "save-season") return saveSeasonForm(event);
 });
 
 document.addEventListener("change", (event) => {
+  const tauntAudienceTarget = event.target.closest('[data-action="taunt-all-users"]');
+  if (tauntAudienceTarget) {
+    const formEl = tauntAudienceTarget.closest("form");
+    syncTauntAudienceInputs(formEl);
+    formEl?.querySelector(".taunt-account-grid")?.classList.toggle("is-disabled", tauntAudienceTarget.checked);
+    return;
+  }
   const gameDateTarget = event.target.closest('[data-action="filter-player-game-date"]');
   if (gameDateTarget) {
     statisticsGameDate = gameDateTarget.value || "";
@@ -5241,6 +5708,9 @@ document.addEventListener("click", (event) => {
   if (action === "toggle-account") {
     const target = event.target.closest("[data-account-id]");
     toggleManagedAccount(target?.dataset.accountId || "", target?.dataset.enabled === "true");
+  }
+  if (action === "delete-taunt") {
+    deleteManagedTaunt(event.target.closest("[data-taunt-id]")?.dataset.tauntId || "");
   }
   if (action === "show-rooms") {
     homeView = "rooms";
@@ -5349,6 +5819,13 @@ document.addEventListener("click", (event) => {
   }
   if (action === "dogleg-selected") chooseDoglegSelectedCard();
   if (action === "play-selected") playSelectedCards();
+  if (action === "open-taunts") {
+    activeDialog = "taunts";
+    render();
+  }
+  if (action === "send-taunt") {
+    sendTaunt(event.target.closest("[data-preset-id]")?.dataset.presetId || "");
+  }
   if (action === "auto-play-on") setAutoPlay(true);
   if (action === "auto-play-off") setAutoPlay(false);
   if (action === "enter-throw") enterThrowMode();

@@ -2,6 +2,12 @@ import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 
 import pg from "pg";
+import {
+  calculateDiamondReward,
+  diamondRewardDate,
+  DIAMOND_REWARD_RULES,
+  isDiamondEligibleGame
+} from "./diamond-rewards.js";
 
 const { Pool } = pg;
 const RULES_VERSION = "2026-07-20";
@@ -45,6 +51,14 @@ const MIGRATIONS = [
   {
     version: 10,
     path: fileURLToPath(new URL("./db/migrations/010_fry_and_won_card_statistics.sql", import.meta.url))
+  },
+  {
+    version: 11,
+    path: fileURLToPath(new URL("./db/migrations/011_diamond_rewards.sql", import.meta.url))
+  },
+  {
+    version: 12,
+    path: fileURLToPath(new URL("./db/migrations/012_taunt_presets.sql", import.meta.url))
   }
 ];
 const HISTORY_ENABLED = String(process.env.GAME_HISTORY_ENABLED || "").toLowerCase() === "true";
@@ -391,6 +405,123 @@ export async function recordStoredAccountLogin(accountId) {
   }
 }
 
+function publicStoredTauntPreset(row) {
+  return {
+    id: row.taunt_id,
+    text: row.taunt_text,
+    enabled: Boolean(row.enabled),
+    availableToAll: Boolean(row.available_to_all),
+    availableAccountIds: Array.isArray(row.available_account_ids)
+      ? row.available_account_ids.map(String)
+      : [],
+    sortOrder: Number(row.sort_order) || 0,
+    createdAt: row.created_at ? new Date(row.created_at).toISOString() : null,
+    updatedAt: row.updated_at ? new Date(row.updated_at).toISOString() : null
+  };
+}
+
+export async function loadStoredTauntPresets() {
+  if (!pool || !status.connected || !status.accountStorageReady) return [];
+  try {
+    const result = await pool.query(`
+      SELECT
+        preset.taunt_id,
+        preset.taunt_text,
+        preset.enabled,
+        preset.available_to_all,
+        preset.sort_order,
+        preset.created_at,
+        preset.updated_at,
+        coalesce(
+          array_agg(access.account_id::text ORDER BY access.account_id)
+            FILTER (WHERE access.account_id IS NOT NULL),
+          ARRAY[]::text[]
+        ) AS available_account_ids
+      FROM cdp_taunt_presets preset
+      LEFT JOIN cdp_taunt_preset_access access ON access.taunt_id = preset.taunt_id
+      GROUP BY preset.taunt_id
+      ORDER BY preset.sort_order, preset.created_at, preset.taunt_id
+    `);
+    return result.rows.map(publicStoredTauntPreset);
+  } catch (error) {
+    rememberError(error);
+    console.error("[taunt-presets] load failed", error.message);
+    return [];
+  }
+}
+
+export async function saveStoredTauntPreset(preset, { createdBy = null } = {}) {
+  if (!pool || !status.connected || !status.accountStorageReady) return { status: "unavailable" };
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const result = await client.query(
+      `INSERT INTO cdp_taunt_presets (
+        taunt_id, taunt_text, enabled, available_to_all, sort_order, created_by
+      ) VALUES ($1, $2, $3, $4, $5, $6)
+      ON CONFLICT (taunt_id) DO UPDATE SET
+        taunt_text = excluded.taunt_text,
+        enabled = excluded.enabled,
+        available_to_all = excluded.available_to_all,
+        sort_order = excluded.sort_order,
+        updated_at = now()
+      RETURNING
+        taunt_id, taunt_text, enabled, available_to_all, sort_order,
+        created_at, updated_at`,
+      [
+        preset.id,
+        preset.text,
+        preset.enabled !== false,
+        preset.availableToAll !== false,
+        Number(preset.sortOrder) || 0,
+        createdBy || null
+      ]
+    );
+    await client.query("DELETE FROM cdp_taunt_preset_access WHERE taunt_id = $1", [preset.id]);
+    const accountIds = preset.availableToAll
+      ? []
+      : [...new Set((preset.availableAccountIds || []).map(String).filter(Boolean))];
+    if (accountIds.length) {
+      await client.query(
+        `INSERT INTO cdp_taunt_preset_access (taunt_id, account_id)
+         SELECT $1, account_id
+         FROM unnest($2::uuid[]) AS account_id`,
+        [preset.id, accountIds]
+      );
+    }
+    await client.query("COMMIT");
+    return {
+      status: "saved",
+      preset: publicStoredTauntPreset({
+        ...result.rows[0],
+        available_account_ids: accountIds
+      })
+    };
+  } catch (error) {
+    await client.query("ROLLBACK");
+    rememberError(error);
+    console.error(`[taunt-presets] save failed for ${preset.id}`, error.message);
+    return { status: "failed", code: error.code || "UNKNOWN" };
+  } finally {
+    client.release();
+  }
+}
+
+export async function deleteStoredTauntPreset(tauntId) {
+  if (!pool || !status.connected || !status.accountStorageReady) return { status: "unavailable" };
+  try {
+    const result = await pool.query(
+      "DELETE FROM cdp_taunt_presets WHERE taunt_id = $1 RETURNING taunt_id",
+      [tauntId]
+    );
+    return result.rows[0] ? { status: "deleted" } : { status: "missing" };
+  } catch (error) {
+    rememberError(error);
+    console.error(`[taunt-presets] delete failed for ${tauntId}`, error.message);
+    return { status: "failed" };
+  }
+}
+
 function compactCardId(card) {
   if (card?.id) return card.id;
   if (card?.type === "joker") return `${card.deck || 0}-JOKER-${String(card.joker || "").toUpperCase()}`;
@@ -463,7 +594,11 @@ export function buildGameRecord(room) {
       draggedDiamondFives: Number(playerResult.draggedDiamondFives) || 0,
       throwFailures: Number(playerResult.throwFailures) || 0,
       evaluation: jsonValue(playerResult.evaluation, {}),
-      tags
+      tags,
+      diamondReward: jsonValue(
+        playerResult.diamondReward || calculateDiamondReward({ gameScore, tags }),
+        {}
+      )
     };
   });
 
@@ -505,8 +640,142 @@ export function buildGameRecord(room) {
 }
 
 export function isHumanOnlyGame(room) {
-  return Boolean(room?.players?.length)
-    && room.players.every((player) => !player.test && Boolean(player.accountId));
+  return isDiamondEligibleGame(room);
+}
+
+function diamondRewardOutcome(row) {
+  return {
+    accountId: row.account_id,
+    status: row.status,
+    awardedAmount: Number(row.awarded_amount) || 0,
+    balanceAfter: Number(row.balance_after) || 0,
+    rewardDate: row.reward_date instanceof Date
+      ? row.reward_date.toISOString().slice(0, 10)
+      : String(row.reward_date)
+  };
+}
+
+async function saveDiamondRewards(client, record) {
+  const outcomes = [];
+  const rewardDate = diamondRewardDate(record.finishedAt);
+  for (const player of record.players) {
+    if (!player.accountId || player.isAi) continue;
+
+    await client.query(
+      `INSERT INTO cdp_diamond_wallets (account_id)
+       VALUES ($1::uuid)
+       ON CONFLICT (account_id) DO NOTHING`,
+      [player.accountId]
+    );
+    await client.query(
+      `SELECT balance
+       FROM cdp_diamond_wallets
+       WHERE account_id = $1::uuid
+       FOR UPDATE`,
+      [player.accountId]
+    );
+
+    const existing = await client.query(
+      `SELECT account_id, status, awarded_amount, balance_after, reward_date
+       FROM cdp_game_diamond_rewards
+       WHERE game_id = $1::uuid AND account_id = $2::uuid`,
+      [record.gameId, player.accountId]
+    );
+    if (existing.rows[0]) {
+      outcomes.push(diamondRewardOutcome(existing.rows[0]));
+      continue;
+    }
+
+    const rewardedGames = await client.query(
+      `SELECT count(*)::integer AS count
+       FROM cdp_game_diamond_rewards
+       WHERE account_id = $1::uuid
+         AND reward_date = $2::date
+         AND status = 'awarded'`,
+      [player.accountId, rewardDate]
+    );
+    const dailyCapped = Number(rewardedGames.rows[0]?.count || 0) >= DIAMOND_REWARD_RULES.dailyRewardGameLimit;
+    const reward = player.diamondReward || calculateDiamondReward({
+      gameScore: player.gameScore,
+      tags: player.tags
+    });
+    const awardedAmount = dailyCapped ? 0 : Number(reward.totalAmount) || 0;
+    let balanceAfter = 0;
+
+    if (awardedAmount > 0) {
+      const wallet = await client.query(
+        `UPDATE cdp_diamond_wallets
+         SET balance = balance + $2,
+             lifetime_earned = lifetime_earned + $2,
+             updated_at = now()
+         WHERE account_id = $1::uuid
+         RETURNING balance`,
+        [player.accountId, awardedAmount]
+      );
+      balanceAfter = Number(wallet.rows[0]?.balance) || 0;
+    } else {
+      const wallet = await client.query(
+        `SELECT balance
+         FROM cdp_diamond_wallets
+         WHERE account_id = $1::uuid`,
+        [player.accountId]
+      );
+      balanceAfter = Number(wallet.rows[0]?.balance) || 0;
+    }
+
+    const statusName = dailyCapped ? "daily-capped" : "awarded";
+    const inserted = await client.query(
+      `INSERT INTO cdp_game_diamond_rewards (
+        game_id, room_player_id, account_id, reward_date, rules_version,
+        status, base_amount, win_bonus, title_bonus, calculated_amount,
+        awarded_amount, balance_after, breakdown
+      ) VALUES (
+        $1::uuid, $2, $3::uuid, $4::date, $5,
+        $6, $7, $8, $9, $10,
+        $11, $12, $13::jsonb
+      )
+      RETURNING account_id, status, awarded_amount, balance_after, reward_date`,
+      [
+        record.gameId,
+        player.roomPlayerId,
+        player.accountId,
+        rewardDate,
+        reward.rulesVersion || DIAMOND_REWARD_RULES.version,
+        statusName,
+        Number(reward.baseAmount) || 0,
+        Number(reward.winBonus) || 0,
+        Number(reward.titleBonus) || 0,
+        Number(reward.totalAmount) || 0,
+        awardedAmount,
+        balanceAfter,
+        JSON.stringify(reward)
+      ]
+    );
+
+    if (awardedAmount > 0) {
+      await client.query(
+        `INSERT INTO cdp_diamond_ledger (
+          account_id, amount, balance_after, reason, game_id,
+          rules_version, idempotency_key, detail
+        ) VALUES (
+          $1::uuid, $2, $3, 'game_reward', $4::uuid,
+          $5, $6, $7::jsonb
+        )
+        ON CONFLICT (idempotency_key) DO NOTHING`,
+        [
+          player.accountId,
+          awardedAmount,
+          balanceAfter,
+          record.gameId,
+          reward.rulesVersion || DIAMOND_REWARD_RULES.version,
+          `game_reward:${record.gameId}:${player.accountId}`,
+          JSON.stringify(reward)
+        ]
+      );
+    }
+    outcomes.push(diamondRewardOutcome(inserted.rows[0]));
+  }
+  return outcomes;
 }
 
 async function saveGameRecord(record) {
@@ -603,9 +872,11 @@ async function saveGameRecord(record) {
         [record.gameId, JSON.stringify(tags)]
       );
     }
+    const diamondRewards = await saveDiamondRewards(client, record);
     await client.query("COMMIT");
     status.connected = true;
     status.lastSavedAt = new Date().toISOString();
+    return { diamondRewards };
   } catch (error) {
     await client.query("ROLLBACK");
     throw error;
@@ -629,9 +900,9 @@ async function flushPendingGameRecords() {
   try {
     for (const [gameId, pending] of pendingRecords) {
       try {
-        await saveGameRecord(pending.record);
+        const saved = await saveGameRecord(pending.record);
         pendingRecords.delete(gameId);
-        pending.onStatus?.({ status: "saved", gameId });
+        pending.onStatus?.({ status: "saved", gameId, ...saved });
       } catch (error) {
         pending.attempts += 1;
         status.connected = false;
@@ -677,6 +948,66 @@ function requirePool() {
     throw error;
   }
   return pool;
+}
+
+export async function getDiamondWallet(accountId, limit = 20) {
+  const database = requirePool();
+  const safeLimit = Math.max(1, Math.min(50, Number(limit) || 20));
+  const rewardDate = diamondRewardDate(new Date().toISOString());
+  const [walletResult, dailyResult, rewardResult] = await Promise.all([
+    database.query(
+      `SELECT balance, lifetime_earned, updated_at
+       FROM cdp_diamond_wallets
+       WHERE account_id = $1::uuid`,
+      [accountId]
+    ),
+    database.query(
+      `SELECT count(*)::integer AS rewarded_games
+       FROM cdp_game_diamond_rewards
+       WHERE account_id = $1::uuid
+         AND reward_date = $2::date
+         AND status = 'awarded'`,
+      [accountId, rewardDate]
+    ),
+    database.query(
+      `SELECT
+        reward.game_id, reward.reward_date, reward.status,
+        reward.base_amount, reward.win_bonus, reward.title_bonus,
+        reward.calculated_amount, reward.awarded_amount,
+        reward.balance_after, reward.rules_version, reward.breakdown,
+        game.finished_at
+       FROM cdp_game_diamond_rewards reward
+       JOIN cdp_games game ON game.game_id = reward.game_id
+       WHERE reward.account_id = $1::uuid
+       ORDER BY game.finished_at DESC, reward.game_id DESC
+       LIMIT $2`,
+      [accountId, safeLimit]
+    )
+  ]);
+  const wallet = walletResult.rows[0];
+  return {
+    balance: Number(wallet?.balance) || 0,
+    lifetimeEarned: Number(wallet?.lifetime_earned) || 0,
+    updatedAt: wallet?.updated_at ? new Date(wallet.updated_at).toISOString() : null,
+    rewardDate,
+    rewardedGamesToday: Number(dailyResult.rows[0]?.rewarded_games) || 0,
+    dailyRewardGameLimit: DIAMOND_REWARD_RULES.dailyRewardGameLimit,
+    rulesVersion: DIAMOND_REWARD_RULES.version,
+    recentRewards: rewardResult.rows.map((row) => ({
+      gameId: row.game_id,
+      rewardDate: String(row.reward_date),
+      status: row.status,
+      baseAmount: Number(row.base_amount) || 0,
+      winBonus: Number(row.win_bonus) || 0,
+      titleBonus: Number(row.title_bonus) || 0,
+      calculatedAmount: Number(row.calculated_amount) || 0,
+      awardedAmount: Number(row.awarded_amount) || 0,
+      balanceAfter: Number(row.balance_after) || 0,
+      rulesVersion: row.rules_version,
+      breakdown: row.breakdown || {},
+      finishedAt: row.finished_at ? new Date(row.finished_at).toISOString() : null
+    }))
+  };
 }
 
 function seasonError(message, statusCode = 400) {
