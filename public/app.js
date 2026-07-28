@@ -4727,6 +4727,10 @@ function renderTablePlayerSummary(play, statusText, statusTone) {
   const avatarFrame = play.avatarFrame || player?.avatarFrame || "";
   return `
     <div class="trick-player-main">
+      <span class="trick-player-meta">
+        ${roleMark(play.role, play.playerId)}
+        <span class="seat-status ${escapeHtml(statusTone)}">${escapeHtml(statusText)}</span>
+      </span>
       <span class="table-player-avatar-stage" tabindex="0" aria-label="查看${escapeHtml(play.playerName)}的历史数据">
         ${avatarHtml(play.playerName, play.avatarUrl, "small", avatarFrame)}
         ${renderTauntBubble(play.playerId)}
@@ -4735,9 +4739,7 @@ function renderTablePlayerSummary(play, statusText, statusTone) {
       <span class="trick-player-summary">
         <span class="trick-player-line">
           <strong class="trick-player-display-name">${escapeHtml(play.playerName)}</strong>
-          ${roleMark(play.role, play.playerId)}
           ${renderAutoPlayMark(player || play)}
-          <span class="seat-status ${escapeHtml(statusTone)}">${escapeHtml(statusText)}</span>
         </span>
         ${renderCompactPlayerStats(play)}
       </span>
@@ -4800,9 +4802,9 @@ function sideSeatY(slot, count, reverse = false) {
 
 function topPlayShift(slot, count) {
   if (count <= 1) return 0;
-  if (count === 2) return slot === 0 ? -120 : 120;
-  if (count === 3) return [-84, 0, 84][slot] || 0;
-  return [-72, -24, 24, 72][slot] || 0;
+  if (count === 2) return slot === 0 ? -42 : 42;
+  if (count === 3) return [-42, 0, 42][slot] || 0;
+  return [-42, -14, 14, 42][slot] || 0;
 }
 
 function seatZone(index, total) {
