@@ -960,6 +960,86 @@ label {
   color: var(--muted);
 }
 
+.statistics-game-history-section {
+  margin-top: 14px;
+}
+
+.statistics-game-history-section > header > div {
+  display: grid;
+  gap: 3px;
+}
+
+.statistics-game-date-filter {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.statistics-game-date-filter input {
+  min-height: 34px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #fff;
+  padding: 0 8px;
+  color: var(--text);
+}
+
+.statistics-game-list {
+  display: grid;
+}
+
+.statistics-game-row {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(150px, 0.7fr) minmax(220px, 0.9fr) minmax(220px, 1.35fr) auto;
+  align-items: center;
+  gap: 12px;
+  border-bottom: 1px solid var(--line);
+  padding: 12px 14px;
+}
+
+.statistics-game-row:last-child {
+  border-bottom: 0;
+}
+
+.statistics-game-time,
+.statistics-game-result {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex-wrap: wrap;
+}
+
+.statistics-game-time {
+  display: grid;
+  gap: 3px;
+}
+
+.statistics-game-time span,
+.statistics-game-result small,
+.statistics-game-players {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.statistics-game-result b.positive {
+  color: var(--good);
+}
+
+.statistics-game-result b.negative {
+  color: var(--bad);
+}
+
+.statistics-game-players {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .statistics-relationship-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -2172,6 +2252,16 @@ button.joinable-room-player.spectate-player {
 .tag.accent {
   background: #f8ead9;
   color: #8a4b12;
+}
+
+.tag.bad {
+  background: #fbe8e8;
+  color: var(--bad);
+}
+
+.tag.lead {
+  background: #e8f2f8;
+  color: #2b6e9a;
 }
 
 .dogleg-count-control {
@@ -3462,6 +3552,39 @@ button.joinable-room-player.spectate-player {
   white-space: nowrap;
 }
 
+button.auto-play-toggle {
+  border-color: #b692db;
+  background: #f7f0ff;
+  color: #694092;
+}
+
+button.auto-play-toggle.active {
+  border-color: #7b4eaa;
+  background: #7b4eaa;
+  color: #fff;
+}
+
+.auto-play-mark {
+  display: inline-flex;
+  align-items: center;
+  min-height: 20px;
+  border: 1px solid #c9ace5;
+  border-radius: 999px;
+  background: #f5edfc;
+  color: #694092;
+  padding: 1px 7px;
+  font-size: 11px;
+  font-weight: 900;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.tag.auto-play-mark {
+  border-color: #c9ace5;
+  background: #f5edfc;
+  color: #694092;
+}
+
 .seat-hand .hand-controls .action-reason {
   flex: 1 0 100%;
   min-height: 14px;
@@ -3849,15 +3972,102 @@ button.joinable-room-player.spectate-player {
   color: var(--club);
 }
 
-.history {
-  display: grid;
-  gap: 10px;
-  max-height: 560px;
-  overflow: auto;
-}
-
 .history-modal {
   width: min(860px, 100%);
+  overflow: hidden;
+}
+
+.history-filters {
+  display: flex;
+  gap: 7px;
+  overflow-x: auto;
+  padding-bottom: 2px;
+}
+
+.history-filters button {
+  flex: 0 0 auto;
+}
+
+.history-timeline {
+  min-height: 160px;
+  max-height: min(560px, calc(100vh - 230px));
+  display: grid;
+  align-content: start;
+  gap: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfcfb;
+}
+
+.history-timeline-entry {
+  display: grid;
+  grid-template-columns: 70px minmax(0, 1fr);
+  gap: 12px;
+  border-bottom: 1px solid var(--line);
+  padding: 10px 12px;
+}
+
+.history-timeline-entry:last-child {
+  border-bottom: 0;
+}
+
+.history-timeline-entry > time {
+  padding-top: 4px;
+  color: var(--muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.history-entry-body {
+  min-width: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.history-entry-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.history-entry-head .tag,
+.history-role {
+  min-height: 20px;
+  padding: 0 7px;
+  font-size: 11px;
+}
+
+.history-role {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  background: #fff1df;
+  color: #8a4b12;
+  font-weight: 800;
+}
+
+.history-entry-body p {
+  margin: 0;
+  color: #33413b;
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.history-timeline-entry.history-fry {
+  background: #fffaf0;
+}
+
+.history-timeline-entry.history-play .mini-cards {
+  padding-top: 1px;
+}
+
+.history-timeline-entry.history-play .mini-card {
+  flex-basis: 48px;
+  width: 48px;
+  min-height: 60px;
 }
 
 .result-modal {
@@ -4227,6 +4437,15 @@ button.joinable-room-player.spectate-player {
     grid-template-columns: 1fr;
   }
 
+  .statistics-game-row {
+    grid-template-columns: minmax(150px, 0.75fr) minmax(220px, 1fr) auto;
+  }
+
+  .statistics-game-players {
+    grid-column: 1 / -1;
+    grid-row: 2;
+  }
+
   .statistics-relationship-grid {
     grid-template-columns: 1fr;
   }
@@ -4269,6 +4488,30 @@ button.joinable-room-player.spectate-player {
 
   .statistics-relationship-section > header {
     display: grid;
+  }
+
+  .statistics-game-history-section > header,
+  .statistics-game-date-filter {
+    display: grid;
+  }
+
+  .statistics-game-row {
+    grid-template-columns: 1fr auto;
+  }
+
+  .statistics-game-result,
+  .statistics-game-players {
+    grid-column: 1 / -1;
+    grid-row: auto;
+  }
+
+  .history-timeline-entry {
+    grid-template-columns: 1fr;
+    gap: 4px;
+  }
+
+  .history-timeline-entry > time {
+    padding-top: 0;
   }
 
   .statistics-relationship-sorters {

@@ -26,8 +26,10 @@ import { versionedAssetUrl } from "./public/asset-versions.js";
 import { createStatePatch } from "./public/state-patch.js";
 import {
   gameHistoryStatus,
+  getGameHistory,
   getPlayerStatistics,
   initializeGameHistory,
+  listPlayerGames,
   listPlayerStatistics,
   listRecentGames,
   listSeasons,
@@ -79,6 +81,14 @@ const suitStrength = new Map([
   ["C", 1],
   ["H", 2],
   ["S", 3]
+]);
+const autoPlaySuitOrder = new Map([
+  ["D", 0],
+  ["C", 1],
+  ["H", 2],
+  ["S", 3],
+  ["TRUMP", 4],
+  ["JOKER", 5]
 ]);
 const rooms = new Map();
 const accounts = new Map();
@@ -356,6 +366,7 @@ function createPlayer(profileOrName, host = false, test = false) {
     test,
     connected: false,
     ready: Boolean(test),
+    autoPlayEnabled: false,
     score: 0,
     draggedRedFives: 0,
     draggedDiamondFives: 0,
@@ -827,6 +838,7 @@ function resetRoomToLobby(room, options = {}) {
   room.notice = null;
   room.players.forEach((player) => {
     player.hand = [];
+    player.autoPlayEnabled = false;
     player.score = 0;
     player.draggedRedFives = 0;
     player.draggedDiamondFives = 0;
@@ -873,7 +885,8 @@ function publicBid(room, bid) {
     suitName: suitName(bid.suit),
     cards: (bid.cards || []).map(publicCard),
     random: Boolean(bid.random),
-    direct: Boolean(bid.direct)
+    direct: Boolean(bid.direct),
+    at: bid.at || null
   };
 }
 
@@ -981,6 +994,7 @@ function trickSnapshot(room, trick) {
         avatarFrame: normalizeAvatarFrame(player.avatarFrame),
         cardSkin: normalizeCardSkin(player.cardSkin),
         playEffect: normalizePlayEffect(player.playEffect),
+        autoPlayEnabled: Boolean(player.autoPlayEnabled),
         role: playerRole(room, player.id),
         played: Boolean(play),
         lead: trick.leaderId === player.id,
@@ -1067,7 +1081,8 @@ function roomSnapshot(room, viewer = null) {
       name: viewer.name,
       avatarUrl: viewer.avatarUrl || "",
       host: viewer.host,
-      ready: Boolean(viewer.ready)
+      ready: Boolean(viewer.ready),
+      autoPlayEnabled: Boolean(viewer.autoPlayEnabled)
     } : null,
     players: room.players.map((player) => ({
       id: player.id,
@@ -1083,6 +1098,7 @@ function roomSnapshot(room, viewer = null) {
       role: playerRole(room, player.id),
       connected: player.connected,
       ready: Boolean(player.ready),
+      autoPlayEnabled: Boolean(player.autoPlayEnabled),
       score: player.score || 0,
       draggedRedFives: player.draggedRedFives || 0,
       draggedDiamondFives: player.draggedDiamondFives || 0,
@@ -1287,6 +1303,9 @@ function finishGame(room, completedTrick) {
   clearAiPlayTimer(room);
   clearScoreBidTimer(room);
   clearFryTimer(room);
+  room.players.forEach((player) => {
+    player.autoPlayEnabled = false;
+  });
 
   const bankerIds = bankerTeamIds(room);
   const bankerIdSet = new Set(bankerIds);
@@ -3588,6 +3607,52 @@ function legalAutoCards(room, player) {
   return chooseFollowAutoCards(room, player, info);
 }
 
+function compareCardsSmallToLarge(room, a, b) {
+  const aSuit = playSuit(a, room.trumpSuit);
+  const bSuit = playSuit(b, room.trumpSuit);
+  return patternValue(b, room.trumpSuit) - patternValue(a, room.trumpSuit)
+    || (autoPlaySuitOrder.get(aSuit) ?? 9) - (autoPlaySuitOrder.get(bSuit) ?? 9)
+    || a.deck - b.deck
+    || a.id.localeCompare(b.id);
+}
+
+function sortCardsSmallToLarge(room, cards) {
+  return [...cards].sort((a, b) => compareCardsSmallToLarge(room, a, b));
+}
+
+function smallestLegalAutoCards(room, player) {
+  if (!player.hand.length) return [];
+  const info = leadInfo(room.currentTrick, room.trumpSuit);
+  if (!info) return sortCardsSmallToLarge(room, player.hand).slice(0, 1);
+
+  const sameSuit = sortCardsSmallToLarge(
+    room,
+    player.hand.filter((card) => playSuit(card, room.trumpSuit) === info.suit)
+  );
+  if (sameSuit.length >= info.count) return sameSuit.slice(0, info.count);
+
+  const otherCards = sortCardsSmallToLarge(
+    room,
+    player.hand.filter((card) => playSuit(card, room.trumpSuit) !== info.suit)
+  );
+  return [...sameSuit, ...otherCards.slice(0, info.count - sameSuit.length)];
+}
+
+function playerUsesAutomaticPlay(player) {
+  return Boolean(player?.test || player?.autoPlayEnabled);
+}
+
+function setPlayerAutoPlay(room, player, enabled) {
+  if (room.status !== "dealt" || room.stage !== "playing") {
+    return { error: "只有进入打牌阶段后才能开启托管", status: 409 };
+  }
+  const nextEnabled = Boolean(enabled);
+  if (player.autoPlayEnabled === nextEnabled) return { ok: true, changed: false };
+  player.autoPlayEnabled = nextEnabled;
+  addEvent(room, `${player.name}${nextEnabled ? "开启" : "取消"}了托管`);
+  return { ok: true, changed: true };
+}
+
 function clearAiPlayTimer(room) {
   if (!room?.aiPlayTimer) return;
   clearTimeout(room.aiPlayTimer);
@@ -3598,24 +3663,29 @@ function scheduleNextAiPlay(room, delayMs = AI_PLAY_DELAY_MS) {
   if (!room || room.aiPlayTimer || room.status !== "dealt" || room.stage !== "playing") return false;
   const nextPlayerId = expectedPlayerId(room);
   const nextPlayer = playerById(room, nextPlayerId);
-  if (!nextPlayer?.test) return false;
+  if (!playerUsesAutomaticPlay(nextPlayer)) return false;
+  const pauseDelay = room.playPauseUntil
+    ? Math.max(0, new Date(room.playPauseUntil).getTime() - Date.now())
+    : 0;
 
   room.aiPlayTimer = setTimeout(() => {
     room.aiPlayTimer = null;
     if (rooms.get(room.id) !== room || room.status !== "dealt" || room.stage !== "playing") return;
     const currentPlayer = playerById(room, expectedPlayerId(room));
-    if (!currentPlayer?.test) return;
-    const cards = legalAutoCards(room, currentPlayer);
+    if (!playerUsesAutomaticPlay(currentPlayer)) return;
+    const cards = currentPlayer.test
+      ? legalAutoCards(room, currentPlayer)
+      : smallestLegalAutoCards(room, currentPlayer);
     if (!cards.length) return;
     const result = playCards(room, currentPlayer, cards.map((card) => card.id));
     if (result.error) {
-      addEvent(room, `${currentPlayer.name} 自动出牌失败：${result.error}`);
+      addEvent(room, `${currentPlayer.name} ${currentPlayer.test ? "自动" : "托管"}出牌失败：${result.error}`);
       broadcast(room);
       return;
     }
     broadcast(room);
     scheduleNextAiPlay(room);
-  }, Math.max(0, delayMs));
+  }, Math.max(0, delayMs, pauseDelay + 20));
   return true;
 }
 
@@ -3683,6 +3753,7 @@ function playCards(room, player, cardIds, options = {}) {
     }
   }
 
+  clearAiPlayTimer(room);
   const selectedIds = new Set(playedCards.map((card) => card.id));
   player.hand = player.hand.filter((card) => !selectedIds.has(card.id));
   room.currentTrick.plays.push({
@@ -3954,12 +4025,27 @@ async function handleApi(req, res, pathParts, url) {
       return writeJson(res, 200, { players: await listPlayerStatistics(url.searchParams.get("seasonId")) });
     }
     if (pathParts[2] === "players" && pathParts[3]) {
+      if (pathParts[4] === "games") {
+        const games = await listPlayerGames(pathParts[3], {
+          seasonId: url.searchParams.get("seasonId"),
+          from: url.searchParams.get("from"),
+          to: url.searchParams.get("to"),
+          limit: url.searchParams.get("limit")
+        });
+        return writeJson(res, 200, { games });
+      }
       const detail = await getPlayerStatistics(pathParts[3], url.searchParams.get("seasonId"));
       return detail
         ? writeJson(res, 200, detail)
         : writeJson(res, 404, { error: "暂无该玩家的牌局数据" });
     }
     if (pathParts[2] === "games") {
+      if (pathParts[3]) {
+        const game = await getGameHistory(pathParts[3]);
+        return game
+          ? writeJson(res, 200, { game })
+          : writeJson(res, 404, { error: "牌局记录不存在" });
+      }
       return writeJson(res, 200, { games: await listRecentGames(url.searchParams.get("limit")) });
     }
     return writeJson(res, 404, { error: "历史记录接口不存在" });
@@ -4431,6 +4517,18 @@ async function handleApi(req, res, pathParts, url) {
       if (result.error) return writeJson(res, result.status, { error: result.error });
       broadcastAndContinueAutomation(room);
       return writeJson(res, 200, roomStateAck(room));
+    }
+
+    if (req.method === "POST" && pathParts[3] === "auto-play") {
+      const body = await readJson(req);
+      const viewer = requirePlayer(res, room, body.playerId, body.token);
+      if (!viewer) return;
+      const result = setPlayerAutoPlay(room, viewer, body.enabled);
+      if (result.error) return writeJson(res, result.status, { error: result.error });
+      clearAiPlayTimer(room);
+      broadcast(room);
+      scheduleNextAiPlay(room);
+      return writeJson(res, 200, roomStateAck(room, { autoPlayEnabled: viewer.autoPlayEnabled }));
     }
 
     if (req.method === "POST" && pathParts[3] === "play") {

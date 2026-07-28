@@ -416,12 +416,20 @@ function compactTrickHistory(tricks) {
     leaderId: trick.leaderId || null,
     winnerId: trick.winnerId || null,
     points: Number(trick.points) || 0,
-    plays: (trick.plays || []).filter((play) => play.played !== false && play.cards?.length).map((play) => ({
-      playerId: play.playerId,
-      at: play.at || null,
-      cards: play.cards.map(compactCardId),
-      throw: compactThrow(play)
-    }))
+    plays: (trick.plays || [])
+      .filter((play) => play.played !== false && play.cards?.length)
+      .sort((left, right) => {
+        const leftIndex = Number.isFinite(left.turnIndex) ? left.turnIndex : Number.MAX_SAFE_INTEGER;
+        const rightIndex = Number.isFinite(right.turnIndex) ? right.turnIndex : Number.MAX_SAFE_INTEGER;
+        if (leftIndex !== rightIndex) return leftIndex - rightIndex;
+        return String(left.at || "").localeCompare(String(right.at || ""));
+      })
+      .map((play) => ({
+        playerId: play.playerId,
+        at: play.at || null,
+        cards: play.cards.map(compactCardId),
+        throw: compactThrow(play)
+      }))
   }));
 }
 
@@ -486,7 +494,10 @@ export function buildGameRecord(room) {
     bottomPoints: Number(result.bottomPoints) || 0,
     bottomCards: (result.bottomCards || []).map(compactCardId),
     removedCards: (room.removedCards || []).map(compactCardId),
-    setup: jsonValue(room.setup, {}),
+    setup: {
+      ...jsonValue(room.setup, {}),
+      events: jsonValue([...(room.events || [])].reverse(), [])
+    },
     result: compactResult(result),
     trickHistory: compactTrickHistory(room.settledTrickHistory?.length ? room.settledTrickHistory : room.trickHistory),
     players
@@ -1041,6 +1052,177 @@ export async function getPlayerStatistics(accountId, seasonId = null) {
     getPlayerRelationships(database, accountId, period)
   ]);
   return { player, trend: trendResult.rows, relationships };
+}
+
+function historyTimestamp(value, label) {
+  if (!value) return null;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) throw seasonError(`${label}无效`);
+  return date.toISOString();
+}
+
+function intersectHistoryPeriod(period, from, to) {
+  const periodStart = period?.starts_at ? new Date(period.starts_at).getTime() : -Infinity;
+  const periodEnd = period?.ends_at ? new Date(period.ends_at).getTime() : Infinity;
+  const requestedStart = from ? new Date(from).getTime() : -Infinity;
+  const requestedEnd = to ? new Date(to).getTime() : Infinity;
+  const start = Math.max(periodStart, requestedStart);
+  const end = Math.min(periodEnd, requestedEnd);
+  return {
+    from: Number.isFinite(start) ? new Date(start).toISOString() : null,
+    to: Number.isFinite(end) ? new Date(end).toISOString() : null,
+    empty: start >= end
+  };
+}
+
+export async function listPlayerGames(accountId, options = {}) {
+  const database = requirePool();
+  const period = await seasonPeriod(database, options.seasonId);
+  const range = intersectHistoryPeriod(
+    period,
+    historyTimestamp(options.from, "开始时间"),
+    historyTimestamp(options.to, "结束时间")
+  );
+  if (range.empty) return [];
+  const safeLimit = Math.max(1, Math.min(100, Number(options.limit) || 50));
+  const result = await database.query(
+    `SELECT
+      game.game_id, game.room_code, game.started_at, game.finished_at,
+      game.player_count, game.call_mode_name, game.trump_suit,
+      game.threshold, game.idle_score, game.winner_team,
+      target.role, target.team, target.won, target.trick_score, target.game_score,
+      coalesce((
+        SELECT jsonb_agg(jsonb_build_object(
+          'accountId', participant.account_id,
+          'profileId', participant.profile_id,
+          'name', participant.name_snapshot,
+          'avatarUrl', participant.avatar_url_snapshot,
+          'role', participant.role,
+          'team', participant.team,
+          'won', participant.won,
+          'trickScore', participant.trick_score,
+          'gameScore', participant.game_score
+        ) ORDER BY participant.seat_index)
+        FROM cdp_game_players participant
+        WHERE participant.game_id = game.game_id
+      ), '[]'::jsonb) AS players
+    FROM cdp_game_players target
+    JOIN cdp_games game ON game.game_id = target.game_id
+    WHERE target.account_id = $1::uuid
+      AND ($2::timestamptz IS NULL OR game.finished_at >= $2::timestamptz)
+      AND ($3::timestamptz IS NULL OR game.finished_at < $3::timestamptz)
+    ORDER BY game.finished_at DESC, game.game_id DESC
+    LIMIT $4`,
+    [accountId, range.from, range.to, safeLimit]
+  );
+  return result.rows;
+}
+
+const HISTORY_SUIT_DETAILS = {
+  S: { name: "黑桃", symbol: "♠", color: "black" },
+  H: { name: "红桃", symbol: "♥", color: "red" },
+  C: { name: "草花", symbol: "♣", color: "green" },
+  D: { name: "方块", symbol: "♦", color: "red" }
+};
+
+export function historyCardFromId(cardId) {
+  if (cardId && typeof cardId === "object") return jsonValue(cardId, {});
+  const id = String(cardId || "");
+  const parts = id.split("-");
+  const deck = Number(parts[0]) || 0;
+  if (parts[1] === "JOKER") {
+    const joker = String(parts[2] || "").toLowerCase();
+    return {
+      id,
+      deck,
+      type: "joker",
+      joker,
+      color: joker === "big" ? "red" : "black",
+      rank: "JOKER",
+      label: joker === "big" ? "大王" : "小王"
+    };
+  }
+  const suit = parts[1] || "";
+  const rank = parts.slice(2).join("-") || "";
+  const detail = HISTORY_SUIT_DETAILS[suit] || { name: "", symbol: "", color: "" };
+  return {
+    id,
+    deck,
+    type: "normal",
+    suit,
+    suitName: detail.name,
+    symbol: detail.symbol,
+    color: detail.color,
+    rank,
+    label: `${detail.symbol}${rank}`
+  };
+}
+
+function expandHistoryThrow(throwData) {
+  if (!throwData) return null;
+  return {
+    ...throwData,
+    attempt: (throwData.attempt || []).map(historyCardFromId),
+    components: (throwData.components || []).map((component) => ({
+      ...component,
+      cards: (component.cards || []).map(historyCardFromId)
+    }))
+  };
+}
+
+function expandHistoryTricks(tricks) {
+  return (tricks || []).map((trick) => ({
+    ...trick,
+    plays: [...(trick.plays || [])]
+      .sort((left, right) => String(left.at || "").localeCompare(String(right.at || "")))
+      .map((play, turnIndex) => ({
+        ...play,
+        turnIndex,
+        cards: (play.cards || []).map(historyCardFromId),
+        throw: expandHistoryThrow(play.throw)
+      }))
+  }));
+}
+
+export async function getGameHistory(gameId) {
+  const result = await requirePool().query(
+    `SELECT
+      game.game_id, game.room_code, game.started_at, game.finished_at,
+      game.player_count, game.call_mode, game.call_mode_name,
+      game.banker_bid_score, game.total_game_points, game.trump_suit,
+      game.banker_room_player_id, game.dogleg_card,
+      game.threshold, game.idle_score, game.score_diff, game.winner_team,
+      game.bottom_winner_room_player_id, game.bottom_winner_team,
+      game.bottom_points, game.bottom_cards, game.removed_cards,
+      game.setup_data, game.result_data, game.trick_history,
+      coalesce(jsonb_agg(jsonb_build_object(
+        'roomPlayerId', player.room_player_id,
+        'accountId', player.account_id,
+        'profileId', player.profile_id,
+        'name', player.name_snapshot,
+        'avatarUrl', player.avatar_url_snapshot,
+        'seatIndex', player.seat_index,
+        'role', player.role,
+        'team', player.team,
+        'won', player.won,
+        'trickScore', player.trick_score,
+        'gameScore', player.game_score
+      ) ORDER BY player.seat_index) FILTER (WHERE player.room_player_id IS NOT NULL), '[]'::jsonb) AS players
+    FROM cdp_games game
+    LEFT JOIN cdp_game_players player ON player.game_id = game.game_id
+    WHERE game.game_id = $1::uuid
+    GROUP BY game.game_id`,
+    [gameId]
+  );
+  const row = result.rows[0];
+  if (!row) return null;
+  return {
+    ...row,
+    dogleg_card: row.dogleg_card ? historyCardFromId(row.dogleg_card) : null,
+    bottom_cards: (row.bottom_cards || []).map(historyCardFromId),
+    removed_cards: (row.removed_cards || []).map(historyCardFromId),
+    trick_history: expandHistoryTricks(row.trick_history)
+  };
 }
 
 export async function listRecentGames(limit = 30) {

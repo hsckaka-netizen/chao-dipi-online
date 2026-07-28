@@ -8,6 +8,7 @@ import {
   buildGameRecord,
   createStoredAccount,
   gameHistoryStatus,
+  historyCardFromId,
   isHumanOnlyGame,
   loadStoredAccounts,
   loadStoredPlayerProfiles,
@@ -170,10 +171,31 @@ test("settled game is converted to an immutable history record", () => {
   assert.equal(record.trickHistory[0].plays[0].playerName, undefined);
   assert.equal(record.result.playerResults, undefined);
   assert.equal(record.result.bottomCards, undefined);
+  assert.deepEqual(record.setup.events, []);
   assert.notEqual(record.result, room.result);
 
   room.result.playerResults[2].name = "已修改";
   assert.equal(record.players[2].name, "陈然");
+});
+
+test("compact history keeps actual play order and saved card ids can be restored", () => {
+  const room = settledRoom();
+  room.settledTrickHistory[0].plays.reverse();
+  const record = buildGameRecord(room);
+
+  assert.deepEqual(record.trickHistory[0].plays.map((play) => play.playerId), ["room-banker", "room-idle"]);
+  assert.deepEqual(historyCardFromId("2-H-10"), {
+    id: "2-H-10",
+    deck: 2,
+    type: "normal",
+    suit: "H",
+    suitName: "红桃",
+    symbol: "♥",
+    color: "red",
+    rank: "10",
+    label: "♥10"
+  });
+  assert.equal(historyCardFromId("4-JOKER-BIG").joker, "big");
 });
 
 test("leaderboard wins follow final settlement score instead of card-score team", () => {

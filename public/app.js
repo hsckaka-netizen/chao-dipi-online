@@ -63,6 +63,7 @@ let throwDraftComponents = null;
 let dragSelect = null;
 let suppressCardClickUntil = 0;
 let activeDialog = null;
+let historyFilter = "all";
 let dismissedActionDialogKey = null;
 let dismissedResultRoomId = null;
 let messageTimer = null;
@@ -94,6 +95,12 @@ let statisticsSortDirection = "desc";
 let statisticsSelectedAccountId = "";
 let statisticsPlayerDetailLoadingId = "";
 const statisticsPlayerDetails = new Map();
+const statisticsPlayerGameLists = new Map();
+const statisticsGameLogs = new Map();
+let statisticsGameDate = "";
+let statisticsPlayerGamesLoadingKey = "";
+let statisticsGameLogId = "";
+let statisticsGameLogLoadingId = "";
 const statisticsRelationshipSorts = {
   bonds: { key: "games_played", direction: "desc" },
   opponents: { key: "games_played", direction: "desc" }
@@ -1369,6 +1376,23 @@ async function playThrowDraft() {
   }
 }
 
+async function setAutoPlay(enabled) {
+  if (!session || isSpectating()) return;
+  try {
+    await roomAction(`/api/rooms/${session.roomId}/auto-play`, {
+      method: "POST",
+      body: JSON.stringify({ playerId: session.playerId, token: session.token, enabled })
+    });
+    if (enabled) {
+      selectedCardIds = new Set();
+      throwDraftComponents = null;
+    }
+    setMessage(enabled ? "已开启托管，轮到你时会从小到大自动出牌。" : "已取消托管。");
+  } catch (error) {
+    setMessage(error.message, true);
+  }
+}
+
 async function setReady(ready) {
   if (!session) return;
   try {
@@ -2062,6 +2086,30 @@ function selectionAction() {
   return null;
 }
 
+function viewerAutoPlayEnabled() {
+  return Boolean(viewerPlayer()?.autoPlayEnabled);
+}
+
+function renderAutoPlayControl() {
+  if (isSpectating() || state?.stage !== "playing") return "";
+  const enabled = viewerAutoPlayEnabled();
+  return `
+    <button
+      type="button"
+      class="secondary auto-play-toggle ${enabled ? "active" : ""}"
+      data-action="${enabled ? "auto-play-off" : "auto-play-on"}"
+      aria-pressed="${enabled ? "true" : "false"}"
+      title="${enabled ? "取消后恢复手动出牌" : "轮到你时按规则从小到大自动出牌"}"
+    >${enabled ? "取消托管" : "托管"}</button>
+  `;
+}
+
+function renderAutoPlayMark(player) {
+  return player?.autoPlayEnabled
+    ? `<span class="auto-play-mark" title="该玩家已开启自动出牌">托管中</span>`
+    : "";
+}
+
 function renderHandControls(action) {
   if (action) {
     if (action.throwMode) {
@@ -2074,6 +2122,7 @@ function renderHandControls(action) {
           <button type="button" data-action="add-throw-component" ${action.enabled ? "" : "disabled"}>加入牌型</button>
           <button type="button" data-action="confirm-throw" ${action.throwEnabled ? "" : "disabled"}>确认甩牌</button>
           <button type="button" class="secondary" data-action="cancel-throw">取消</button>
+          ${renderAutoPlayControl()}
           <span class="action-reason">${escapeHtml(reason)}</span>
         </div>
       `;
@@ -2089,6 +2138,7 @@ function renderHandControls(action) {
         <span class="tag">${selectedCardIds.size} 张已选</span>
         <button type="button" data-action="${action.action}" ${action.enabled ? "" : "disabled"}>${escapeHtml(action.label)}</button>
         ${throwButton}
+        ${renderAutoPlayControl()}
         <span class="action-reason">${escapeHtml(reason)}</span>
       </div>
     `;
@@ -2106,6 +2156,7 @@ function renderHandControls(action) {
     <div class="hand-waiting-controls">
       <span class="tag">${selectedCardIds.size} 张已选</span>
       <div class="turn-waiting">${escapeHtml(text)}</div>
+      ${renderAutoPlayControl()}
     </div>
   `;
 }
@@ -2185,6 +2236,12 @@ function renderShell(content) {
   const account = authState.account;
   const accountLabel = account?.profile?.name || account?.username || "";
   const canLeaveCurrentRoom = Boolean(session && !session.spectator && state?.status === "lobby");
+  const preservedScroll = new Map(
+    [...app.querySelectorAll("[data-preserve-scroll]")].map((element) => [
+      element.dataset.preserveScroll,
+      { top: element.scrollTop, left: element.scrollLeft }
+    ])
+  );
   app.innerHTML = `
     <div class="page">
       <header class="topbar">
@@ -2209,6 +2266,12 @@ function renderShell(content) {
       ${content}
     </div>
   `;
+  app.querySelectorAll("[data-preserve-scroll]").forEach((element) => {
+    const position = preservedScroll.get(element.dataset.preserveScroll);
+    if (!position) return;
+    element.scrollTop = position.top;
+    element.scrollLeft = position.left;
+  });
 }
 
 function renderHome() {
@@ -2590,8 +2653,14 @@ function statisticsPlayerDetailKey(accountId) {
 
 function showPlayerStatistics(accountId) {
   if (!accountId) return;
+  if (statisticsSelectedAccountId !== accountId) {
+    statisticsGameDate = "";
+    statisticsGameLogId = "";
+    historyFilter = "all";
+  }
   const detailKey = statisticsPlayerDetailKey(accountId);
   statisticsSelectedAccountId = accountId;
+  ensurePlayerGameHistory(accountId);
   if (statisticsPlayerDetails.has(detailKey) || statisticsPlayerDetailLoadingId === detailKey) {
     render();
     return;
@@ -2607,6 +2676,70 @@ function showPlayerStatistics(accountId) {
     })
     .finally(() => {
       if (statisticsPlayerDetailLoadingId === detailKey) statisticsPlayerDetailLoadingId = "";
+      render();
+    });
+}
+
+function playerGameHistoryKey(accountId, date = statisticsGameDate) {
+  return `${statisticsSeasonId}:${accountId}:${date || "all"}`;
+}
+
+function playerGameDateRange(dateText) {
+  if (!dateText) return null;
+  const start = new Date(`${dateText}T00:00:00`);
+  if (Number.isNaN(start.getTime())) return null;
+  const end = new Date(start);
+  end.setDate(end.getDate() + 1);
+  return { from: start.toISOString(), to: end.toISOString() };
+}
+
+function ensurePlayerGameHistory(accountId, force = false) {
+  if (!accountId) return;
+  const key = playerGameHistoryKey(accountId);
+  if ((!force && statisticsPlayerGameLists.has(key)) || statisticsPlayerGamesLoadingKey === key) return;
+  statisticsPlayerGamesLoadingKey = key;
+  const params = new URLSearchParams({
+    seasonId: statisticsSeasonId,
+    limit: "100"
+  });
+  const range = playerGameDateRange(statisticsGameDate);
+  if (range) {
+    params.set("from", range.from);
+    params.set("to", range.to);
+  }
+  api(`/api/history/players/${encodeURIComponent(accountId)}/games?${params.toString()}`)
+    .then((data) => {
+      statisticsPlayerGameLists.set(key, data.games || []);
+    })
+    .catch((error) => {
+      setMessage(error.message || "对局历史加载失败", true);
+    })
+    .finally(() => {
+      if (statisticsPlayerGamesLoadingKey === key) statisticsPlayerGamesLoadingKey = "";
+      render();
+    });
+}
+
+function openStoredGameHistory(gameId) {
+  if (!gameId) return;
+  statisticsGameLogId = gameId;
+  historyFilter = "all";
+  if (statisticsGameLogs.has(gameId) || statisticsGameLogLoadingId === gameId) {
+    render();
+    return;
+  }
+  statisticsGameLogLoadingId = gameId;
+  render();
+  api(`/api/history/games/${encodeURIComponent(gameId)}`)
+    .then((data) => {
+      if (data.game) statisticsGameLogs.set(gameId, data.game);
+    })
+    .catch((error) => {
+      statisticsGameLogId = "";
+      setMessage(error.message || "牌局记录加载失败", true);
+    })
+    .finally(() => {
+      if (statisticsGameLogLoadingId === gameId) statisticsGameLogLoadingId = "";
       render();
     });
 }
@@ -2720,6 +2853,52 @@ function renderPlayerRelationshipBoard(type, rows = [], loading = false) {
   `;
 }
 
+function renderPlayerGameHistorySection(accountId) {
+  const key = playerGameHistoryKey(accountId);
+  const games = statisticsPlayerGameLists.get(key) || [];
+  const loading = statisticsPlayerGamesLoadingKey === key;
+  return `
+    <section class="statistics-detail-section statistics-game-history-section">
+      <header>
+        <div>
+          <h3>对局历史</h3>
+          <span>按结束时间倒序，可查看完整牌局记录</span>
+        </div>
+        <label class="statistics-game-date-filter">
+          <span>筛选日期</span>
+          <input type="date" value="${escapeHtml(statisticsGameDate)}" data-action="filter-player-game-date">
+          ${statisticsGameDate ? `<button type="button" class="secondary compact-button" data-action="clear-player-game-date">查看全部</button>` : ""}
+        </label>
+      </header>
+      ${loading && !statisticsPlayerGameLists.has(key) ? `<div class="empty">正在读取对局历史...</div>` : games.length ? `
+        <div class="statistics-game-list">
+          ${games.map((game) => {
+            const gameScore = statisticNumber(game.game_score);
+            const teammates = (game.players || []).map((player) => player.name).filter(Boolean).join("、");
+            return `
+              <article class="statistics-game-row">
+                <div class="statistics-game-time">
+                  <strong>${escapeHtml(fmtDateTime(game.finished_at))}</strong>
+                  <span>房间 ${escapeHtml(game.room_code || "-")} · ${escapeHtml(game.call_mode_name || "")}</span>
+                </div>
+                <div class="statistics-game-result">
+                  <span class="tag ${game.won ? "good" : ""}">${game.won ? "胜" : "负"}</span>
+                  <strong>${escapeHtml(game.role || "")}</strong>
+                  <b class="${gameScore > 0 ? "positive" : gameScore < 0 ? "negative" : ""}">${escapeHtml(statisticSigned(gameScore))}</b>
+                  <small>牌分 ${escapeHtml(game.trick_score || 0)} · 闲家 ${escapeHtml(game.idle_score || 0)}/${escapeHtml(game.threshold || 0)}</small>
+                </div>
+                <div class="statistics-game-players" title="${escapeHtml(teammates)}">${escapeHtml(teammates)}</div>
+                <button type="button" class="secondary compact-button" data-action="open-stored-game-history" data-game-id="${escapeHtml(game.game_id)}">查看牌局记录</button>
+              </article>
+            `;
+          }).join("")}
+        </div>
+      ` : `<div class="empty">${statisticsGameDate ? "这一天没有已记录的牌局" : "暂无已记录的对局"}</div>`}
+    </section>
+    ${statisticsGameLogId ? renderStoredGameHistoryDialog() : ""}
+  `;
+}
+
 function renderPlayerStatisticsDetail(baseRow) {
   const detailKey = statisticsPlayerDetailKey(baseRow.account_id);
   const detail = statisticsPlayerDetails.get(detailKey);
@@ -2787,6 +2966,7 @@ function renderPlayerStatisticsDetail(baseRow) {
         ${renderPlayerRelationshipBoard("bonds", relationships.bonds || [], statisticsPlayerDetailLoadingId === detailKey)}
         ${renderPlayerRelationshipBoard("opponents", relationships.opponents || [], statisticsPlayerDetailLoadingId === detailKey)}
       </div>
+      ${renderPlayerGameHistorySection(row.account_id)}
     </div>
   `;
 }
@@ -3034,8 +3214,7 @@ function renderRoom() {
             <div class="row">
               <button type="button" data-action="copy">复制链接</button>
               <button type="button" class="secondary" data-action="open-players">玩家</button>
-              <button type="button" class="secondary" data-action="open-events">日志</button>
-              ${state.trickHistory.length || state.removedCards?.length ? `<button type="button" class="secondary" data-action="open-history">历史出牌 ${state.trickHistory.length}</button>` : ""}
+              ${state.status === "dealt" || state.events.length ? `<button type="button" class="secondary" data-action="open-history">牌局记录 ${state.trickHistory.length} 轮</button>` : ""}
               ${state.canViewKitty ? `<button type="button" class="secondary" data-action="open-kitty">查看底牌</button>` : ""}
               ${spectating ? "" : `
                 ${state.viewer.host && state.status === "lobby" ? renderCallModeToggle() : ""}
@@ -3272,7 +3451,7 @@ function renderSetupCenter() {
       ${renderSetupLines([
         { label: "控底", value: escapeHtml(fry.lastFryerName || setup.bankerName) },
         { label: "门槛", value: escapeHtml(bidText(fry.lastBid)) },
-        { label: "当前", value: `轮到 ${escapeHtml(fry.currentPlayerName)} ${setupCountdownTag(deadline)}` },
+        { label: "当前", value: `轮到 ${escapeHtml(fry.currentPlayerName)} ${setupCountdownTag(deadline, " 后自动不炒")}` },
         currentTrumpItem
       ])}
       <div class="row">
@@ -3359,7 +3538,7 @@ function renderActiveDialog() {
   if (activeDialog === "kitty" && state.canViewKitty) return renderKittyDialog();
   if (activeDialog === "history") return renderHistoryDialog();
   if (activeDialog === "players") return renderPlayersDialog();
-  if (activeDialog === "events") return renderEventsDialog();
+  if (activeDialog === "events") return renderHistoryDialog();
   if (activeDialog === "spectators") return renderSpectatorsDialog();
   if (activeDialog === "result" && state.stage === "finished") return renderResultPanel();
   return "";
@@ -3738,7 +3917,7 @@ function renderPlayTable() {
           <div class="tags">
             ${renderGameInfoTags()}
             <span class="tag accent">本局结束</span>
-            <button type="button" class="secondary compact-button" data-action="open-history">历史出牌 ${state.trickHistory.length}</button>
+            <button type="button" class="secondary compact-button" data-action="open-history">牌局记录 ${state.trickHistory.length} 轮</button>
           </div>
         </div>
         ${finalTrick
@@ -3760,7 +3939,7 @@ function renderPlayTable() {
         <div class="tags">
           ${renderGameInfoTags()}
           <span class="tag good">${escapeHtml(holdingPreviousResult ? `${turnText}，上一轮结果暂留` : turnText)}</span>
-          <button type="button" class="secondary compact-button" data-action="open-history">历史出牌 ${state.trickHistory.length}</button>
+          <button type="button" class="secondary compact-button" data-action="open-history">牌局记录 ${state.trickHistory.length} 轮</button>
         </div>
       </div>
       ${renderTrick(tableTrick, true, { heldResult: holdingPreviousResult })}
@@ -3927,7 +4106,7 @@ function renderSeatHand(action, play, trick, index, options = {}) {
           </div>
           <div class="seat-hand-profile-copy">
             <div class="seat-hand-player-line">
-              <strong><span class="seat-hand-name">${escapeHtml(play.playerName)}</span>${roleMark(play.role, play.playerId)}</strong>
+              <strong><span class="seat-hand-name">${escapeHtml(play.playerName)}</span>${roleMark(play.role, play.playerId)}${renderAutoPlayMark(roomPlayer)}</strong>
               <span class="seat-status ${escapeHtml(statusTone)}">${escapeHtml(statusText)}</span>
             </div>
           </div>
@@ -4144,6 +4323,7 @@ function renderTablePlayerSummary(play, statusText, statusTone) {
         <span class="trick-player-line">
           <strong class="trick-player-display-name">${escapeHtml(play.playerName)}</strong>
           ${roleMark(play.role, play.playerId)}
+          ${renderAutoPlayMark(player || play)}
           <span class="seat-status ${escapeHtml(statusTone)}">${escapeHtml(statusText)}</span>
         </span>
         ${renderCompactPlayerStats(play)}
@@ -4232,36 +4412,268 @@ function sideSeatInfo(index, counts) {
   return { name: "left", slot: offset };
 }
 
-function renderHistoryDialog() {
-  const history = [...(state.trickHistory || [])].reverse();
-  const removedCards = state.removedCards || [];
+function historySuitDetail(suit) {
+  return {
+    S: { name: "黑桃", symbol: "♠" },
+    H: { name: "红桃", symbol: "♥" },
+    C: { name: "草花", symbol: "♣" },
+    D: { name: "方块", symbol: "♦" }
+  }[suit] || { name: "未定", symbol: "" };
+}
+
+function historySourceFromState() {
+  const tricks = [...(state.trickHistory || [])];
+  if (state.currentTrick && (state.currentTrick.plays || []).some((play) => play.played && play.cards?.length)) {
+    tricks.push(state.currentTrick);
+  }
+  return {
+    setup: state.setup || {},
+    events: state.events || [],
+    trickHistory: tricks,
+    removedCards: state.removedCards || [],
+    trumpSuit: currentTrumpSuit(),
+    players: state.players || [],
+    finishedAt: state.result?.finishedAt || null
+  };
+}
+
+function historySourceFromStoredGame(game) {
+  return {
+    setup: game.setup_data || {},
+    events: game.setup_data?.events || [],
+    trickHistory: game.trick_history || [],
+    removedCards: game.removed_cards || [],
+    trumpSuit: game.trump_suit || null,
+    players: game.players || [],
+    finishedAt: game.finished_at || null
+  };
+}
+
+function historyPlayerName(source, playerId) {
+  const player = (source.players || []).find((item) => (item.id || item.roomPlayerId) === playerId);
+  return player?.name || "玩家";
+}
+
+function historyPlayerRole(source, playerId) {
+  const player = (source.players || []).find((item) => (item.id || item.roomPlayerId) === playerId);
+  return player?.role || "";
+}
+
+function setupHistoryEntries(source) {
+  const setup = source.setup || {};
+  const entries = [];
+  (setup.scoreBid?.history || []).forEach((action) => {
+    entries.push({
+      kind: "setup",
+      label: "叫分",
+      at: action.at || null,
+      text: `${action.playerName || historyPlayerName(source, action.playerId)} 叫到 ${action.score} 分`
+    });
+  });
+  (setup.bidHistory || []).forEach((action) => {
+    const playerName = action.playerName || historyPlayerName(source, action.playerId);
+    entries.push({
+      kind: "setup",
+      label: action.direct ? "定主" : "叫主",
+      at: action.at || null,
+      text: action.direct
+        ? `${playerName} 选择${action.suitName || historySuitDetail(action.suit).name}为主`
+        : `${playerName} ${action.random ? "被随机指定" : "亮出"}${action.count || 1}张${action.suitName || historySuitDetail(action.suit).name}2`
+    });
+  });
+  (setup.fry?.history || []).forEach((action) => {
+    entries.push({
+      kind: "fry",
+      label: "炒底",
+      at: action.at || null,
+      text: `${action.playerName || historyPlayerName(source, action.playerId)} 用 ${action.count} 张${action.suitName || historySuitDetail(action.suit).name}2 炒底`
+    });
+  });
+  return entries;
+}
+
+function timelineEventKind(text) {
+  if (/炒底|不炒/.test(text)) return "fry";
+  if (/叫分|叫主|抢主|庄家|主牌|贴底|底牌|狗腿/.test(text)) return "setup";
+  return "event";
+}
+
+function isDuplicatedPlayEvent(text) {
+  return / 第 \d+ 轮出了 /.test(text) || /^第 \d+ 轮结束：/.test(text);
+}
+
+function historyTimelineEntries(source) {
+  let sequence = 0;
+  const events = (source.events || [])
+    .filter((event) => event?.text && !isDuplicatedPlayEvent(event.text))
+    .map((event) => ({
+      kind: timelineEventKind(event.text),
+      label: timelineEventKind(event.text) === "fry" ? "炒底" : "牌局",
+      at: event.at || null,
+      text: event.text,
+      sequence: sequence += 1
+    }));
+  if (!events.length) {
+    setupHistoryEntries(source).forEach((entry) => events.push({ ...entry, sequence: sequence += 1 }));
+  }
+
+  (source.trickHistory || []).forEach((trick) => {
+    const plays = (trick.plays || [])
+      .filter((play) => play.cards?.length && play.played !== false)
+      .sort((left, right) => {
+        const leftIndex = Number.isFinite(left.turnIndex) ? left.turnIndex : Number.MAX_SAFE_INTEGER;
+        const rightIndex = Number.isFinite(right.turnIndex) ? right.turnIndex : Number.MAX_SAFE_INTEGER;
+        if (leftIndex !== rightIndex) return leftIndex - rightIndex;
+        return String(left.at || "").localeCompare(String(right.at || ""));
+      });
+    plays.forEach((play, index) => {
+      events.push({
+        kind: "play",
+        label: `第 ${trick.number} 轮 · 第 ${index + 1} 手`,
+        at: play.at || null,
+        sequence: sequence += 1,
+        playerId: play.playerId,
+        playerName: play.playerName || historyPlayerName(source, play.playerId),
+        role: play.role || historyPlayerRole(source, play.playerId),
+        cards: play.cards || [],
+        suits: uniquePlaySuits(play.cards || [], source.trumpSuit),
+        lead: index === 0 || play.lead,
+        winning: play.playerId === trick.winnerId || play.winning,
+        throwPlay: play.throwPlay || play.throw?.result === "success",
+        throwFailed: play.throwFailed || play.throw?.result === "failed",
+        trickPoints: Number(trick.points) || 0
+      });
+    });
+  });
+
+  return events.sort((left, right) => {
+    const leftAt = left.at ? new Date(left.at).getTime() : Number.MAX_SAFE_INTEGER;
+    const rightAt = right.at ? new Date(right.at).getTime() : Number.MAX_SAFE_INTEGER;
+    if (leftAt !== rightAt) return leftAt - rightAt;
+    return left.sequence - right.sequence;
+  });
+}
+
+function historyFilterOptions(source) {
+  const options = [
+    { value: "all", label: "全部" },
+    { value: "fry", label: "炒底" }
+  ];
+  if (!source.trumpSuit) return options;
+  const trump = historySuitDetail(source.trumpSuit);
+  options.push({ value: "suit:TRUMP", label: `主牌 ${trump.symbol}${trump.name}` });
+  ["S", "H", "C", "D"].filter((suit) => suit !== source.trumpSuit).forEach((suit) => {
+    const detail = historySuitDetail(suit);
+    options.push({ value: `suit:${suit}`, label: `${detail.symbol}${detail.name}` });
+  });
+  return options;
+}
+
+function filteredHistoryEntries(entries) {
+  if (historyFilter === "all") return entries;
+  if (historyFilter === "fry") return entries.filter((entry) => entry.kind === "fry");
+  if (historyFilter.startsWith("suit:")) {
+    const suit = historyFilter.slice("suit:".length);
+    return entries.filter((entry) => entry.kind === "play" && entry.suits?.includes(suit));
+  }
+  return entries;
+}
+
+function renderHistoryTimelineEntry(entry, source) {
+  if (entry.kind !== "play") {
+    return `
+      <article class="history-timeline-entry history-${escapeHtml(entry.kind)}">
+        <time>${escapeHtml(fmtTime(entry.at))}</time>
+        <div class="history-entry-body">
+          <div class="history-entry-head"><span class="tag ${entry.kind === "fry" ? "accent" : ""}">${escapeHtml(entry.label)}</span></div>
+          <p>${escapeHtml(entry.text)}</p>
+        </div>
+      </article>
+    `;
+  }
+  return `
+    <article class="history-timeline-entry history-play">
+      <time>${escapeHtml(fmtTime(entry.at))}</time>
+      <div class="history-entry-body">
+        <div class="history-entry-head">
+          <span class="tag">${escapeHtml(entry.label)}</span>
+          <strong>${escapeHtml(entry.playerName)}</strong>
+          ${entry.role ? `<span class="history-role">${escapeHtml(entry.role)}</span>` : ""}
+          ${entry.lead ? `<span class="tag lead">首家</span>` : ""}
+          ${entry.winning ? `<span class="tag good">本轮最大${entry.trickPoints ? ` · ${entry.trickPoints}分` : ""}</span>` : ""}
+          ${entry.throwPlay ? `<span class="tag accent">甩牌成功</span>` : ""}
+          ${entry.throwFailed ? `<span class="tag bad">甩牌失败</span>` : ""}
+        </div>
+        ${renderMiniCards(entry.cards, { trumpSuit: source.trumpSuit, cardSkin: "" })}
+      </div>
+    </article>
+  `;
+}
+
+function renderHistoryRecordDialog(source, options = {}) {
+  const entries = historyTimelineEntries(source);
+  const removedCards = source.removedCards || [];
+  const filters = historyFilterOptions(source);
+  if (!filters.some((option) => option.value === historyFilter)) historyFilter = "all";
+  const visibleEntries = filteredHistoryEntries(entries);
   return `
     <div class="modal-backdrop">
-      <section class="modal-card history-modal" role="dialog" aria-modal="true" aria-label="历史出牌">
+      <section class="modal-card history-modal" role="dialog" aria-modal="true" aria-label="${escapeHtml(options.title || "牌局记录")}">
         <div class="section-head">
           <div>
-            <h2>历史出牌</h2>
-            <div class="meta">${history.length} 轮${removedCards.length ? ` · 开局移除 ${removedCards.length} 张4` : ""}</div>
+            <h2>${escapeHtml(options.title || "牌局记录")}</h2>
+            <div class="meta">${escapeHtml(options.meta || `${entries.filter((entry) => entry.kind === "play").length} 次出牌 · 按发生顺序展示`)}</div>
           </div>
-          <button type="button" class="secondary compact-button" data-action="close-dialog">关闭</button>
+          <button type="button" class="secondary compact-button" data-action="${escapeHtml(options.closeAction || "close-dialog")}">关闭</button>
         </div>
-        ${removedCards.length ? `
+        <div class="history-filters" role="group" aria-label="筛选牌局记录">
+          ${filters.map((filter) => `
+            <button type="button" class="${historyFilter === filter.value ? "" : "secondary"} compact-button" data-action="filter-history" data-history-filter="${escapeHtml(filter.value)}">${escapeHtml(filter.label)}</button>
+          `).join("")}
+        </div>
+        ${removedCards.length && historyFilter === "all" ? `
           <div class="history-removed-cards">
             <div class="section-head compact">
               <h3>开局移除的4</h3>
-              <span class="tag">底牌保持 6 张</span>
+              <span class="tag">${removedCards.length} 张</span>
             </div>
-            <div class="kitty-cards">${sortCardsForPlay(removedCards).map(renderStaticCard).join("")}</div>
+            <div class="kitty-cards">${sortCardsForPlay(removedCards, source.trumpSuit).map(renderStaticCard).join("")}</div>
           </div>
         ` : ""}
-        ${history.length ? `
-          <div class="history">
-            ${history.map((trick) => renderTrick(trick, false)).join("")}
+        ${visibleEntries.length ? `
+          <div class="history-timeline" data-preserve-scroll="${escapeHtml(options.scrollKey || "live-game-history")}">
+            ${visibleEntries.map((entry) => renderHistoryTimelineEntry(entry, source)).join("")}
           </div>
-        ` : `<div class="empty">本局还没有完成的历史轮。</div>`}
+        ` : `<div class="empty">${historyFilter === "all" ? "本局还没有记录" : "没有符合当前筛选的记录"}</div>`}
       </section>
     </div>
   `;
+}
+
+function renderHistoryDialog() {
+  return renderHistoryRecordDialog(historySourceFromState());
+}
+
+function renderStoredGameHistoryDialog() {
+  if (statisticsGameLogLoadingId === statisticsGameLogId && !statisticsGameLogs.has(statisticsGameLogId)) {
+    return `
+      <div class="modal-backdrop">
+        <section class="modal-card history-modal" role="dialog" aria-modal="true" aria-label="牌局记录">
+          <div class="section-head"><h2>牌局记录</h2><button type="button" class="secondary compact-button" data-action="close-stored-game-history">关闭</button></div>
+          <div class="empty">正在读取牌局记录...</div>
+        </section>
+      </div>
+    `;
+  }
+  const game = statisticsGameLogs.get(statisticsGameLogId);
+  if (!game) return "";
+  const trump = historySuitDetail(game.trump_suit);
+  return renderHistoryRecordDialog(historySourceFromStoredGame(game), {
+    title: `牌局记录 · ${fmtDateTime(game.finished_at)}`,
+    meta: `房间 ${game.room_code || "-"} · 主牌 ${trump.symbol}${trump.name} · 闲家 ${game.idle_score}/${game.threshold} 分`,
+    closeAction: "close-stored-game-history",
+    scrollKey: `stored-game-history-${game.game_id}`
+  });
 }
 
 function renderPlayer(player) {
@@ -4277,6 +4689,7 @@ function renderPlayer(player) {
         <div class="tags">
           ${player.host ? `<span class="tag accent">房主</span>` : ""}
           ${player.test ? `<span class="tag">机器人</span>` : ""}
+          ${player.autoPlayEnabled ? `<span class="tag auto-play-mark">托管中</span>` : ""}
           ${state.status === "lobby" ? `<span class="tag ${player.ready ? "good" : ""}">${player.ready ? "已准备" : "未准备"}</span>` : ""}
           ${isTurn ? `<span class="tag good">出牌</span>` : ""}
           ${isSetupTurn || isBankerAction ? `<span class="tag good">操作</span>` : ""}
@@ -4354,8 +4767,7 @@ function sortCardsForGroup(groupId, cards) {
   });
 }
 
-function sortCardsForPlay(cards) {
-  const trumpSuit = currentTrumpSuit();
+function sortCardsForPlay(cards, trumpSuit = currentTrumpSuit()) {
   const suitOrder = { TRUMP: 0, S: 1, H: 2, C: 3, D: 4, JOKER: 5 };
   return [...cards].sort((a, b) => {
     const aSuit = playSuit(a, trumpSuit);
@@ -4545,7 +4957,7 @@ function playedCardEffectClass(play, card, trickNumber) {
 
 function renderMiniCards(cards, options = {}) {
   if (!cards.length) return `<div class="meta">未出牌</div>`;
-  const sortedCards = sortCardsForPlay(cards);
+  const sortedCards = sortCardsForPlay(cards, options.trumpSuit ?? currentTrumpSuit());
   const skin = options.cardSkin
     ?? options.play?.cardSkin
     ?? (options.play?.playerId ? cardSkinForPlayer(options.play.playerId) : viewerCardSkin());
@@ -4763,6 +5175,14 @@ document.addEventListener("submit", (event) => {
 });
 
 document.addEventListener("change", (event) => {
+  const gameDateTarget = event.target.closest('[data-action="filter-player-game-date"]');
+  if (gameDateTarget) {
+    statisticsGameDate = gameDateTarget.value || "";
+    statisticsGameLogId = "";
+    ensurePlayerGameHistory(statisticsSelectedAccountId, true);
+    render();
+    return;
+  }
   const target = event.target.closest('[data-action="select-statistics-season"]');
   if (!target) return;
   const nextSeasonId = target.value || "all";
@@ -4770,6 +5190,8 @@ document.addEventListener("change", (event) => {
   if (!valid || nextSeasonId === statisticsSeasonId) return;
   statisticsSeasonId = nextSeasonId;
   statisticsSelectedAccountId = "";
+  statisticsGameDate = "";
+  statisticsGameLogId = "";
   playerStatisticsRows = [];
   playerStatisticsLoaded = false;
   ensurePlayerStatistics(true);
@@ -4860,6 +5282,22 @@ document.addEventListener("click", (event) => {
   }
   if (action === "back-statistics") {
     statisticsSelectedAccountId = "";
+    statisticsGameDate = "";
+    statisticsGameLogId = "";
+    render();
+  }
+  if (action === "clear-player-game-date") {
+    statisticsGameDate = "";
+    statisticsGameLogId = "";
+    ensurePlayerGameHistory(statisticsSelectedAccountId);
+    render();
+  }
+  if (action === "open-stored-game-history") {
+    openStoredGameHistory(event.target.closest("[data-game-id]")?.dataset.gameId || "");
+  }
+  if (action === "close-stored-game-history") {
+    statisticsGameLogId = "";
+    historyFilter = "all";
     render();
   }
   if (action === "quick-create-room") createRoom();
@@ -4911,6 +5349,8 @@ document.addEventListener("click", (event) => {
   }
   if (action === "dogleg-selected") chooseDoglegSelectedCard();
   if (action === "play-selected") playSelectedCards();
+  if (action === "auto-play-on") setAutoPlay(true);
+  if (action === "auto-play-off") setAutoPlay(false);
   if (action === "enter-throw") enterThrowMode();
   if (action === "add-throw-component") addSelectedThrowComponent();
   if (action === "remove-throw-component") {
@@ -4925,6 +5365,7 @@ document.addEventListener("click", (event) => {
     render();
   }
   if (action === "open-history") {
+    historyFilter = "all";
     activeDialog = "history";
     render();
   }
@@ -4937,7 +5378,15 @@ document.addEventListener("click", (event) => {
     render();
   }
   if (action === "open-events") {
-    activeDialog = "events";
+    historyFilter = "all";
+    activeDialog = "history";
+    render();
+  }
+  if (action === "filter-history") {
+    const nextFilter = event.target.closest("[data-history-filter]")?.dataset.historyFilter || "all";
+    historyFilter = nextFilter;
+    const timeline = app.querySelector(".history-timeline");
+    if (timeline) timeline.scrollTop = 0;
     render();
   }
   if (action === "open-result") {
