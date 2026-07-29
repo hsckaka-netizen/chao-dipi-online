@@ -1,0 +1,4 @@
+interface:
+  display_name: "提交给代码发布"
+  short_description: "汇总已完成需求的改动、检查和风险，交由代码发布任务统一完成上线"
+  default_prompt: "使用 $submit-to-code-release 将当前已完成改动提交给代码发布任务统一发布。"
