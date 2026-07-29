@@ -13,6 +13,7 @@ import { SHOP_RULES_VERSION, shopProductIdFromPath } from "./shop-and-items.js";
 
 const { Pool } = pg;
 const RULES_VERSION = "2026-07-29";
+const ADMIN_DIAMOND_GRANT_RULES_VERSION = "2026-07-29-admin-grant-v1";
 const MIGRATIONS = [
   {
     version: 1,
@@ -810,6 +811,94 @@ export async function updateShopProduct(productId, body, administratorId) {
   if (Object.hasOwn(body || {}, "isListed")) update.isListed = body.isListed;
   const [updated] = await updateShopProducts([update], administratorId);
   return updated;
+}
+
+export async function grantDiamondsByAdmin(administratorId, accountId, amountValue, requestIdValue, noteValue = "") {
+  const amount = Number(amountValue);
+  if (!Number.isInteger(amount) || amount <= 0 || amount > 1_000_000) {
+    throw commerceError("单次发放钻石必须是 1 至 1000000 的整数");
+  }
+  const note = String(noteValue || "").trim();
+  if (note.length > 160) throw commerceError("发放备注不能超过 160 个字符");
+  const requestId = normalizedRequestId(requestIdValue);
+  const idempotencyKey = `admin_grant:${requestId}`;
+  const database = requirePool();
+  const client = await database.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [idempotencyKey]);
+    const existing = await client.query(
+      `SELECT account_id, amount, balance_after, detail, created_at
+       FROM cdp_diamond_ledger
+       WHERE idempotency_key = $1`,
+      [idempotencyKey]
+    );
+    if (existing.rows[0]) {
+      const row = existing.rows[0];
+      if (row.account_id !== accountId || Number(row.amount) !== amount) {
+        throw commerceError("请求编号已用于其他钻石发放", 409);
+      }
+      await client.query("COMMIT");
+      return {
+        repeated: true,
+        accountId: row.account_id,
+        amount: Number(row.amount),
+        balanceAfter: Number(row.balance_after),
+        note: row.detail?.note || "",
+        createdAt: row.created_at ? new Date(row.created_at).toISOString() : null
+      };
+    }
+
+    await client.query(
+      `INSERT INTO cdp_diamond_wallets (account_id)
+       VALUES ($1::uuid)
+       ON CONFLICT (account_id) DO NOTHING`,
+      [accountId]
+    );
+    const wallet = await client.query(
+      `UPDATE cdp_diamond_wallets
+       SET balance = balance + $2,
+           lifetime_earned = lifetime_earned + $2,
+           updated_at = now()
+       WHERE account_id = $1::uuid
+       RETURNING balance`,
+      [accountId, amount]
+    );
+    const balanceAfter = Number(wallet.rows[0]?.balance) || 0;
+    const detail = { administratorId, requestId, note };
+    const inserted = await client.query(
+      `INSERT INTO cdp_diamond_ledger (
+        account_id, amount, balance_after, reason,
+        rules_version, idempotency_key, detail
+      ) VALUES ($1::uuid, $2, $3, 'admin_grant', $4, $5, $6::jsonb)
+      RETURNING created_at`,
+      [
+        accountId,
+        amount,
+        balanceAfter,
+        ADMIN_DIAMOND_GRANT_RULES_VERSION,
+        idempotencyKey,
+        JSON.stringify(detail)
+      ]
+    );
+    await client.query("COMMIT");
+    return {
+      repeated: false,
+      accountId,
+      amount,
+      balanceAfter,
+      note,
+      createdAt: inserted.rows[0]?.created_at
+        ? new Date(inserted.rows[0].created_at).toISOString()
+        : null
+    };
+  } catch (error) {
+    await client.query("ROLLBACK");
+    rememberError(error);
+    throw error;
+  } finally {
+    client.release();
+  }
 }
 
 export async function grantCosmeticEntitlement(administratorId, accountId, productId, requestIdValue, reason = "") {

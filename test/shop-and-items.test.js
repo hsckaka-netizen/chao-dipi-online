@@ -105,6 +105,9 @@ test("server and browser expose the shop, self-equipped cosmetics, and game-item
   assert.match(serverSource, /updateShopProducts\(body\.products, admin\.id\)/);
   assert.match(serverSource, /pathParts\[2\] === "cosmetics" && pathParts\[3\] === "grants"/);
   assert.match(appSource, /data-action="show-shop"/);
+  assert.match(appSource, /data-action="show-inventory"/);
+  assert.match(appSource, /function renderInventoryPage/);
+  assert.match(appSource, /预占中/);
   assert.match(appSource, /data-form="own-cosmetics"/);
   assert.match(appSource, /data-form="save-shop-products"/);
   assert.match(appSource, /data-form="save-seasons"/);

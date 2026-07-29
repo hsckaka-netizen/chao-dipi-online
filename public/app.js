@@ -47,6 +47,12 @@ const CARD_SKIN_OPTIONS = [
   { value: "paladin", label: "圣光骑士（魔兽圣骑士主题）" },
   { value: "vip-legend", label: "至尊星耀 VIP（动态）" }
 ];
+const CONSUMABLE_ITEM_FALLBACKS = Object.freeze([
+  { assetKey: "restart-card", name: "重开卡", description: "作废当前牌局并立即重新洗牌发牌。" },
+  { assetKey: "war-god-card", name: "战神卡", description: "本局原始积分翻倍，额外积分由最终对方阵营承担。" },
+  { assetKey: "colorful-card", name: "缤纷卡", description: "随机改变炒底阶段四种花色 2 的压制顺序。" },
+  { assetKey: "luck-card", name: "牌运卡", description: "本局头像展示牌运之神的庇佑效果。" }
+]);
 const AVATAR_FRAME_VALUES = new Set(AVATAR_FRAME_OPTIONS.map((option) => option.value));
 const CARD_SKIN_VALUES = new Set(CARD_SKIN_OPTIONS.map((option) => option.value));
 const storageKey = "chaoDipiOnlineSession";
@@ -632,7 +638,7 @@ function ensureShopState(force = false) {
       if (authState.account?.id !== account.id) return;
       shopStateLoading = false;
       shopState = { unavailable: true, products: [], entitlements: {}, inventory: {} };
-      if (homeView === "shop") setMessage(error.message || "商城暂不可用", true);
+      if (homeView === "shop" || homeView === "inventory") setMessage(error.message || "商城与背包暂不可用", true);
       render();
     });
 }
@@ -1478,6 +1484,52 @@ async function grantShopCosmetic(event) {
     render();
   } catch (error) {
     setMessage(error.message, true);
+  }
+}
+
+async function grantAdminDiamonds(event) {
+  event.preventDefault();
+  const formEl = event.target.closest("form");
+  const form = new FormData(formEl);
+  const accountId = String(form.get("accountId") || "");
+  const amount = Number(form.get("amount"));
+  const note = String(form.get("note") || "").trim();
+  const accountLabel = formEl.querySelector('[name="accountId"]')?.selectedOptions?.[0]?.textContent?.trim() || "该玩家";
+  if (!accountId || !Number.isInteger(amount) || amount <= 0) {
+    return setMessage("请选择玩家并填写正确的钻石数量。", true);
+  }
+  if (!window.confirm(`确认给 ${accountLabel} 发放 ${amount} 钻石吗？发放后会立即到账并写入流水。`)) return;
+  const signature = JSON.stringify({ accountId, amount, note });
+  if (formEl.dataset.grantSignature !== signature) {
+    formEl.dataset.grantSignature = signature;
+    formEl.dataset.requestId = requestId();
+  }
+  setModuleSaveState(formEl, true);
+  try {
+    const result = await api("/api/admin/diamonds/grants", {
+      method: "POST",
+      body: JSON.stringify({
+        accountId,
+        amount,
+        note,
+        requestId: formEl.dataset.requestId
+      })
+    });
+    const grant = result.grant || {};
+    setMessage(
+      grant.repeated
+        ? `该笔发放已经处理，玩家当前余额为 ${grant.balanceAfter || 0} 钻石。`
+        : `已向 ${result.account?.profile?.name || result.account?.username || accountLabel} 发放 ${grant.amount || amount} 钻石，余额 ${grant.balanceAfter || 0}。`,
+      false
+    );
+    formEl.reset();
+    delete formEl.dataset.grantSignature;
+    delete formEl.dataset.requestId;
+    render();
+  } catch (error) {
+    setMessage(error.message, true);
+  } finally {
+    setModuleSaveState(formEl, false);
   }
 }
 
@@ -2825,12 +2877,14 @@ function renderHome() {
   if (homeView === "account") return renderAccountSettings();
   if (homeView === "admin" || homeView === "players") return renderProfileManager();
   if (homeView === "shop") return renderShopPage();
+  if (homeView === "inventory") return renderInventoryPage();
   renderShell(`
     <section class="home-toolbar">
       <div class="segmented home-tabs" role="tablist" aria-label="首页模块">
         <button type="button" class="${homeView === "rooms" ? "active" : "secondary"}" data-action="show-rooms">房间</button>
         <button type="button" class="${homeView === "stats" ? "active" : "secondary"}" data-action="show-statistics">数据</button>
         ${authState.account?.role === "player" ? `<button type="button" class="secondary" data-action="show-shop">钻石商城</button>` : ""}
+        ${authState.account?.role === "player" ? `<button type="button" class="secondary" data-action="show-inventory">背包</button>` : ""}
       </div>
       ${homeView === "rooms" ? `
         <div class="home-room-actions">
@@ -3709,6 +3763,91 @@ function renderShopPage() {
   `);
 }
 
+function backpackConsumables() {
+  const productsByItemId = new Map([
+    ...CONSUMABLE_ITEM_FALLBACKS.map((item, index) => [item.assetKey, {
+      ...item,
+      productType: "consumable_item",
+      sortOrder: 100 + index
+    }]),
+    ...(shopState?.products || [])
+      .filter((product) => product.productType === "consumable_item")
+      .map((product) => [product.assetKey, product])
+  ]);
+  return Object.entries(shopState?.inventory || {}).map(([itemId, inventory]) => {
+    const available = Number(inventory?.available || 0);
+    const reserved = Number(inventory?.reserved || 0);
+    const product = productsByItemId.get(itemId) || {
+      assetKey: itemId,
+      name: itemId,
+      description: "已拥有的对局道具。",
+      productType: "consumable_item",
+      sortOrder: 999
+    };
+    return { ...product, available, reserved };
+  }).filter((item) => item.available > 0 || item.reserved > 0)
+    .sort((left, right) => Number(left.sortOrder || 0) - Number(right.sortOrder || 0));
+}
+
+function renderBackpackItem(item) {
+  return `
+    <article class="game-item-row backpack-item">
+      ${shopProductPreview(item)}
+      <div>
+        <strong>${escapeHtml(item.name)}</strong>
+        <p>${escapeHtml(item.description || "")}</p>
+        ${item.isListed === false ? `<span class="tag">已下架 · 已拥有仍可使用</span>` : ""}
+      </div>
+      <div class="backpack-item-counts">
+        <span class="tag good">可用 ${escapeHtml(item.available)}</span>
+        ${item.reserved ? `<span class="tag accent">预占中 ${escapeHtml(item.reserved)}</span>` : ""}
+      </div>
+    </article>
+  `;
+}
+
+function renderInventoryPage() {
+  if (authState.account?.role !== "player") {
+    homeView = "rooms";
+    return renderHome();
+  }
+  ensureShopState();
+  const items = backpackConsumables();
+  const availableCount = items.reduce((total, item) => total + item.available, 0);
+  const reservedCount = items.reduce((total, item) => total + item.reserved, 0);
+  renderShell(`
+    <section class="shop-hero panel">
+      <div>
+        <span class="eyebrow">PLAYER INVENTORY</span>
+        <h2>我的背包</h2>
+        <p>查看已拥有的对局道具卡。预占中的卡会在牌局自然结束时消耗，房间重置或解散时返还。</p>
+      </div>
+      <div class="shop-balance"><span>当前卡片</span><strong>${escapeHtml(availableCount)} 可用${reservedCount ? ` · ${escapeHtml(reservedCount)} 预占` : ""}</strong></div>
+      <button type="button" class="secondary compact-button" data-action="show-rooms">返回房间</button>
+    </section>
+    ${shopStateLoading && !shopState
+      ? `<section class="panel"><div class="empty">正在读取背包...</div></section>`
+      : shopState?.unavailable
+        ? `<section class="panel"><div class="empty">背包暂不可用，请稍后再试。</div></section>`
+        : `
+          <section class="panel stack">
+            <div class="section-head">
+              <div><h2>对局道具卡</h2><div class="meta">与未来的英雄卡系统相互独立；符合牌局条件时可在叫庄结束前使用。</div></div>
+              <span class="tag">${items.length} 种</span>
+            </div>
+            <div class="game-items-list">
+              ${items.map(renderBackpackItem).join("") || `
+                <div class="empty">
+                  背包里还没有对局道具卡。
+                  <button type="button" data-action="show-shop">前往钻石商城</button>
+                </div>
+              `}
+            </div>
+          </section>
+        `}
+  `);
+}
+
 function renderManagedAccount(account) {
   const profileName = account.profile?.name || "未绑定玩家";
   return `
@@ -3813,6 +3952,24 @@ function renderAdminShopManager() {
   `;
 }
 
+function renderAdminDiamondGrant() {
+  const accounts = (adminData?.accounts || []).filter((account) => account.role === "player");
+  return `
+    <section class="panel stack admin-diamond-grant">
+      <div class="section-head">
+        <div><h2>钻石发放</h2><div class="meta">选择玩家并发放钻石；到账后不可在后台直接撤回，每笔操作都会写入钻石流水。</div></div>
+      </div>
+      <form class="shop-grant-form admin-diamond-grant-form" data-form="grant-diamonds">
+        <div><strong>给玩家发放钻石</strong><span class="meta">单次可发放 1～1000000 钻石。</span></div>
+        <label>玩家<select name="accountId" required><option value="">选择玩家</option>${accounts.map((account) => `<option value="${escapeHtml(account.id)}">${escapeHtml(account.profile?.name || account.username)}（${escapeHtml(account.username)}）</option>`).join("")}</select></label>
+        <label>数量<input name="amount" type="number" min="1" max="1000000" step="1" required placeholder="输入钻石数量"></label>
+        <label>备注<input name="note" maxlength="160" placeholder="可选，例如：活动奖励"></label>
+        <button type="submit" data-module-save ${accounts.length ? "" : "disabled"}>发放钻石</button>
+      </form>
+    </section>
+  `;
+}
+
 function renderProfileManager() {
   if (authState.account?.role !== "admin") {
     homeView = "login";
@@ -3840,6 +3997,8 @@ function renderProfileManager() {
     ${renderSeasonManager()}
 
     ${renderAdminShopManager()}
+
+    ${renderAdminDiamondGrant()}
 
     <section class="panel stack admin-account-create">
       <div class="section-head">
@@ -4417,13 +4576,7 @@ function renderGameItemsDialog() {
     product.productType === "consumable_item"
     && (product.isListed || Number(shopState?.inventory?.[product.assetKey]?.available || 0) > 0)
   );
-  const fallback = [
-    { assetKey: "restart-card", name: "重开卡", description: "作废当前牌局并立即重新洗牌发牌。" },
-    { assetKey: "war-god-card", name: "战神卡", description: "本局原始积分翻倍，额外积分由最终对方阵营承担。" },
-    { assetKey: "colorful-card", name: "缤纷卡", description: "随机改变炒底阶段四种花色 2 的压制顺序。" },
-    { assetKey: "luck-card", name: "牌运卡", description: "本局头像展示牌运之神的庇佑效果。" }
-  ];
-  const items = catalog.length ? catalog : fallback;
+  const items = catalog.length ? catalog : CONSUMABLE_ITEM_FALLBACKS;
   const uses = state.gameItems?.uses || [];
   const viewerId = state.viewer?.id;
   return `
@@ -6306,6 +6459,7 @@ document.addEventListener("submit", (event) => {
   if (form.dataset.form === "save-shop-products") return saveShopProducts(event);
   if (form.dataset.form === "save-profiles") return saveManagedProfiles(event);
   if (form.dataset.form === "grant-cosmetic") return grantShopCosmetic(event);
+  if (form.dataset.form === "grant-diamonds") return grantAdminDiamonds(event);
 });
 
 document.addEventListener("change", (event) => {
@@ -6386,6 +6540,11 @@ document.addEventListener("click", (event) => {
   }
   if (action === "show-shop") {
     homeView = "shop";
+    homeJoinOpen = false;
+    render();
+  }
+  if (action === "show-inventory") {
+    homeView = "inventory";
     homeJoinOpen = false;
     render();
   }

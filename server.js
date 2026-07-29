@@ -41,6 +41,7 @@ import { createStatePatch } from "./public/state-patch.js";
 import {
   gameHistoryStatus,
   consumeGameItemUses,
+  grantDiamondsByAdmin,
   getPlayerShopState,
   getDiamondWallet,
   getGameHistory,
@@ -4389,6 +4390,19 @@ async function handleApi(req, res, pathParts, url) {
         products: await listShopProducts({ includeUnlisted: true }),
         accounts: [...accounts.values()].filter((account) => account.role === "player").map(publicAccount)
       });
+    }
+    if (pathParts[2] === "diamonds" && pathParts[3] === "grants" && pathParts.length === 4 && req.method === "POST") {
+      const body = await readJson(req);
+      const target = accounts.get(String(body.accountId || ""));
+      if (!target || target.role !== "player") return writeJson(res, 404, { error: "玩家账号不存在" });
+      const grant = await grantDiamondsByAdmin(
+        admin.id,
+        target.id,
+        body.amount,
+        body.requestId,
+        body.note
+      );
+      return writeJson(res, 200, { grant, account: publicAccount(target) });
     }
     if (pathParts[2] === "shop" && pathParts.length === 3 && req.method === "PATCH") {
       const body = await readJson(req);

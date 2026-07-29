@@ -5629,6 +5629,13 @@ button.auto-play-toggle.active {
   margin: 3px 0 7px;
 }
 
+.backpack-item-counts {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
 .colorful-order {
   margin-bottom: 12px;
   padding: 10px 12px;
@@ -5734,6 +5741,10 @@ button.auto-play-toggle.active {
   .game-item-row .shop-item-preview {
     width: 52px;
     height: 56px;
+  }
+
+  .backpack-item-counts {
+    justify-content: flex-start;
   }
 
   .lucky-deity-mark small {

@@ -143,3 +143,19 @@ test("diamond migration defines wallets, per-game rewards, and idempotent ledger
   assert.match(migration, /CREATE TABLE IF NOT EXISTS cdp_diamond_ledger/);
   assert.match(migration, /idempotency_key varchar\(160\) NOT NULL UNIQUE/);
 });
+
+test("administrator diamond grants are idempotent and recorded in the wallet ledger", async () => {
+  const [historySource, serverSource, appSource] = await Promise.all([
+    readFile(fileURLToPath(new URL("../game-history.js", import.meta.url)), "utf8"),
+    readFile(fileURLToPath(new URL("../server.js", import.meta.url)), "utf8"),
+    readFile(fileURLToPath(new URL("../public/app.js", import.meta.url)), "utf8")
+  ]);
+
+  assert.match(historySource, /export async function grantDiamondsByAdmin/);
+  assert.match(historySource, /pg_advisory_xact_lock/);
+  assert.match(historySource, /'admin_grant'/);
+  assert.match(historySource, /lifetime_earned = lifetime_earned \+ \$2/);
+  assert.match(serverSource, /pathParts\[2\] === "diamonds" && pathParts\[3\] === "grants"/);
+  assert.match(appSource, /data-form="grant-diamonds"/);
+  assert.match(appSource, /发放后会立即到账并写入流水/);
+});
