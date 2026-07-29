@@ -309,7 +309,7 @@ function syncCardSelectionForState() {
     const routeCardIds = hand
       .filter((card) => playSuit(card) === lead.suit)
       .map((card) => card.id);
-    if (routeCardIds.length < lead.count) {
+    if (routeCardIds.length <= lead.count) {
       const requiredIds = new Set(routeCardIds);
       nextSelection = [
         ...routeCardIds,
