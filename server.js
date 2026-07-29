@@ -69,6 +69,7 @@ import {
   saveStoredTauntPreset,
   saveStoredPlayerProfile,
   updateShopProduct,
+  updateShopProducts,
   updateStoredAccount
 } from "./game-history.js";
 import {
@@ -4384,6 +4385,14 @@ async function handleApi(req, res, pathParts, url) {
       return writeJson(res, 200, adminTauntsPayload());
     }
     if (pathParts[2] === "shop" && pathParts.length === 3 && req.method === "GET") {
+      return writeJson(res, 200, {
+        products: await listShopProducts({ includeUnlisted: true }),
+        accounts: [...accounts.values()].filter((account) => account.role === "player").map(publicAccount)
+      });
+    }
+    if (pathParts[2] === "shop" && pathParts.length === 3 && req.method === "PATCH") {
+      const body = await readJson(req);
+      await updateShopProducts(body.products, admin.id);
       return writeJson(res, 200, {
         products: await listShopProducts({ includeUnlisted: true }),
         accounts: [...accounts.values()].filter((account) => account.role === "player").map(publicAccount)

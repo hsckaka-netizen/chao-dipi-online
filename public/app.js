@@ -872,14 +872,26 @@ async function createManagedAccount(event) {
   }
 }
 
-function tauntPayloadFromForm(formEl) {
-  const form = new FormData(formEl);
+function tauntPayloadFromContainer(container) {
   return {
-    text: form.get("text"),
-    enabled: form.get("enabled") === "on",
-    availableToAll: form.get("availableToAll") === "on",
-    accountIds: form.getAll("accountIds")
+    text: container.querySelector('input[name="text"]')?.value || "",
+    enabled: Boolean(container.querySelector('input[name="enabled"]')?.checked),
+    availableToAll: Boolean(container.querySelector('input[name="availableToAll"]')?.checked),
+    accountIds: [...container.querySelectorAll('input[name="accountIds"]:checked:not(:disabled)')].map((input) => input.value)
   };
+}
+
+function setModuleSaveState(formEl, saving) {
+  const button = formEl?.querySelector("[data-module-save]");
+  if (!button) return;
+  if (saving) {
+    button.dataset.idleLabel = button.textContent;
+    button.textContent = "保存中…";
+    button.disabled = true;
+    return;
+  }
+  button.textContent = button.dataset.idleLabel || "保存";
+  button.disabled = false;
 }
 
 async function createManagedTaunt(event) {
@@ -888,7 +900,7 @@ async function createManagedTaunt(event) {
   try {
     adminTaunts = await api("/api/admin/taunts", {
       method: "POST",
-      body: JSON.stringify(tauntPayloadFromForm(formEl))
+      body: JSON.stringify(tauntPayloadFromContainer(formEl))
     });
     formEl.reset();
     syncTauntAudienceInputs(formEl);
@@ -899,19 +911,27 @@ async function createManagedTaunt(event) {
   }
 }
 
-async function saveManagedTaunt(event) {
+async function saveManagedTaunts(event) {
   event.preventDefault();
   const formEl = event.target.closest("form");
-  const tauntId = formEl.dataset.tauntId || "";
+  const rows = [...formEl.querySelectorAll("[data-taunt-id]")];
+  if (!rows.length) return setMessage("暂无可保存的嘲讽词。", true);
+  setModuleSaveState(formEl, true);
   try {
-    adminTaunts = await api(`/api/admin/taunts/${encodeURIComponent(tauntId)}`, {
-      method: "PATCH",
-      body: JSON.stringify(tauntPayloadFromForm(formEl))
-    });
-    setMessage("嘲讽词设置已保存。", false);
+    let latest = adminTaunts;
+    for (const row of rows) {
+      latest = await api(`/api/admin/taunts/${encodeURIComponent(row.dataset.tauntId || "")}`, {
+        method: "PATCH",
+        body: JSON.stringify(tauntPayloadFromContainer(row))
+      });
+    }
+    adminTaunts = latest;
+    setMessage(`已统一保存 ${rows.length} 条嘲讽词设置。`, false);
     render();
   } catch (error) {
     setMessage(error.message, true);
+  } finally {
+    setModuleSaveState(formEl, false);
   }
 }
 
@@ -967,32 +987,61 @@ async function resetManagedPassword(event) {
   }
 }
 
+function seasonPayloadFromContainer(container) {
+  const startsAt = String(container.querySelector('[name="startsAt"]')?.value || "");
+  const endsAt = String(container.querySelector('[name="endsAt"]')?.value || "");
+  return {
+    name: container.querySelector('[name="name"]')?.value || "",
+    startsAt: startsAt ? new Date(startsAt).toISOString() : "",
+    endsAt: endsAt ? new Date(endsAt).toISOString() : null,
+    isActive: Boolean(container.querySelector('[name="isActive"]')?.checked)
+  };
+}
+
 async function saveSeasonForm(event) {
   event.preventDefault();
   const formEl = event.target.closest("form");
-  const form = new FormData(formEl);
-  const seasonId = formEl.dataset.seasonId || "";
-  const startsAt = String(form.get("startsAt") || "");
-  const endsAt = String(form.get("endsAt") || "");
   try {
-    const data = await api(seasonId ? `/api/admin/seasons/${encodeURIComponent(seasonId)}` : "/api/admin/seasons", {
-      method: seasonId ? "PATCH" : "POST",
-      body: JSON.stringify({
-        name: form.get("name"),
-        startsAt: startsAt ? new Date(startsAt).toISOString() : "",
-        endsAt: endsAt ? new Date(endsAt).toISOString() : null,
-        isActive: form.get("isActive") === "on"
-      })
+    const data = await api("/api/admin/seasons", {
+      method: "POST",
+      body: JSON.stringify(seasonPayloadFromContainer(formEl))
     });
     statisticsSeasons = data.seasons || [];
     statisticsSeasonsLoaded = true;
     playerStatisticsLoaded = false;
     statisticsPlayerDetails.clear();
-    if (!seasonId) formEl.reset();
-    setMessage(seasonId ? "赛季设置已更新。" : "赛季已创建。", false);
+    formEl.reset();
+    setMessage("赛季已创建。", false);
     render();
   } catch (error) {
     setMessage(error.message, true);
+  }
+}
+
+async function saveManagedSeasons(event) {
+  event.preventDefault();
+  const formEl = event.target.closest("form");
+  const rows = [...formEl.querySelectorAll("[data-season-id]")];
+  if (!rows.length) return setMessage("暂无可保存的赛季。", true);
+  setModuleSaveState(formEl, true);
+  try {
+    let data = { seasons: statisticsSeasons };
+    for (const row of rows) {
+      data = await api(`/api/admin/seasons/${encodeURIComponent(row.dataset.seasonId || "")}`, {
+        method: "PATCH",
+        body: JSON.stringify(seasonPayloadFromContainer(row))
+      });
+    }
+    statisticsSeasons = data.seasons || [];
+    statisticsSeasonsLoaded = true;
+    playerStatisticsLoaded = false;
+    statisticsPlayerDetails.clear();
+    setMessage(`已统一保存 ${rows.length} 个赛季设置。`, false);
+    render();
+  } catch (error) {
+    setMessage(error.message, true);
+  } finally {
+    setModuleSaveState(formEl, false);
   }
 }
 
@@ -1297,34 +1346,48 @@ async function leaveSpectating() {
   setMessage("已退出观战。");
 }
 
-async function updateProfile(event) {
+async function saveManagedProfiles(event) {
   event.preventDefault();
   const formEl = event.target.closest("form");
-  const profileId = formEl?.dataset.profileId;
-  const form = new FormData(formEl);
+  const rows = [...formEl.querySelectorAll("[data-profile-id]")];
+  const changedRows = rows.filter((row) => {
+    const name = row.querySelector('[name="name"]')?.value || "";
+    const playEffect = row.querySelector('[name="playEffect"]')?.value || "";
+    const avatar = row.querySelector('[name="avatar"]')?.files?.[0];
+    return name !== (row.dataset.originalName || "")
+      || playEffect !== (row.dataset.originalPlayEffect || "")
+      || Boolean(avatar?.size);
+  });
+  if (!changedRows.length) return setMessage("玩家资料没有需要保存的修改。", false);
+  setModuleSaveState(formEl, true);
   try {
-    await api(`/api/players/${encodeURIComponent(profileId)}`, {
-      method: "PUT",
-      body: JSON.stringify({
-        name: form.get("name"),
-        playEffect: form.get("playEffect")
-      })
-    });
-    const avatarFile = form.get("avatar");
-    if (avatarFile instanceof File && avatarFile.size) {
-      const avatarDataUrl = await prepareAvatarDataUrl(avatarFile);
-      await api(`/api/admin/profiles/${encodeURIComponent(profileId)}/avatar`, {
-        method: "POST",
-        body: JSON.stringify({ avatarDataUrl })
+    for (const row of changedRows) {
+      const profileId = row.dataset.profileId || "";
+      await api(`/api/players/${encodeURIComponent(profileId)}`, {
+        method: "PUT",
+        body: JSON.stringify({
+          name: row.querySelector('[name="name"]')?.value || "",
+          playEffect: row.querySelector('[name="playEffect"]')?.value || ""
+        })
       });
+      const avatarFile = row.querySelector('[name="avatar"]')?.files?.[0];
+      if (avatarFile?.size) {
+        const avatarDataUrl = await prepareAvatarDataUrl(avatarFile);
+        await api(`/api/admin/profiles/${encodeURIComponent(profileId)}/avatar`, {
+          method: "POST",
+          body: JSON.stringify({ avatarDataUrl })
+        });
+      }
     }
     adminData = await api("/api/admin/accounts");
     profiles = adminData.profiles || [];
     profilesLoaded = true;
-    setMessage("玩家资料已保存。", false);
+    setMessage(`已统一保存 ${changedRows.length} 位玩家的资料。`, false);
     render();
   } catch (error) {
     setMessage(error.message, true);
+  } finally {
+    setModuleSaveState(formEl, false);
   }
 }
 
@@ -1365,19 +1428,33 @@ async function saveOwnCosmetics(event) {
   }
 }
 
-async function saveShopProduct(event) {
+async function saveShopProducts(event) {
   event.preventDefault();
   const formEl = event.target.closest("form");
-  const form = new FormData(formEl);
+  const changes = [...formEl.querySelectorAll("[data-product-id]")].map((row) => ({
+    productId: row.dataset.productId || "",
+    price: Number(row.querySelector('[name="price"]')?.value),
+    isListed: Boolean(row.querySelector('[name="isListed"]')?.checked),
+    originalPrice: Number(row.dataset.originalPrice),
+    originalListed: row.dataset.originalListed === "true"
+  })).filter((product) =>
+    product.price !== product.originalPrice || product.isListed !== product.originalListed
+  );
+  if (!changes.length) return setMessage("商品设置没有需要保存的修改。", false);
+  setModuleSaveState(formEl, true);
   try {
-    adminShop = await api(`/api/admin/shop/${encodeURIComponent(formEl.dataset.productId || "")}`, {
+    adminShop = await api("/api/admin/shop", {
       method: "PATCH",
-      body: JSON.stringify({ price: Number(form.get("price")), isListed: form.get("isListed") === "on" })
+      body: JSON.stringify({
+        products: changes.map(({ productId, price, isListed }) => ({ productId, price, isListed }))
+      })
     });
-    setMessage("商品设置已保存。", false);
+    setMessage(`已统一保存 ${changes.length} 项商品修改。`, false);
     render();
   } catch (error) {
     setMessage(error.message, true);
+  } finally {
+    setModuleSaveState(formEl, false);
   }
 }
 
@@ -2250,8 +2327,18 @@ function patternKey(card, trumpSuit = currentTrumpSuit()) {
   return `${playSuit(card, trumpSuit)}:${patternValue(card, trumpSuit)}`;
 }
 
-function bidBeats(current, next) {
-  const suitStrength = { D: 0, C: 1, H: 2, S: 3 };
+function currentFrySuitStrength() {
+  const order = state?.gameItems?.frySuitOrder;
+  if (!Array.isArray(order) || order.length !== 4 || new Set(order).size !== 4) return null;
+  return Object.fromEntries(order.map((suit, index) => [suit, order.length - index - 1]));
+}
+
+function colorfulFryOrderText() {
+  const names = state?.gameItems?.frySuitOrderNames;
+  return Array.isArray(names) && names.length === 4 ? names.join(" ＞ ") : "";
+}
+
+function bidBeats(current, next, suitStrength = { D: 0, C: 1, H: 2, S: 3 }) {
   if (!current) return next.count >= 1;
   if (current.direct) return next.count >= 2;
   if (current.count === 1) return next.count >= 2;
@@ -2273,7 +2360,8 @@ function validateBidLikeSelection(type) {
 
   const bid = { count: cards.length, suit: suits[0] };
   const current = type === "bid" ? state.setup?.bid : type === "fry" ? state.setup?.fry?.lastBid : null;
-  if (!bidBeats(current, bid)) {
+  const frySuitStrength = type === "fry" ? currentFrySuitStrength() : null;
+  if (!bidBeats(current, bid, frySuitStrength || undefined)) {
     if (current?.direct) return { ok: false, reason: "定主后首轮炒底至少需要 2 张同花色 2" };
     if (current?.count === 1) return { ok: false, reason: "当前是 1 张叫主，至少 2 张 2 才能抢" };
     return { ok: false, reason: `需要比 ${bidText(current)} 更大` };
@@ -3641,15 +3729,26 @@ function renderManagedAccount(account) {
 
 function renderSeasonForm(season = null) {
   const seasonId = season?.season_id ? String(season.season_id) : "";
+  if (season) {
+    return `
+      <div class="season-form" data-season-id="${escapeHtml(seasonId)}">
+        <label>赛季名称<input name="name" required maxlength="64" value="${escapeHtml(season.name || "")}"></label>
+        <label>开始时间<input name="startsAt" type="datetime-local" required value="${escapeHtml(dateTimeLocalValue(season.starts_at))}"></label>
+        <label>结束时间<input name="endsAt" type="datetime-local" value="${escapeHtml(dateTimeLocalValue(season.ends_at))}"></label>
+        <label class="season-active-field"><input name="isActive" type="checkbox" data-action="season-active" ${season.is_active ? "checked" : ""}><span>设为当前赛季</span></label>
+        <div class="season-form-action"><span class="tag ${season.is_active ? "good" : ""}">${season.is_active ? "当前赛季" : seasonDateRange(season)}</span></div>
+      </div>
+    `;
+  }
   return `
-    <form class="season-form ${season ? "" : "season-create-form"}" data-form="save-season" data-season-id="${escapeHtml(seasonId)}">
-      <label>赛季名称<input name="name" required maxlength="64" value="${escapeHtml(season?.name || "")}" placeholder="例如 2026 夏季赛"></label>
-      <label>开始时间<input name="startsAt" type="datetime-local" required value="${escapeHtml(dateTimeLocalValue(season?.starts_at || new Date()))}"></label>
-      <label>结束时间<input name="endsAt" type="datetime-local" value="${escapeHtml(dateTimeLocalValue(season?.ends_at))}"></label>
-      <label class="season-active-field"><input name="isActive" type="checkbox" ${season?.is_active ? "checked" : ""}><span>设为当前赛季</span></label>
+    <form class="season-form season-create-form" data-form="save-season">
+      <label>赛季名称<input name="name" required maxlength="64" value="" placeholder="例如 2026 夏季赛"></label>
+      <label>开始时间<input name="startsAt" type="datetime-local" required value="${escapeHtml(dateTimeLocalValue(new Date()))}"></label>
+      <label>结束时间<input name="endsAt" type="datetime-local" value=""></label>
+      <label class="season-active-field"><input name="isActive" type="checkbox"><span>设为当前赛季</span></label>
       <div class="season-form-action">
-        ${season ? `<span class="tag ${season.is_active ? "good" : ""}">${season.is_active ? "当前赛季" : seasonDateRange(season)}</span>` : `<span class="meta">结束时间可留空</span>`}
-        <button type="submit" class="${season ? "secondary" : ""}">${season ? "保存" : "创建赛季"}</button>
+        <span class="meta">结束时间可留空</span>
+        <button type="submit">创建赛季</button>
       </div>
     </form>
   `;
@@ -3662,11 +3761,14 @@ function renderSeasonManager() {
         <div><h2>赛季管理</h2><div class="meta">排行榜按牌局结束时间归入赛季；调整时间不会修改原始牌局记录。</div></div>
       </div>
       ${renderSeasonForm()}
-      <div class="season-list">
-        ${statisticsSeasonsLoaded
-          ? statisticsSeasons.map((season) => renderSeasonForm(season)).join("") || `<div class="empty">暂无赛季，先创建一个赛季。</div>`
-          : `<div class="empty">正在读取赛季...</div>`}
-      </div>
+      <form class="module-settings-form" data-form="save-seasons">
+        <div class="season-list">
+          ${statisticsSeasonsLoaded
+            ? statisticsSeasons.map((season) => renderSeasonForm(season)).join("") || `<div class="empty">暂无赛季，先创建一个赛季。</div>`
+            : `<div class="empty">正在读取赛季...</div>`}
+        </div>
+        <div class="module-save-actions"><button type="submit" data-module-save ${statisticsSeasons.length ? "" : "disabled"}>统一保存赛季设置</button></div>
+      </form>
     </section>
   `;
 }
@@ -3682,16 +3784,23 @@ function renderAdminShopManager() {
         <span class="tag">${products.filter((product) => product.isListed).length}/${products.length} 上架</span>
       </div>
       ${adminShopLoading && !adminShop ? `<div class="empty">正在读取商品...</div>` : `
-        <div class="shop-admin-products">
-          ${products.map((product) => `
-            <form class="shop-admin-product" data-form="save-shop-product" data-product-id="${escapeHtml(product.id)}">
-              <div><strong>${escapeHtml(product.name)}</strong><span>${product.productType === "consumable_item" ? "对局道具" : product.productType === "avatar_frame" ? "头像框" : "牌面边框"}</span></div>
-              <label>价格<input name="price" type="number" min="1" step="1" required value="${escapeHtml(product.price)}"></label>
-              <label class="check-label"><input name="isListed" type="checkbox" ${product.isListed ? "checked" : ""}>上架</label>
-              <button type="submit" class="secondary compact-button">保存</button>
-            </form>
-          `).join("") || `<div class="empty">暂无商品。</div>`}
-        </div>
+        <form class="module-settings-form" data-form="save-shop-products">
+          <div class="shop-admin-products">
+            ${products.map((product) => `
+              <div
+                class="shop-admin-product"
+                data-product-id="${escapeHtml(product.id)}"
+                data-original-price="${escapeHtml(product.price)}"
+                data-original-listed="${product.isListed ? "true" : "false"}"
+              >
+                <div><strong>${escapeHtml(product.name)}</strong><span>${product.productType === "consumable_item" ? "对局道具" : product.productType === "avatar_frame" ? "头像框" : "牌面边框"}</span></div>
+                <label>价格<input name="price" type="number" min="1" step="1" required value="${escapeHtml(product.price)}"></label>
+                <label class="check-label"><input name="isListed" type="checkbox" ${product.isListed ? "checked" : ""}>上架</label>
+              </div>
+            `).join("") || `<div class="empty">暂无商品。</div>`}
+          </div>
+          <div class="module-save-actions"><button type="submit" data-module-save ${products.length ? "" : "disabled"}>统一保存商品设置</button></div>
+        </form>
         <form class="shop-grant-form" data-form="grant-cosmetic">
           <div><strong>直接发放皮肤</strong><span class="meta">只增加永久拥有权，不替玩家修改当前装备。</span></div>
           <label>玩家<select name="accountId" required><option value="">选择玩家</option>${accounts.filter((account) => account.role === "player").map((account) => `<option value="${escapeHtml(account.id)}">${escapeHtml(account.profile?.name || account.username)}（${escapeHtml(account.username)}）</option>`).join("")}</select></label>
@@ -3757,9 +3866,12 @@ function renderProfileManager() {
       <div class="section-head">
         <div><h2>玩家资料</h2><div class="meta">昵称、头像和出牌特效由管理员管理；皮肤由管理员发放，玩家在钻石商城中自行装备。</div></div>
       </div>
-      <div class="profile-list">
-        ${managedProfiles.length ? managedProfiles.map(renderProfileRow).join("") : `<div class="empty">暂无玩家。</div>`}
-      </div>
+      <form class="module-settings-form" data-form="save-profiles">
+        <div class="profile-list">
+          ${managedProfiles.length ? managedProfiles.map(renderProfileRow).join("") : `<div class="empty">暂无玩家。</div>`}
+        </div>
+        <div class="module-save-actions"><button type="submit" data-module-save ${managedProfiles.length ? "" : "disabled"}>统一保存玩家资料</button></div>
+      </form>
     </section>
   `);
 }
@@ -3792,11 +3904,14 @@ function renderTauntManager() {
           </div>
           ${renderTauntAudienceControls(null, accounts)}
         </form>
-        <div class="taunt-admin-list">
-          ${taunts.length
-            ? taunts.map((taunt) => renderTauntAdminRow(taunt, accounts)).join("")
-            : `<div class="empty">暂无嘲讽词，可以先添加一条。</div>`}
-        </div>
+        <form class="module-settings-form" data-form="save-taunts">
+          <div class="taunt-admin-list">
+            ${taunts.length
+              ? taunts.map((taunt) => renderTauntAdminRow(taunt, accounts)).join("")
+              : `<div class="empty">暂无嘲讽词，可以先添加一条。</div>`}
+          </div>
+          <div class="module-save-actions"><button type="submit" data-module-save ${taunts.length ? "" : "disabled"}>统一保存嘲讽词设置</button></div>
+        </form>
       `}
     </section>
   `;
@@ -3838,7 +3953,7 @@ function renderTauntAudienceControls(taunt, accounts) {
 
 function renderTauntAdminRow(taunt, accounts) {
   return `
-    <form class="taunt-admin-card" data-form="save-taunt" data-taunt-id="${escapeHtml(taunt.id)}">
+    <div class="taunt-admin-card" data-taunt-id="${escapeHtml(taunt.id)}">
       <div class="taunt-admin-head">
         <label class="taunt-text-field">
           嘲讽词
@@ -3849,7 +3964,6 @@ function renderTauntAdminRow(taunt, accounts) {
           启用
         </label>
         <div class="taunt-admin-actions">
-          <button type="submit">保存</button>
           <button
             type="button"
             class="secondary danger"
@@ -3859,13 +3973,18 @@ function renderTauntAdminRow(taunt, accounts) {
         </div>
       </div>
       ${renderTauntAudienceControls(taunt, accounts)}
-    </form>
+    </div>
   `;
 }
 
 function renderProfileRow(profile) {
   return `
-    <form class="profile-row" data-form="update-profile" data-profile-id="${escapeHtml(profile.id)}">
+    <div
+      class="profile-row"
+      data-profile-id="${escapeHtml(profile.id)}"
+      data-original-name="${escapeHtml(profile.name)}"
+      data-original-play-effect="${escapeHtml(profile.playEffect || "")}"
+    >
       ${avatarHtml(profile.name, profile.avatarUrl, "normal", profile.avatarFrame)}
       <div class="profile-fields">
         <label>
@@ -3886,9 +4005,8 @@ function renderProfileRow(profile) {
       </div>
       <div class="profile-row-actions">
         ${profile.account ? `<span class="tag ${profile.account.enabled ? "good" : ""}">${escapeHtml(profile.account.username)}</span>` : `<span class="tag">未绑定账号</span>`}
-        <button type="submit" class="secondary">保存</button>
       </div>
-    </form>
+    </div>
   `;
 }
 
@@ -4101,6 +4219,10 @@ function renderSetupCenter() {
   const setup = state.setup || {};
   const stage = state.stage;
   let body = "";
+  const colorfulOrder = colorfulFryOrderText();
+  const colorfulOrderItem = colorfulOrder
+    ? { label: "缤纷顺序（大 → 小）", value: escapeHtml(colorfulOrder) }
+    : null;
   const currentTrumpItem = setup.currentTrumpSuitName
     ? { label: "当前主牌", value: escapeHtml(setup.currentTrumpSuitName) }
     : null;
@@ -4167,6 +4289,7 @@ function renderSetupCenter() {
       ${renderSetupLines([
         { label: "控底", value: escapeHtml(fry.lastFryerName || setup.bankerName) },
         { label: "门槛", value: escapeHtml(bidText(fry.lastBid)) },
+        colorfulOrderItem,
         { label: "当前", value: `轮到 ${escapeHtml(fry.currentPlayerName)} ${setupCountdownTag(deadline, " 后自动不炒")}` },
         currentTrumpItem
       ])}
@@ -4183,6 +4306,7 @@ function renderSetupCenter() {
       ${renderSetupLines([
         { label: "炒底玩家", value: escapeHtml(fry.currentPlayerName) },
         { label: "贴底", value: `选择 ${escapeHtml(state.kittySize)} 张` },
+        colorfulOrderItem,
         currentTrumpItem
       ])}
     `;
@@ -4309,7 +4433,7 @@ function renderGameItemsDialog() {
           <div><h2>对局道具</h2><div class="meta">只有全员登录的真人局可用；每位玩家每局同一道具限用一次。</div></div>
           <button type="button" class="secondary compact-button" data-action="close-dialog">关闭</button>
         </div>
-        ${state.gameItems?.frySuitOrderNames?.length ? `<div class="colorful-order">缤纷卡顺序：<strong>${state.gameItems.frySuitOrderNames.map(escapeHtml).join(" ＞ ")}</strong></div>` : ""}
+        ${colorfulFryOrderText() ? `<div class="colorful-order">缤纷卡顺序（大 → 小）：<strong>${escapeHtml(colorfulFryOrderText())}</strong></div>` : ""}
         <div class="game-items-list">
           ${items.map((item) => {
             const count = Number(shopState?.inventory?.[item.assetKey]?.available || 0);
@@ -4653,6 +4777,7 @@ function renderResultPanel() {
 function renderBidFryDialog(type) {
   const isBid = type === "bid";
   const title = isBid ? (state.setup?.bid ? "抢主" : "叫主") : "炒底";
+  const colorfulOrder = isBid ? "" : colorfulFryOrderText();
   const validation = validateBidLikeSelection(type);
   const currentBid = isBid ? state.setup?.bid : state.setup?.fry?.lastBid;
   const twoCards = sortCardsForGroup("rank", (state.hand || []).filter(isTwoCard));
@@ -4671,6 +4796,7 @@ function renderBidFryDialog(type) {
           </div>
           <button type="button" class="secondary compact-button" data-action="close-dialog">关闭</button>
         </div>
+        ${colorfulOrder ? `<div class="colorful-order">花色 2 大小（大 → 小）：<strong>${escapeHtml(colorfulOrder)}</strong></div>` : ""}
         <div class="choice-panel">
           <div class="choice-title">
             <strong>我的 2</strong>
@@ -6167,26 +6293,36 @@ document.addEventListener("submit", (event) => {
   if (!form) return;
   if (form.dataset.form === "create") return createRoom(event);
   if (form.dataset.form === "join") return joinRoom(event);
-  if (form.dataset.form === "update-profile") return updateProfile(event);
   if (form.dataset.form === "account-login") return loginAccount(event);
   if (form.dataset.form === "change-password") return changeAccountPassword(event);
   if (form.dataset.form === "own-avatar") return uploadOwnAvatar(event);
   if (form.dataset.form === "own-cosmetics") return saveOwnCosmetics(event);
   if (form.dataset.form === "create-account") return createManagedAccount(event);
   if (form.dataset.form === "create-taunt") return createManagedTaunt(event);
-  if (form.dataset.form === "save-taunt") return saveManagedTaunt(event);
+  if (form.dataset.form === "save-taunts") return saveManagedTaunts(event);
   if (form.dataset.form === "reset-password") return resetManagedPassword(event);
   if (form.dataset.form === "save-season") return saveSeasonForm(event);
-  if (form.dataset.form === "save-shop-product") return saveShopProduct(event);
+  if (form.dataset.form === "save-seasons") return saveManagedSeasons(event);
+  if (form.dataset.form === "save-shop-products") return saveShopProducts(event);
+  if (form.dataset.form === "save-profiles") return saveManagedProfiles(event);
   if (form.dataset.form === "grant-cosmetic") return grantShopCosmetic(event);
 });
 
 document.addEventListener("change", (event) => {
   const tauntAudienceTarget = event.target.closest('[data-action="taunt-all-users"]');
   if (tauntAudienceTarget) {
-    const formEl = tauntAudienceTarget.closest("form");
-    syncTauntAudienceInputs(formEl);
-    formEl?.querySelector(".taunt-account-grid")?.classList.toggle("is-disabled", tauntAudienceTarget.checked);
+    const cardEl = tauntAudienceTarget.closest(".taunt-admin-card");
+    syncTauntAudienceInputs(cardEl);
+    cardEl?.querySelector(".taunt-account-grid")?.classList.toggle("is-disabled", tauntAudienceTarget.checked);
+    return;
+  }
+  const seasonActiveTarget = event.target.closest('[data-action="season-active"]');
+  if (seasonActiveTarget) {
+    if (seasonActiveTarget.checked) {
+      seasonActiveTarget.closest("form")?.querySelectorAll('[data-action="season-active"]').forEach((input) => {
+        if (input !== seasonActiveTarget) input.checked = false;
+      });
+    }
     return;
   }
   const gameDateTarget = event.target.closest('[data-action="filter-player-game-date"]');

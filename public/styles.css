@@ -2352,6 +2352,18 @@ button.joinable-room-player.spectate-player {
   gap: 10px;
 }
 
+.module-settings-form {
+  display: grid;
+  gap: 12px;
+}
+
+.module-save-actions {
+  display: flex;
+  justify-content: flex-end;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+
 .admin-account-create {
   margin-bottom: 14px;
 }
@@ -5543,7 +5555,7 @@ button.auto-play-toggle.active {
 .shop-admin-product {
   min-width: 0;
   display: grid;
-  grid-template-columns: minmax(140px, 1fr) 84px auto auto;
+  grid-template-columns: minmax(140px, 1fr) 84px auto;
   align-items: end;
   gap: 10px;
   padding: 10px 12px;
@@ -5713,6 +5725,10 @@ button.auto-play-toggle.active {
   .shop-product-grid,
   .shop-admin-products {
     grid-template-columns: 1fr;
+  }
+
+  .module-save-actions button {
+    width: 100%;
   }
 
   .game-item-row .shop-item-preview {

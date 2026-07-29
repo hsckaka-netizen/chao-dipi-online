@@ -9,7 +9,7 @@ import {
   DIAMOND_REWARD_RULES,
   isDiamondEligibleGame
 } from "./diamond-rewards.js";
-import { SHOP_RULES_VERSION } from "./shop-and-items.js";
+import { SHOP_RULES_VERSION, shopProductIdFromPath } from "./shop-and-items.js";
 
 const { Pool } = pg;
 const RULES_VERSION = "2026-07-29";
@@ -733,40 +733,68 @@ export async function purchaseShopProduct(accountId, productId, requestIdValue) 
   }
 }
 
-export async function updateShopProduct(productId, body, administratorId) {
+function normalizedShopProductUpdate(update) {
+  const productId = shopProductIdFromPath(update?.productId ?? update?.id);
+  if (!productId) throw commerceError("商品编号不能为空", 400);
+  return {
+    productId,
+    hasPrice: Object.hasOwn(update || {}, "price"),
+    price: update?.price,
+    hasIsListed: Object.hasOwn(update || {}, "isListed"),
+    isListed: update?.isListed
+  };
+}
+
+export async function updateShopProducts(updates, administratorId) {
+  const normalizedUpdates = (Array.isArray(updates) ? updates : []).map(normalizedShopProductUpdate);
+  if (!normalizedUpdates.length) throw commerceError("没有需要保存的商品", 400);
+  const duplicatedId = normalizedUpdates.find((update, index) =>
+    normalizedUpdates.findIndex((item) => item.productId === update.productId) !== index
+  )?.productId;
+  if (duplicatedId) throw commerceError("商品不能重复提交", 400);
+
   const database = requirePool();
   const client = await database.connect();
   try {
     await client.query("BEGIN");
-    const currentResult = await client.query(
-      `SELECT product_id, product_type, asset_key, name, description,
-              price, is_listed, sort_order, updated_at
-       FROM cdp_shop_products
-       WHERE product_id = $1
-       FOR UPDATE`,
-      [String(productId || "")]
-    );
-    const current = currentResult.rows[0];
-    if (!current) throw commerceError("商品不存在", 404);
-    const price = Object.hasOwn(body || {}, "price") ? Number(body.price) : Number(current.price);
-    if (!Number.isInteger(price) || price <= 0) throw commerceError("商品价格必须是大于零的整数");
-    const isListed = Object.hasOwn(body || {}, "isListed") ? Boolean(body.isListed) : Boolean(current.is_listed);
-    const updated = await client.query(
-      `UPDATE cdp_shop_products
-       SET price = $2, is_listed = $3, updated_by = $4::uuid, updated_at = now()
-       WHERE product_id = $1
-       RETURNING product_id, product_type, asset_key, name, description,
-                 price, is_listed, sort_order, updated_at`,
-      [current.product_id, price, isListed, administratorId]
-    );
-    await client.query(
-      `INSERT INTO cdp_shop_product_audit (
-        product_id, admin_account_id, before_data, after_data
-      ) VALUES ($1, $2::uuid, $3::jsonb, $4::jsonb)`,
-      [current.product_id, administratorId, JSON.stringify(current), JSON.stringify(updated.rows[0])]
-    );
+    const updatedProducts = [];
+    for (const update of normalizedUpdates) {
+      const currentResult = await client.query(
+        `SELECT product_id, product_type, asset_key, name, description,
+                price, is_listed, sort_order, updated_at
+         FROM cdp_shop_products
+         WHERE product_id = $1
+         FOR UPDATE`,
+        [update.productId]
+      );
+      const current = currentResult.rows[0];
+      if (!current) throw commerceError("商品不存在", 404);
+      const price = update.hasPrice ? Number(update.price) : Number(current.price);
+      if (!Number.isInteger(price) || price <= 0) throw commerceError("商品价格必须是大于零的整数");
+      const isListed = update.hasIsListed ? Boolean(update.isListed) : Boolean(current.is_listed);
+      const changed = Number(current.price) !== price || Boolean(current.is_listed) !== isListed;
+      if (!changed) {
+        updatedProducts.push(publicShopProduct(current));
+        continue;
+      }
+      const updated = await client.query(
+        `UPDATE cdp_shop_products
+         SET price = $2, is_listed = $3, updated_by = $4::uuid, updated_at = now()
+         WHERE product_id = $1
+         RETURNING product_id, product_type, asset_key, name, description,
+                   price, is_listed, sort_order, updated_at`,
+        [current.product_id, price, isListed, administratorId]
+      );
+      await client.query(
+        `INSERT INTO cdp_shop_product_audit (
+          product_id, admin_account_id, before_data, after_data
+        ) VALUES ($1, $2::uuid, $3::jsonb, $4::jsonb)`,
+        [current.product_id, administratorId, JSON.stringify(current), JSON.stringify(updated.rows[0])]
+      );
+      updatedProducts.push(publicShopProduct(updated.rows[0]));
+    }
     await client.query("COMMIT");
-    return publicShopProduct(updated.rows[0]);
+    return updatedProducts;
   } catch (error) {
     await client.query("ROLLBACK");
     rememberError(error);
@@ -774,6 +802,14 @@ export async function updateShopProduct(productId, body, administratorId) {
   } finally {
     client.release();
   }
+}
+
+export async function updateShopProduct(productId, body, administratorId) {
+  const update = { productId };
+  if (Object.hasOwn(body || {}, "price")) update.price = body.price;
+  if (Object.hasOwn(body || {}, "isListed")) update.isListed = body.isListed;
+  const [updated] = await updateShopProducts([update], administratorId);
+  return updated;
 }
 
 export async function grantCosmeticEntitlement(administratorId, accountId, productId, requestIdValue, reason = "") {

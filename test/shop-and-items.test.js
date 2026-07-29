@@ -102,11 +102,24 @@ test("server and browser expose the shop, self-equipped cosmetics, and game-item
   assert.match(serverSource, /pathParts\[1\] === "cosmetics"/);
   assert.match(serverSource, /pathParts\[3\] === "item-use"/);
   assert.match(serverSource, /refundOrphanedGameItemUses/);
+  assert.match(serverSource, /updateShopProducts\(body\.products, admin\.id\)/);
   assert.match(serverSource, /pathParts\[2\] === "cosmetics" && pathParts\[3\] === "grants"/);
   assert.match(appSource, /data-action="show-shop"/);
   assert.match(appSource, /data-form="own-cosmetics"/);
-  assert.match(appSource, /data-form="save-shop-product"/);
+  assert.match(appSource, /data-form="save-shop-products"/);
+  assert.match(appSource, /data-form="save-seasons"/);
+  assert.match(appSource, /data-form="save-taunts"/);
+  assert.match(appSource, /data-form="save-profiles"/);
+  assert.match(appSource, /统一保存商品设置/);
+  assert.match(appSource, /body: JSON\.stringify\(\{\s*products: changes\.map/);
+  assert.doesNotMatch(appSource, /data-form="save-shop-product"/);
+  assert.doesNotMatch(appSource, /data-form="save-taunt"/);
+  assert.doesNotMatch(appSource, /data-form="update-profile"/);
   assert.match(appSource, /牌运之神庇佑着你/);
+  assert.match(appSource, /function currentFrySuitStrength/);
+  assert.match(appSource, /label: "缤纷顺序（大 → 小）"/);
+  assert.match(appSource, /花色 2 大小（大 → 小）/);
+  assert.match(appSource, /bidBeats\(current, bid, frySuitStrength \|\| undefined\)/);
 
   const adminProfileUpdate = serverSource.slice(
     serverSource.indexOf('if (pathParts[1] === "players")'),
