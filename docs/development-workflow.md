@@ -4,10 +4,13 @@
 
 - 每项可独立验收、提交和回滚的需求使用一个新任务。
 - 在 Codex 中优先从本 Git 项目创建独立 Worktree。
+- 新 Worktree 根据 `.codex/environments/environment.toml` 自动执行 `npm ci`。
 - 开始时只读 `AGENTS.md`、`docs/project-memory.md` 和本需求对应的模块文档。
 - 先搜索定位，再读取相关代码片段；不默认读取全部大文件、历史任务或无关设计稿。
 - 保持需求范围，保留其他任务和用户已有改动，不做无关重构。
 - 需求任务不得直接推送 `main` 或部署。
+
+Codex 顶部快捷操作已配置为：启动本地服务、语法检查、完整测试。
 
 ## 分级验收
 
