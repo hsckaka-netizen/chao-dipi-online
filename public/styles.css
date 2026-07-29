@@ -4854,6 +4854,60 @@ button.auto-play-toggle.active {
     padding: 8px 10px;
   }
 
+  .table-center.setup-center {
+    left: auto;
+    top: auto;
+    bottom: auto;
+    width: 100%;
+    min-width: 0;
+    max-width: none;
+    transform: none;
+    justify-items: stretch;
+  }
+
+  .table-center.setup-center .setup-center-content {
+    width: 100%;
+    min-width: 0;
+    justify-items: stretch;
+  }
+
+  .setup-stage-score-bidding .setup-lines {
+    width: 100%;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 6px;
+  }
+
+  .setup-stage-score-bidding .setup-lines span {
+    min-width: 0;
+    justify-content: center;
+    white-space: normal;
+  }
+
+  .setup-stage-score-bidding .setup-lines span:first-child {
+    grid-column: 1 / -1;
+  }
+
+  .setup-stage-score-bidding .setup-center-content > .row {
+    width: 100%;
+    min-width: 0;
+    display: block;
+  }
+
+  .setup-stage-score-bidding .score-bid-actions {
+    width: 100%;
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 6px;
+  }
+
+  .setup-stage-score-bidding .score-bid-actions button {
+    width: 100%;
+    min-width: 0;
+    min-height: 40px;
+    padding: 0 6px;
+  }
+
   .finished-table .table-center.result-center {
     position: static;
     display: grid;

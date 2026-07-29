@@ -3553,7 +3553,6 @@ function scoreBidActionButtons() {
   }
   return `
     <span class="score-bid-actions">
-      ${countdown}
       <button type="button" data-action="score-bid-10">+10</button>
       <button type="button" data-action="score-bid-20">+20</button>
       <button type="button" data-action="score-bid-30">+30</button>
