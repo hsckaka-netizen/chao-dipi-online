@@ -920,7 +920,7 @@ async function createManagedTaunt(event) {
 async function saveManagedTaunts(event) {
   event.preventDefault();
   const formEl = event.target.closest("form");
-  const rows = [...formEl.querySelectorAll("[data-taunt-id]")];
+  const rows = [...formEl.querySelectorAll("[data-taunt-row]")];
   if (!rows.length) return setMessage("暂无可保存的嘲讽词。", true);
   setModuleSaveState(formEl, true);
   try {
@@ -4112,7 +4112,7 @@ function renderTauntAudienceControls(taunt, accounts) {
 
 function renderTauntAdminRow(taunt, accounts) {
   return `
-    <div class="taunt-admin-card" data-taunt-id="${escapeHtml(taunt.id)}">
+    <div class="taunt-admin-card" data-taunt-row data-taunt-id="${escapeHtml(taunt.id)}">
       <div class="taunt-admin-head">
         <label class="taunt-text-field">
           嘲讽词

@@ -91,3 +91,12 @@ test("admin taunt routes cover create, update, delete, and player filtering", as
   assert.match(source, /availableTauntPresets\(tauntPresets, viewer\?\.accountId/);
   assert.match(source, /tauntAvailableToAccount\(preset, player\.accountId/);
 });
+
+test("batch taunt saves only collect taunt rows, not delete buttons", async () => {
+  const appPath = fileURLToPath(new URL("../public/app.js", import.meta.url));
+  const source = await readFile(appPath, "utf8");
+
+  assert.match(source, /querySelectorAll\("\[data-taunt-row\]"\)/);
+  assert.match(source, /class="taunt-admin-card" data-taunt-row data-taunt-id=/);
+  assert.doesNotMatch(source, /querySelectorAll\("\[data-taunt-id\]"\)/);
+});
