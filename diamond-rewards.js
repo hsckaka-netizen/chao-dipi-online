@@ -100,7 +100,7 @@ export function attachDiamondRewards(room) {
     const roomPlayer = roomPlayers.get(playerResult.playerId);
     const playerEligible = isDiamondEligiblePlayer(room, roomPlayer);
     const calculated = calculateDiamondReward({
-      gameScore: playerResult.gameScore,
+      gameScore: playerResult.baseGameScore ?? playerResult.gameScore,
       tags: playerResult.evaluationTags
     });
     playerResult.diamondReward = playerEligible

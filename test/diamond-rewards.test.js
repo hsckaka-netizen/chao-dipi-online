@@ -86,6 +86,25 @@ test("only unique logged-in human accounts are diamond eligible", () => {
   assert.equal(isDiamondEligibleGame(room), false);
 });
 
+test("item-adjusted final score does not change the diamond win bonus", () => {
+  const room = {
+    players: [
+      { id: "a", accountId: "account-a", test: false },
+      { id: "b", accountId: "account-b", test: false }
+    ],
+    result: {
+      playerResults: [
+        { playerId: "a", baseGameScore: -2, itemScoreDelta: 4, gameScore: 2, evaluationTags: [] },
+        { playerId: "b", baseGameScore: 2, itemScoreDelta: -4, gameScore: -2, evaluationTags: [] }
+      ]
+    }
+  };
+
+  attachDiamondRewards(room);
+  assert.equal(room.result.playerResults[0].diamondReward.winBonus, 0);
+  assert.equal(room.result.playerResults[1].diamondReward.winBonus, 3);
+});
+
 test("an account actively spectating the room cannot receive a player diamond reward", () => {
   const room = {
     players: [

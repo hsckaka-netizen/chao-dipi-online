@@ -189,6 +189,22 @@ section.game-room-overview {
   justify-content: flex-end;
 }
 
+.room-table-management {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 2px 4px;
+}
+
+.room-table-management > span {
+  margin-inline-end: 2px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
 .table-dogleg-tag {
   gap: 4px;
   border: 1px solid #c8e2d4;
@@ -2847,6 +2863,24 @@ button.joinable-room-player.spectate-player {
   width: min(520px, 100%);
 }
 
+.room-action-confirm-modal {
+  width: min(440px, 100%);
+}
+
+.room-action-confirm-modal h2 {
+  margin-bottom: 8px;
+}
+
+.room-action-confirm-modal p {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.65;
+}
+
+.room-action-confirm-buttons {
+  justify-content: flex-end;
+}
+
 .taunt-preset-list {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -3643,10 +3677,10 @@ button.joinable-room-player.spectate-player {
 }
 
 .seat-top .seat-play {
-  left: calc(50% + var(--play-shift-x, 0px));
+  left: 0;
   top: calc(100% + 10px);
   bottom: auto;
-  transform: translateX(-50%);
+  transform: none;
 }
 
 .seat-left .seat-play {
@@ -3677,9 +3711,18 @@ button.joinable-room-player.spectate-player {
   overflow: visible;
 }
 
+.table-circle .seat-top .seat-play .mini-cards {
+  justify-content: flex-start;
+  padding-left: 0;
+}
+
+.table-circle .seat-top .setup-action-trail {
+  justify-content: flex-start;
+}
+
 .table-circle .seat-left .seat-play,
 .table-circle .seat-right .seat-play {
-  width: max-content;
+  width: clamp(180px, 21vw, 230px);
   max-width: clamp(180px, 21vw, 230px);
 }
 
@@ -3691,11 +3734,22 @@ button.joinable-room-player.spectate-player {
 .table-circle .seat-left .seat-play .mini-cards,
 .table-circle .seat-left .setup-action-trail {
   justify-content: flex-start;
+  padding-left: 0;
 }
 
 .table-circle .seat-right .seat-play .mini-cards,
 .table-circle .seat-right .setup-action-trail {
   justify-content: flex-end;
+  padding-left: 0;
+}
+
+.table-circle .seat-top .setup-action:not(.current),
+.table-circle .seat-left .setup-action:not(.current) {
+  transform-origin: left center;
+}
+
+.table-circle .seat-right .setup-action:not(.current) {
+  transform-origin: right center;
 }
 
 .table-seats-6 .seat-top .seat-play,
@@ -4426,6 +4480,7 @@ button.auto-play-toggle.active {
 .setup-action {
   display: grid;
   gap: 4px;
+  justify-items: start;
   border: 1px solid #dfe5de;
   border-radius: 8px;
   background: rgba(255, 255, 255, 0.92);
@@ -4448,21 +4503,27 @@ button.auto-play-toggle.active {
 }
 
 .setup-action .mini-cards {
-  padding-left: 14px;
+  padding-left: 0;
 }
 
 .setup-action .mini-card {
+  box-sizing: border-box;
   flex-basis: 40px;
   width: 40px;
-  min-height: 48px;
+  min-height: 50px;
   margin-left: -14px;
+  padding: 4px 3px 0 4px;
   font-size: 12px;
+}
+
+.setup-action .mini-card:first-child {
+  margin-left: 0;
 }
 
 .setup-action:not(.current) .mini-card {
   flex-basis: 34px;
   width: 34px;
-  min-height: 42px;
+  min-height: 43px;
 }
 
 .setup-action:not(.current) .card-rank {
@@ -5019,8 +5080,14 @@ button.auto-play-toggle.active {
     transform: none;
   }
 
-  .table-circle .seat-play .mini-cards {
+  .table-circle .seat-top .seat-play .mini-cards,
+  .table-circle .seat-left .seat-play .mini-cards,
+  .table-circle .seat-right .seat-play .mini-cards,
+  .table-circle .seat-top .setup-action-trail,
+  .table-circle .seat-left .setup-action-trail,
+  .table-circle .seat-right .setup-action-trail {
     justify-content: flex-start;
+    padding-left: 0;
   }
 
   .seat-hand {
@@ -5284,5 +5351,380 @@ button.auto-play-toggle.active {
 
   .statistics-performance-item:last-child {
     border-bottom: 0;
+  }
+}
+
+/* Diamond shop, owned cosmetics and consumable game items */
+.shop-hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 24px;
+  overflow: hidden;
+  background:
+    radial-gradient(circle at 78% 20%, rgba(70, 189, 255, 0.2), transparent 30%),
+    linear-gradient(135deg, #102642, #173f63 58%, #176579);
+  color: #f7fbff;
+  border-color: rgba(85, 195, 255, 0.25);
+}
+
+.shop-hero h2 {
+  margin: 2px 0 6px;
+  font-size: clamp(27px, 4vw, 40px);
+}
+
+.shop-hero p,
+.shop-hero .eyebrow {
+  margin: 0;
+  color: rgba(231, 246, 255, 0.76);
+}
+
+.shop-hero .eyebrow {
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.2em;
+}
+
+.shop-balance {
+  min-width: 148px;
+  display: grid;
+  gap: 4px;
+  padding: 14px 18px;
+  border: 1px solid rgba(172, 225, 255, 0.26);
+  border-radius: 16px;
+  background: rgba(5, 20, 38, 0.32);
+}
+
+.shop-balance span {
+  color: rgba(231, 246, 255, 0.7);
+  font-size: 12px;
+}
+
+.shop-balance strong {
+  font-size: 23px;
+}
+
+.shop-product-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+  gap: 14px;
+}
+
+.shop-product-card {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 76px minmax(0, 1fr);
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: linear-gradient(160deg, #fff, #f7faf8);
+}
+
+.shop-product-card.owned {
+  border-color: rgba(28, 132, 99, 0.28);
+  background: linear-gradient(160deg, #fbfffd, #eef8f3);
+}
+
+.shop-avatar-preview,
+.shop-item-preview,
+.shop-card-preview {
+  width: 72px;
+  height: 84px;
+  display: grid;
+  place-items: center;
+  align-self: start;
+}
+
+.shop-avatar-preview .avatar {
+  width: 70px;
+  height: 70px;
+}
+
+.shop-card-preview {
+  position: relative;
+  align-content: start;
+  justify-content: start;
+  padding: 10px;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  background-color: #fff;
+  background-image: var(--card-frame-image);
+  background-position: center;
+  background-repeat: no-repeat;
+  background-size: 100% 100%;
+  color: #c63843;
+  box-shadow: 0 7px 18px rgba(24, 45, 35, 0.11);
+}
+
+.shop-card-rank {
+  font-size: 22px;
+  font-weight: 900;
+  line-height: 1;
+}
+
+.shop-card-suit {
+  font-size: 18px;
+  line-height: 1;
+}
+
+.shop-item-preview {
+  border-radius: 18px;
+  color: #fff;
+  font-size: 40px;
+  font-weight: 900;
+  background: linear-gradient(145deg, #167b79, #173e65);
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,0.22), 0 8px 18px rgba(16, 60, 72, 0.18);
+}
+
+.shop-item-war-god-card { background: linear-gradient(145deg, #9c312d, #3d1724); }
+.shop-item-colorful-card { background: conic-gradient(from 30deg, #356fc0, #a6459a, #d66e34, #2c9f7d, #356fc0); }
+.shop-item-luck-card { background: linear-gradient(145deg, #5aa52c, #176a54); }
+
+.shop-product-copy {
+  min-width: 0;
+}
+
+.shop-product-title {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.shop-product-copy p,
+.game-item-row p {
+  margin: 7px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.shop-product-buy {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding-top: 11px;
+  border-top: 1px solid var(--line);
+}
+
+.shop-product-buy b {
+  color: #14617a;
+  font-size: 17px;
+}
+
+.owned-cosmetics-form {
+  display: grid;
+  grid-template-columns: minmax(210px, 1fr) minmax(150px, 0.7fr) minmax(150px, 0.7fr) auto;
+  align-items: end;
+  gap: 14px;
+}
+
+.owned-cosmetics-form label,
+.shop-admin-product label,
+.shop-grant-form label {
+  display: grid;
+  gap: 5px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.shop-admin-products {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
+  gap: 8px;
+  max-height: 520px;
+  overflow: auto;
+}
+
+.shop-admin-product {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(140px, 1fr) 84px auto auto;
+  align-items: end;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #fbfcfb;
+}
+
+.shop-admin-product > div {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.shop-admin-product > div strong,
+.shop-admin-product > div span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.shop-admin-product > div span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.shop-grant-form {
+  display: grid;
+  grid-template-columns: minmax(200px, 1fr) minmax(170px, 0.8fr) minmax(200px, 1fr) minmax(160px, 0.8fr) auto;
+  align-items: end;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid rgba(33, 126, 102, 0.25);
+  border-radius: 14px;
+  background: #f3faf7;
+}
+
+.shop-grant-form > div {
+  display: grid;
+  gap: 4px;
+}
+
+.game-items-modal {
+  width: min(760px, calc(100vw - 28px));
+}
+
+.game-items-list {
+  display: grid;
+  gap: 10px;
+}
+
+.game-item-row {
+  display: grid;
+  grid-template-columns: 60px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 13px;
+  padding: 11px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: #fafcfb;
+}
+
+.game-item-row .shop-item-preview {
+  width: 58px;
+  height: 64px;
+  border-radius: 14px;
+  font-size: 30px;
+}
+
+.game-item-row p {
+  margin: 3px 0 7px;
+}
+
+.colorful-order {
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: linear-gradient(90deg, rgba(55, 125, 195, 0.12), rgba(197, 77, 155, 0.12), rgba(54, 160, 105, 0.12));
+}
+
+.player-identity,
+.table-player-avatar-stage,
+.seat-hand-avatar-stage {
+  position: relative;
+}
+
+.lucky-deity-mark {
+  position: absolute;
+  z-index: 12;
+  left: -12px;
+  top: -15px;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  pointer-events: none;
+  filter: drop-shadow(0 2px 3px rgba(53, 80, 22, 0.25));
+}
+
+.lucky-deity-figure {
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  border: 2px solid #f4d95b;
+  border-radius: 50%;
+  background: #fff8c8;
+  font-size: 17px;
+}
+
+.lucky-deity-mark small {
+  width: max-content;
+  max-width: 110px;
+  padding: 2px 6px;
+  border: 1px solid rgba(136, 112, 18, 0.22);
+  border-radius: 999px;
+  background: rgba(255, 251, 218, 0.96);
+  color: #6e5b0d;
+  font-size: 9px;
+  font-weight: 800;
+}
+
+.table-player-avatar-stage .lucky-deity-mark,
+.seat-hand-avatar-stage .lucky-deity-mark {
+  left: -8px;
+  top: -9px;
+}
+
+.result-final-score {
+  display: grid;
+  justify-items: end;
+  gap: 2px;
+}
+
+.result-final-score small {
+  color: var(--muted);
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+@media (max-width: 980px) {
+  .shop-hero,
+  .owned-cosmetics-form,
+  .shop-grant-form {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .shop-hero > div:first-child,
+  .shop-grant-form > div:first-child,
+  .owned-cosmetics-form .account-profile-preview {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 620px) {
+  .shop-hero,
+  .owned-cosmetics-form,
+  .shop-admin-product,
+  .shop-grant-form,
+  .game-item-row {
+    grid-template-columns: 1fr;
+  }
+
+  .shop-balance {
+    min-width: 0;
+  }
+
+  .shop-product-grid,
+  .shop-admin-products {
+    grid-template-columns: 1fr;
+  }
+
+  .game-item-row .shop-item-preview {
+    width: 52px;
+    height: 56px;
+  }
+
+  .lucky-deity-mark small {
+    display: none;
+  }
+
+  .result-final-score {
+    justify-items: start;
   }
 }

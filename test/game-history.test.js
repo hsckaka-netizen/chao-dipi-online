@@ -178,6 +178,32 @@ test("settled game is converted to an immutable history record", () => {
   assert.equal(record.players[2].name, "陈然");
 });
 
+test("history keeps original and item-adjusted scores separately", () => {
+  const room = settledRoom();
+  Object.assign(room.result.playerResults[2], {
+    baseGameScore: 4.5,
+    itemSelfDelta: 4.5,
+    itemOpponentDelta: -1,
+    itemScoreDelta: 3.5,
+    gameScore: 8
+  });
+  room.result.itemAdjustments = [{
+    sourcePlayerId: "room-idle",
+    recipientPlayerId: "room-idle",
+    adjustmentType: "war-god-self",
+    delta: 4.5
+  }];
+
+  const record = buildGameRecord(room);
+  assert.equal(record.players[2].baseGameScore, 4.5);
+  assert.equal(record.players[2].itemSelfDelta, 4.5);
+  assert.equal(record.players[2].itemOpponentDelta, -1);
+  assert.equal(record.players[2].itemScoreDelta, 3.5);
+  assert.equal(record.players[2].gameScore, 8);
+  assert.equal(record.players[2].won, true);
+  assert.equal(record.itemAdjustments[0].adjustmentType, "war-god-self");
+});
+
 test("compact history keeps actual play order and saved card ids can be restored", () => {
   const room = settledRoom();
   room.settledTrickHistory[0].plays.reverse();

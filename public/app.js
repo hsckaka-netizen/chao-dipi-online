@@ -60,10 +60,12 @@ let state = null;
 let message = "";
 let messageBad = false;
 let selectedCardIds = new Set();
+let autoFollowSelectionKey = "";
 let throwDraftComponents = null;
 let dragSelect = null;
 let suppressCardClickUntil = 0;
 let activeDialog = null;
+let pendingRoomAction = "";
 let historyFilter = "all";
 let dismissedActionDialogKey = null;
 let dismissedResultRoomId = null;
@@ -124,10 +126,17 @@ let authState = {
 let diamondWallet = null;
 let diamondWalletLoading = false;
 let diamondWalletAccountId = "";
+let shopState = null;
+let shopStateLoading = false;
+let shopStateAccountId = "";
+let shopPurchaseInFlight = "";
+let itemUseInFlight = "";
 let adminData = null;
 let adminDataLoading = false;
 let adminTaunts = null;
 let adminTauntsLoading = false;
+let adminShop = null;
+let adminShopLoading = false;
 let homeJoinOpen = Boolean(roomFromUrl());
 const stateVersionWaiters = new Set();
 const dragSelectThreshold = 8;
@@ -169,10 +178,14 @@ function clearSession() {
   actionDialogTemporarilyBlocked = false;
   buryInFlight = false;
   tauntInFlight = false;
+  itemUseInFlight = "";
   stateSyncInFlight = false;
   lastEventReceivedAt = 0;
   source = null;
   state = null;
+  selectedCardIds = new Set();
+  autoFollowSelectionKey = "";
+  pendingRoomAction = "";
   for (const waiter of stateVersionWaiters) {
     window.clearTimeout(waiter.timer);
     waiter.resolve(false);
@@ -218,6 +231,7 @@ function applyState(nextState, options = {}) {
   captureGameplayEffects(previousState, nextState);
   const previousHandIds = new Set((state?.hand || []).map((card) => card.id));
   state = nextState;
+  syncCardSelectionForState();
   const viewerReward = nextState?.result?.playerResults
     ?.find((player) => player.playerId === nextState?.viewer?.id)
     ?.diamondReward;
@@ -260,6 +274,45 @@ function applyState(nextState, options = {}) {
   if (!newCardIds.length) return false;
   selectedCardIds = new Set(newCardIds);
   return true;
+}
+
+function followSelectionKey(lead) {
+  if (!lead || !viewerNeedsFollow(lead) || state?.stage !== "playing" || !state.currentTrick) return "";
+  return [
+    state.roomId,
+    state.currentTrick.number,
+    state.viewer?.id || "",
+    lead.suit || "mixed",
+    lead.count
+  ].join(":");
+}
+
+function syncCardSelectionForState() {
+  const hand = state?.hand || [];
+  const handIds = new Set(hand.map((card) => card.id));
+  let nextSelection = [...selectedCardIds].filter((cardId) => handIds.has(cardId));
+  const lead = state?.stage === "playing" ? leadInfoFromSnapshot(state.currentTrick) : null;
+  const key = followSelectionKey(lead);
+  if (!lead || !key) {
+    selectedCardIds = new Set(nextSelection);
+    autoFollowSelectionKey = "";
+    return;
+  }
+
+  if (key !== autoFollowSelectionKey && lead.suit) {
+    const routeCardIds = hand
+      .filter((card) => playSuit(card) === lead.suit)
+      .map((card) => card.id);
+    if (routeCardIds.length < lead.count) {
+      const requiredIds = new Set(routeCardIds);
+      nextSelection = [
+        ...routeCardIds,
+        ...nextSelection.filter((cardId) => !requiredIds.has(cardId))
+      ];
+    }
+  }
+  selectedCardIds = new Set(nextSelection.slice(0, lead.count));
+  autoFollowSelectionKey = key;
 }
 
 function resolveStateVersionWaiters() {
@@ -545,6 +598,45 @@ function resetDiamondWallet() {
   diamondWalletAccountId = "";
 }
 
+function resetShopState() {
+  shopState = null;
+  shopStateLoading = false;
+  shopStateAccountId = "";
+  shopPurchaseInFlight = "";
+}
+
+function requestId() {
+  return globalThis.crypto?.randomUUID?.() || `request-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+function ensureShopState(force = false) {
+  const account = authState.account;
+  if (!account || account.role !== "player") {
+    if (shopStateAccountId) resetShopState();
+    return;
+  }
+  if (shopStateAccountId !== account.id) {
+    resetShopState();
+    shopStateAccountId = account.id;
+  }
+  if (shopStateLoading || (!force && shopState)) return;
+  shopStateLoading = true;
+  api("/api/shop/me")
+    .then((data) => {
+      if (authState.account?.id !== account.id) return;
+      shopState = data;
+      shopStateLoading = false;
+      render();
+    })
+    .catch((error) => {
+      if (authState.account?.id !== account.id) return;
+      shopStateLoading = false;
+      shopState = { unavailable: true, products: [], entitlements: {}, inventory: {} };
+      if (homeView === "shop") setMessage(error.message || "商城暂不可用", true);
+      render();
+    });
+}
+
 function ensureDiamondWallet(force = false) {
   const account = authState.account;
   if (!account || account.role !== "player") {
@@ -611,6 +703,21 @@ function ensureAdminTaunts(force = false) {
     });
 }
 
+function ensureAdminShop(force = false) {
+  if (authState.account?.role !== "admin" || adminShopLoading || (!force && adminShop)) return;
+  adminShopLoading = true;
+  api("/api/admin/shop")
+    .then((data) => {
+      adminShop = data;
+      adminShopLoading = false;
+      render();
+    })
+    .catch((error) => {
+      adminShopLoading = false;
+      setMessage(error.message || "商城管理数据读取失败", true);
+    });
+}
+
 async function loginAccount(event) {
   event.preventDefault();
   const form = new FormData(event.target.closest("form"));
@@ -622,9 +729,11 @@ async function loginAccount(event) {
     authState.account = data.account;
     authState.loaded = true;
     resetDiamondWallet();
+    resetShopState();
     homeView = data.account?.role === "admin" ? "admin" : "rooms";
     adminData = null;
     adminTaunts = null;
+    adminShop = null;
     setMessage(`已登录：${data.account?.profile?.name || data.account?.username || "账号"}`);
     render();
   } catch (error) {
@@ -640,9 +749,12 @@ async function logoutAccount() {
   }
   authState.account = null;
   resetDiamondWallet();
+  resetShopState();
   adminData = null;
   adminTaunts = null;
   adminTauntsLoading = false;
+  adminShop = null;
+  adminShopLoading = false;
   homeView = "rooms";
   setMessage("已退出账号。", false);
   render();
@@ -1195,8 +1307,6 @@ async function updateProfile(event) {
       method: "PUT",
       body: JSON.stringify({
         name: form.get("name"),
-        avatarFrame: form.get("avatarFrame"),
-        cardSkin: form.get("cardSkin"),
         playEffect: form.get("playEffect")
       })
     });
@@ -1215,6 +1325,108 @@ async function updateProfile(event) {
     render();
   } catch (error) {
     setMessage(error.message, true);
+  }
+}
+
+async function purchaseShopItem(productId) {
+  if (!productId || shopPurchaseInFlight) return;
+  shopPurchaseInFlight = productId;
+  render();
+  try {
+    const data = await api("/api/shop/purchases", {
+      method: "POST",
+      body: JSON.stringify({ productId, requestId: requestId() })
+    });
+    shopState = data;
+    if (diamondWallet) diamondWallet.balance = data.balance;
+    setMessage("购买成功，商品已经发放。", false);
+  } catch (error) {
+    setMessage(error.message, true);
+  } finally {
+    shopPurchaseInFlight = "";
+    render();
+  }
+}
+
+async function saveOwnCosmetics(event) {
+  event.preventDefault();
+  const form = new FormData(event.target.closest("form"));
+  try {
+    const data = await api("/api/cosmetics/me", {
+      method: "PATCH",
+      body: JSON.stringify({ avatarFrame: form.get("avatarFrame"), cardSkin: form.get("cardSkin") })
+    });
+    shopState = data;
+    authState.account = data.account;
+    setMessage("当前皮肤已经保存。", false);
+    render();
+  } catch (error) {
+    setMessage(error.message, true);
+  }
+}
+
+async function saveShopProduct(event) {
+  event.preventDefault();
+  const formEl = event.target.closest("form");
+  const form = new FormData(formEl);
+  try {
+    adminShop = await api(`/api/admin/shop/${encodeURIComponent(formEl.dataset.productId || "")}`, {
+      method: "PATCH",
+      body: JSON.stringify({ price: Number(form.get("price")), isListed: form.get("isListed") === "on" })
+    });
+    setMessage("商品设置已保存。", false);
+    render();
+  } catch (error) {
+    setMessage(error.message, true);
+  }
+}
+
+async function grantShopCosmetic(event) {
+  event.preventDefault();
+  const formEl = event.target.closest("form");
+  const form = new FormData(formEl);
+  try {
+    const result = await api("/api/admin/cosmetics/grants", {
+      method: "POST",
+      body: JSON.stringify({
+        accountId: form.get("accountId"),
+        productId: form.get("productId"),
+        reason: form.get("reason"),
+        requestId: requestId()
+      })
+    });
+    if (result.products) adminShop.products = result.products;
+    setMessage(result.granted ? "皮肤已经发放。" : "该玩家已经拥有这件皮肤。", false);
+    formEl.reset();
+    render();
+  } catch (error) {
+    setMessage(error.message, true);
+  }
+}
+
+async function useGameItem(itemId) {
+  if (!session || isSpectating() || itemUseInFlight) return;
+  if (itemId === "restart-card" && !window.confirm("使用重开卡会立即作废当前牌局并重新发牌，确定使用吗？")) return;
+  itemUseInFlight = itemId;
+  render();
+  try {
+    await roomAction(`/api/rooms/${session.roomId}/item-use`, {
+      method: "POST",
+      body: JSON.stringify({
+        playerId: session.playerId,
+        token: session.token,
+        itemId,
+        requestId: requestId()
+      })
+    });
+    activeDialog = null;
+    ensureShopState(true);
+    setMessage(itemId === "restart-card" ? "重开卡已生效，牌局已经重新发牌。" : "对局道具已生效。", false);
+  } catch (error) {
+    setMessage(error.message, true);
+  } finally {
+    itemUseInFlight = "";
+    render();
   }
 }
 
@@ -1586,6 +1798,23 @@ async function playAgain() {
   }
 }
 
+function openRoomActionConfirm(action) {
+  if (isSpectating() || !state?.viewer?.host) return;
+  if (action === "reset" && state.status !== "dealt") return;
+  if (action !== "reset" && action !== "dissolve") return;
+  pendingRoomAction = action;
+  activeDialog = "room-action-confirm";
+  render();
+}
+
+async function confirmRoomAction() {
+  const action = pendingRoomAction;
+  pendingRoomAction = "";
+  activeDialog = null;
+  if (action === "reset") await resetRoom();
+  if (action === "dissolve") await dissolveRoom();
+}
+
 async function resetRoom() {
   if (!session) return;
   try {
@@ -1615,7 +1844,6 @@ async function leaveRoom() {
 
 async function dissolveRoom() {
   if (!session) return clearSession();
-  if (!window.confirm("确定要解散这个房间吗？房间内所有玩家都会离开。")) return;
   try {
     await api(`/api/rooms/${session.roomId}/dissolve`, {
       method: "POST",
@@ -2154,10 +2382,20 @@ function leadInfoFromSnapshot(trick) {
   if (!lead) return null;
   const suits = uniquePlaySuits(lead.cards);
   return {
+    playerId: lead.playerId,
     count: lead.cards.length,
     suit: suits.length === 1 ? suits[0] : null,
     pattern: detectPlayPattern(lead.cards)
   };
+}
+
+function viewerNeedsFollow(lead) {
+  return Boolean(
+    lead
+    && !isSpectating()
+    && lead.playerId !== state?.viewer?.id
+    && !viewerPlayedCurrent()
+  );
 }
 
 function validatePlaySelection() {
@@ -2286,6 +2524,36 @@ function renderTauntControl() {
   `;
 }
 
+function renderGameItemControl() {
+  if (isSpectating() || !state?.gameItems?.canUse) return "";
+  const available = Object.values(shopState?.inventory || {}).reduce((total, item) => total + Number(item?.available || 0), 0);
+  return `
+    <button
+      type="button"
+      class="secondary item-use-toggle"
+      data-action="open-items"
+      aria-haspopup="dialog"
+      title="在叫庄结束前使用对局道具"
+    >道具${available ? ` ${available}` : ""}</button>
+  `;
+}
+
+function followSelectionLimit() {
+  if (state?.stage !== "playing") return null;
+  const lead = leadInfoFromSnapshot(state.currentTrick);
+  return viewerNeedsFollow(lead) ? lead.count : null;
+}
+
+function selectedCountLabel() {
+  const limit = followSelectionLimit();
+  return limit === null ? `${selectedCardIds.size} 张已选` : `已选 ${selectedCardIds.size}/${limit}`;
+}
+
+function selectionLimitMessage() {
+  const limit = followSelectionLimit();
+  return limit === null ? "" : `本轮需跟 ${limit} 张，不能继续选牌`;
+}
+
 function renderHandControls(action) {
   if (action) {
     if (action.throwMode) {
@@ -2294,12 +2562,13 @@ function renderHandControls(action) {
         : (!action.throwEnabled ? action.throwReason : "");
       return `
         <div class="row hand-controls throw-controls">
-          <span class="tag">${selectedCardIds.size} 张已选</span>
+          <span class="tag">${escapeHtml(selectedCountLabel())}</span>
           <button type="button" data-action="add-throw-component" ${action.enabled ? "" : "disabled"}>加入牌型</button>
           <button type="button" data-action="confirm-throw" ${action.throwEnabled ? "" : "disabled"}>确认甩牌</button>
           <button type="button" class="secondary" data-action="cancel-throw">取消</button>
           ${renderAutoPlayControl()}
           ${renderTauntControl()}
+          ${renderGameItemControl()}
           <span class="action-reason">${escapeHtml(reason)}</span>
         </div>
       `;
@@ -2312,16 +2581,19 @@ function renderHandControls(action) {
     return `
       <div class="row hand-controls">
         ${turnIndicator}
-        <span class="tag">${selectedCardIds.size} 张已选</span>
+        <span class="tag">${escapeHtml(selectedCountLabel())}</span>
         <button type="button" data-action="${action.action}" ${action.enabled ? "" : "disabled"}>${escapeHtml(action.label)}</button>
         ${throwButton}
         ${renderAutoPlayControl()}
         ${renderTauntControl()}
+        ${renderGameItemControl()}
         <span class="action-reason">${escapeHtml(reason)}</span>
       </div>
     `;
   }
-  if (state?.stage !== "playing") return "";
+  if (state?.stage !== "playing") {
+    return state?.gameItems?.canUse ? `<div class="hand-waiting-controls">${renderGameItemControl()}</div>` : "";
+  }
 
   const turnName = state.currentTrick?.currentTurnPlayerName || "";
   const played = viewerPlayedCurrent();
@@ -2332,10 +2604,11 @@ function renderHandControls(action) {
       : "等待下一轮";
   return `
     <div class="hand-waiting-controls">
-      <span class="tag">${selectedCardIds.size} 张已选</span>
+      <span class="tag">${escapeHtml(selectedCountLabel())}</span>
       <div class="turn-waiting">${escapeHtml(text)}</div>
       ${renderAutoPlayControl()}
       ${renderTauntControl()}
+      ${renderGameItemControl()}
     </div>
   `;
 }
@@ -2463,11 +2736,13 @@ function renderHome() {
   if (homeView === "login") return renderLogin();
   if (homeView === "account") return renderAccountSettings();
   if (homeView === "admin" || homeView === "players") return renderProfileManager();
+  if (homeView === "shop") return renderShopPage();
   renderShell(`
     <section class="home-toolbar">
       <div class="segmented home-tabs" role="tablist" aria-label="首页模块">
         <button type="button" class="${homeView === "rooms" ? "active" : "secondary"}" data-action="show-rooms">房间</button>
         <button type="button" class="${homeView === "stats" ? "active" : "secondary"}" data-action="show-statistics">数据</button>
+        ${authState.account?.role === "player" ? `<button type="button" class="secondary" data-action="show-shop">钻石商城</button>` : ""}
       </div>
       ${homeView === "rooms" ? `
         <div class="home-room-actions">
@@ -3213,6 +3488,139 @@ function renderAccountSettings() {
   `);
 }
 
+function ownedShopProduct(product) {
+  if (product.productType === "avatar_frame") {
+    return (shopState?.entitlements?.avatarFrames || []).includes(product.assetKey);
+  }
+  if (product.productType === "card_skin") {
+    return (shopState?.entitlements?.cardSkins || []).includes(product.assetKey);
+  }
+  return false;
+}
+
+function shopProductPreview(product) {
+  if (product.productType === "avatar_frame") {
+    return `<div class="shop-avatar-preview">${avatarHtml(product.name, "", "normal", product.assetKey)}</div>`;
+  }
+  if (product.productType === "card_skin") {
+    return `
+      <div class="shop-card-preview ${cardSkinClass(product.assetKey)}" aria-hidden="true">
+        <span class="shop-card-rank">A</span><span class="shop-card-suit">♥</span>
+      </div>
+    `;
+  }
+  const icon = {
+    "restart-card": "↻",
+    "war-god-card": "⚔",
+    "colorful-card": "✦",
+    "luck-card": "☘"
+  }[product.assetKey] || "◇";
+  return `<div class="shop-item-preview shop-item-${escapeHtml(product.assetKey)}" aria-hidden="true">${icon}</div>`;
+}
+
+function renderShopProduct(product) {
+  const owned = ownedShopProduct(product);
+  const itemCount = product.productType === "consumable_item"
+    ? Number(shopState?.inventory?.[product.assetKey]?.available || 0)
+    : 0;
+  const purchasing = shopPurchaseInFlight === product.id;
+  const cannotAfford = Number(shopState?.balance || 0) < Number(product.price || 0);
+  return `
+    <article class="shop-product-card ${owned ? "owned" : ""}">
+      ${shopProductPreview(product)}
+      <div class="shop-product-copy">
+        <div class="shop-product-title">
+          <strong>${escapeHtml(product.name)}</strong>
+          ${owned ? `<span class="tag good">已拥有</span>` : itemCount ? `<span class="tag">背包 ${itemCount}</span>` : ""}
+        </div>
+        <p>${escapeHtml(product.description)}</p>
+      </div>
+      <div class="shop-product-buy">
+        <b>💎 ${escapeHtml(product.price)}</b>
+        <button
+          type="button"
+          data-action="buy-shop-product"
+          data-product-id="${escapeHtml(product.id)}"
+          ${owned || purchasing || shopPurchaseInFlight || cannotAfford ? "disabled" : ""}
+        >${owned ? "已解锁" : purchasing ? "购买中…" : cannotAfford ? "钻石不足" : "购买"}</button>
+      </div>
+    </article>
+  `;
+}
+
+function renderOwnedCosmetics() {
+  const profile = authState.account?.profile;
+  if (!profile) return "";
+  const avatarFrameKeys = ["", ...(shopState?.entitlements?.avatarFrames || [])];
+  const cardSkinKeys = ["", ...(shopState?.entitlements?.cardSkins || [])];
+  const avatarLabels = new Map(AVATAR_FRAME_OPTIONS.map((option) => [option.value, option.label]));
+  const cardLabels = new Map(CARD_SKIN_OPTIONS.map((option) => [option.value, option.label]));
+  return `
+    <section class="panel stack owned-cosmetics-panel">
+      <div class="section-head">
+        <div><h2>我的皮肤</h2><div class="meta">购买或由管理员发放后永久拥有；装备只影响你自己的当前皮肤。</div></div>
+      </div>
+      <form class="owned-cosmetics-form" data-form="own-cosmetics">
+        <div class="account-profile-preview">
+          ${avatarHtml(profile.name, profile.avatarUrl, "normal", profile.avatarFrame)}
+          <div><b>${escapeHtml(profile.name)}</b><span>当前头像框与牌面边框</span></div>
+        </div>
+        <label>
+          头像框
+          <select name="avatarFrame">
+            ${avatarFrameKeys.map((key) => `<option value="${escapeHtml(key)}" ${profile.avatarFrame === key ? "selected" : ""}>${escapeHtml(avatarLabels.get(key) || key)}</option>`).join("")}
+          </select>
+        </label>
+        <label>
+          牌面边框
+          <select name="cardSkin">
+            ${cardSkinKeys.map((key) => `<option value="${escapeHtml(key)}" ${profile.cardSkin === key ? "selected" : ""}>${escapeHtml(cardLabels.get(key) || key)}</option>`).join("")}
+          </select>
+        </label>
+        <button type="submit">保存当前使用</button>
+      </form>
+    </section>
+  `;
+}
+
+function renderShopPage() {
+  const account = authState.account;
+  if (!account) {
+    homeView = "login";
+    return renderLogin();
+  }
+  if (account.role !== "player") {
+    homeView = "admin";
+    return renderProfileManager();
+  }
+  ensureShopState();
+  const products = shopState?.products || [];
+  const cosmetics = products.filter((product) => product.isListed && product.productType !== "consumable_item");
+  const consumables = products.filter((product) => product.isListed && product.productType === "consumable_item");
+  renderShell(`
+    <section class="shop-hero panel">
+      <div>
+        <span class="eyebrow">DIAMOND SHOP</span>
+        <h2>钻石商城</h2>
+        <p>用牌局获得的钻石解锁永久皮肤，或补充对局中使用的消耗型道具。</p>
+      </div>
+      <div class="shop-balance"><span>当前余额</span><strong>💎 ${escapeHtml(shopState?.balance ?? diamondWallet?.balance ?? "…")}</strong></div>
+      <button type="button" class="secondary compact-button" data-action="show-rooms">返回房间</button>
+    </section>
+    ${shopStateLoading && !shopState ? `<section class="panel"><div class="empty">正在读取商品与背包...</div></section>` : shopState?.unavailable ? `<section class="panel"><div class="empty">商城暂不可用，请稍后再试。</div></section>` : `
+      ${renderOwnedCosmetics()}
+      <section class="panel stack shop-catalog">
+        <div class="section-head"><div><h2>永久皮肤</h2><div class="meta">头像框和牌面边框购买一次即可永久使用。</div></div><span class="tag">${cosmetics.length} 件</span></div>
+        <div class="shop-product-grid">${cosmetics.map(renderShopProduct).join("") || `<div class="empty">暂无上架皮肤。</div>`}</div>
+      </section>
+      <section class="panel stack shop-catalog">
+        <div class="section-head"><div><h2>对局道具</h2><div class="meta">每次购买增加 1 张；只有全员登录的真人牌局可在叫庄结束前使用。</div></div><span class="tag">${consumables.length} 种</span></div>
+        <div class="shop-product-grid consumables">${consumables.map(renderShopProduct).join("") || `<div class="empty">暂无上架道具。</div>`}</div>
+      </section>
+    `}
+  `);
+}
+
 function renderManagedAccount(account) {
   const profileName = account.profile?.name || "未绑定玩家";
   return `
@@ -3263,6 +3671,39 @@ function renderSeasonManager() {
   `;
 }
 
+function renderAdminShopManager() {
+  const products = adminShop?.products || [];
+  const accounts = adminShop?.accounts || [];
+  const cosmetics = products.filter((product) => product.productType === "avatar_frame" || product.productType === "card_skin");
+  return `
+    <section class="panel stack shop-admin-manager">
+      <div class="section-head">
+        <div><h2>钻石商城管理</h2><div class="meta">修改价格或上下架商品；历史订单仍保留成交时价格。</div></div>
+        <span class="tag">${products.filter((product) => product.isListed).length}/${products.length} 上架</span>
+      </div>
+      ${adminShopLoading && !adminShop ? `<div class="empty">正在读取商品...</div>` : `
+        <div class="shop-admin-products">
+          ${products.map((product) => `
+            <form class="shop-admin-product" data-form="save-shop-product" data-product-id="${escapeHtml(product.id)}">
+              <div><strong>${escapeHtml(product.name)}</strong><span>${product.productType === "consumable_item" ? "对局道具" : product.productType === "avatar_frame" ? "头像框" : "牌面边框"}</span></div>
+              <label>价格<input name="price" type="number" min="1" step="1" required value="${escapeHtml(product.price)}"></label>
+              <label class="check-label"><input name="isListed" type="checkbox" ${product.isListed ? "checked" : ""}>上架</label>
+              <button type="submit" class="secondary compact-button">保存</button>
+            </form>
+          `).join("") || `<div class="empty">暂无商品。</div>`}
+        </div>
+        <form class="shop-grant-form" data-form="grant-cosmetic">
+          <div><strong>直接发放皮肤</strong><span class="meta">只增加永久拥有权，不替玩家修改当前装备。</span></div>
+          <label>玩家<select name="accountId" required><option value="">选择玩家</option>${accounts.filter((account) => account.role === "player").map((account) => `<option value="${escapeHtml(account.id)}">${escapeHtml(account.profile?.name || account.username)}（${escapeHtml(account.username)}）</option>`).join("")}</select></label>
+          <label>皮肤<select name="productId" required><option value="">选择皮肤</option>${cosmetics.map((product) => `<option value="${escapeHtml(product.id)}">${escapeHtml(product.name)}</option>`).join("")}</select></label>
+          <label>备注<input name="reason" maxlength="160" placeholder="可选，例如：活动奖励"></label>
+          <button type="submit">发放</button>
+        </form>
+      `}
+    </section>
+  `;
+}
+
 function renderProfileManager() {
   if (authState.account?.role !== "admin") {
     homeView = "login";
@@ -3270,6 +3711,7 @@ function renderProfileManager() {
   }
   ensureAdminData();
   ensureAdminTaunts();
+  ensureAdminShop();
   const managedProfiles = adminData?.profiles || [];
   const managedAccounts = adminData?.accounts || [];
   renderShell(`
@@ -3287,6 +3729,8 @@ function renderProfileManager() {
     </section>
 
     ${renderSeasonManager()}
+
+    ${renderAdminShopManager()}
 
     <section class="panel stack admin-account-create">
       <div class="section-head">
@@ -3311,7 +3755,7 @@ function renderProfileManager() {
 
     <section class="panel stack">
       <div class="section-head">
-        <div><h2>玩家资料</h2><div class="meta">昵称、头像框、牌面边框和出牌特效由管理员管理；玩家可每 7 天自助更换头像一次。</div></div>
+        <div><h2>玩家资料</h2><div class="meta">昵称、头像和出牌特效由管理员管理；皮肤由管理员发放，玩家在钻石商城中自行装备。</div></div>
       </div>
       <div class="profile-list">
         ${managedProfiles.length ? managedProfiles.map(renderProfileRow).join("") : `<div class="empty">暂无玩家。</div>`}
@@ -3429,18 +3873,6 @@ function renderProfileRow(profile) {
           <input name="name" maxlength="16" required value="${escapeHtml(profile.name)}">
         </label>
         <label>
-          头像框
-          <select name="avatarFrame">
-            ${AVATAR_FRAME_OPTIONS.map((option) => `<option value="${escapeHtml(option.value)}" ${profile.avatarFrame === option.value ? "selected" : ""}>${escapeHtml(option.label)}</option>`).join("")}
-          </select>
-        </label>
-        <label>
-          牌面边框
-          <select name="cardSkin">
-            ${CARD_SKIN_OPTIONS.map((option) => `<option value="${escapeHtml(option.value)}" ${profile.cardSkin === option.value ? "selected" : ""}>${escapeHtml(option.label)}</option>`).join("")}
-          </select>
-        </label>
-        <label>
           出牌特效
           <select name="playEffect">
             <option value="" ${profile.playEffect ? "" : "selected"}>无</option>
@@ -3462,6 +3894,7 @@ function renderProfileRow(profile) {
 
 function renderRoom() {
   ensurePlayerStatistics();
+  ensureShopState();
   const viewer = viewerPlayer();
   const spectating = isSpectating();
   const waitingNextRound = !spectating && state.stage === "finished" && Boolean(viewer?.ready);
@@ -3518,6 +3951,7 @@ function renderRoom() {
         </section>
 
         ${!showTable ? renderLobbyPlayersPanel() : ""}
+        ${showTable ? renderRoomManagementActions() : ""}
         ${showTable ? renderPlayTable() : ""}
         ${!showTable ? `<section class="panel"><div class="empty">${escapeHtml(lobbyEmptyText(waitingNextRound))}</div></section>` : ""}
       </div>
@@ -3815,8 +4249,11 @@ function temporarilyDismissActionDialog(delay = 900) {
 }
 
 function renderActiveDialog() {
+  if (activeDialog === "items" && (!state.gameItems?.canUse || isSpectating())) activeDialog = null;
   if (activeDialog === "bid" && viewerCanBid()) return renderBidFryDialog("bid");
   if (activeDialog === "fry" && viewerCanFry()) return renderBidFryDialog("fry");
+  if (activeDialog === "room-action-confirm" && pendingRoomAction) return renderRoomActionConfirmDialog();
+  if (activeDialog === "items" && state.gameItems?.canUse && !isSpectating()) return renderGameItemsDialog();
   if (activeDialog === "taunts" && state.stage === "playing" && !isSpectating()) return renderTauntDialog();
   if (activeDialog === "kitty" && state.canViewKitty) return renderKittyDialog();
   if (activeDialog === "history") return renderHistoryDialog();
@@ -3825,6 +4262,73 @@ function renderActiveDialog() {
   if (activeDialog === "spectators") return renderSpectatorsDialog();
   if (activeDialog === "result" && state.stage === "finished") return renderResultPanel();
   return "";
+}
+
+function renderRoomActionConfirmDialog() {
+  const resetting = pendingRoomAction === "reset";
+  const title = resetting ? "确认重开房间？" : "确认解散房间？";
+  const description = resetting
+    ? "当前牌局会立即结束，所有玩家回到房间等待状态，已进行的出牌不会保留。"
+    : "房间会立即解散，所有玩家和观战者都会离开，之后无法返回本房间。";
+  return `
+    <div class="modal-backdrop">
+      <section class="modal-card room-action-confirm-modal" role="dialog" aria-modal="true" aria-label="${escapeHtml(title)}">
+        <div class="stack">
+          <div>
+            <h2>${escapeHtml(title)}</h2>
+            <p>${escapeHtml(description)}</p>
+          </div>
+          <div class="row room-action-confirm-buttons">
+            <button type="button" class="secondary" data-action="close-dialog">取消</button>
+            <button type="button" class="danger" data-action="confirm-room-action">${resetting ? "确认重开" : "确认解散"}</button>
+          </div>
+        </div>
+      </section>
+    </div>
+  `;
+}
+
+function renderGameItemsDialog() {
+  const catalog = (shopState?.products || []).filter((product) =>
+    product.productType === "consumable_item"
+    && (product.isListed || Number(shopState?.inventory?.[product.assetKey]?.available || 0) > 0)
+  );
+  const fallback = [
+    { assetKey: "restart-card", name: "重开卡", description: "作废当前牌局并立即重新洗牌发牌。" },
+    { assetKey: "war-god-card", name: "战神卡", description: "本局原始积分翻倍，额外积分由最终对方阵营承担。" },
+    { assetKey: "colorful-card", name: "缤纷卡", description: "随机改变炒底阶段四种花色 2 的压制顺序。" },
+    { assetKey: "luck-card", name: "牌运卡", description: "本局头像展示牌运之神的庇佑效果。" }
+  ];
+  const items = catalog.length ? catalog : fallback;
+  const uses = state.gameItems?.uses || [];
+  const viewerId = state.viewer?.id;
+  return `
+    <div class="modal-backdrop">
+      <section class="modal-card game-items-modal" role="dialog" aria-modal="true" aria-label="使用对局道具">
+        <div class="section-head">
+          <div><h2>对局道具</h2><div class="meta">只有全员登录的真人局可用；每位玩家每局同一道具限用一次。</div></div>
+          <button type="button" class="secondary compact-button" data-action="close-dialog">关闭</button>
+        </div>
+        ${state.gameItems?.frySuitOrderNames?.length ? `<div class="colorful-order">缤纷卡顺序：<strong>${state.gameItems.frySuitOrderNames.map(escapeHtml).join(" ＞ ")}</strong></div>` : ""}
+        <div class="game-items-list">
+          ${items.map((item) => {
+            const count = Number(shopState?.inventory?.[item.assetKey]?.available || 0);
+            const usedByViewer = uses.some((use) => use.playerId === viewerId && use.itemId === item.assetKey);
+            const globallyUsed = item.assetKey === "colorful-card" && uses.some((use) => use.itemId === item.assetKey);
+            const restartUsed = item.assetKey === "restart-card" && state.gameItems?.restartUsed;
+            const disabled = !count || usedByViewer || globallyUsed || restartUsed || Boolean(itemUseInFlight);
+            return `
+              <article class="game-item-row">
+                ${shopProductPreview({ ...item, productType: "consumable_item" })}
+                <div><strong>${escapeHtml(item.name)}</strong><p>${escapeHtml(item.description)}</p><span class="tag">背包 ${count}</span></div>
+                <button type="button" data-action="use-game-item" data-item-id="${escapeHtml(item.assetKey)}" ${disabled ? "disabled" : ""}>${itemUseInFlight === item.assetKey ? "使用中…" : usedByViewer ? "本局已用" : globallyUsed || restartUsed ? "本轮已生效" : count ? "使用" : "暂无"}</button>
+              </article>
+            `;
+          }).join("")}
+        </div>
+      </section>
+    </div>
+  `;
 }
 
 function renderTauntDialog() {
@@ -4096,6 +4600,7 @@ function renderResultPanel() {
           ${scoreDirectionReversed
             ? "牌局胜负按闲家牌分判断；保底、拖五和甩牌调整后，牌局胜方本局仍可能成为积分扣分方。"
             : "牌局胜负按闲家牌分判断；每人积分还包含保底、拖五和甩牌调整。"}
+          ${result.itemAdjustments?.length ? " 战神卡调整单独计算，并已计入下方个人最终积分。" : ""}
         </div>
         <div class="score-breakdown">
           <span class="tag">胜负 ${signedScore(null, result.baseScore)}</span>
@@ -4132,7 +4637,10 @@ function renderResultPanel() {
               <span>方五 ${player.draggedDiamondFives}</span>
               <span>甩失 ${player.throwFailures || 0}</span>
               ${renderDiamondReward(player.diamondReward)}
-              <b>${signedScore(player.gameScoreText, player.gameScore)}</b>
+              <span class="result-final-score">
+                <b>${signedScore(player.gameScoreText, player.gameScore)}</b>
+                ${Number(player.itemScoreDelta || 0) ? `<small>原始 ${signedScore(player.baseGameScoreText, player.baseGameScore)} · 道具 ${signedScore(player.itemScoreDeltaText, player.itemScoreDelta)}</small>` : ""}
+              </span>
             </div>
           `;
           }).join("")}
@@ -4171,6 +4679,7 @@ function renderBidFryDialog(type) {
           ${twoCards.length ? renderTwoCardChoices(twoCards) : `<div class="empty">手里没有可用于${escapeHtml(title)}的 2。</div>`}
         </div>
         <div class="dialog-actions">
+          ${renderGameItemControl()}
           ${canPass ? `<button type="button" class="secondary" data-action="${passAction}" ${passCountdownAttrs}>${escapeHtml(passLabel)}</button>` : `<button type="button" class="secondary" data-action="close-dialog">过</button>`}
           <button type="button" data-action="${isBid ? "bid-selected" : "fry-selected"}" ${validation.ok ? "" : "disabled"}>${escapeHtml(title)}</button>
           ${!validation.ok && validation.reason ? `<span class="action-reason">${escapeHtml(validation.reason)}</span>` : ""}
@@ -4304,8 +4813,6 @@ function renderDoglegTableTag() {
 
 function renderTableToolbar(title, statusTag = "") {
   const spectating = isSpectating();
-  const canReset = !spectating && state.viewer?.host && state.status === "dealt";
-  const canDissolve = !spectating && state.viewer?.host;
   return `
     <div class="game-table-toolbar">
       <div class="game-table-heading">
@@ -4325,9 +4832,18 @@ function renderTableToolbar(title, statusTag = "") {
         <button type="button" class="secondary compact-button" data-action="open-players">玩家</button>
         <button type="button" class="secondary compact-button" data-action="open-history">记录 ${state.trickHistory.length} 轮</button>
         ${state.canViewKitty ? `<button type="button" class="secondary compact-button" data-action="open-kitty">底牌</button>` : ""}
-        ${canReset ? `<button type="button" class="secondary compact-button" data-action="reset">重开</button>` : ""}
-        ${canDissolve ? `<button type="button" class="danger compact-button" data-action="dissolve-room">解散</button>` : ""}
       </div>
+    </div>
+  `;
+}
+
+function renderRoomManagementActions() {
+  if (isSpectating() || !state.viewer?.host) return "";
+  return `
+    <div class="room-table-management">
+      <span>房间管理</span>
+      ${state.status === "dealt" ? `<button type="button" class="secondary compact-button" data-action="reset">重开房间</button>` : ""}
+      <button type="button" class="danger compact-button" data-action="dissolve-room">解散房间</button>
     </div>
   `;
 }
@@ -4508,6 +5024,7 @@ function renderSeatHand(action, play, trick, index, options = {}) {
         <aside class="seat-hand-profile-card">
           <div class="seat-hand-avatar-stage" tabindex="0" aria-label="查看${escapeHtml(play.playerName)}的历史数据">
             ${avatarHtml(play.playerName, play.avatarUrl, "seat-profile", play.avatarFrame || roomPlayer.avatarFrame)}
+            ${renderLuckyMark(play.playerId)}
             ${renderTauntBubble(play.playerId, true)}
             ${renderPlayerHistoryMini(play.playerId, { overlay: true })}
           </div>
@@ -4687,6 +5204,19 @@ function renderTauntBubble(playerId, large = false) {
   `;
 }
 
+function renderLuckyMark(playerId) {
+  if (!(state?.gameItems?.luckyPlayerIds || []).includes(playerId)) return "";
+  const self = !isSpectating() && state?.viewer?.id === playerId;
+  const playerName = state?.players?.find((player) => player.id === playerId)?.name || "他";
+  const text = self ? "牌运之神庇佑着你" : "牌运之神庇佑着他";
+  return `
+    <span class="lucky-deity-mark" title="${escapeHtml(self ? text : `牌运之神庇佑着${playerName}`)}">
+      <span class="lucky-deity-figure" aria-hidden="true">🧚</span>
+      <small>${escapeHtml(text)}</small>
+    </span>
+  `;
+}
+
 function normalizedCardSkin(value) {
   return CARD_SKIN_VALUES.has(value) ? value : "";
 }
@@ -4708,6 +5238,7 @@ function playerIdentity(name, role, avatarUrl = "", suffix = "", playerId = "", 
   return `
     <span class="player-identity">
       ${avatarHtml(name, avatarUrl, "small", avatarFrame)}
+      ${renderLuckyMark(playerId)}
       ${roleMark(role, playerId)}
       <span class="name-text">${escapeHtml(`${name}${suffix}`)}</span>
     </span>
@@ -4726,6 +5257,7 @@ function tablePlayerIdentity(play) {
     <span class="player-identity table-player-identity">
       <span class="table-player-avatar-stage" tabindex="0" aria-label="查看${escapeHtml(play.playerName)}的历史数据">
         ${avatarHtml(play.playerName, play.avatarUrl, "small", avatarFrame)}
+        ${renderLuckyMark(play.playerId)}
         ${renderTauntBubble(play.playerId)}
         ${renderPlayerHistoryMini(play.playerId, { overlay: true })}
       </span>
@@ -4746,6 +5278,7 @@ function renderTablePlayerSummary(play, statusText, statusTone) {
       </span>
       <span class="table-player-avatar-stage" tabindex="0" aria-label="查看${escapeHtml(play.playerName)}的历史数据">
         ${avatarHtml(play.playerName, play.avatarUrl, "small", avatarFrame)}
+        ${renderLuckyMark(play.playerId)}
         ${renderTauntBubble(play.playerId)}
         ${renderPlayerHistoryMini(play.playerId, { overlay: true })}
       </span>
@@ -4800,8 +5333,7 @@ function seatStyle(index, total) {
   }
   if (side.name === "top") {
     const x = 94 - ((side.slot + 0.5) * 88) / counts.top;
-    const playShift = topPlayShift(side.slot, counts.top);
-    return `--seat-x:${x.toFixed(2)}%;--seat-y:9%;--play-shift-x:${playShift}px;`;
+    return `--seat-x:${x.toFixed(2)}%;--seat-y:9%;`;
   }
   const y = sideSeatY(side.slot, counts.left);
   return `--seat-x:12%;--seat-y:${y.toFixed(2)}%;`;
@@ -4811,13 +5343,6 @@ function sideSeatY(slot, count, reverse = false) {
   const positions = count <= 1 ? [42] : [35, 54];
   const positionIndex = reverse ? positions.length - 1 - slot : slot;
   return positions[Math.max(0, Math.min(positionIndex, positions.length - 1))];
-}
-
-function topPlayShift(slot, count) {
-  if (count <= 1) return 0;
-  if (count === 2) return slot === 0 ? -42 : 42;
-  if (count === 3) return [-42, 0, 42][slot] || 0;
-  return [-42, -14, 14, 42][slot] || 0;
 }
 
 function seatZone(index, total) {
@@ -5520,6 +6045,8 @@ function syncCardSelectionVisual(cardId) {
 function setCardSelected(cardId, selected, syncVisual = false) {
   if (!cardId) return false;
   if (selectedCardIds.has(cardId) === selected) return false;
+  const limit = followSelectionLimit();
+  if (selected && limit !== null && selectedCardIds.size >= limit) return false;
   if (selected) selectedCardIds.add(cardId);
   else selectedCardIds.delete(cardId);
   if (syncVisual) syncCardSelectionVisual(cardId);
@@ -5542,7 +6069,13 @@ function shouldSuppressCardClick() {
 
 function toggleCard(cardId) {
   if (!cardId || !viewerCanSelectCards() || isThrowDraftCard(cardId)) return;
-  setCardSelected(cardId, !selectedCardIds.has(cardId));
+  const selected = !selectedCardIds.has(cardId);
+  if (selected && !setCardSelected(cardId, true)) {
+    const limitMessage = selectionLimitMessage();
+    if (limitMessage) return setMessage(limitMessage, true);
+  } else if (!selected) {
+    setCardSelected(cardId, false);
+  }
   render();
 }
 
@@ -5551,6 +6084,14 @@ function beginDragSelect(event) {
   const cardId = cardElement?.dataset.cardId;
   if (!cardId || !viewerCanSelectCards() || isThrowDraftCard(cardId)) return;
   if (event.pointerType === "mouse" && event.button !== 0) return;
+  if (!selectedCardIds.has(cardId)) {
+    const limit = followSelectionLimit();
+    if (limit !== null && selectedCardIds.size >= limit) {
+      const limitMessage = selectionLimitMessage();
+      if (limitMessage) setMessage(limitMessage, true);
+      return;
+    }
+  }
   suppressNextCardClick();
   dragSelect = {
     pointerId: event.pointerId,
@@ -5604,13 +6145,13 @@ function clearSelectionFromPageClick(event) {
 }
 
 const mutatingActions = new Set([
-  "room-leave", "dissolve-room", "call-mode-two", "call-mode-score", "dogleg-count",
+  "room-leave", "confirm-room-action", "call-mode-two", "call-mode-score", "dogleg-count",
   "add-robot", "random-seats", "start", "ready-on", "ready-off", "bid-selected",
   "bid-pass", "random-bid", "score-bid-start", "score-bid-10", "score-bid-20",
   "score-bid-30", "score-pass", "trump-suit-S", "trump-suit-H", "trump-suit-C",
   "trump-suit-D", "bury-selected", "fry-selected",
-  "fry-pass", "dogleg-selected", "play-selected", "confirm-throw", "reset", "play-again",
-  "send-taunt", "delete-taunt", "kick-player"
+  "fry-pass", "dogleg-selected", "play-selected", "confirm-throw", "play-again",
+  "send-taunt", "delete-taunt", "kick-player", "buy-shop-product", "use-game-item"
 ]);
 
 function isRapidMutatingAction(action) {
@@ -5630,11 +6171,14 @@ document.addEventListener("submit", (event) => {
   if (form.dataset.form === "account-login") return loginAccount(event);
   if (form.dataset.form === "change-password") return changeAccountPassword(event);
   if (form.dataset.form === "own-avatar") return uploadOwnAvatar(event);
+  if (form.dataset.form === "own-cosmetics") return saveOwnCosmetics(event);
   if (form.dataset.form === "create-account") return createManagedAccount(event);
   if (form.dataset.form === "create-taunt") return createManagedTaunt(event);
   if (form.dataset.form === "save-taunt") return saveManagedTaunt(event);
   if (form.dataset.form === "reset-password") return resetManagedPassword(event);
   if (form.dataset.form === "save-season") return saveSeasonForm(event);
+  if (form.dataset.form === "save-shop-product") return saveShopProduct(event);
+  if (form.dataset.form === "grant-cosmetic") return grantShopCosmetic(event);
 });
 
 document.addEventListener("change", (event) => {
@@ -5690,7 +6234,8 @@ document.addEventListener("click", (event) => {
   if (action === "leave") clearSession();
   if (action === "leave-spectating") leaveSpectating();
   if (action === "room-leave") leaveRoom();
-  if (action === "dissolve-room") dissolveRoom();
+  if (action === "dissolve-room") openRoomActionConfirm("dissolve");
+  if (action === "confirm-room-action") confirmRoomAction();
   if (action === "show-profiles") {
     homeView = "admin";
     render();
@@ -5703,11 +6248,19 @@ document.addEventListener("click", (event) => {
     homeView = "account";
     render();
   }
+  if (action === "show-shop") {
+    homeView = "shop";
+    homeJoinOpen = false;
+    render();
+  }
   if (action === "show-admin") {
     homeView = "admin";
     render();
   }
   if (action === "logout-account") logoutAccount();
+  if (action === "buy-shop-product") {
+    purchaseShopItem(event.target.closest("[data-product-id]")?.dataset.productId || "");
+  }
   if (action === "toggle-account") {
     const target = event.target.closest("[data-account-id]");
     toggleManagedAccount(target?.dataset.accountId || "", target?.dataset.enabled === "true");
@@ -5826,6 +6379,13 @@ document.addEventListener("click", (event) => {
     activeDialog = "taunts";
     render();
   }
+  if (action === "open-items") {
+    activeDialog = "items";
+    render();
+  }
+  if (action === "use-game-item") {
+    useGameItem(event.target.closest("[data-item-id]")?.dataset.itemId || "");
+  }
   if (action === "send-taunt") {
     sendTaunt(event.target.closest("[data-preset-id]")?.dataset.presetId || "");
   }
@@ -5838,7 +6398,7 @@ document.addEventListener("click", (event) => {
   }
   if (action === "confirm-throw") playThrowDraft();
   if (action === "cancel-throw") cancelThrowMode();
-  if (action === "reset") resetRoom();
+  if (action === "reset") openRoomActionConfirm("reset");
   if (action === "play-again") playAgain();
   if (action === "open-kitty") {
     activeDialog = "kitty";
@@ -5880,6 +6440,7 @@ document.addEventListener("click", (event) => {
   if (action === "close-dialog") {
     if (activeDialog === "bid" || activeDialog === "fry") dismissedActionDialogKey = actionDialogKey();
     if (activeDialog === "result" || (!activeDialog && state?.stage === "finished")) dismissedResultRoomId = state?.roomId || null;
+    if (activeDialog === "room-action-confirm") pendingRoomAction = "";
     activeDialog = null;
     render();
   }

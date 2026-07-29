@@ -20,7 +20,8 @@
 | 房间、观战、牌桌 UI、移动端、头像框、牌面边框、特效 | `docs/room-and-ui.md` |
 | 账号、历史、排行榜、个人主页、赛季 | `docs/accounts-data-and-statistics.md` |
 | 钻石奖励 | `docs/diamond-system-requirement-analysis.md` |
-| 卡牌、抽卡、养成方案 | `docs/card-system-requirement-analysis.md` |
+| 钻石商城、皮肤拥有权、商品管理、对局道具 | `docs/shop-and-consumable-items-requirement-analysis.md` |
+| 英雄卡、抽卡、养成方案（未来能力） | `docs/card-system-requirement-analysis.md` |
 | 测试、Token 控制、任务交接、Git、发布 | `docs/development-workflow.md` |
 
 ## 维护规则

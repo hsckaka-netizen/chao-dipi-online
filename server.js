@@ -24,12 +24,23 @@ import {
 import { buildGameEvaluations, finalScoreWinnerTeam } from "./game-evaluations.js";
 import {
   applyDiamondRewardPersistence,
-  attachDiamondRewards
+  attachDiamondRewards,
+  isDiamondEligibleGame
 } from "./diamond-rewards.js";
+import {
+  applyWarGodAdjustments,
+  CONSUMABLE_ITEMS,
+  frySuitStrength,
+  isConsumableItemId,
+  isItemUseStage,
+  randomFrySuitOrder
+} from "./shop-and-items.js";
 import { versionedAssetUrl } from "./public/asset-versions.js";
 import { createStatePatch } from "./public/state-patch.js";
 import {
   gameHistoryStatus,
+  consumeGameItemUses,
+  getPlayerShopState,
   getDiamondWallet,
   getGameHistory,
   getPlayerStatistics,
@@ -38,16 +49,25 @@ import {
   listPlayerStatistics,
   listRecentGames,
   listSeasons,
+  listShopProducts,
   loadStoredTauntPresets,
   loadStoredAccounts,
   loadStoredPlayerProfiles,
   queueGameRecord,
+  grantCosmeticEntitlement,
+  purchaseShopProduct,
   recordStoredAccountLogin,
+  refundOrphanedGameItemUses,
+  refundGameItemUses,
+  reserveGameItem,
+  resolveRestartGameItemUses,
   createStoredAccount,
   deleteStoredTauntPreset,
   saveSeason,
+  saveEquippedCosmetics,
   saveStoredTauntPreset,
   saveStoredPlayerProfile,
+  updateShopProduct,
   updateStoredAccount
 } from "./game-history.js";
 import {
@@ -99,6 +119,7 @@ const suitStrength = new Map([
   ["H", 2],
   ["S", 3]
 ]);
+const consumableItemById = new Map(CONSUMABLE_ITEMS.map((item) => [item.id, item]));
 const autoPlaySuitOrder = new Map([
   ["D", 0],
   ["C", 1],
@@ -429,6 +450,14 @@ function syncProfileToRooms(profile) {
 async function initializePersistence() {
   const databaseStatus = await initializeGameHistory();
   if (!databaseStatus.connected || !databaseStatus.profileStorageReady) return;
+  try {
+    const itemRecovery = await refundOrphanedGameItemUses();
+    if (itemRecovery.resolved) {
+      console.log(`[game-items] refunded ${itemRecovery.resolved} orphaned reservations after restart`);
+    }
+  } catch (error) {
+    console.error("[game-items] orphaned reservation recovery failed", error.message);
+  }
   const storedProfiles = await loadStoredPlayerProfiles();
   storedProfiles.forEach((stored) => {
     const profile = profileForId(stored.id) || {
@@ -863,6 +892,11 @@ function deal(room) {
   room.provisionalWinnerPlayerIds = [];
   room.playPauseUntil = null;
   room.notice = null;
+  room.gameItems = {
+    uses: [],
+    frySuitOrder: null,
+    luckyPlayerIds: []
+  };
   if (room.removedCards.length) {
     addEvent(room, `本局开局移除 ${room.removedCards.map((card) => card.label).join("、")}，底牌保持 ${room.kittySize} 张`);
   }
@@ -910,6 +944,8 @@ function resetRoomToLobby(room, options = {}) {
   room.provisionalWinnerPlayerIds = [];
   room.playPauseUntil = null;
   room.notice = null;
+  room.gameItems = { uses: [], frySuitOrder: null, luckyPlayerIds: [] };
+  room.restartChainUsed = false;
   room.events = [];
   room.players.forEach((player) => {
     player.hand = [];
@@ -1034,6 +1070,26 @@ function setupSnapshot(room) {
   };
 }
 
+function gameItemsSnapshot(room) {
+  const gameItems = room.gameItems || { uses: [], frySuitOrder: null, luckyPlayerIds: [] };
+  return {
+    eligible: isDiamondEligibleGame(room),
+    canUse: room.status === "dealt" && isItemUseStage(room.stage) && isDiamondEligibleGame(room),
+    restartUsed: Boolean(room.restartChainUsed),
+    frySuitOrder: gameItems.frySuitOrder ? [...gameItems.frySuitOrder] : null,
+    frySuitOrderNames: gameItems.frySuitOrder?.map(suitName) || [],
+    luckyPlayerIds: [...(gameItems.luckyPlayerIds || [])],
+    uses: (gameItems.uses || []).map((use) => ({
+      useId: use.useId,
+      playerId: use.playerId,
+      playerName: playerName(room, use.playerId),
+      itemId: use.itemId,
+      itemName: consumableItemById.get(use.itemId)?.name || use.itemId,
+      at: use.at
+    }))
+  };
+}
+
 function playerRole(room, playerId) {
   if (room.bankerId === playerId) return "庄家";
   if ((room.doglegPlayerIds || []).includes(playerId)) return "狗腿";
@@ -1150,6 +1206,7 @@ function roomSnapshot(room, viewer = null) {
     notice: room.notice?.expiresAt && Date.now() < new Date(room.notice.expiresAt).getTime() ? room.notice : null,
     tauntPresets: availableTauntPresets(tauntPresets, viewer?.accountId || null),
     taunts: activeTauntsSnapshot(room),
+    gameItems: gameItemsSnapshot(room),
     hostId: room.hostId,
     setup: setupSnapshot(room),
     viewer: viewer ? {
@@ -1272,6 +1329,84 @@ function submitTaunt(room, player, presetId) {
   return { taunt };
 }
 
+async function submitGameItem(room, player, itemIdValue, requestId) {
+  const itemId = String(itemIdValue || "");
+  if (!isConsumableItemId(itemId)) return { error: "对局道具不存在", status: 404 };
+  if (room.itemUseInFlight) return { error: "正在处理其他道具，请稍后重试", status: 409 };
+  if (room.status !== "dealt" || !isItemUseStage(room.stage)) {
+    return { error: "只能在发牌后至叫庄结束前使用对局道具", status: 409 };
+  }
+  if (!isDiamondEligibleGame(room)) {
+    return { error: "只有全部为已登录真人的牌局可以使用对局道具", status: 409 };
+  }
+  if (!player.accountId) return { error: "请先登录玩家账号", status: 403 };
+  if (!room.gameRecordId) return { error: "本局尚未生成有效标识", status: 409 };
+  const gameItems = room.gameItems || { uses: [], frySuitOrder: null, luckyPlayerIds: [] };
+  room.gameItems = gameItems;
+  if (gameItems.uses.some((use) => use.playerId === player.id && use.itemId === itemId)) {
+    return { error: "本局已经使用过这个对局道具", status: 409 };
+  }
+  if (itemId === "colorful-card" && gameItems.uses.some((use) => use.itemId === itemId)) {
+    return { error: "本局已经有缤纷卡生效", status: 409 };
+  }
+  if (itemId === "restart-card" && room.restartChainUsed) {
+    return { error: "本轮连续牌局已经使用过重开卡", status: 409 };
+  }
+
+  room.itemUseInFlight = true;
+  try {
+    const effectData = itemId === "colorful-card"
+      ? { frySuitOrder: randomFrySuitOrder(randomInt(23)) }
+      : {};
+    const reservation = await reserveGameItem(
+      player.accountId,
+      player.id,
+      room.gameRecordId,
+      itemId,
+      requestId,
+      effectData
+    );
+    const use = {
+      useId: reservation.use.use_id,
+      playerId: player.id,
+      accountId: player.accountId,
+      itemId,
+      effectData: reservation.use.effect_data || effectData,
+      at: now()
+    };
+    if (reservation.repeated) {
+      const existing = gameItems.uses.find((entry) => entry.useId === use.useId);
+      if (existing) return { ok: true, repeated: true, use: existing };
+    }
+
+    if (itemId === "restart-card") {
+      const oldGameId = room.gameRecordId;
+      await resolveRestartGameItemUses(oldGameId, use.useId);
+      room.restartChainUsed = true;
+      deal(room);
+      room.gameRecordId = randomUUID();
+      addEvent(room, `${player.name} 使用重开卡，本局已重新洗牌发牌`);
+      return { ok: true, restarted: true, use };
+    }
+
+    gameItems.uses.push(use);
+    if (itemId === "colorful-card") {
+      gameItems.frySuitOrder = [...use.effectData.frySuitOrder];
+      addEvent(room, `${player.name} 使用缤纷卡，本局炒底花色顺序变为 ${gameItems.frySuitOrder.map(suitName).join(" > ")}`);
+    } else if (itemId === "luck-card") {
+      if (!gameItems.luckyPlayerIds.includes(player.id)) gameItems.luckyPlayerIds.push(player.id);
+      addEvent(room, `${player.name} 使用牌运卡，牌运之神开始庇佑`);
+    } else if (itemId === "war-god-card") {
+      addEvent(room, `${player.name} 使用战神卡，本局积分将在原始结算后翻倍`);
+    }
+    return { ok: true, use };
+  } catch (error) {
+    return { error: error.message || "对局道具使用失败", status: error.status || 503 };
+  } finally {
+    room.itemUseInFlight = false;
+  }
+}
+
 function publicRoomSpectators(room) {
   return [...roomSpectators(room).values()]
     .map((spectator) => ({
@@ -1361,6 +1496,11 @@ function dissolveRoom(room, messageText) {
   clearScoreBidTimer(room);
   clearFryTimer(room);
   clearRoomTaunts(room);
+  if (room.gameRecordId && room.gameItems?.uses?.length) {
+    void refundGameItemUses(room.gameRecordId).catch((error) => {
+      console.error(`[game-items] refund failed for dissolved room ${room.id}`, error.message);
+    });
+  }
   disconnectAllRoomClients(room, messageText);
   rooms.delete(room.id);
 }
@@ -1610,6 +1750,27 @@ function finishGame(room, completedTrick) {
       };
     })
   };
+  const warGodPlayerIds = (room.gameItems?.uses || [])
+    .filter((use) => use.itemId === "war-god-card")
+    .map((use) => use.playerId);
+  const adjusted = applyWarGodAdjustments(room.result.playerResults, warGodPlayerIds);
+  room.result.playerResults = adjusted.playerResults.map((playerResult) => ({
+    ...playerResult,
+    baseGameScoreText: gameScoreText(playerResult.baseGameScore),
+    itemSelfDeltaText: gameScoreText(playerResult.itemSelfDelta),
+    itemOpponentDeltaText: gameScoreText(playerResult.itemOpponentDelta),
+    itemScoreDeltaText: gameScoreText(playerResult.itemScoreDelta),
+    gameScoreText: gameScoreText(playerResult.gameScore)
+  }));
+  room.result.itemAdjustments = adjusted.adjustments;
+  room.result.itemUses = (room.gameItems?.uses || []).map((use) => ({
+    useId: use.useId,
+    playerId: use.playerId,
+    itemId: use.itemId,
+    itemName: consumableItemById.get(use.itemId)?.name || use.itemId,
+    effectData: use.effectData || {},
+    at: use.at
+  }));
   attachDiamondRewards(room);
 
   addEvent(room, `本局结束：${teamName(winnerTeam)}牌局获胜，闲家 ${idleScore}/${threshold} 分，闲家每人 ${room.result.idleEachScoreText} 分，庄队每人 ${room.result.bankerEachScoreText} 分`);
@@ -1628,6 +1789,11 @@ function completeCurrentTrick(room) {
   if (room.players.every((player) => player.hand.length === 0)) {
     finishGame(room, completed);
     const finishedGameId = room.gameRecordId;
+    if (room.gameItems?.uses?.length) {
+      void consumeGameItemUses(finishedGameId).catch((error) => {
+        console.error(`[game-items] consume failed for ${finishedGameId}`, error.message);
+      });
+    }
     const persistence = queueGameRecord(room, (nextPersistence) => {
       const currentRoom = rooms.get(room.id);
       if (!currentRoom || currentRoom.gameRecordId !== finishedGameId) return;
@@ -1800,13 +1966,13 @@ function bidFromSuit(room, player, suit) {
   };
 }
 
-function bidBeats(current, next) {
+function bidBeats(current, next, strength = suitStrength) {
   if (!current) return next.count >= 1;
   if (current.direct) return next.count >= 2;
   if (current.count === 1) return next.count >= 2;
   if (next.count > current.count) return true;
   if (next.count < current.count) return false;
-  return (suitStrength.get(next.suit) ?? -1) > (suitStrength.get(current.suit) ?? -1);
+  return (strength.get(next.suit) ?? -1) > (strength.get(current.suit) ?? -1);
 }
 
 function randomSuitId() {
@@ -2108,7 +2274,10 @@ function submitFry(room, player, cardIds) {
   }
   const bid = bidFromCards(room, player, cardIds);
   if (bid.error) return bid;
-  if (!bidBeats(fry.lastBid, bid)) {
+  const strength = room.gameItems?.frySuitOrder
+    ? frySuitStrength(room.gameItems.frySuitOrder)
+    : suitStrength;
+  if (!bidBeats(fry.lastBid, bid, strength)) {
     return { error: "选择的 2 不能压过当前炒底", status: 400 };
   }
 
@@ -2325,12 +2494,12 @@ function cardShapeAssetCost(room, player, card) {
   return cost;
 }
 
-function minimumBidCountToBeat(currentBid, suit) {
+function minimumBidCountToBeat(currentBid, suit, strength = suitStrength) {
   if (!currentBid) return 1;
   const currentCount = Number(currentBid.count) || 0;
   if (currentCount <= 0) return 1;
   if (currentCount === 1) return 2;
-  if ((suitStrength.get(suit) ?? -1) > (suitStrength.get(currentBid.suit) ?? -1)) return currentCount;
+  if ((strength.get(suit) ?? -1) > (strength.get(currentBid.suit) ?? -1)) return currentCount;
   return currentCount + 1;
 }
 
@@ -2346,16 +2515,16 @@ function twoCountForSuit(player, suit) {
   return player.hand.filter((card) => card.type === "normal" && card.rank === "2" && card.suit === suit).length;
 }
 
-function bidStrengthValue(bid) {
+function bidStrengthValue(bid, strength = suitStrength) {
   if (!bid) return 0;
-  return (bid.count || 0) * 10 + (suitStrength.get(bid.suit) ?? 0);
+  return (bid.count || 0) * 10 + (strength.get(bid.suit) ?? 0);
 }
 
-function bestPossibleBidStrength(player) {
+function bestPossibleBidStrength(player, strength = suitStrength) {
   return suits.reduce((best, suit) => {
     const count = twoCountForSuit(player, suit.id);
     if (!count) return best;
-    return Math.max(best, bidStrengthValue({ count, suit: suit.id }));
+    return Math.max(best, bidStrengthValue({ count, suit: suit.id }, strength));
   }, 0);
 }
 
@@ -2394,9 +2563,12 @@ function shouldAimForBottom(room, player, trumpSuit) {
 
 function bidPowerScore(room, player, suit, count, { includeKitty = false } = {}) {
   const currentBid = includeKitty ? room.setup.fry?.lastBid : room.setup.bid;
+  const strength = includeKitty && room.gameItems?.frySuitOrder
+    ? frySuitStrength(room.gameItems.frySuitOrder)
+    : suitStrength;
   const cards = includeKitty ? [...player.hand, ...room.kitty] : player.hand;
   const twoCount = twoCountForSuit(player, suit);
-  const minimumCount = minimumBidCountToBeat(currentBid, suit);
+  const minimumCount = minimumBidCountToBeat(currentBid, suit, strength);
   const trumpNormalCount = cards.filter((card) => card.type === "normal" && card.suit === suit && !isCompareCard(card, suit)).length;
   const mainCount = cards.filter((card) => isMainPlayCard(card, suit)).length;
   const topMainCount = highMainCount(cards, suit, 8);
@@ -2437,12 +2609,15 @@ function bidCardIdsForSuit(player, suit, count) {
 }
 
 function bestAutoBid(room, player, currentBid, options = {}) {
+  const strength = options.includeKitty && room.gameItems?.frySuitOrder
+    ? frySuitStrength(room.gameItems.frySuitOrder)
+    : suitStrength;
   const choices = [];
   for (const suit of suits.map((item) => item.id)) {
     const count = player.hand.filter((card) => card.type === "normal" && card.rank === "2" && card.suit === suit).length;
     for (let bidCount = 1; bidCount <= count; bidCount += 1) {
       const bid = { count: bidCount, suit };
-      if (!bidBeats(currentBid, bid)) continue;
+      if (!bidBeats(currentBid, bid, strength)) continue;
       const score = bidPowerScore(room, player, suit, bidCount, options);
       choices.push({ bid, score, cardIds: bidCardIdsForSuit(player, suit, bidCount) });
     }
@@ -2451,7 +2626,7 @@ function bestAutoBid(room, player, currentBid, options = {}) {
   const best = choices.sort((a, b) => {
     return b.score - a.score
       || a.bid.count - b.bid.count
-      || (suitStrength.get(b.bid.suit) ?? 0) - (suitStrength.get(a.bid.suit) ?? 0);
+      || (strength.get(b.bid.suit) ?? 0) - (strength.get(a.bid.suit) ?? 0);
   })[0];
   const kittyPressure = options.includeKitty
     ? Math.min(34, cardsPoint(room.kitty) * 0.7 + protectedFiveCount(room.kitty) * 12)
@@ -4207,6 +4382,31 @@ async function handleApi(req, res, pathParts, url) {
       broadcastTauntPresetChanges();
       return writeJson(res, 200, adminTauntsPayload());
     }
+    if (pathParts[2] === "shop" && pathParts.length === 3 && req.method === "GET") {
+      return writeJson(res, 200, {
+        products: await listShopProducts({ includeUnlisted: true }),
+        accounts: [...accounts.values()].filter((account) => account.role === "player").map(publicAccount)
+      });
+    }
+    if (pathParts[2] === "shop" && pathParts[3] && pathParts.length === 4 && req.method === "PATCH") {
+      const body = await readJson(req);
+      await updateShopProduct(pathParts[3], body, admin.id);
+      return writeJson(res, 200, {
+        products: await listShopProducts({ includeUnlisted: true }),
+        accounts: [...accounts.values()].filter((account) => account.role === "player").map(publicAccount)
+      });
+    }
+    if (pathParts[2] === "cosmetics" && pathParts[3] === "grants" && req.method === "POST") {
+      const body = await readJson(req);
+      const result = await grantCosmeticEntitlement(
+        admin.id,
+        body.accountId,
+        body.productId,
+        body.requestId,
+        body.reason
+      );
+      return writeJson(res, 200, { ...result, products: await listShopProducts({ includeUnlisted: true }) });
+    }
     if (pathParts[2] === "seasons" && pathParts.length === 3 && req.method === "GET") {
       return writeJson(res, 200, { seasons: await listSeasons() });
     }
@@ -4274,6 +4474,45 @@ async function handleApi(req, res, pathParts, url) {
     return writeJson(res, 200, await getDiamondWallet(account.id, url.searchParams.get("limit")));
   }
 
+  if (pathParts[1] === "shop") {
+    const account = requireAccount(res, req);
+    if (!account) return;
+    if (account.role !== "player") return writeJson(res, 403, { error: "管理员账号不能购买商品" });
+    if (req.method === "GET" && pathParts[2] === "me") {
+      return writeJson(res, 200, await getPlayerShopState(account.id, { includeUnlisted: true }));
+    }
+    if (req.method === "POST" && pathParts[2] === "purchases") {
+      const body = await readJson(req);
+      const purchase = await purchaseShopProduct(account.id, body.productId, body.requestId);
+      return writeJson(res, 200, { purchase, ...(await getPlayerShopState(account.id, { includeUnlisted: true })) });
+    }
+    return writeJson(res, 404, { error: "商城接口不存在" });
+  }
+
+  if (pathParts[1] === "cosmetics" && pathParts[2] === "me" && req.method === "PATCH") {
+    const account = requireAccount(res, req);
+    if (!account) return;
+    if (account.role !== "player" || !account.profileId) {
+      return writeJson(res, 403, { error: "当前账号没有玩家身份" });
+    }
+    const profile = profileForId(account.profileId);
+    if (!profile) return writeJson(res, 404, { error: "账号绑定的玩家不存在" });
+    const body = await readJson(req);
+    const avatarFrame = normalizeAvatarFrame(body.avatarFrame);
+    const cardSkin = normalizeCardSkin(body.cardSkin);
+    const saved = await saveEquippedCosmetics(account.id, profile.id, { avatarFrame, cardSkin });
+    profile.avatarFrame = avatarFrame;
+    profile.cardSkin = cardSkin;
+    profile.updatedAt = saved.updatedAt;
+    playerProfiles.set(profile.id, profile);
+    syncProfileToRooms(profile);
+    return writeJson(res, 200, {
+      account: publicAccount(account),
+      player: publicProfile(profile),
+      ...(await getPlayerShopState(account.id, { includeUnlisted: true }))
+    });
+  }
+
   if (pathParts[1] === "players") {
     if (req.method === "GET" && pathParts.length === 2) {
       return writeJson(res, 200, { players: profilesList() });
@@ -4289,8 +4528,6 @@ async function handleApi(req, res, pathParts, url) {
       if (!name) return writeJson(res, 400, { error: "请输入玩家名称" });
       if (profileNameTaken(name, profile.id)) return writeJson(res, 409, { error: "这个玩家名称已经存在" });
       profile.name = name;
-      if (Object.hasOwn(body, "avatarFrame")) profile.avatarFrame = normalizeAvatarFrame(body.avatarFrame);
-      if (Object.hasOwn(body, "cardSkin")) profile.cardSkin = normalizeCardSkin(body.cardSkin);
       if (Object.hasOwn(body, "playEffect")) profile.playEffect = normalizePlayEffect(body.playEffect);
       profile.updatedAt = now();
       playerProfiles.set(profile.id, profile);
@@ -4358,6 +4595,9 @@ async function handleApi(req, res, pathParts, url) {
       taunts: new Map(),
       tauntTimers: new Map(),
       tauntLastSentAt: new Map(),
+      gameItems: { uses: [], frySuitOrder: null, luckyPlayerIds: [] },
+      restartChainUsed: false,
+      itemUseInFlight: false,
       snapshotVersion: 0
     };
     rooms.set(room.id, room);
@@ -4622,6 +4862,7 @@ async function handleApi(req, res, pathParts, url) {
         return writeJson(res, 409, { error: `还有玩家未准备：${readyPlayerCount(room)}/${room.players.length}` });
       }
 
+      room.restartChainUsed = false;
       deal(room);
       room.gameRecordId = randomUUID();
       addEvent(room, `房主开始牌局：${room.players.length} 人，每人 ${HAND_SIZE} 张，底牌 ${room.kitty.length} 张`);
@@ -4767,6 +5008,19 @@ async function handleApi(req, res, pathParts, url) {
       return writeJson(res, 200, roomStateAck(room, { taunt: result.taunt }));
     }
 
+    if (req.method === "POST" && pathParts[3] === "item-use") {
+      const body = await readJson(req);
+      const viewer = requirePlayer(res, room, body.playerId, body.token);
+      if (!viewer) return;
+      const result = await submitGameItem(room, viewer, body.itemId, body.requestId);
+      if (result.error) return writeJson(res, result.status, { error: result.error });
+      broadcastAndContinueAutomation(room);
+      return writeJson(res, 200, roomStateAck(room, {
+        restarted: Boolean(result.restarted),
+        itemUse: result.use
+      }));
+    }
+
     if (req.method === "POST" && pathParts[3] === "play") {
       const body = await readJson(req);
       const viewer = requirePlayer(res, room, body.playerId, body.token);
@@ -4835,6 +5089,13 @@ async function handleApi(req, res, pathParts, url) {
       const viewer = playerFor(room, body.playerId, body.token);
       if (!viewer) return writeJson(res, 401, { error: "玩家身份已失效" });
       if (!viewer.host) return writeJson(res, 403, { error: "只有房主可以重开" });
+      if (room.gameRecordId && room.gameItems?.uses?.length) {
+        try {
+          await refundGameItemUses(room.gameRecordId);
+        } catch (error) {
+          return writeJson(res, error.status || 503, { error: "对局道具返还失败，暂不能重置房间" });
+        }
+      }
       resetRoomToLobby(room);
       addEvent(room, "房主把房间重置到等待状态");
       broadcast(room);

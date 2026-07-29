@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
+import { randomUUID } from "node:crypto";
 
 import pg from "pg";
 import {
@@ -8,9 +9,10 @@ import {
   DIAMOND_REWARD_RULES,
   isDiamondEligibleGame
 } from "./diamond-rewards.js";
+import { SHOP_RULES_VERSION } from "./shop-and-items.js";
 
 const { Pool } = pg;
-const RULES_VERSION = "2026-07-20";
+const RULES_VERSION = "2026-07-29";
 const MIGRATIONS = [
   {
     version: 1,
@@ -59,6 +61,10 @@ const MIGRATIONS = [
   {
     version: 12,
     path: fileURLToPath(new URL("./db/migrations/012_taunt_presets.sql", import.meta.url))
+  },
+  {
+    version: 13,
+    path: fileURLToPath(new URL("./db/migrations/013_shop_and_consumable_items.sql", import.meta.url))
   }
 ];
 const HISTORY_ENABLED = String(process.env.GAME_HISTORY_ENABLED || "").toLowerCase() === "true";
@@ -522,6 +528,496 @@ export async function deleteStoredTauntPreset(tauntId) {
   }
 }
 
+function commerceError(message, statusCode = 400) {
+  const error = new Error(message);
+  error.status = statusCode;
+  return error;
+}
+
+function normalizedRequestId(value) {
+  const requestId = String(value || "").trim();
+  if (!requestId || requestId.length > 120) throw commerceError("请求编号无效");
+  return requestId;
+}
+
+function publicShopProduct(row) {
+  return {
+    id: row.product_id,
+    productType: row.product_type,
+    assetKey: row.asset_key,
+    name: row.name,
+    description: row.description || "",
+    price: Number(row.price) || 0,
+    isListed: Boolean(row.is_listed),
+    sortOrder: Number(row.sort_order) || 0,
+    updatedAt: row.updated_at ? new Date(row.updated_at).toISOString() : null
+  };
+}
+
+export async function listShopProducts({ includeUnlisted = false } = {}) {
+  const result = await requirePool().query(
+    `SELECT product_id, product_type, asset_key, name, description,
+            price, is_listed, sort_order, updated_at
+     FROM cdp_shop_products
+     WHERE $1::boolean OR is_listed
+     ORDER BY sort_order, product_id`,
+    [Boolean(includeUnlisted)]
+  );
+  return result.rows.map(publicShopProduct);
+}
+
+export async function getPlayerShopState(accountId, { includeUnlisted = false } = {}) {
+  const database = requirePool();
+  const [products, entitlementResult, inventoryResult, walletResult] = await Promise.all([
+    listShopProducts({ includeUnlisted }),
+    database.query(
+      `SELECT cosmetic_type, cosmetic_key
+       FROM cdp_cosmetic_entitlements
+       WHERE account_id = $1::uuid
+       ORDER BY cosmetic_type, cosmetic_key`,
+      [accountId]
+    ),
+    database.query(
+      `SELECT item_id, available_quantity, reserved_quantity
+       FROM cdp_consumable_inventory
+       WHERE account_id = $1::uuid
+       ORDER BY item_id`,
+      [accountId]
+    ),
+    database.query(
+      `SELECT balance FROM cdp_diamond_wallets WHERE account_id = $1::uuid`,
+      [accountId]
+    )
+  ]);
+  return {
+    rulesVersion: SHOP_RULES_VERSION,
+    balance: Number(walletResult.rows[0]?.balance) || 0,
+    products,
+    entitlements: {
+      avatarFrames: entitlementResult.rows.filter((row) => row.cosmetic_type === "avatar_frame").map((row) => row.cosmetic_key),
+      cardSkins: entitlementResult.rows.filter((row) => row.cosmetic_type === "card_skin").map((row) => row.cosmetic_key)
+    },
+    inventory: Object.fromEntries(inventoryResult.rows.map((row) => [row.item_id, {
+      available: Number(row.available_quantity) || 0,
+      reserved: Number(row.reserved_quantity) || 0
+    }]))
+  };
+}
+
+export async function purchaseShopProduct(accountId, productId, requestIdValue) {
+  const database = requirePool();
+  const requestId = normalizedRequestId(requestIdValue);
+  const client = await database.connect();
+  try {
+    await client.query("BEGIN");
+    const existing = await client.query(
+      `SELECT purchase_id, product_id, price, balance_after, created_at
+       FROM cdp_shop_purchases
+       WHERE account_id = $1::uuid AND request_id = $2`,
+      [accountId, requestId]
+    );
+    if (existing.rows[0]) {
+      await client.query("COMMIT");
+      return { repeated: true, purchase: existing.rows[0] };
+    }
+
+    const productResult = await client.query(
+      `SELECT product_id, product_type, asset_key, name, price, is_listed
+       FROM cdp_shop_products
+       WHERE product_id = $1
+       FOR UPDATE`,
+      [String(productId || "")]
+    );
+    const product = productResult.rows[0];
+    if (!product) throw commerceError("商品不存在", 404);
+    if (!product.is_listed) throw commerceError("商品已经下架", 409);
+
+    if (product.product_type !== "consumable_item") {
+      const owned = await client.query(
+        `SELECT 1 FROM cdp_cosmetic_entitlements
+         WHERE account_id = $1::uuid AND cosmetic_type = $2 AND cosmetic_key = $3`,
+        [accountId, product.product_type, product.asset_key]
+      );
+      if (owned.rows[0]) throw commerceError("已经拥有这件皮肤", 409);
+    }
+
+    await client.query(
+      `INSERT INTO cdp_diamond_wallets (account_id)
+       VALUES ($1::uuid)
+       ON CONFLICT (account_id) DO NOTHING`,
+      [accountId]
+    );
+    const wallet = await client.query(
+      `UPDATE cdp_diamond_wallets
+       SET balance = balance - $2, updated_at = now()
+       WHERE account_id = $1::uuid AND balance >= $2
+       RETURNING balance`,
+      [accountId, Number(product.price)]
+    );
+    if (!wallet.rows[0]) throw commerceError("钻石余额不足", 409);
+
+    const purchaseId = randomUUID();
+    const balanceAfter = Number(wallet.rows[0].balance) || 0;
+    await client.query(
+      `INSERT INTO cdp_shop_purchases (
+        purchase_id, account_id, product_id, price, balance_after, request_id
+      ) VALUES ($1::uuid, $2::uuid, $3, $4, $5, $6)`,
+      [purchaseId, accountId, product.product_id, Number(product.price), balanceAfter, requestId]
+    );
+    await client.query(
+      `INSERT INTO cdp_diamond_ledger (
+        account_id, amount, balance_after, reason, rules_version, idempotency_key, detail
+      ) VALUES ($1::uuid, $2, $3, 'shop_purchase', $4, $5, $6::jsonb)`,
+      [
+        accountId,
+        -Number(product.price),
+        balanceAfter,
+        SHOP_RULES_VERSION,
+        `shop_purchase:${purchaseId}`,
+        JSON.stringify({ purchaseId, productId: product.product_id, productName: product.name })
+      ]
+    );
+
+    if (product.product_type === "consumable_item") {
+      const inventory = await client.query(
+        `INSERT INTO cdp_consumable_inventory (
+          account_id, item_id, available_quantity, reserved_quantity
+        ) VALUES ($1::uuid, $2, 1, 0)
+        ON CONFLICT (account_id, item_id) DO UPDATE SET
+          available_quantity = cdp_consumable_inventory.available_quantity + 1,
+          updated_at = now()
+        RETURNING available_quantity, reserved_quantity`,
+        [accountId, product.asset_key]
+      );
+      await client.query(
+        `INSERT INTO cdp_consumable_ledger (
+          account_id, item_id, available_delta, reserved_delta,
+          available_after, reserved_after, reason, purchase_id,
+          idempotency_key, detail
+        ) VALUES ($1::uuid, $2, 1, 0, $3, $4, 'purchase', $5::uuid, $6, $7::jsonb)`,
+        [
+          accountId,
+          product.asset_key,
+          Number(inventory.rows[0].available_quantity),
+          Number(inventory.rows[0].reserved_quantity),
+          purchaseId,
+          `item_purchase:${purchaseId}`,
+          JSON.stringify({ productId: product.product_id })
+        ]
+      );
+    } else {
+      await client.query(
+        `INSERT INTO cdp_cosmetic_entitlements (
+          account_id, cosmetic_type, cosmetic_key, source, source_id
+        ) VALUES ($1::uuid, $2, $3, 'purchase', $4)`,
+        [accountId, product.product_type, product.asset_key, purchaseId]
+      );
+    }
+
+    await client.query("COMMIT");
+    return {
+      repeated: false,
+      purchase: {
+        purchase_id: purchaseId,
+        product_id: product.product_id,
+        price: Number(product.price),
+        balance_after: balanceAfter
+      }
+    };
+  } catch (error) {
+    await client.query("ROLLBACK");
+    rememberError(error);
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+export async function updateShopProduct(productId, body, administratorId) {
+  const database = requirePool();
+  const client = await database.connect();
+  try {
+    await client.query("BEGIN");
+    const currentResult = await client.query(
+      `SELECT product_id, product_type, asset_key, name, description,
+              price, is_listed, sort_order, updated_at
+       FROM cdp_shop_products
+       WHERE product_id = $1
+       FOR UPDATE`,
+      [String(productId || "")]
+    );
+    const current = currentResult.rows[0];
+    if (!current) throw commerceError("商品不存在", 404);
+    const price = Object.hasOwn(body || {}, "price") ? Number(body.price) : Number(current.price);
+    if (!Number.isInteger(price) || price <= 0) throw commerceError("商品价格必须是大于零的整数");
+    const isListed = Object.hasOwn(body || {}, "isListed") ? Boolean(body.isListed) : Boolean(current.is_listed);
+    const updated = await client.query(
+      `UPDATE cdp_shop_products
+       SET price = $2, is_listed = $3, updated_by = $4::uuid, updated_at = now()
+       WHERE product_id = $1
+       RETURNING product_id, product_type, asset_key, name, description,
+                 price, is_listed, sort_order, updated_at`,
+      [current.product_id, price, isListed, administratorId]
+    );
+    await client.query(
+      `INSERT INTO cdp_shop_product_audit (
+        product_id, admin_account_id, before_data, after_data
+      ) VALUES ($1, $2::uuid, $3::jsonb, $4::jsonb)`,
+      [current.product_id, administratorId, JSON.stringify(current), JSON.stringify(updated.rows[0])]
+    );
+    await client.query("COMMIT");
+    return publicShopProduct(updated.rows[0]);
+  } catch (error) {
+    await client.query("ROLLBACK");
+    rememberError(error);
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+export async function grantCosmeticEntitlement(administratorId, accountId, productId, requestIdValue, reason = "") {
+  const database = requirePool();
+  const requestId = normalizedRequestId(requestIdValue);
+  const client = await database.connect();
+  try {
+    await client.query("BEGIN");
+    const existing = await client.query(
+      `SELECT grant_id FROM cdp_admin_cosmetic_grants
+       WHERE admin_account_id = $1::uuid AND request_id = $2`,
+      [administratorId, requestId]
+    );
+    if (existing.rows[0]) {
+      await client.query("COMMIT");
+      return { repeated: true, granted: false };
+    }
+    const account = await client.query("SELECT role FROM cdp_accounts WHERE account_id = $1::uuid", [accountId]);
+    if (!account.rows[0]) throw commerceError("玩家账号不存在", 404);
+    if (account.rows[0].role !== "player") throw commerceError("只能向玩家账号发放皮肤", 400);
+    const productResult = await client.query(
+      `SELECT product_type, asset_key FROM cdp_shop_products
+       WHERE product_id = $1 AND product_type IN ('avatar_frame', 'card_skin')`,
+      [String(productId || "")]
+    );
+    const product = productResult.rows[0];
+    if (!product) throw commerceError("请选择有效的皮肤商品", 400);
+    const grantId = randomUUID();
+    const inserted = await client.query(
+      `INSERT INTO cdp_cosmetic_entitlements (
+        account_id, cosmetic_type, cosmetic_key, source, source_id
+      ) VALUES ($1::uuid, $2, $3, 'admin_grant', $4)
+      ON CONFLICT DO NOTHING
+      RETURNING cosmetic_key`,
+      [accountId, product.product_type, product.asset_key, grantId]
+    );
+    await client.query(
+      `INSERT INTO cdp_admin_cosmetic_grants (
+        grant_id, admin_account_id, account_id, cosmetic_type,
+        cosmetic_key, request_id, reason
+      ) VALUES ($1::uuid, $2::uuid, $3::uuid, $4, $5, $6, $7)`,
+      [grantId, administratorId, accountId, product.product_type, product.asset_key, requestId, String(reason || "").slice(0, 160)]
+    );
+    await client.query("COMMIT");
+    return { repeated: false, granted: Boolean(inserted.rows[0]) };
+  } catch (error) {
+    await client.query("ROLLBACK");
+    rememberError(error);
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+export async function saveEquippedCosmetics(accountId, profileId, { avatarFrame = "", cardSkin = "" } = {}) {
+  const database = requirePool();
+  const requested = [
+    ["avatar_frame", String(avatarFrame || "")],
+    ["card_skin", String(cardSkin || "")]
+  ];
+  for (const [type, key] of requested) {
+    if (!key) continue;
+    const owned = await database.query(
+      `SELECT 1 FROM cdp_cosmetic_entitlements
+       WHERE account_id = $1::uuid AND cosmetic_type = $2 AND cosmetic_key = $3`,
+      [accountId, type, key]
+    );
+    if (!owned.rows[0]) throw commerceError("只能使用已经拥有的皮肤", 403);
+  }
+  const result = await database.query(
+    `UPDATE cdp_player_profiles
+     SET avatar_frame = $3, card_skin = $4, updated_at = now()
+     WHERE profile_id = $1 AND account_id = $2::uuid
+     RETURNING updated_at`,
+    [profileId, accountId, avatarFrame, cardSkin]
+  );
+  if (!result.rows[0]) throw commerceError("玩家资料不存在", 404);
+  return { updatedAt: new Date(result.rows[0].updated_at).toISOString() };
+}
+
+export async function reserveGameItem(accountId, roomPlayerId, gameId, itemId, requestIdValue, effectData = {}) {
+  const database = requirePool();
+  const requestId = normalizedRequestId(requestIdValue);
+  const client = await database.connect();
+  try {
+    await client.query("BEGIN");
+    const repeated = await client.query(
+      `SELECT use_id, item_id, status, effect_data
+       FROM cdp_game_item_uses
+       WHERE account_id = $1::uuid AND request_id = $2`,
+      [accountId, requestId]
+    );
+    if (repeated.rows[0]) {
+      await client.query("COMMIT");
+      return { repeated: true, use: repeated.rows[0] };
+    }
+    const product = await client.query(
+      `SELECT 1 FROM cdp_shop_products
+       WHERE product_type = 'consumable_item' AND asset_key = $1`,
+      [itemId]
+    );
+    if (!product.rows[0]) throw commerceError("对局道具不存在", 404);
+    const inventory = await client.query(
+      `UPDATE cdp_consumable_inventory
+       SET available_quantity = available_quantity - 1,
+           reserved_quantity = reserved_quantity + 1,
+           updated_at = now()
+       WHERE account_id = $1::uuid AND item_id = $2 AND available_quantity > 0
+       RETURNING available_quantity, reserved_quantity`,
+      [accountId, itemId]
+    );
+    if (!inventory.rows[0]) throw commerceError("背包中没有这个对局道具", 409);
+    const useId = randomUUID();
+    const use = await client.query(
+      `INSERT INTO cdp_game_item_uses (
+        use_id, game_id, room_player_id, account_id, item_id,
+        status, request_id, effect_data
+      ) VALUES ($1::uuid, $2::uuid, $3, $4::uuid, $5, 'reserved', $6, $7::jsonb)
+      RETURNING use_id, item_id, status, effect_data`,
+      [useId, gameId, roomPlayerId, accountId, itemId, requestId, JSON.stringify(effectData)]
+    );
+    await client.query(
+      `INSERT INTO cdp_consumable_ledger (
+        account_id, item_id, available_delta, reserved_delta,
+        available_after, reserved_after, reason, use_id,
+        idempotency_key, detail
+      ) VALUES ($1::uuid, $2, -1, 1, $3, $4, 'reserve', $5::uuid, $6, $7::jsonb)`,
+      [
+        accountId,
+        itemId,
+        Number(inventory.rows[0].available_quantity),
+        Number(inventory.rows[0].reserved_quantity),
+        useId,
+        `item_reserve:${useId}`,
+        JSON.stringify(effectData)
+      ]
+    );
+    await client.query("COMMIT");
+    return { repeated: false, use: use.rows[0] };
+  } catch (error) {
+    await client.query("ROLLBACK");
+    rememberError(error);
+    if (error.code === "23505") throw commerceError("本局已经使用过这个对局道具", 409);
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+async function resolveReservedUses(gameId, mode, restartUseId = null) {
+  const database = requirePool();
+  const client = await database.connect();
+  try {
+    await client.query("BEGIN");
+    const uses = await client.query(
+      `SELECT use_id, account_id, item_id
+       FROM cdp_game_item_uses
+       WHERE game_id = $1::uuid AND status = 'reserved'
+       ORDER BY used_at, use_id
+       FOR UPDATE`,
+      [gameId]
+    );
+    for (const use of uses.rows) {
+      const consume = mode === "consume" || (mode === "restart" && String(use.use_id) === String(restartUseId));
+      const inventory = await client.query(
+        consume
+          ? `UPDATE cdp_consumable_inventory
+             SET reserved_quantity = reserved_quantity - 1, updated_at = now()
+             WHERE account_id = $1::uuid AND item_id = $2 AND reserved_quantity > 0
+             RETURNING available_quantity, reserved_quantity`
+          : `UPDATE cdp_consumable_inventory
+             SET available_quantity = available_quantity + 1,
+                 reserved_quantity = reserved_quantity - 1,
+                 updated_at = now()
+             WHERE account_id = $1::uuid AND item_id = $2 AND reserved_quantity > 0
+             RETURNING available_quantity, reserved_quantity`,
+        [use.account_id, use.item_id]
+      );
+      if (!inventory.rows[0]) continue;
+      const statusName = consume ? "consumed" : "refunded";
+      await client.query(
+        `UPDATE cdp_game_item_uses
+         SET status = $2, resolved_at = now()
+         WHERE use_id = $1::uuid`,
+        [use.use_id, statusName]
+      );
+      await client.query(
+        `INSERT INTO cdp_consumable_ledger (
+          account_id, item_id, available_delta, reserved_delta,
+          available_after, reserved_after, reason, use_id,
+          idempotency_key, detail
+        ) VALUES ($1::uuid, $2, $3, -1, $4, $5, $6, $7::uuid, $8, '{}'::jsonb)
+        ON CONFLICT (idempotency_key) DO NOTHING`,
+        [
+          use.account_id,
+          use.item_id,
+          consume ? 0 : 1,
+          Number(inventory.rows[0].available_quantity),
+          Number(inventory.rows[0].reserved_quantity),
+          statusName,
+          use.use_id,
+          `item_${statusName}:${use.use_id}`
+        ]
+      );
+    }
+    await client.query("COMMIT");
+    return { resolved: uses.rows.length };
+  } catch (error) {
+    await client.query("ROLLBACK");
+    rememberError(error);
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+export function consumeGameItemUses(gameId) {
+  return resolveReservedUses(gameId, "consume");
+}
+
+export function refundGameItemUses(gameId) {
+  return resolveReservedUses(gameId, "refund");
+}
+
+export function resolveRestartGameItemUses(gameId, restartUseId) {
+  return resolveReservedUses(gameId, "restart", restartUseId);
+}
+
+export async function refundOrphanedGameItemUses() {
+  const database = requirePool();
+  const result = await database.query(
+    `SELECT DISTINCT game_id
+     FROM cdp_game_item_uses
+     WHERE status = 'reserved'
+     ORDER BY game_id`
+  );
+  let resolved = 0;
+  for (const row of result.rows) {
+    const outcome = await resolveReservedUses(row.game_id, "refund");
+    resolved += outcome.resolved;
+  }
+  return { resolved };
+}
+
 function compactCardId(card) {
   if (card?.id) return card.id;
   if (card?.type === "joker") return `${card.deck || 0}-JOKER-${String(card.joker || "").toUpperCase()}`;
@@ -577,6 +1073,7 @@ export function buildGameRecord(room) {
     const roomPlayer = playersById.get(playerResult.playerId);
     const tags = jsonValue(playerResult.evaluationTags, []);
     const gameScore = Number(playerResult.gameScore) || 0;
+    const baseGameScore = Number(playerResult.baseGameScore ?? playerResult.gameScore) || 0;
     return {
       roomPlayerId: playerResult.playerId,
       profileId: roomPlayer?.profileId || null,
@@ -587,16 +1084,20 @@ export function buildGameRecord(room) {
       avatarUrl: roomPlayer?.avatarUrl || "",
       role: playerResult.role || "",
       team: playerResult.team,
-      won: gameScore > 0,
+      won: baseGameScore > 0,
       trickScore: Number(playerResult.trickScore) || 0,
       gameScore,
+      baseGameScore,
+      itemSelfDelta: Number(playerResult.itemSelfDelta) || 0,
+      itemOpponentDelta: Number(playerResult.itemOpponentDelta) || 0,
+      itemScoreDelta: Number(playerResult.itemScoreDelta) || 0,
       draggedRedFives: Number(playerResult.draggedRedFives) || 0,
       draggedDiamondFives: Number(playerResult.draggedDiamondFives) || 0,
       throwFailures: Number(playerResult.throwFailures) || 0,
       evaluation: jsonValue(playerResult.evaluation, {}),
       tags,
       diamondReward: jsonValue(
-        playerResult.diamondReward || calculateDiamondReward({ gameScore, tags }),
+        playerResult.diamondReward || calculateDiamondReward({ gameScore: baseGameScore, tags }),
         {}
       )
     };
@@ -635,6 +1136,8 @@ export function buildGameRecord(room) {
     },
     result: compactResult(result),
     trickHistory: compactTrickHistory(room.settledTrickHistory?.length ? room.settledTrickHistory : room.trickHistory),
+    itemUses: jsonValue(result.itemUses, []),
+    itemAdjustments: jsonValue(result.itemAdjustments, []),
     players
   };
 }
@@ -696,7 +1199,7 @@ async function saveDiamondRewards(client, record) {
     );
     const dailyCapped = Number(rewardedGames.rows[0]?.count || 0) >= DIAMOND_REWARD_RULES.dailyRewardGameLimit;
     const reward = player.diamondReward || calculateDiamondReward({
-      gameScore: player.gameScore,
+      gameScore: player.baseGameScore,
       tags: player.tags
     });
     const awardedAmount = dailyCapped ? 0 : Number(reward.totalAmount) || 0;
@@ -815,19 +1318,23 @@ async function saveGameRecord(record) {
         `INSERT INTO cdp_game_players (
           game_id, room_player_id, profile_id, account_id, seat_index, is_ai,
           name_snapshot, avatar_url_snapshot, role, team, won, trick_score,
-          game_score, dragged_red_fives, dragged_diamond_fives, throw_failures,
+          game_score, base_game_score, item_self_delta, item_opponent_delta,
+          item_score_delta, dragged_red_fives, dragged_diamond_fives, throw_failures,
           evaluation_data
         )
         SELECT
           $1::uuid, player.room_player_id, player.profile_id, player.account_id,
           player.seat_index, player.is_ai, player.name_snapshot, player.avatar_url_snapshot,
           player.role, player.team, player.won, player.trick_score, player.game_score,
-          player.dragged_red_fives, player.dragged_diamond_fives, player.throw_failures,
+          player.base_game_score, player.item_self_delta, player.item_opponent_delta,
+          player.item_score_delta, player.dragged_red_fives, player.dragged_diamond_fives, player.throw_failures,
           player.evaluation_data
         FROM jsonb_to_recordset($2::jsonb) AS player(
           room_player_id text, profile_id text, account_id uuid, seat_index smallint,
           is_ai boolean, name_snapshot text, avatar_url_snapshot text, role text,
           team text, won boolean, trick_score integer, game_score numeric,
+          base_game_score numeric, item_self_delta numeric, item_opponent_delta numeric,
+          item_score_delta numeric,
           dragged_red_fives integer, dragged_diamond_fives integer,
           throw_failures integer, evaluation_data jsonb
         )
@@ -846,10 +1353,37 @@ async function saveGameRecord(record) {
           won: player.won,
           trick_score: player.trickScore,
           game_score: player.gameScore,
+          base_game_score: player.baseGameScore,
+          item_self_delta: player.itemSelfDelta,
+          item_opponent_delta: player.itemOpponentDelta,
+          item_score_delta: player.itemScoreDelta,
           dragged_red_fives: player.draggedRedFives,
           dragged_diamond_fives: player.draggedDiamondFives,
           throw_failures: player.throwFailures,
           evaluation_data: player.evaluation
+        })))]
+      );
+    }
+
+    if (record.itemAdjustments?.length) {
+      await client.query(
+        `INSERT INTO cdp_game_score_adjustments (
+          game_id, source_room_player_id, recipient_room_player_id,
+          adjustment_type, delta, detail
+        )
+        SELECT $1::uuid, adjustment.source_player_id, adjustment.recipient_player_id,
+               adjustment.adjustment_type, adjustment.delta, adjustment.detail
+        FROM jsonb_to_recordset($2::jsonb) AS adjustment(
+          source_player_id text, recipient_player_id text,
+          adjustment_type text, delta numeric, detail jsonb
+        )
+        ON CONFLICT DO NOTHING`,
+        [record.gameId, JSON.stringify(record.itemAdjustments.map((adjustment) => ({
+          source_player_id: adjustment.sourcePlayerId,
+          recipient_player_id: adjustment.recipientPlayerId,
+          adjustment_type: adjustment.adjustmentType,
+          delta: adjustment.delta,
+          detail: adjustment
         })))]
       );
     }
@@ -1537,7 +2071,11 @@ export async function getGameHistory(gameId) {
         'team', player.team,
         'won', player.won,
         'trickScore', player.trick_score,
-        'gameScore', player.game_score
+        'gameScore', player.game_score,
+        'baseGameScore', player.base_game_score,
+        'itemSelfDelta', player.item_self_delta,
+        'itemOpponentDelta', player.item_opponent_delta,
+        'itemScoreDelta', player.item_score_delta
       ) ORDER BY player.seat_index) FILTER (WHERE player.room_player_id IS NOT NULL), '[]'::jsonb) AS players
     FROM cdp_games game
     LEFT JOIN cdp_game_players player ON player.game_id = game.game_id
@@ -1571,7 +2109,9 @@ export async function listRecentGames(limit = 30) {
         'team', player.team,
         'won', player.won,
         'trickScore', player.trick_score,
-        'gameScore', player.game_score
+        'gameScore', player.game_score,
+        'baseGameScore', player.base_game_score,
+        'itemScoreDelta', player.item_score_delta
       ) ORDER BY player.seat_index), '[]'::jsonb) AS players
     FROM cdp_games game
     LEFT JOIN cdp_game_players player ON player.game_id = game.game_id
