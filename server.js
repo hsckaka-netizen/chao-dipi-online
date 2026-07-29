@@ -905,10 +905,12 @@ function resetRoomToLobby(room, options = {}) {
   room.result = null;
   room.setup = emptySetup();
   room.currentTrick = null;
+  room.trickHistory = [];
   room.settledTrickHistory = [];
   room.provisionalWinnerPlayerIds = [];
   room.playPauseUntil = null;
   room.notice = null;
+  room.events = [];
   room.players.forEach((player) => {
     player.hand = [];
     player.autoPlayEnabled = false;
@@ -4843,11 +4845,12 @@ async function handleApi(req, res, pathParts, url) {
       const body = await readJson(req);
       const viewer = requirePlayer(res, room, body.playerId, body.token);
       if (!viewer) return;
-      if (room.status === "lobby") {
-        viewer.ready = true;
-        addEvent(room, `${viewer.name} ${room.stage === "finished" ? "已准备再来一局" : "已准备"}`);
-      } else {
+      if (room.status !== "lobby") {
         return writeJson(res, 409, { error: "本局还未结束，暂不能再来一局" });
+      }
+      if (room.stage === "finished") {
+        resetRoomToLobby(room);
+        addEvent(room, `${viewer.name} 发起下一局，房间已进入开局前准备`);
       }
       broadcast(room);
       return writeJson(res, 200, roomStateAck(room));

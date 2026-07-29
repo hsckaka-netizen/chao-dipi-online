@@ -8,7 +8,8 @@ import {
   calculateDiamondReward,
   diamondRewardDate,
   DIAMOND_REWARD_RULES,
-  isDiamondEligibleGame
+  isDiamondEligibleGame,
+  isDiamondEligiblePlayer
 } from "../diamond-rewards.js";
 
 test("diamond rewards combine base, win, and positive title bonuses", () => {
@@ -83,6 +84,34 @@ test("only unique logged-in human accounts are diamond eligible", () => {
 
   room.players[1].accountId = "account-a";
   assert.equal(isDiamondEligibleGame(room), false);
+});
+
+test("an account actively spectating the room cannot receive a player diamond reward", () => {
+  const room = {
+    players: [
+      { id: "a", accountId: "account-a", test: false },
+      { id: "b", accountId: "account-b", test: false }
+    ],
+    spectators: new Map([
+      ["spectator-a", { id: "spectator-a", accountId: "account-a", targetPlayerId: "b" }]
+    ]),
+    result: {
+      playerResults: [
+        { playerId: "a", gameScore: 2, evaluationTags: [] },
+        { playerId: "b", gameScore: -2, evaluationTags: [] }
+      ]
+    }
+  };
+
+  assert.equal(isDiamondEligibleGame(room), true);
+  assert.equal(isDiamondEligiblePlayer(room, room.players[0]), false);
+  assert.equal(isDiamondEligiblePlayer(room, room.players[1]), true);
+
+  attachDiamondRewards(room);
+  assert.equal(room.result.playerResults[0].diamondReward.status, "ineligible");
+  assert.equal(room.result.playerResults[0].diamondReward.reason, "spectator");
+  assert.equal(room.result.playerResults[0].diamondReward.totalAmount, 0);
+  assert.equal(room.result.playerResults[1].diamondReward.status, "pending");
 });
 
 test("diamond migration defines wallets, per-game rewards, and idempotent ledger", async () => {

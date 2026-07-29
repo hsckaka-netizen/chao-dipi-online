@@ -659,7 +659,7 @@ async function saveDiamondRewards(client, record) {
   const outcomes = [];
   const rewardDate = diamondRewardDate(record.finishedAt);
   for (const player of record.players) {
-    if (!player.accountId || player.isAi) continue;
+    if (!player.accountId || player.isAi || player.diamondReward?.status === "ineligible") continue;
 
     await client.query(
       `INSERT INTO cdp_diamond_wallets (account_id)

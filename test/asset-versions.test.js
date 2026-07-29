@@ -49,4 +49,5 @@ test("every local script and stylesheet reference uses its current content versi
   await assertVersionedReference("app.js", "/state-patch.js");
   await assertVersionedReference("app.js", "/gameplay-effects.js");
   await assertVersionedReference("app.js", "/asset-versions.js");
+  await assertVersionedReference("app.js", "/history-records.js");
 });

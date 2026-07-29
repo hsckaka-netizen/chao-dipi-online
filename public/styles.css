@@ -4574,11 +4574,50 @@ button.auto-play-toggle.active {
   background: #fffaf0;
 }
 
-.history-timeline-entry.history-play .mini-cards {
-  padding-top: 1px;
+.history-trick-head {
+  justify-content: space-between;
 }
 
-.history-timeline-entry.history-play .mini-card {
+.history-trick-plays {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.history-trick-play {
+  min-width: 0;
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  overflow: hidden;
+  border: 1px solid #e1e7e3;
+  border-radius: 7px;
+  background: #fff;
+  padding: 8px;
+}
+
+.history-trick-play .history-entry-head {
+  align-content: flex-start;
+}
+
+.history-play-order {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.history-trick-play .mini-cards {
+  --mini-card-overlap: -24px;
+  flex-wrap: nowrap;
+  gap: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 1px 0 5px 24px;
+  scrollbar-width: thin;
+}
+
+.history-trick-play .mini-card {
   flex-basis: 48px;
   width: 48px;
   min-height: 60px;

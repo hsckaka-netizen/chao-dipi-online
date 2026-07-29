@@ -73,6 +73,21 @@ export function isDiamondEligibleGame(room) {
     && new Set(accountIds).size === room.players.length;
 }
 
+function spectatorAccountIds(room) {
+  const spectators = room?.spectators instanceof Map
+    ? [...room.spectators.values()]
+    : Array.isArray(room?.spectators)
+      ? room.spectators
+      : [];
+  return new Set(spectators.map((spectator) => spectator?.accountId).filter(Boolean));
+}
+
+export function isDiamondEligiblePlayer(room, player) {
+  return isDiamondEligibleGame(room)
+    && Boolean(player)
+    && !spectatorAccountIds(room).has(player.accountId);
+}
+
 export function attachDiamondRewards(room) {
   if (!room?.result?.playerResults) return null;
   const eligible = isDiamondEligibleGame(room);
@@ -83,11 +98,12 @@ export function attachDiamondRewards(room) {
   room.result.diamondRewardsEligible = eligible;
   room.result.playerResults.forEach((playerResult) => {
     const roomPlayer = roomPlayers.get(playerResult.playerId);
+    const playerEligible = isDiamondEligiblePlayer(room, roomPlayer);
     const calculated = calculateDiamondReward({
       gameScore: playerResult.gameScore,
       tags: playerResult.evaluationTags
     });
-    playerResult.diamondReward = eligible
+    playerResult.diamondReward = playerEligible
       ? {
           ...calculated,
           status: "pending",
@@ -100,7 +116,11 @@ export function attachDiamondRewards(room) {
           awardedAmount: 0,
           balanceAfter: null,
           totalAmount: 0,
-          reason: roomPlayer?.test ? "robot-game" : "login-required"
+          reason: spectatorAccountIds(room).has(roomPlayer?.accountId)
+            ? "spectator"
+            : roomPlayer?.test
+              ? "robot-game"
+              : "login-required"
         };
   });
   return room.result;

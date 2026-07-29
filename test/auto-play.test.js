@@ -257,6 +257,86 @@ test("trustee state is public, plays the smallest legal cards, and can be cancel
   assert.equal(stillWaiting.hand.length, handCountAfterCancel, "取消托管后不应继续自动出牌");
 });
 
+test("any player can move a finished room into a fresh next-game lobby", async (t) => {
+  const server = await startServer({ AI_PLAY_DELAY_MS: "0" });
+  t.after(() => server.child.kill());
+
+  const created = await jsonRequest(`${server.baseUrl}/api/rooms`, {
+    method: "POST",
+    body: JSON.stringify({ profileId: "player-benlei" })
+  });
+  const credentials = { playerId: created.playerId, token: created.token };
+  const stateParams = new URLSearchParams(credentials);
+  const stateUrl = `${server.baseUrl}/api/rooms/${created.roomId}/state?${stateParams.toString()}`;
+  const actionUrl = (action) => `${server.baseUrl}/api/rooms/${created.roomId}/${action}`;
+
+  await jsonRequest(actionUrl("test-players"), {
+    method: "POST",
+    body: JSON.stringify({ ...credentials, targetCount: 5 })
+  });
+  await jsonRequest(actionUrl("doglegs"), {
+    method: "POST",
+    body: JSON.stringify({ ...credentials, count: 0 })
+  });
+  await jsonRequest(actionUrl("ready"), {
+    method: "POST",
+    body: JSON.stringify({ ...credentials, ready: true })
+  });
+  await jsonRequest(actionUrl("start"), {
+    method: "POST",
+    body: JSON.stringify(credentials)
+  });
+
+  await waitForHumanPlayingTurn(stateUrl, actionUrl, credentials);
+  await jsonRequest(actionUrl("auto-play"), {
+    method: "POST",
+    body: JSON.stringify({ ...credentials, enabled: true })
+  });
+  const finished = await waitForState(
+    stateUrl,
+    (snapshot) => snapshot.stage === "finished",
+    "托管牌局没有在预期时间内结束",
+    20_000
+  );
+  assert.equal(finished.status, "lobby");
+  assert.ok(finished.result);
+  assert.ok(finished.trickHistory.length > 0);
+
+  const nextPlayer = await jsonRequest(actionUrl("join"), {
+    method: "POST",
+    body: JSON.stringify({ profileId: "player-biesan" })
+  });
+  assert.equal(nextPlayer.snapshot.viewer.host, false);
+  await jsonRequest(actionUrl("again"), {
+    method: "POST",
+    body: JSON.stringify({ playerId: nextPlayer.playerId, token: nextPlayer.token })
+  });
+  const nextLobby = await jsonRequest(stateUrl);
+  assert.equal(nextLobby.status, "lobby");
+  assert.equal(nextLobby.stage, "lobby");
+  assert.equal(nextLobby.result, null);
+  assert.equal(nextLobby.startedAt, null);
+  assert.deepEqual(nextLobby.trickHistory, []);
+  assert.deepEqual(nextLobby.hand, []);
+  assert.equal(nextLobby.viewer.ready, false);
+  assert.equal(nextLobby.players.filter((player) => player.ready).length, 4);
+
+  await jsonRequest(actionUrl("call-mode"), {
+    method: "POST",
+    body: JSON.stringify({ ...credentials, mode: "score" })
+  });
+  const hostConfiguredLobby = await jsonRequest(stateUrl);
+  assert.equal(hostConfiguredLobby.callMode, "score");
+
+  await jsonRequest(actionUrl("again"), {
+    method: "POST",
+    body: JSON.stringify(credentials)
+  });
+  const idempotentLobby = await jsonRequest(stateUrl);
+  assert.equal(idempotentLobby.stage, "lobby");
+  assert.equal(idempotentLobby.viewer.ready, false);
+});
+
 test("preset taunts are validated, visible to the room, and expire", async (t) => {
   const server = await startServer({
     TAUNT_DURATION_MS: "350",

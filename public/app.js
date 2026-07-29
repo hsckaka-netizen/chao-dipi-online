@@ -1,6 +1,7 @@
 import { applyStatePatch } from "./state-patch.js?v=9330552c7e1e";
 import { detectNewDraggedFiveEffects, detectNewLargePlayEffects } from "./gameplay-effects.js?v=14791e626d30";
 import { ASSET_URLS } from "./asset-versions.js?v=b62e391a838d";
+import { createHistoryTrickEntry, filterHistoryTimelineEntries } from "./history-records.js?v=874ba3c97732";
 
 const app = document.querySelector("#app");
 document.documentElement.style.setProperty("--joker-face-image", `url("${ASSET_URLS.jokerFace}")`);
@@ -1579,7 +1580,7 @@ async function playAgain() {
     });
     activeDialog = null;
     dismissedResultRoomId = state?.stage === "finished" ? state?.roomId || null : null;
-    setMessage("已准备下一局，等待其他玩家确认。");
+    setMessage("已进入下一局准备页。");
   } catch (error) {
     setMessage(error.message, true);
   }
@@ -3992,7 +3993,10 @@ function renderDiamondReward(reward) {
   if (!reward) return `<span class="result-diamond muted">💎 —</span>`;
   const title = diamondRewardTitle(reward);
   if (reward.status === "ineligible") {
-    return `<span class="result-diamond muted" title="含机器人、未登录或重复账号席位的牌局不发钻石">💎 不发放</span>`;
+    const ineligibleTitle = reward.reason === "spectator"
+      ? "观战身份不参与本局钻石结算"
+      : "含机器人、未登录或重复账号席位的牌局不发钻石";
+    return `<span class="result-diamond muted" title="${escapeHtml(ineligibleTitle)}">💎 不发放</span>`;
   }
   if (reward.status === "daily-capped") {
     return `<span class="result-diamond capped" title="今日奖励局数已满">💎 今日已满</span>`;
@@ -4007,11 +4011,16 @@ function renderDiamondReward(reward) {
 }
 
 function renderViewerDiamondSummary(result) {
+  if (isSpectating()) {
+    return `<div class="diamond-reward-summary muted"><strong>观战不获得钻石</strong><span>观战用户只查看牌局，不参与本局奖励结算。</span></div>`;
+  }
   const player = result?.playerResults?.find((item) => item.playerId === state?.viewer?.id);
   const reward = player?.diamondReward;
   if (!reward) return "";
   if (reward.status === "ineligible") {
-    return `<div class="diamond-reward-summary muted"><strong>本局不发钻石</strong><span>只有全部席位均为已登录真人账号时才会发放。</span></div>`;
+    return reward.reason === "spectator"
+      ? `<div class="diamond-reward-summary muted"><strong>观战不获得钻石</strong><span>观战用户只查看牌局，不参与本局奖励结算。</span></div>`
+      : `<div class="diamond-reward-summary muted"><strong>本局不发钻石</strong><span>只有全部席位均为已登录真人账号时才会发放。</span></div>`;
   }
   if (reward.status === "daily-capped") {
     return `<div class="diamond-reward-summary capped"><strong>今日奖励局数已满</strong><span>本局原可获得 ${escapeHtml(reward.totalAmount || 0)} 钻石，牌局积分和称号仍正常记录。</span></div>`;
@@ -4041,17 +4050,20 @@ function renderResultPanel() {
   `;
   const winnerEachScore = result.winnerTeam === "idle" ? result.idleEachScore : result.bankerEachScore;
   const scoreDirectionReversed = Number(winnerEachScore) < 0;
+  const spectating = isSpectating();
   return `
     <div class="modal-backdrop">
       <section class="modal-card result-modal stack" role="dialog" aria-modal="true" aria-label="总结看板">
         <div class="section-head">
           <div>
             <h2>总结看板</h2>
-            <div class="meta">${escapeHtml(readyStatusText())}，点击再来一局只会让你自己进入下一局准备。</div>
+            <div class="meta">${escapeHtml(spectating ? "观战用户不参与下一局准备和钻石结算。" : "任意玩家点击再来一局后，全房间进入下一局准备页。")}</div>
           </div>
           <div class="row">
-            <button type="button" data-action="play-again">再来一局</button>
-            <button type="button" class="secondary" data-action="room-leave">退出房间</button>
+            ${spectating
+              ? `<button type="button" class="secondary" data-action="leave-spectating">结束观战</button>`
+              : `<button type="button" data-action="play-again">再来一局</button>
+                 <button type="button" class="secondary" data-action="room-leave">退出房间</button>`}
             <button type="button" class="secondary compact-button" data-action="close-dialog">隐藏结算</button>
           </div>
         </div>
@@ -4937,32 +4949,13 @@ function historyTimelineEntries(source) {
   }
 
   (source.trickHistory || []).forEach((trick) => {
-    const plays = (trick.plays || [])
-      .filter((play) => play.cards?.length && play.played !== false)
-      .sort((left, right) => {
-        const leftIndex = Number.isFinite(left.turnIndex) ? left.turnIndex : Number.MAX_SAFE_INTEGER;
-        const rightIndex = Number.isFinite(right.turnIndex) ? right.turnIndex : Number.MAX_SAFE_INTEGER;
-        if (leftIndex !== rightIndex) return leftIndex - rightIndex;
-        return String(left.at || "").localeCompare(String(right.at || ""));
-      });
-    plays.forEach((play, index) => {
-      events.push({
-        kind: "play",
-        label: `第 ${trick.number} 轮 · 第 ${index + 1} 手`,
-        at: play.at || null,
-        sequence: sequence += 1,
-        playerId: play.playerId,
-        playerName: play.playerName || historyPlayerName(source, play.playerId),
-        role: play.role || historyPlayerRole(source, play.playerId),
-        cards: play.cards || [],
-        suits: uniquePlaySuits(play.cards || [], source.trumpSuit),
-        lead: index === 0 || play.lead,
-        winning: play.playerId === trick.winnerId || play.winning,
-        throwPlay: play.throwPlay || play.throw?.result === "success",
-        throwFailed: play.throwFailed || play.throw?.result === "failed",
-        trickPoints: Number(trick.points) || 0
-      });
+    const entry = createHistoryTrickEntry(trick, {
+      sequence: sequence += 1,
+      playerName: (playerId) => historyPlayerName(source, playerId),
+      playerRole: (playerId) => historyPlayerRole(source, playerId),
+      playSuits: (cards) => uniquePlaySuits(cards, source.trumpSuit)
     });
+    if (entry.plays.length) events.push(entry);
   });
 
   return events.sort((left, right) => {
@@ -4989,17 +4982,11 @@ function historyFilterOptions(source) {
 }
 
 function filteredHistoryEntries(entries) {
-  if (historyFilter === "all") return entries;
-  if (historyFilter === "fry") return entries.filter((entry) => entry.kind === "fry");
-  if (historyFilter.startsWith("suit:")) {
-    const suit = historyFilter.slice("suit:".length);
-    return entries.filter((entry) => entry.kind === "play" && entry.suits?.includes(suit));
-  }
-  return entries;
+  return filterHistoryTimelineEntries(entries, historyFilter);
 }
 
 function renderHistoryTimelineEntry(entry, source) {
-  if (entry.kind !== "play") {
+  if (entry.kind !== "trick") {
     return `
       <article class="history-timeline-entry history-${escapeHtml(entry.kind)}">
         <time>${escapeHtml(fmtTime(entry.at))}</time>
@@ -5011,19 +4998,29 @@ function renderHistoryTimelineEntry(entry, source) {
     `;
   }
   return `
-    <article class="history-timeline-entry history-play">
+    <article class="history-timeline-entry history-trick">
       <time>${escapeHtml(fmtTime(entry.at))}</time>
       <div class="history-entry-body">
-        <div class="history-entry-head">
+        <div class="history-entry-head history-trick-head">
           <span class="tag">${escapeHtml(entry.label)}</span>
-          <strong>${escapeHtml(entry.playerName)}</strong>
-          ${entry.role ? `<span class="history-role">${escapeHtml(entry.role)}</span>` : ""}
-          ${entry.lead ? `<span class="tag lead">首家</span>` : ""}
-          ${entry.winning ? `<span class="tag good">本轮最大${entry.trickPoints ? ` · ${entry.trickPoints}分` : ""}</span>` : ""}
-          ${entry.throwPlay ? `<span class="tag accent">甩牌成功</span>` : ""}
-          ${entry.throwFailed ? `<span class="tag bad">甩牌失败</span>` : ""}
+          <span class="meta">${entry.plays.length} 人出牌 · 按出牌顺序${entry.points ? ` · 本轮 ${entry.points} 分` : ""}</span>
         </div>
-        ${renderMiniCards(entry.cards, { trumpSuit: source.trumpSuit, cardSkin: "" })}
+        <div class="history-trick-plays">
+          ${entry.plays.map((play) => `
+            <section class="history-trick-play">
+              <div class="history-entry-head">
+                <span class="history-play-order">第 ${play.order} 手</span>
+                <strong>${escapeHtml(play.playerName)}</strong>
+                ${play.role ? `<span class="history-role">${escapeHtml(play.role)}</span>` : ""}
+                ${play.lead ? `<span class="tag lead">首家</span>` : ""}
+                ${play.winning ? `<span class="tag good">本轮最大${entry.points ? ` · ${entry.points}分` : ""}</span>` : ""}
+                ${play.throwPlay ? `<span class="tag accent">甩牌成功</span>` : ""}
+                ${play.throwFailed ? `<span class="tag bad">甩牌失败</span>` : ""}
+              </div>
+              ${renderMiniCards(play.cards, { trumpSuit: source.trumpSuit, cardSkin: "" })}
+            </section>
+          `).join("")}
+        </div>
       </div>
     </article>
   `;
@@ -5035,13 +5032,16 @@ function renderHistoryRecordDialog(source, options = {}) {
   const filters = historyFilterOptions(source);
   if (!filters.some((option) => option.value === historyFilter)) historyFilter = "all";
   const visibleEntries = filteredHistoryEntries(entries);
+  const playCount = entries
+    .filter((entry) => entry.kind === "trick")
+    .reduce((total, entry) => total + entry.plays.length, 0);
   return `
     <div class="modal-backdrop">
       <section class="modal-card history-modal" role="dialog" aria-modal="true" aria-label="${escapeHtml(options.title || "牌局记录")}">
         <div class="section-head">
           <div>
             <h2>${escapeHtml(options.title || "牌局记录")}</h2>
-            <div class="meta">${escapeHtml(options.meta || `${entries.filter((entry) => entry.kind === "play").length} 次出牌 · 按发生顺序展示`)}</div>
+            <div class="meta">${escapeHtml(options.meta || `${playCount} 次出牌 · 每轮按出牌顺序展示`)}</div>
           </div>
           <button type="button" class="secondary compact-button" data-action="${escapeHtml(options.closeAction || "close-dialog")}">关闭</button>
         </div>
