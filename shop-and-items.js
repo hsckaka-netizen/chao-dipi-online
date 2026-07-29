@@ -87,6 +87,15 @@ export function isConsumableItemId(value) {
   return CONSUMABLE_ITEM_IDS.has(String(value || ""));
 }
 
+export function shopProductIdFromPath(value) {
+  const rawValue = String(value || "");
+  try {
+    return decodeURIComponent(rawValue);
+  } catch {
+    return rawValue;
+  }
+}
+
 export function isItemUseStage(stage) {
   return stage === "bidding" || stage === "score-bidding";
 }

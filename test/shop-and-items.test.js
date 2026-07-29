@@ -9,7 +9,8 @@ import {
   DEFAULT_SHOP_PRODUCTS,
   frySuitStrength,
   isItemUseStage,
-  randomFrySuitOrder
+  randomFrySuitOrder,
+  shopProductIdFromPath
 } from "../shop-and-items.js";
 
 test("hero cards and consumable items have an independent fixed shop catalog", () => {
@@ -19,6 +20,13 @@ test("hero cards and consumable items have an independent fixed shop catalog", (
   assert.equal(isItemUseStage("bidding"), true);
   assert.equal(isItemUseStage("score-bidding"), true);
   assert.equal(isItemUseStage("burying"), false);
+});
+
+test("admin shop route restores encoded product ids", () => {
+  assert.equal(shopProductIdFromPath("avatar-frame%3Aemerald"), "avatar-frame:emerald");
+  assert.equal(shopProductIdFromPath("consumable%3Awar-god-card"), "consumable:war-god-card");
+  assert.equal(shopProductIdFromPath("avatar-frame:emerald"), "avatar-frame:emerald");
+  assert.equal(shopProductIdFromPath("%E0%A4%A"), "%E0%A4%A");
 });
 
 test("colorful card always returns a non-default suit permutation", () => {

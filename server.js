@@ -33,7 +33,8 @@ import {
   frySuitStrength,
   isConsumableItemId,
   isItemUseStage,
-  randomFrySuitOrder
+  randomFrySuitOrder,
+  shopProductIdFromPath
 } from "./shop-and-items.js";
 import { versionedAssetUrl } from "./public/asset-versions.js";
 import { createStatePatch } from "./public/state-patch.js";
@@ -4390,7 +4391,7 @@ async function handleApi(req, res, pathParts, url) {
     }
     if (pathParts[2] === "shop" && pathParts[3] && pathParts.length === 4 && req.method === "PATCH") {
       const body = await readJson(req);
-      await updateShopProduct(pathParts[3], body, admin.id);
+      await updateShopProduct(shopProductIdFromPath(pathParts[3]), body, admin.id);
       return writeJson(res, 200, {
         products: await listShopProducts({ includeUnlisted: true }),
         accounts: [...accounts.values()].filter((account) => account.role === "player").map(publicAccount)
