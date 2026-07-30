@@ -95,6 +95,70 @@ test("web server starts even when the history database URL is invalid", async (t
   assert.equal(response.status, 200);
 });
 
+test("host configures the opening bid from 10% to 40% before a score-bidding game", async (t) => {
+  const server = await startServer();
+  t.after(() => server.child.kill());
+
+  const created = await jsonRequest(`${server.baseUrl}/api/rooms`, {
+    method: "POST",
+    body: JSON.stringify({ profileId: "player-benlei" })
+  });
+  const credentials = { playerId: created.playerId, token: created.token };
+  const roomUrl = `${server.baseUrl}/api/rooms/${created.roomId}`;
+  const stateParams = new URLSearchParams(credentials);
+
+  assert.equal(created.snapshot.callMode, "score");
+  assert.equal(created.snapshot.openingBidPercent, 40);
+
+  await jsonRequest(`${roomUrl}/opening-bid-percent`, {
+    method: "POST",
+    body: JSON.stringify({ ...credentials, percent: 20 })
+  });
+  const configured = await jsonRequest(`${roomUrl}/state?${stateParams.toString()}`);
+  assert.equal(configured.openingBidPercent, 20);
+
+  const invalidResponse = await fetch(`${roomUrl}/opening-bid-percent`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ ...credentials, percent: 15 })
+  });
+  assert.equal(invalidResponse.status, 400);
+  assert.match((await invalidResponse.json()).error, /10%、20%、30% 或 40%/);
+
+  const removedModeResponse = await fetch(`${roomUrl}/call-mode`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ ...credentials, mode: "two" })
+  });
+  assert.equal(removedModeResponse.status, 400);
+  assert.match((await removedModeResponse.json()).error, /仅支持叫分抢庄/);
+
+  await jsonRequest(`${roomUrl}/test-players`, {
+    method: "POST",
+    body: JSON.stringify({ ...credentials, targetCount: 5 })
+  });
+  await jsonRequest(`${roomUrl}/ready`, {
+    method: "POST",
+    body: JSON.stringify({ ...credentials, ready: true })
+  });
+  await jsonRequest(`${roomUrl}/start`, {
+    method: "POST",
+    body: JSON.stringify(credentials)
+  });
+  const started = await jsonRequest(`${roomUrl}/state?${stateParams.toString()}`);
+  assert.equal(started.stage, "score-bidding");
+  assert.equal(started.setup.openingBidPercent, 20);
+  assert.equal(started.setup.scoreBid.minimum, 100);
+  assert.equal(started.setup.scoreBid.currentScore, 100);
+
+  const inGameSettingResponse = await fetch(`${roomUrl}/opening-bid-percent`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ ...credentials, percent: 30 })
+  });
+  assert.equal(inGameSettingResponse.status, 409);
+});
+
 test("players can leave the lobby and reclaim their active-game seat", async (t) => {
   const server = await startServer();
   t.after(() => server.child.kill());
@@ -258,7 +322,7 @@ test("room snapshots stay monotonic and visual assets are cached", async (t) => 
   });
   const started = await jsonRequest(`${server.baseUrl}/api/rooms/${created.roomId}/state?${stateParams.toString()}`);
   assert.equal(startedAck.snapshotVersion, started.snapshotVersion);
-  assert.equal(started.stage, "bidding", "开局请求应先返回，不应同步跑完机器人准备流程");
+  assert.equal(started.stage, "score-bidding", "开局请求应先返回，不应同步跑完机器人准备流程");
   assert.equal(started.kittySize, 5);
   assert.deepEqual(started.removedCards, []);
   assert.ok(started.currentTrick === null || started.currentTrick.plays.every((play) => Object.hasOwn(play, "avatarFrame")));
@@ -348,7 +412,7 @@ test("room snapshots stay monotonic and visual assets are cached", async (t) => 
     assert.ok(countStarted.removedCards.every((card) => card.rank === "4"));
     assert.equal(new Set(countStarted.removedCards.map((card) => card.suit)).size, expectedRemovedCount);
     assert.equal(countStarted.hand.length, 53);
-    assert.equal(countStarted.stage, "bidding");
+    assert.equal(countStarted.stage, "score-bidding");
 
     const countSpectate = await jsonRequest(`${server.baseUrl}/api/rooms/${countRoom.roomId}/spectate`, {
       method: "POST",

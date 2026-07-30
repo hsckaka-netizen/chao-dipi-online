@@ -1672,14 +1672,14 @@ async function randomBid() {
   }
 }
 
-async function setCallMode(mode) {
+async function setOpeningBidPercent(percent) {
   if (!session) return;
   try {
-    await roomAction(`/api/rooms/${session.roomId}/call-mode`, {
+    await roomAction(`/api/rooms/${session.roomId}/opening-bid-percent`, {
       method: "POST",
-      body: JSON.stringify({ playerId: session.playerId, token: session.token, mode })
+      body: JSON.stringify({ playerId: session.playerId, token: session.token, percent })
     });
-    setMessage(`已切换为${state.callModeName || "新的叫庄方式"}。`);
+    setMessage(`起始叫分已设置为总牌分的 ${state.openingBidPercent || percent}%。`);
   } catch (error) {
     setMessage(error.message, true);
   }
@@ -2789,12 +2789,23 @@ function renderReadyControls({ waitingNextRound = false } = {}) {
   return `<button type="button" class="${ready ? "secondary" : ""}" data-action="${ready ? "ready-off" : "ready-on"}">${escapeHtml(label)}</button>`;
 }
 
-function renderCallModeToggle() {
-  const mode = state.callMode || state.setup?.callMode || "two";
+function renderOpeningBidPercentControl() {
+  const options = [10, 20, 30, 40];
+  const current = options.includes(Number(state.openingBidPercent)) ? Number(state.openingBidPercent) : 40;
   return `
-    <span class="segmented call-mode-toggle" aria-label="叫庄方式">
-      <button type="button" class="${mode === "two" ? "" : "secondary"}" data-action="call-mode-two" ${mode === "two" ? "disabled" : ""}>亮2叫主</button>
-      <button type="button" class="${mode === "score" ? "" : "secondary"}" data-action="call-mode-score" ${mode === "score" ? "disabled" : ""}>叫分抢庄</button>
+    <span class="dogleg-count-control">
+      <span class="meta">起始叫分</span>
+      <span class="segmented" aria-label="起始叫分占总牌分比例">
+        ${options.map((percent) => `
+          <button
+            type="button"
+            class="${percent === current ? "" : "secondary"}"
+            data-action="opening-bid-percent"
+            data-percent="${percent}"
+            ${percent === current ? "disabled" : ""}
+          >${percent}%</button>
+        `).join("")}
+      </span>
     </span>
   `;
 }
@@ -2984,7 +2995,7 @@ function renderJoinableRoom(room) {
           <span class="tag accent">${escapeHtml(room.playerCount)}/${escapeHtml(room.maxPlayers)} 人</span>
           ${room.status === "lobby" ? `<span class="tag good">准备 ${escapeHtml(room.readyCount)}/${escapeHtml(room.playerCount)}</span>` : ""}
           <span class="tag">房主 ${escapeHtml(room.hostName || "未知")}</span>
-          <span class="tag">${escapeHtml(room.callModeName || "亮2叫主")}</span>
+          <span class="tag">起叫 ${escapeHtml(room.openingBidPercent || 40)}%</span>
           ${room.phase ? `<span class="tag">${escapeHtml(room.phase)}</span>` : ""}
           <span class="tag">${escapeHtml(fmtTime(room.createdAt))}</span>
         </div>
@@ -4199,6 +4210,7 @@ function renderRoom() {
               <span class="tag accent">${state.players.length}/${state.maxPlayers} 人</span>
               ${spectating ? `<span class="tag good">观战 · ${escapeHtml(state.spectator?.targetPlayerName || state.viewer?.name || "玩家")}</span>` : ""}
               <span class="tag">${escapeHtml(state.phase)}</span>
+              ${inLobbyView ? `<span class="tag">起叫 ${escapeHtml(state.openingBidPercent || 40)}%</span>` : ""}
               ${inLobbyView ? `<span class="tag good">${escapeHtml(readyStatusText())}</span>` : ""}
             </div>
           </div>
@@ -4211,7 +4223,7 @@ function renderRoom() {
               ${state.status === "dealt" || state.events.length ? `<button type="button" class="secondary" data-action="open-history">牌局记录 ${state.trickHistory.length} 轮</button>` : ""}
               ${state.canViewKitty ? `<button type="button" class="secondary" data-action="open-kitty">查看底牌</button>` : ""}
               ${spectating ? "" : `
-                ${state.viewer.host && state.status === "lobby" ? renderCallModeToggle() : ""}
+                ${state.viewer.host && state.status === "lobby" ? renderOpeningBidPercentControl() : ""}
                 ${state.viewer.host && state.status === "lobby" ? renderDoglegCountControl() : ""}
                 ${inLobbyView ? renderReadyControls({ waitingNextRound }) : ""}
                 ${state.viewer.host && state.status === "lobby" ? `<button type="button" class="secondary" data-action="add-robot" ${state.players.length >= state.maxPlayers ? "disabled" : ""}>添加机器人</button>` : ""}
@@ -6424,7 +6436,7 @@ function clearSelectionFromPageClick(event) {
 }
 
 const mutatingActions = new Set([
-  "room-leave", "confirm-room-action", "call-mode-two", "call-mode-score", "dogleg-count",
+  "room-leave", "confirm-room-action", "opening-bid-percent", "dogleg-count",
   "add-robot", "random-seats", "start", "ready-on", "ready-off", "bid-selected",
   "bid-pass", "random-bid", "score-bid-start", "score-bid-10", "score-bid-20",
   "score-bid-30", "score-pass", "trump-suit-S", "trump-suit-H", "trump-suit-C",
@@ -6640,8 +6652,9 @@ document.addEventListener("click", (event) => {
     spectatePlayer(target?.dataset.roomId || "", target?.dataset.playerId || "");
   }
   if (action === "copy") copyShare();
-  if (action === "call-mode-two") setCallMode("two");
-  if (action === "call-mode-score") setCallMode("score");
+  if (action === "opening-bid-percent") {
+    setOpeningBidPercent(Number(event.target.closest("[data-percent]")?.dataset.percent || 0));
+  }
   if (action === "dogleg-count") setDoglegCount(Number(event.target.closest("[data-count]")?.dataset.count || 0));
   if (action === "add-robot") addRobot();
   if (action === "random-seats") randomizeSeats();

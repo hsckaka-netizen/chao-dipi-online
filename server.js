@@ -88,8 +88,9 @@ const port = Number(process.env.PORT || 3000);
 const MIN_PLAYERS = 5;
 const MAX_PLAYERS = 9;
 const HAND_SIZE = 53;
-const CALL_MODE_TWO = "two";
 const CALL_MODE_SCORE = "score";
+const OPENING_BID_PERCENTAGES = new Set([10, 20, 30, 40]);
+const DEFAULT_OPENING_BID_PERCENT = 40;
 const SCORE_BID_SECONDS = 20;
 const FRY_SECONDS = 20;
 const TAUNT_DURATION_MS = Math.max(100, Number(process.env.TAUNT_DURATION_MS) || 4500);
@@ -370,6 +371,7 @@ function joinableRoomsList() {
       phase: room.phase,
       callMode: normalizedCallMode(room.callMode),
       callModeName: callModeName(room.callMode),
+      openingBidPercent: normalizedOpeningBidPercent(room.openingBidPercent),
       doglegNeeded: clampDoglegCount(room.doglegNeeded, room.players.length),
       doglegMax: maxDoglegCount(room.players.length),
       createdAt: room.createdAt,
@@ -726,12 +728,12 @@ function createEmptyTrick(number = 1, leaderId = null) {
   };
 }
 
-function normalizedCallMode(value) {
-  return value === CALL_MODE_SCORE ? CALL_MODE_SCORE : CALL_MODE_TWO;
+function normalizedCallMode() {
+  return CALL_MODE_SCORE;
 }
 
-function callModeName(value) {
-  return normalizedCallMode(value) === CALL_MODE_SCORE ? "叫分抢庄" : "亮2叫主";
+function callModeName() {
+  return "叫分抢庄";
 }
 
 function emptySetup() {
@@ -749,8 +751,13 @@ function totalGamePoints(room) {
   return room.players.length * 100;
 }
 
+function normalizedOpeningBidPercent(value) {
+  const percent = Number(value);
+  return OPENING_BID_PERCENTAGES.has(percent) ? percent : DEFAULT_OPENING_BID_PERCENT;
+}
+
 function openingBankerScore(room) {
-  return Math.round(totalGamePoints(room) * 0.4);
+  return Math.round(totalGamePoints(room) * normalizedOpeningBidPercent(room.openingBidPercent) / 100);
 }
 
 function createScoreBidSetup(room) {
@@ -876,9 +883,10 @@ function deal(room) {
   });
   room.kitty = deck.slice(count * HAND_SIZE);
   room.status = "dealt";
-  room.callMode = normalizedCallMode(room.callMode);
-  room.stage = room.callMode === CALL_MODE_SCORE ? "score-bidding" : "bidding";
-  room.phase = room.callMode === CALL_MODE_SCORE ? "叫分抢庄" : "叫主/抢主";
+  room.callMode = CALL_MODE_SCORE;
+  room.openingBidPercent = normalizedOpeningBidPercent(room.openingBidPercent);
+  room.stage = "score-bidding";
+  room.phase = "叫分抢庄";
   room.startedAt = now();
   room.kittySize = room.kitty.length;
   room.bankerId = null;
@@ -888,7 +896,7 @@ function deal(room) {
   room.doglegNeeded = clampDoglegCount(room.doglegNeeded, count);
   room.result = null;
   room.setup = emptySetup();
-  if (room.callMode === CALL_MODE_SCORE) room.setup.scoreBid = createScoreBidSetup(room);
+  room.setup.scoreBid = createScoreBidSetup(room);
   room.currentTrick = null;
   room.trickHistory = [];
   room.settledTrickHistory = [];
@@ -903,7 +911,7 @@ function deal(room) {
   if (room.removedCards.length) {
     addEvent(room, `本局开局移除 ${room.removedCards.map((card) => card.label).join("、")}，底牌保持 ${room.kittySize} 张`);
   }
-  if (room.callMode === CALL_MODE_SCORE && room.setup.scoreBid?.current) {
+  if (room.setup.scoreBid?.current) {
     const scoreBid = room.setup.scoreBid;
     room.phase = `${playerName(room, scoreBid.current.playerId)} 以 ${scoreBid.current.score} 分起叫，等待其他玩家加分或过`;
     addEvent(room, `${playerName(room, scoreBid.current.playerId)} 以 ${scoreBid.current.score} 分起叫抢庄`);
@@ -1039,6 +1047,7 @@ function setupSnapshot(room) {
     stage: room.stage,
     callMode: normalizedCallMode(room.callMode),
     callModeName: callModeName(room.callMode),
+    openingBidPercent: normalizedOpeningBidPercent(room.openingBidPercent),
     bankerId: room.bankerId,
     bankerName: room.bankerId ? playerName(room, room.bankerId) : "",
     trumpSuit: room.trumpSuit,
@@ -1191,6 +1200,7 @@ function roomSnapshot(room, viewer = null) {
     phase: room.phase,
     callMode: normalizedCallMode(room.callMode),
     callModeName: callModeName(room.callMode),
+    openingBidPercent: normalizedOpeningBidPercent(room.openingBidPercent),
     minPlayers: MIN_PLAYERS,
     maxPlayers: MAX_PLAYERS,
     handSize: HAND_SIZE,
@@ -4589,7 +4599,8 @@ async function handleApi(req, res, pathParts, url) {
       createdAt: now(),
       startedAt: null,
       gameRecordId: null,
-      callMode: CALL_MODE_TWO,
+      callMode: CALL_MODE_SCORE,
+      openingBidPercent: DEFAULT_OPENING_BID_PERCENT,
       hostId: host.id,
       players: [host],
       kitty: [],
@@ -4778,12 +4789,27 @@ async function handleApi(req, res, pathParts, url) {
       const body = await readJson(req);
       const viewer = requirePlayer(res, room, body.playerId, body.token);
       if (!viewer) return;
-      if (!viewer.host) return writeJson(res, 403, { error: "只有房主可以切换叫庄方式" });
-      if (room.status !== "lobby") return writeJson(res, 409, { error: "只有开局前可以切换叫庄方式" });
-      const nextMode = normalizedCallMode(body.mode);
-      if (room.callMode !== nextMode) {
-        room.callMode = nextMode;
-        addEvent(room, `房主切换叫庄方式为${callModeName(nextMode)}`);
+      if (!viewer.host) return writeJson(res, 403, { error: "只有房主可以设置叫庄方式" });
+      if (room.status !== "lobby") return writeJson(res, 409, { error: "只有开局前可以设置叫庄方式" });
+      if (body.mode !== CALL_MODE_SCORE) return writeJson(res, 400, { error: "当前仅支持叫分抢庄" });
+      room.callMode = CALL_MODE_SCORE;
+      broadcast(room);
+      return writeJson(res, 200, roomStateAck(room));
+    }
+
+    if (req.method === "POST" && pathParts[3] === "opening-bid-percent") {
+      const body = await readJson(req);
+      const viewer = requirePlayer(res, room, body.playerId, body.token);
+      if (!viewer) return;
+      if (!viewer.host) return writeJson(res, 403, { error: "只有房主可以设置起始叫分" });
+      if (room.status !== "lobby") return writeJson(res, 409, { error: "只有开局前可以设置起始叫分" });
+      const nextPercent = Number(body.percent);
+      if (!OPENING_BID_PERCENTAGES.has(nextPercent)) {
+        return writeJson(res, 400, { error: "起始叫分比例只能设置为 10%、20%、30% 或 40%" });
+      }
+      if (room.openingBidPercent !== nextPercent) {
+        room.openingBidPercent = nextPercent;
+        addEvent(room, `房主将起始叫分设置为总牌分的 ${nextPercent}%`);
       }
       broadcast(room);
       return writeJson(res, 200, roomStateAck(room));

@@ -77,6 +77,24 @@ async function waitForHumanPlayingTurn(stateUrl, actionUrl, credentials, timeout
       });
       continue;
     }
+    if (
+      state.stage === "score-bidding"
+      && state.setup?.scoreBid?.currentPlayerId !== credentials.playerId
+      && !(state.setup?.scoreBid?.passIds || []).includes(credentials.playerId)
+    ) {
+      await jsonRequest(actionUrl("score-pass"), {
+        method: "POST",
+        body: JSON.stringify(credentials)
+      });
+      continue;
+    }
+    if (state.stage === "trump-selecting" && state.setup?.bankerId === credentials.playerId) {
+      await jsonRequest(actionUrl("trump"), {
+        method: "POST",
+        body: JSON.stringify({ ...credentials, suit: "S" })
+      });
+      continue;
+    }
     if (state.stage === "burying" && state.setup?.bankerId === credentials.playerId) {
       await jsonRequest(actionUrl("bury"), {
         method: "POST",
@@ -321,12 +339,13 @@ test("any player can move a finished room into a fresh next-game lobby", async (
   assert.equal(nextLobby.viewer.ready, false);
   assert.equal(nextLobby.players.filter((player) => player.ready).length, 4);
 
-  await jsonRequest(actionUrl("call-mode"), {
+  await jsonRequest(actionUrl("opening-bid-percent"), {
     method: "POST",
-    body: JSON.stringify({ ...credentials, mode: "score" })
+    body: JSON.stringify({ ...credentials, percent: 20 })
   });
   const hostConfiguredLobby = await jsonRequest(stateUrl);
   assert.equal(hostConfiguredLobby.callMode, "score");
+  assert.equal(hostConfiguredLobby.openingBidPercent, 20);
 
   await jsonRequest(actionUrl("again"), {
     method: "POST",
