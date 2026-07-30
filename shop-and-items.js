@@ -1,4 +1,4 @@
-export const SHOP_RULES_VERSION = "2026-07-29-v1";
+export const SHOP_RULES_VERSION = "2026-07-30-v1";
 
 export const CONSUMABLE_ITEMS = Object.freeze([
   {
@@ -98,6 +98,19 @@ export function shopProductIdFromPath(value) {
 
 export function isItemUseStage(stage) {
   return stage === "bidding" || stage === "score-bidding";
+}
+
+export function gameItemAccess(room) {
+  const players = Array.isArray(room?.players) ? room.players : [];
+  const humanPlayers = players.filter((player) => !player?.test);
+  const accountIds = humanPlayers.map((player) => player?.accountId).filter(Boolean);
+  const eligible = humanPlayers.length > 0
+    && accountIds.length === humanPlayers.length
+    && new Set(accountIds).size === humanPlayers.length;
+  return {
+    eligible,
+    freeUse: eligible && players.some((player) => Boolean(player?.test))
+  };
 }
 
 export function randomFrySuitOrder(randomIndex) {

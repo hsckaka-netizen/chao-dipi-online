@@ -8,6 +8,7 @@ import {
   DEFAULT_FRY_SUIT_ORDER,
   DEFAULT_SHOP_PRODUCTS,
   frySuitStrength,
+  gameItemAccess,
   isItemUseStage,
   randomFrySuitOrder,
   shopProductIdFromPath
@@ -20,6 +21,27 @@ test("hero cards and consumable items have an independent fixed shop catalog", (
   assert.equal(isItemUseStage("bidding"), true);
   assert.equal(isItemUseStage("score-bidding"), true);
   assert.equal(isItemUseStage("burying"), false);
+});
+
+test("game items allow AI games without charging inventory", () => {
+  assert.deepEqual(gameItemAccess({
+    players: [
+      { accountId: "account-a", test: false },
+      { accountId: "account-b", test: false }
+    ]
+  }), { eligible: true, freeUse: false });
+  assert.deepEqual(gameItemAccess({
+    players: [
+      { accountId: "account-a", test: false },
+      { accountId: null, test: true }
+    ]
+  }), { eligible: true, freeUse: true });
+  assert.deepEqual(gameItemAccess({
+    players: [
+      { accountId: null, test: false },
+      { accountId: null, test: true }
+    ]
+  }), { eligible: false, freeUse: false });
 });
 
 test("admin shop route restores encoded product ids", () => {
@@ -101,6 +123,8 @@ test("server and browser expose the shop, self-equipped cosmetics, and game-item
   assert.match(serverSource, /pathParts\[1\] === "shop"/);
   assert.match(serverSource, /pathParts\[1\] === "cosmetics"/);
   assert.match(serverSource, /pathParts\[3\] === "item-use"/);
+  assert.match(serverSource, /\{ freeUse: access\.freeUse \}/);
+  assert.match(appSource, /本局含 AI，不消耗卡片/);
   assert.match(serverSource, /refundOrphanedGameItemUses/);
   assert.match(serverSource, /updateShopProducts\(body\.products, admin\.id\)/);
   assert.match(serverSource, /pathParts\[2\] === "cosmetics" && pathParts\[3\] === "grants"/);

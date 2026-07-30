@@ -1536,6 +1536,7 @@ async function grantAdminDiamonds(event) {
 async function useGameItem(itemId) {
   if (!session || isSpectating() || itemUseInFlight) return;
   if (itemId === "restart-card" && !window.confirm("使用重开卡会立即作废当前牌局并重新发牌，确定使用吗？")) return;
+  const freeUse = Boolean(state?.gameItems?.freeUse);
   itemUseInFlight = itemId;
   render();
   try {
@@ -1550,7 +1551,8 @@ async function useGameItem(itemId) {
     });
     activeDialog = null;
     ensureShopState(true);
-    setMessage(itemId === "restart-card" ? "重开卡已生效，牌局已经重新发牌。" : "对局道具已生效。", false);
+    const successText = itemId === "restart-card" ? "重开卡已生效，牌局已经重新发牌。" : "对局道具已生效。";
+    setMessage(freeUse ? `${successText} 本局含 AI，不消耗卡片。` : successText, false);
   } catch (error) {
     setMessage(error.message, true);
   } finally {
@@ -3767,7 +3769,7 @@ function renderShopPage() {
         <div class="shop-product-grid">${cosmetics.map(renderShopProduct).join("") || `<div class="empty">暂无上架皮肤。</div>`}</div>
       </section>
       <section class="panel stack shop-catalog">
-        <div class="section-head"><div><h2>对局道具</h2><div class="meta">每次购买增加 1 张；只有全员登录的真人牌局可在叫庄结束前使用。</div></div><span class="tag">${consumables.length} 种</span></div>
+        <div class="section-head"><div><h2>对局道具</h2><div class="meta">每次购买增加 1 张；真人局正常消耗，含 AI 的牌局可免费使用。</div></div><span class="tag">${consumables.length} 种</span></div>
         <div class="shop-product-grid consumables">${consumables.map(renderShopProduct).join("") || `<div class="empty">暂无上架道具。</div>`}</div>
       </section>
     `}
@@ -4595,7 +4597,7 @@ function renderGameItemsDialog() {
     <div class="modal-backdrop">
       <section class="modal-card game-items-modal" role="dialog" aria-modal="true" aria-label="使用对局道具">
         <div class="section-head">
-          <div><h2>对局道具</h2><div class="meta">只有全员登录的真人局可用；每位玩家每局同一道具限用一次。</div></div>
+          <div><h2>对局道具</h2><div class="meta">${state.gameItems?.freeUse ? "本局含 AI，使用后不消耗卡片；" : ""}每位玩家每局同一道具限用一次。</div></div>
           <button type="button" class="secondary compact-button" data-action="close-dialog">关闭</button>
         </div>
         ${colorfulFryOrderText() ? `<div class="colorful-order">缤纷卡顺序（大 → 小）：<strong>${escapeHtml(colorfulFryOrderText())}</strong></div>` : ""}
@@ -4609,7 +4611,7 @@ function renderGameItemsDialog() {
             return `
               <article class="game-item-row">
                 ${shopProductPreview({ ...item, productType: "consumable_item" })}
-                <div><strong>${escapeHtml(item.name)}</strong><p>${escapeHtml(item.description)}</p><span class="tag">背包 ${count}</span></div>
+                <div><strong>${escapeHtml(item.name)}</strong><p>${escapeHtml(item.description)}</p><span class="tag">${state.gameItems?.freeUse ? "AI 局免费使用 · " : ""}背包 ${count}</span></div>
                 <button type="button" data-action="use-game-item" data-item-id="${escapeHtml(item.assetKey)}" ${disabled ? "disabled" : ""}>${itemUseInFlight === item.assetKey ? "使用中…" : usedByViewer ? "本局已用" : globallyUsed || restartUsed ? "本轮已生效" : count ? "使用" : "暂无"}</button>
               </article>
             `;

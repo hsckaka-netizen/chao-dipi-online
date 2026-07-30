@@ -31,6 +31,7 @@ import {
   applyWarGodAdjustments,
   CONSUMABLE_ITEMS,
   frySuitStrength,
+  gameItemAccess,
   isConsumableItemId,
   isItemUseStage,
   randomFrySuitOrder,
@@ -1084,9 +1085,11 @@ function setupSnapshot(room) {
 
 function gameItemsSnapshot(room) {
   const gameItems = room.gameItems || { uses: [], frySuitOrder: null, luckyPlayerIds: [] };
+  const access = gameItemAccess(room);
   return {
-    eligible: isDiamondEligibleGame(room),
-    canUse: room.status === "dealt" && isItemUseStage(room.stage) && isDiamondEligibleGame(room),
+    eligible: access.eligible,
+    freeUse: access.freeUse,
+    canUse: room.status === "dealt" && isItemUseStage(room.stage) && access.eligible,
     restartUsed: Boolean(room.restartChainUsed),
     frySuitOrder: gameItems.frySuitOrder ? [...gameItems.frySuitOrder] : null,
     frySuitOrderNames: gameItems.frySuitOrder?.map(suitName) || [],
@@ -1097,6 +1100,7 @@ function gameItemsSnapshot(room) {
       playerName: playerName(room, use.playerId),
       itemId: use.itemId,
       itemName: consumableItemById.get(use.itemId)?.name || use.itemId,
+      freeUse: Boolean(use.freeUse),
       at: use.at
     }))
   };
@@ -1349,8 +1353,9 @@ async function submitGameItem(room, player, itemIdValue, requestId) {
   if (room.status !== "dealt" || !isItemUseStage(room.stage)) {
     return { error: "只能在发牌后至叫庄结束前使用对局道具", status: 409 };
   }
-  if (!isDiamondEligibleGame(room)) {
-    return { error: "只有全部为已登录真人的牌局可以使用对局道具", status: 409 };
+  const access = gameItemAccess(room);
+  if (!access.eligible) {
+    return { error: "真人玩家需全部登录且账号不能重复，才能使用对局道具", status: 409 };
   }
   if (!player.accountId) return { error: "请先登录玩家账号", status: 403 };
   if (!room.gameRecordId) return { error: "本局尚未生成有效标识", status: 409 };
@@ -1377,7 +1382,8 @@ async function submitGameItem(room, player, itemIdValue, requestId) {
       room.gameRecordId,
       itemId,
       requestId,
-      effectData
+      effectData,
+      { freeUse: access.freeUse }
     );
     const use = {
       useId: reservation.use.use_id,
@@ -1385,6 +1391,7 @@ async function submitGameItem(room, player, itemIdValue, requestId) {
       accountId: player.accountId,
       itemId,
       effectData: reservation.use.effect_data || effectData,
+      freeUse: Boolean(reservation.freeUse),
       at: now()
     };
     if (reservation.repeated) {
@@ -1782,6 +1789,7 @@ function finishGame(room, completedTrick) {
     itemId: use.itemId,
     itemName: consumableItemById.get(use.itemId)?.name || use.itemId,
     effectData: use.effectData || {},
+    freeUse: Boolean(use.freeUse),
     at: use.at
   }));
   attachDiamondRewards(room);

@@ -979,7 +979,16 @@ export async function saveEquippedCosmetics(accountId, profileId, { avatarFrame 
   return { updatedAt: new Date(result.rows[0].updated_at).toISOString() };
 }
 
-export async function reserveGameItem(accountId, roomPlayerId, gameId, itemId, requestIdValue, effectData = {}) {
+export async function reserveGameItem(
+  accountId,
+  roomPlayerId,
+  gameId,
+  itemId,
+  requestIdValue,
+  effectData = {},
+  options = {}
+) {
+  const freeUse = options.freeUse === true;
   const database = requirePool();
   const requestId = normalizedRequestId(requestIdValue);
   const client = await database.connect();
@@ -993,7 +1002,11 @@ export async function reserveGameItem(accountId, roomPlayerId, gameId, itemId, r
     );
     if (repeated.rows[0]) {
       await client.query("COMMIT");
-      return { repeated: true, use: repeated.rows[0] };
+      return {
+        repeated: true,
+        freeUse: Boolean(repeated.rows[0].effect_data?.freeUse),
+        use: repeated.rows[0]
+      };
     }
     const product = await client.query(
       `SELECT 1 FROM cdp_shop_products
@@ -1001,6 +1014,35 @@ export async function reserveGameItem(accountId, roomPlayerId, gameId, itemId, r
       [itemId]
     );
     if (!product.rows[0]) throw commerceError("对局道具不存在", 404);
+    if (freeUse) {
+      const inventory = await client.query(
+        `SELECT available_quantity, reserved_quantity
+         FROM cdp_consumable_inventory
+         WHERE account_id = $1::uuid AND item_id = $2 AND available_quantity > 0
+         FOR UPDATE`,
+        [accountId, itemId]
+      );
+      if (!inventory.rows[0]) throw commerceError("背包中没有这个对局道具", 409);
+      const useId = randomUUID();
+      const use = await client.query(
+        `INSERT INTO cdp_game_item_uses (
+          use_id, game_id, room_player_id, account_id, item_id,
+          status, request_id, effect_data, resolved_at
+        ) VALUES ($1::uuid, $2::uuid, $3, $4::uuid, $5, 'refunded', $6, $7::jsonb, now())
+        RETURNING use_id, item_id, status, effect_data`,
+        [
+          useId,
+          gameId,
+          roomPlayerId,
+          accountId,
+          itemId,
+          requestId,
+          JSON.stringify({ ...effectData, freeUse: true })
+        ]
+      );
+      await client.query("COMMIT");
+      return { repeated: false, freeUse: true, use: use.rows[0] };
+    }
     const inventory = await client.query(
       `UPDATE cdp_consumable_inventory
        SET available_quantity = available_quantity - 1,
@@ -1037,7 +1079,7 @@ export async function reserveGameItem(accountId, roomPlayerId, gameId, itemId, r
       ]
     );
     await client.query("COMMIT");
-    return { repeated: false, use: use.rows[0] };
+    return { repeated: false, freeUse: false, use: use.rows[0] };
   } catch (error) {
     await client.query("ROLLBACK");
     rememberError(error);
