@@ -12,7 +12,7 @@ import {
   isDiamondEligiblePlayer
 } from "../diamond-rewards.js";
 
-test("diamond rewards combine base, win, and positive title bonuses", () => {
+test("diamond rewards combine the base amount and positive title bonuses", () => {
   const loser = calculateDiamondReward({ gameScore: -2, tags: [] });
   const winner = calculateDiamondReward({ gameScore: 2, tags: [] });
   const mvpWinner = calculateDiamondReward({
@@ -20,9 +20,9 @@ test("diamond rewards combine base, win, and positive title bonuses", () => {
     tags: [{ code: "mvp", label: "MVP" }]
   });
 
-  assert.equal(loser.totalAmount, 5);
-  assert.equal(winner.totalAmount, 8);
-  assert.equal(mvpWinner.totalAmount, 11);
+  assert.equal(loser.totalAmount, 10);
+  assert.equal(winner.totalAmount, 10);
+  assert.equal(mvpWinner.totalAmount, 13);
   assert.equal(mvpWinner.titleBonus, 3);
 });
 
@@ -38,7 +38,7 @@ test("negative titles do not earn diamonds and duplicate tags count once", () =>
   });
 
   assert.deepEqual(reward.titleRewards, [{ code: "mvp", label: "MVP", amount: 3 }]);
-  assert.equal(reward.totalAmount, 8);
+  assert.equal(reward.totalAmount, 13);
 });
 
 test("title rewards stack incrementally but respect the per-game cap", () => {
@@ -55,7 +55,7 @@ test("title rewards stack incrementally but respect the per-game cap", () => {
 
   assert.equal(reward.titleBonusBeforeCap, 9);
   assert.equal(reward.titleBonus, DIAMOND_REWARD_RULES.titleBonusCap);
-  assert.equal(reward.totalAmount, 13);
+  assert.equal(reward.totalAmount, 15);
 });
 
 test("daily reward dates use the game finish time in Asia/Shanghai", () => {
@@ -80,13 +80,13 @@ test("only unique logged-in human accounts are diamond eligible", () => {
   assert.equal(isDiamondEligibleGame(room), true);
   attachDiamondRewards(room);
   assert.equal(room.result.playerResults[0].diamondReward.status, "pending");
-  assert.equal(room.result.playerResults[0].diamondReward.totalAmount, 8);
+  assert.equal(room.result.playerResults[0].diamondReward.totalAmount, 10);
 
   room.players[1].accountId = "account-a";
   assert.equal(isDiamondEligibleGame(room), false);
 });
 
-test("item-adjusted final score does not change the diamond win bonus", () => {
+test("win bonuses remain disabled after item-adjusted score changes", () => {
   const room = {
     players: [
       { id: "a", accountId: "account-a", test: false },
@@ -102,7 +102,7 @@ test("item-adjusted final score does not change the diamond win bonus", () => {
 
   attachDiamondRewards(room);
   assert.equal(room.result.playerResults[0].diamondReward.winBonus, 0);
-  assert.equal(room.result.playerResults[1].diamondReward.winBonus, 3);
+  assert.equal(room.result.playerResults[1].diamondReward.winBonus, 0);
 });
 
 test("an account actively spectating the room cannot receive a player diamond reward", () => {

@@ -1,7 +1,7 @@
 export const DIAMOND_REWARD_RULES = Object.freeze({
-  version: "2026-07-28-v1",
-  baseAmount: 5,
-  winBonus: 3,
+  version: "2026-07-30-v1",
+  baseAmount: 10,
+  winBonus: 0,
   titleBonusCap: 5,
   dailyRewardGameLimit: 10,
   timezone: "Asia/Shanghai",
