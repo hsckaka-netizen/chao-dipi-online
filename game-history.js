@@ -9,10 +9,11 @@ import {
   DIAMOND_REWARD_RULES,
   isDiamondEligibleGame
 } from "./diamond-rewards.js";
+import { buildGameEvaluations } from "./game-evaluations.js";
 import { SHOP_RULES_VERSION, shopProductIdFromPath } from "./shop-and-items.js";
 
 const { Pool } = pg;
-const RULES_VERSION = "2026-07-29";
+const RULES_VERSION = "2026-07-31";
 const ADMIN_DIAMOND_GRANT_RULES_VERSION = "2026-07-29-admin-grant-v1";
 const MIGRATIONS = [
   {
@@ -66,6 +67,11 @@ const MIGRATIONS = [
   {
     version: 13,
     path: fileURLToPath(new URL("./db/migrations/013_shop_and_consumable_items.sql", import.meta.url))
+  },
+  {
+    version: 14,
+    path: fileURLToPath(new URL("./db/migrations/014_dragged_five_attribution.sql", import.meta.url)),
+    apply: recalculateStoredGameEvaluations
   }
 ];
 const HISTORY_ENABLED = String(process.env.GAME_HISTORY_ENABLED || "").toLowerCase() === "true";
@@ -136,6 +142,7 @@ async function applyMigrations(client) {
       await client.query("BEGIN");
       try {
         await client.query(sql);
+        if (migration.apply) await migration.apply(client);
         await client.query("INSERT INTO cdp_schema_migrations(version) VALUES ($1)", [migration.version]);
         await client.query("COMMIT");
       } catch (error) {
@@ -1230,6 +1237,147 @@ function compactTrickHistory(tricks) {
 function compactResult(result) {
   const { playerResults: _playerResults, bottomCards: _bottomCards, ...summary } = result || {};
   return jsonValue(summary, {});
+}
+
+export function rebuildStoredGameEvaluations({
+  players = [],
+  trickHistory = [],
+  result = {},
+  bankerRoomPlayerId = null,
+  bottomWinnerRoomPlayerId = null,
+  bottomWinnerTeam = null,
+  bottomPoints = 0,
+  bottomCards = []
+} = {}) {
+  const oldAwards = jsonValue(result?.evaluations, {});
+  const hasStoredProvisionalState = players.every((player) =>
+    Object.hasOwn(player.evaluation || {}, "wasProvisionalWinner")
+  );
+  let provisionalWinnerPlayerIds = null;
+  if (hasStoredProvisionalState) {
+    provisionalWinnerPlayerIds = players
+      .filter((player) => player.evaluation?.wasProvisionalWinner)
+      .map((player) => player.roomPlayerId);
+  } else if (Array.isArray(oldAwards.stiffestPlayerIds)) {
+    const stiffestIds = new Set(oldAwards.stiffestPlayerIds);
+    provisionalWinnerPlayerIds = players
+      .filter((player) => !stiffestIds.has(player.roomPlayerId))
+      .map((player) => player.roomPlayerId);
+  }
+
+  const evaluationWinnerTeam = result?.evaluationWinnerTeam
+    || players.find((player) => Number(player.baseGameScore) > 0)?.team
+    || null;
+  const expandedBottomCards = (bottomCards || []).map(historyCardFromId);
+  const bottomDraggedRedFives = Number(result?.bottomDraggedRedFives)
+    || expandedBottomCards.filter((card) => card.type === "normal" && card.rank === "5" && card.suit === "H").length;
+  const bottomDraggedDiamondFives = Number(result?.bottomDraggedDiamondFives)
+    || expandedBottomCards.filter((card) => card.type === "normal" && card.rank === "5" && card.suit === "D").length;
+
+  return buildGameEvaluations({
+    players: players.map((player) => ({
+      id: player.roomPlayerId,
+      score: Number(player.trickScore) || 0,
+      throwFailures: Number(player.throwFailures) || 0
+    })),
+    tricks: expandHistoryTricks(trickHistory),
+    bankerTeamIds: players.filter((player) => player.team === "banker").map((player) => player.roomPlayerId),
+    winnerTeam: evaluationWinnerTeam,
+    provisionalWinnerPlayerIds,
+    finalSideSuitBottomWinnerId: oldAwards.precisionPlayerId || null,
+    bottom: {
+      winnerId: bottomWinnerRoomPlayerId,
+      winnerTeam: bottomWinnerTeam,
+      bankerId: bankerRoomPlayerId,
+      points: Number(bottomPoints) || 0,
+      draggedRedFives: bottomDraggedRedFives,
+      draggedDiamondFives: bottomDraggedDiamondFives
+    }
+  });
+}
+
+async function recalculateStoredGameEvaluations(client) {
+  const storedGames = await client.query(
+    `SELECT
+       game.game_id,
+       game.banker_room_player_id,
+       game.bottom_winner_room_player_id,
+       game.bottom_winner_team,
+       game.bottom_points,
+       game.bottom_cards,
+       game.result_data,
+       game.trick_history,
+       coalesce(jsonb_agg(jsonb_build_object(
+         'roomPlayerId', player.room_player_id,
+         'seatIndex', player.seat_index,
+         'team', player.team,
+         'trickScore', player.trick_score,
+         'baseGameScore', player.base_game_score,
+         'throwFailures', player.throw_failures,
+         'evaluation', player.evaluation_data
+       ) ORDER BY player.seat_index) FILTER (WHERE player.room_player_id IS NOT NULL), '[]'::jsonb) AS players
+     FROM cdp_games game
+     LEFT JOIN cdp_game_players player ON player.game_id = game.game_id
+     GROUP BY game.game_id
+     ORDER BY game.finished_at, game.game_id`
+  );
+
+  for (const game of storedGames.rows) {
+    const rebuilt = rebuildStoredGameEvaluations({
+      players: game.players,
+      trickHistory: game.trick_history,
+      result: game.result_data,
+      bankerRoomPlayerId: game.banker_room_player_id,
+      bottomWinnerRoomPlayerId: game.bottom_winner_room_player_id,
+      bottomWinnerTeam: game.bottom_winner_team,
+      bottomPoints: game.bottom_points,
+      bottomCards: game.bottom_cards
+    });
+    const evaluations = game.players.map((player) => ({
+      room_player_id: player.roomPlayerId,
+      evaluation_data: rebuilt.byPlayerId[player.roomPlayerId] || {}
+    }));
+    await client.query(
+      `UPDATE cdp_game_players player
+       SET evaluation_data = evaluation.evaluation_data
+       FROM jsonb_to_recordset($2::jsonb) AS evaluation(
+         room_player_id text,
+         evaluation_data jsonb
+       )
+       WHERE player.game_id = $1::uuid
+         AND player.room_player_id = evaluation.room_player_id`,
+      [game.game_id, JSON.stringify(evaluations)]
+    );
+
+    await client.query("DELETE FROM cdp_game_tags WHERE game_id = $1::uuid", [game.game_id]);
+    const tags = game.players.flatMap((player) =>
+      (rebuilt.byPlayerId[player.roomPlayerId]?.tags || []).map((tag) => ({
+        room_player_id: player.roomPlayerId,
+        tag_code: tag.code,
+        tag_label: tag.label,
+        tag_title: tag.title
+      }))
+    );
+    if (tags.length) {
+      await client.query(
+        `INSERT INTO cdp_game_tags (game_id, room_player_id, tag_code, tag_label, tag_title)
+         SELECT $1::uuid, tag.room_player_id, tag.tag_code, tag.tag_label, tag.tag_title
+         FROM jsonb_to_recordset($2::jsonb) AS tag(
+           room_player_id text,
+           tag_code text,
+           tag_label text,
+           tag_title text
+         )`,
+        [game.game_id, JSON.stringify(tags)]
+      );
+    }
+    await client.query(
+      `UPDATE cdp_games
+       SET result_data = jsonb_set(result_data, '{evaluations}', $2::jsonb, true)
+       WHERE game_id = $1::uuid`,
+      [game.game_id, JSON.stringify(rebuilt.awards)]
+    );
+  }
 }
 
 export function buildGameRecord(room) {

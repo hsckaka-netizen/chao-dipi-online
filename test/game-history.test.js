@@ -13,6 +13,7 @@ import {
   loadStoredAccounts,
   loadStoredPlayerProfiles,
   queueGameRecord,
+  rebuildStoredGameEvaluations,
   saveStoredPlayerProfile,
   updateStoredAccount
 } from "../game-history.js";
@@ -291,6 +292,70 @@ test("history compaction has its own forward-only migration", async () => {
   const migration = await readFile(migrationPath, "utf8");
   assert.match(migration, /ALTER TABLE cdp_games/);
   assert.match(migration, /record_format_version smallint NOT NULL DEFAULT 1/);
+});
+
+test("dragged-five migration recalculates stored evaluations from compact tricks", async () => {
+  const migrationPath = fileURLToPath(new URL("../db/migrations/014_dragged_five_attribution.sql", import.meta.url));
+  const sourcePath = fileURLToPath(new URL("../game-history.js", import.meta.url));
+  const [migration, source] = await Promise.all([
+    readFile(migrationPath, "utf8"),
+    readFile(sourcePath, "utf8")
+  ]);
+  assert.match(migration, /evaluation_rules_version/);
+  assert.match(migration, /2026-07-31-leader-drag-v2/);
+  assert.match(source, /version: 14,[\s\S]*014_dragged_five_attribution\.sql[\s\S]*apply: recalculateStoredGameEvaluations/);
+  assert.match(source, /DELETE FROM cdp_game_tags WHERE game_id = \$1::uuid/);
+
+  const rebuilt = rebuildStoredGameEvaluations({
+    players: [
+      {
+        roomPlayerId: "leader",
+        team: "idle",
+        trickScore: 0,
+        baseGameScore: -1,
+        throwFailures: 0,
+        evaluation: { wasProvisionalWinner: true }
+      },
+      {
+        roomPlayerId: "winner",
+        team: "banker",
+        trickScore: 20,
+        baseGameScore: 1,
+        throwFailures: 0,
+        evaluation: {
+          wasProvisionalWinner: true,
+          enemyDraggedRedFives: 1
+        }
+      },
+      {
+        roomPlayerId: "follower",
+        team: "banker",
+        trickScore: 0,
+        baseGameScore: 1,
+        throwFailures: 0,
+        evaluation: { wasProvisionalWinner: false }
+      }
+    ],
+    trickHistory: [{
+      number: 1,
+      leaderId: "leader",
+      winnerId: "winner",
+      points: 5,
+      plays: [
+        { playerId: "leader", at: "2026-07-31T10:00:00.000Z", cards: ["0-H-4"] },
+        { playerId: "winner", at: "2026-07-31T10:00:01.000Z", cards: ["0-H-A"] },
+        { playerId: "follower", at: "2026-07-31T10:00:02.000Z", cards: ["0-H-5"] }
+      ]
+    }],
+    result: {
+      evaluationWinnerTeam: "banker",
+      evaluations: { precisionPlayerId: null }
+    }
+  });
+
+  assert.equal(rebuilt.byPlayerId.leader.enemyDraggedRedFives, 1);
+  assert.equal(rebuilt.byPlayerId.winner.enemyDraggedRedFives, 0);
+  assert.equal(rebuilt.byPlayerId.follower.draggedByOpponentRedFives, 1);
 });
 
 test("account migration adds login identities and avatar cooldown timestamps", async () => {
