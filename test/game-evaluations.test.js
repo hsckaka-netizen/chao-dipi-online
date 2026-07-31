@@ -64,6 +64,60 @@ test("evaluation separates opponent drags from teammate drags", () => {
   assert.deepEqual(c.tags.map((tag) => tag.label), ["坑", "僵"]);
 });
 
+test("dragged fives belong to the trick leader instead of the final winner", () => {
+  const result = buildGameEvaluations({
+    players: [
+      { id: "leader", score: 0 },
+      { id: "leader-teammate", score: 0 },
+      { id: "winner", score: 20 },
+      { id: "winner-teammate", score: 0 }
+    ],
+    bankerTeamIds: ["winner", "winner-teammate"],
+    winnerTeam: "banker",
+    tricks: [{
+      leaderId: "leader",
+      winnerId: "winner",
+      plays: [
+        { playerId: "leader", cards: [card("4")] },
+        { playerId: "leader-teammate", cards: [card("5", "H")] },
+        { playerId: "winner", cards: [card("A")] },
+        { playerId: "winner-teammate", cards: [card("5", "D")] }
+      ]
+    }]
+  });
+
+  assert.equal(result.byPlayerId.leader.teammateDraggedRedFives, 1);
+  assert.equal(result.byPlayerId.leader.enemyDraggedDiamondFives, 1);
+  assert.equal(result.byPlayerId.winner.teammateDraggedRedFives, 0);
+  assert.equal(result.byPlayerId.winner.teammateDraggedDiamondFives, 0);
+  assert.equal(result.byPlayerId["leader-teammate"].draggedByTeammateRedFives, 1);
+  assert.equal(result.byPlayerId["winner-teammate"].draggedByOpponentDiamondFives, 1);
+});
+
+test("a leader whose own five is captured does not drag it from themself", () => {
+  const result = buildGameEvaluations({
+    players: [
+      { id: "leader", score: 0 },
+      { id: "winner", score: 5 }
+    ],
+    bankerTeamIds: ["winner"],
+    winnerTeam: "banker",
+    tricks: [{
+      leaderId: "leader",
+      winnerId: "winner",
+      plays: [
+        { playerId: "leader", cards: [card("5", "H")] },
+        { playerId: "winner", cards: [card("A")] }
+      ]
+    }]
+  });
+
+  assert.equal(result.byPlayerId.leader.enemyDraggedRedFives, 0);
+  assert.equal(result.byPlayerId.leader.teammateDraggedRedFives, 0);
+  assert.equal(result.byPlayerId.leader.draggedByOpponentRedFives, 1);
+  assert.equal(result.byPlayerId.winner.enemyDraggedRedFives, 0);
+});
+
 test("bottom dragged fives count as doubled opponent benefit and loss", () => {
   const result = buildGameEvaluations({
     players: [
@@ -132,13 +186,13 @@ test("evaluation awards stiffest, thunder, and precision labels", () => {
     finalSideSuitBottomWinnerId: "a",
     tricks: [
       {
-        leaderId: "c",
+        leaderId: "a",
         winnerId: "a",
         plays: [
-          { playerId: "c", cards: [card("4")] },
-          { playerId: "d", cards: [card("4")] },
           { playerId: "a", cards: [card("A")] },
-          { playerId: "b", cards: [card("5", "H"), card("5", "H")] }
+          { playerId: "b", cards: [card("5", "H"), card("5", "H")] },
+          { playerId: "c", cards: [card("4")] },
+          { playerId: "d", cards: [card("4")] }
         ]
       }
     ]

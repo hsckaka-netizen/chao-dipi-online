@@ -112,6 +112,7 @@ export function buildGameEvaluations({
     if (winner) winner.wonTricks += 1;
     if (leader) leader.leadRounds += 1;
     const winnerTeam = teamByPlayerId.get(trick?.winnerId);
+    const leaderTeam = teamByPlayerId.get(trick?.leaderId);
 
     (trick?.plays || []).forEach((play) => {
       const contributor = metricByPlayerId.get(play?.playerId);
@@ -125,24 +126,26 @@ export function buildGameEvaluations({
         const value = draggedFiveValue(card);
         if (!value) return;
         const isRedFive = card.suit === "H";
-        if (contributorTeam === winnerTeam) {
-          winner.teammateDragHarmValue += value;
+        const dragActor = play.playerId === trick.leaderId ? null : leader;
+        const dragActorTeam = dragActor ? leaderTeam : winnerTeam;
+        if (contributorTeam === dragActorTeam) {
+          if (dragActor) dragActor.teammateDragHarmValue += value;
           if (isRedFive) {
-            winner.teammateDraggedRedFives += 1;
+            if (dragActor) dragActor.teammateDraggedRedFives += 1;
             contributor.draggedByTeammateRedFives += 1;
           } else {
-            winner.teammateDraggedDiamondFives += 1;
+            if (dragActor) dragActor.teammateDraggedDiamondFives += 1;
             contributor.draggedByTeammateDiamondFives += 1;
           }
           return;
         }
-        winner.enemyDragBenefit += value;
+        if (dragActor) dragActor.enemyDragBenefit += value;
         contributor.enemyDragLoss += value;
         if (isRedFive) {
-          winner.enemyDraggedRedFives += 1;
+          if (dragActor) dragActor.enemyDraggedRedFives += 1;
           contributor.draggedByOpponentRedFives += 1;
         } else {
-          winner.enemyDraggedDiamondFives += 1;
+          if (dragActor) dragActor.enemyDraggedDiamondFives += 1;
           contributor.draggedByOpponentDiamondFives += 1;
         }
       });

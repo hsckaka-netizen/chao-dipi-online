@@ -1554,7 +1554,8 @@ function removePlayerFromRoom(room, playerId, messageText) {
 }
 
 function updateDraggedFiveStats(room, trick, winnerId) {
-  const winnerName = playerName(room, winnerId);
+  const leaderId = trick.leaderId;
+  const leaderName = playerName(room, leaderId);
   trick.plays.forEach((play) => {
     if (play.playerId === winnerId) return;
     const player = playerById(room, play.playerId);
@@ -1563,11 +1564,15 @@ function updateDraggedFiveStats(room, trick, winnerId) {
       if (card.type !== "normal" || card.rank !== "5") return;
       if (card.suit === "H") {
         player.draggedRedFives = (player.draggedRedFives || 0) + 1;
-        addEvent(room, `${player.name} 的红五被 ${winnerName} 拖走`);
+        addEvent(room, play.playerId === leaderId
+          ? `${player.name} 的红五未保住`
+          : `${player.name} 的红五被 ${leaderName} 拖走`);
       }
       if (card.suit === "D") {
         player.draggedDiamondFives = (player.draggedDiamondFives || 0) + 1;
-        addEvent(room, `${player.name} 的方五被 ${winnerName} 拖走`);
+        addEvent(room, play.playerId === leaderId
+          ? `${player.name} 的方五未保住`
+          : `${player.name} 的方五被 ${leaderName} 拖走`);
       }
     });
   });
