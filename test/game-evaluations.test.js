@@ -3,8 +3,8 @@ import assert from "node:assert/strict";
 
 import { buildGameEvaluations, finalScoreWinnerTeam } from "../game-evaluations.js";
 
-function card(rank, suit = "C") {
-  return { type: "normal", rank, suit };
+function card(rank, suit = "C", id = `${suit}-${rank}`) {
+  return { id, type: "normal", rank, suit };
 }
 
 test("evaluation separates opponent drags from teammate drags", () => {
@@ -64,7 +64,7 @@ test("evaluation separates opponent drags from teammate drags", () => {
   assert.deepEqual(c.tags.map((tag) => tag.label), ["坑", "僵"]);
 });
 
-test("dragged fives belong to the trick leader instead of the final winner", () => {
+test("fives forced by the follow count belong to the trick leader", () => {
   const result = buildGameEvaluations({
     players: [
       { id: "leader", score: 0 },
@@ -79,9 +79,17 @@ test("dragged fives belong to the trick leader instead of the final winner", () 
       winnerId: "winner",
       plays: [
         { playerId: "leader", cards: [card("4")] },
-        { playerId: "leader-teammate", cards: [card("5", "H")] },
+        {
+          playerId: "leader-teammate",
+          cards: [card("5", "H", "forced-red")],
+          forcedProtectedFiveIds: ["forced-red"]
+        },
         { playerId: "winner", cards: [card("A")] },
-        { playerId: "winner-teammate", cards: [card("5", "D")] }
+        {
+          playerId: "winner-teammate",
+          cards: [card("5", "D", "forced-diamond")],
+          forcedProtectedFiveIds: ["forced-diamond"]
+        }
       ]
     }]
   });
@@ -94,7 +102,32 @@ test("dragged fives belong to the trick leader instead of the final winner", () 
   assert.equal(result.byPlayerId["winner-teammate"].draggedByOpponentDiamondFives, 1);
 });
 
-test("a leader whose own five is captured does not drag it from themself", () => {
+test("a voluntarily played follower five belongs to the final winner", () => {
+  const result = buildGameEvaluations({
+    players: [
+      { id: "leader", score: 0 },
+      { id: "winner", score: 5 },
+      { id: "follower", score: 0 }
+    ],
+    bankerTeamIds: ["winner"],
+    winnerTeam: "banker",
+    tricks: [{
+      leaderId: "leader",
+      winnerId: "winner",
+      plays: [
+        { playerId: "leader", cards: [card("4")] },
+        { playerId: "winner", cards: [card("A")] },
+        { playerId: "follower", cards: [card("5", "D", "voluntary-diamond")] }
+      ]
+    }]
+  });
+
+  assert.equal(result.byPlayerId.leader.enemyDraggedDiamondFives, 0);
+  assert.equal(result.byPlayerId.winner.enemyDraggedDiamondFives, 1);
+  assert.equal(result.byPlayerId.follower.draggedByOpponentDiamondFives, 1);
+});
+
+test("a leader whose own five is captured credits the final winner", () => {
   const result = buildGameEvaluations({
     players: [
       { id: "leader", score: 0 },
@@ -115,7 +148,7 @@ test("a leader whose own five is captured does not drag it from themself", () =>
   assert.equal(result.byPlayerId.leader.enemyDraggedRedFives, 0);
   assert.equal(result.byPlayerId.leader.teammateDraggedRedFives, 0);
   assert.equal(result.byPlayerId.leader.draggedByOpponentRedFives, 1);
-  assert.equal(result.byPlayerId.winner.enemyDraggedRedFives, 0);
+  assert.equal(result.byPlayerId.winner.enemyDraggedRedFives, 1);
 });
 
 test("bottom dragged fives count as doubled opponent benefit and loss", () => {

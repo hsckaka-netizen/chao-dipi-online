@@ -10,6 +10,7 @@ import {
   isDiamondEligibleGame
 } from "./diamond-rewards.js";
 import { buildGameEvaluations } from "./game-evaluations.js";
+import { annotateForcedProtectedFives } from "./dragged-five-attribution.js";
 import { SHOP_RULES_VERSION, shopProductIdFromPath } from "./shop-and-items.js";
 
 const { Pool } = pg;
@@ -70,7 +71,11 @@ const MIGRATIONS = [
   },
   {
     version: 14,
-    path: fileURLToPath(new URL("./db/migrations/014_dragged_five_attribution.sql", import.meta.url)),
+    path: fileURLToPath(new URL("./db/migrations/014_dragged_five_attribution.sql", import.meta.url))
+  },
+  {
+    version: 15,
+    path: fileURLToPath(new URL("./db/migrations/015_forced_dragged_five_attribution.sql", import.meta.url)),
     apply: recalculateStoredGameEvaluations
   }
 ];
@@ -1229,6 +1234,9 @@ function compactTrickHistory(tricks) {
         playerId: play.playerId,
         at: play.at || null,
         cards: play.cards.map(compactCardId),
+        ...(play.forcedProtectedFiveIds?.length
+          ? { forcedProtectedFiveIds: [...play.forcedProtectedFiveIds] }
+          : {}),
         throw: compactThrow(play)
       }))
   }));
@@ -1247,7 +1255,8 @@ export function rebuildStoredGameEvaluations({
   bottomWinnerRoomPlayerId = null,
   bottomWinnerTeam = null,
   bottomPoints = 0,
-  bottomCards = []
+  bottomCards = [],
+  trumpSuit = null
 } = {}) {
   const oldAwards = jsonValue(result?.evaluations, {});
   const hasStoredProvisionalState = players.every((player) =>
@@ -1280,7 +1289,7 @@ export function rebuildStoredGameEvaluations({
       score: Number(player.trickScore) || 0,
       throwFailures: Number(player.throwFailures) || 0
     })),
-    tricks: expandHistoryTricks(trickHistory),
+    tricks: annotateForcedProtectedFives(expandHistoryTricks(trickHistory), trumpSuit),
     bankerTeamIds: players.filter((player) => player.team === "banker").map((player) => player.roomPlayerId),
     winnerTeam: evaluationWinnerTeam,
     provisionalWinnerPlayerIds,
@@ -1305,6 +1314,7 @@ async function recalculateStoredGameEvaluations(client) {
        game.bottom_winner_team,
        game.bottom_points,
        game.bottom_cards,
+       game.trump_suit,
        game.result_data,
        game.trick_history,
        coalesce(jsonb_agg(jsonb_build_object(
@@ -1331,7 +1341,8 @@ async function recalculateStoredGameEvaluations(client) {
       bottomWinnerRoomPlayerId: game.bottom_winner_room_player_id,
       bottomWinnerTeam: game.bottom_winner_team,
       bottomPoints: game.bottom_points,
-      bottomCards: game.bottom_cards
+      bottomCards: game.bottom_cards,
+      trumpSuit: game.trump_suit
     });
     const evaluations = game.players.map((player) => ({
       room_player_id: player.roomPlayerId,

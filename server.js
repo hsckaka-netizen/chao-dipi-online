@@ -23,6 +23,10 @@ import {
 } from "./account-auth.js";
 import { buildGameEvaluations, finalScoreWinnerTeam } from "./game-evaluations.js";
 import {
+  draggedFiveActorId,
+  forcedProtectedFiveIds
+} from "./dragged-five-attribution.js";
+import {
   applyDiamondRewardPersistence,
   attachDiamondRewards,
   isDiamondEligibleGame
@@ -1167,6 +1171,7 @@ function trickSnapshot(room, trick) {
           count: component.count,
           cards: (component.cards || []).map(publicCard)
         })),
+        forcedProtectedFiveIds: [...(play?.forcedProtectedFiveIds || [])],
         cards: play ? play.cards.map(publicCard) : []
       };
     })
@@ -1554,25 +1559,26 @@ function removePlayerFromRoom(room, playerId, messageText) {
 }
 
 function updateDraggedFiveStats(room, trick, winnerId) {
-  const leaderId = trick.leaderId;
-  const leaderName = playerName(room, leaderId);
   trick.plays.forEach((play) => {
     if (play.playerId === winnerId) return;
     const player = playerById(room, play.playerId);
     if (!player) return;
     play.cards.forEach((card) => {
       if (card.type !== "normal" || card.rank !== "5") return;
+      const actorId = draggedFiveActorId(trick, play, card);
+      const actorName = playerName(room, actorId);
+      const forced = (play.forcedProtectedFiveIds || []).includes(card.id);
       if (card.suit === "H") {
         player.draggedRedFives = (player.draggedRedFives || 0) + 1;
-        addEvent(room, play.playerId === leaderId
-          ? `${player.name} 的红五未保住`
-          : `${player.name} 的红五被 ${leaderName} 拖走`);
+        addEvent(room, forced
+          ? `${player.name} 的红五被 ${actorName} 拖走`
+          : `${player.name} 主动出的红五被 ${actorName} 压走`);
       }
       if (card.suit === "D") {
         player.draggedDiamondFives = (player.draggedDiamondFives || 0) + 1;
-        addEvent(room, play.playerId === leaderId
-          ? `${player.name} 的方五未保住`
-          : `${player.name} 的方五被 ${leaderName} 拖走`);
+        addEvent(room, forced
+          ? `${player.name} 的方五被 ${actorName} 拖走`
+          : `${player.name} 主动出的方五被 ${actorName} 压走`);
       }
     });
   });
@@ -4117,12 +4123,22 @@ function playCards(room, player, cardIds, options = {}) {
   }
 
   clearAiPlayTimer(room);
+  const leadCards = room.currentTrick.plays[0]?.cards || [];
+  const forcedFiveIds = leadCards.length
+    ? forcedProtectedFiveIds({
+      hand: player.hand,
+      selected: playedCards,
+      leadCards,
+      trumpSuit: room.trumpSuit
+    })
+    : [];
   const selectedIds = new Set(playedCards.map((card) => card.id));
   player.hand = player.hand.filter((card) => !selectedIds.has(card.id));
   room.currentTrick.plays.push({
     playerId: player.id,
     at: now(),
     cards: playedCards,
+    forcedProtectedFiveIds: forcedFiveIds,
     throwPlay: Boolean(throwMeta && !throwMeta.failed),
     throwFailed: Boolean(throwMeta?.failed),
     throwAttemptCards: throwMeta?.attemptCards || null,

@@ -294,16 +294,16 @@ test("history compaction has its own forward-only migration", async () => {
   assert.match(migration, /record_format_version smallint NOT NULL DEFAULT 1/);
 });
 
-test("dragged-five migration recalculates stored evaluations from compact tricks", async () => {
-  const migrationPath = fileURLToPath(new URL("../db/migrations/014_dragged_five_attribution.sql", import.meta.url));
+test("forced dragged-five migration recalculates stored evaluations from compact tricks", async () => {
+  const migrationPath = fileURLToPath(new URL("../db/migrations/015_forced_dragged_five_attribution.sql", import.meta.url));
   const sourcePath = fileURLToPath(new URL("../game-history.js", import.meta.url));
   const [migration, source] = await Promise.all([
     readFile(migrationPath, "utf8"),
     readFile(sourcePath, "utf8")
   ]);
   assert.match(migration, /evaluation_rules_version/);
-  assert.match(migration, /2026-07-31-leader-drag-v2/);
-  assert.match(source, /version: 14,[\s\S]*014_dragged_five_attribution\.sql[\s\S]*apply: recalculateStoredGameEvaluations/);
+  assert.match(migration, /2026-07-31-forced-drag-v3/);
+  assert.match(source, /version: 15,[\s\S]*015_forced_dragged_five_attribution\.sql[\s\S]*apply: recalculateStoredGameEvaluations/);
   assert.match(source, /DELETE FROM cdp_game_tags WHERE game_id = \$1::uuid/);
 
   const rebuilt = rebuildStoredGameEvaluations({
@@ -329,33 +329,47 @@ test("dragged-five migration recalculates stored evaluations from compact tricks
       },
       {
         roomPlayerId: "follower",
-        team: "banker",
+        team: "idle",
         trickScore: 0,
-        baseGameScore: 1,
+        baseGameScore: -1,
         throwFailures: 0,
         evaluation: { wasProvisionalWinner: false }
       }
     ],
-    trickHistory: [{
-      number: 1,
-      leaderId: "leader",
-      winnerId: "winner",
-      points: 5,
-      plays: [
-        { playerId: "leader", at: "2026-07-31T10:00:00.000Z", cards: ["0-H-4"] },
-        { playerId: "winner", at: "2026-07-31T10:00:01.000Z", cards: ["0-H-A"] },
-        { playerId: "follower", at: "2026-07-31T10:00:02.000Z", cards: ["0-H-5"] }
-      ]
-    }],
+    trickHistory: [
+      {
+        number: 1,
+        leaderId: "leader",
+        winnerId: "winner",
+        points: 5,
+        plays: [
+          { playerId: "leader", at: "2026-07-31T10:00:00.000Z", cards: ["0-C-2"] },
+          { playerId: "winner", at: "2026-07-31T10:00:01.000Z", cards: ["0-H-5"] },
+          { playerId: "follower", at: "2026-07-31T10:00:02.000Z", cards: ["0-D-5"] }
+        ]
+      },
+      {
+        number: 2,
+        leaderId: "winner",
+        winnerId: "winner",
+        points: 0,
+        plays: [
+          { playerId: "winner", at: "2026-07-31T10:01:00.000Z", cards: ["0-C-4"] },
+          { playerId: "follower", at: "2026-07-31T10:01:01.000Z", cards: ["0-S-2"] },
+          { playerId: "leader", at: "2026-07-31T10:01:02.000Z", cards: ["0-D-4"] }
+        ]
+      }
+    ],
     result: {
       evaluationWinnerTeam: "banker",
       evaluations: { precisionPlayerId: null }
-    }
+    },
+    trumpSuit: null
   });
 
-  assert.equal(rebuilt.byPlayerId.leader.enemyDraggedRedFives, 1);
-  assert.equal(rebuilt.byPlayerId.winner.enemyDraggedRedFives, 0);
-  assert.equal(rebuilt.byPlayerId.follower.draggedByOpponentRedFives, 1);
+  assert.equal(rebuilt.byPlayerId.leader.enemyDraggedDiamondFives, 0);
+  assert.equal(rebuilt.byPlayerId.winner.enemyDraggedDiamondFives, 1);
+  assert.equal(rebuilt.byPlayerId.follower.draggedByOpponentDiamondFives, 1);
 });
 
 test("account migration adds login identities and avatar cooldown timestamps", async () => {

@@ -1,3 +1,5 @@
+import { draggedFiveActorId } from "./dragged-five-attribution.js";
+
 function cardPoints(cards) {
   return (cards || []).reduce((sum, card) => {
     if (card?.rank === "5") return sum + 5;
@@ -112,7 +114,6 @@ export function buildGameEvaluations({
     if (winner) winner.wonTricks += 1;
     if (leader) leader.leadRounds += 1;
     const winnerTeam = teamByPlayerId.get(trick?.winnerId);
-    const leaderTeam = teamByPlayerId.get(trick?.leaderId);
 
     (trick?.plays || []).forEach((play) => {
       const contributor = metricByPlayerId.get(play?.playerId);
@@ -126,26 +127,27 @@ export function buildGameEvaluations({
         const value = draggedFiveValue(card);
         if (!value) return;
         const isRedFive = card.suit === "H";
-        const dragActor = play.playerId === trick.leaderId ? null : leader;
-        const dragActorTeam = dragActor ? leaderTeam : winnerTeam;
+        const dragActor = metricByPlayerId.get(draggedFiveActorId(trick, play, card));
+        const dragActorTeam = teamByPlayerId.get(dragActor?.playerId);
+        if (!dragActor || !dragActorTeam) return;
         if (contributorTeam === dragActorTeam) {
-          if (dragActor) dragActor.teammateDragHarmValue += value;
+          dragActor.teammateDragHarmValue += value;
           if (isRedFive) {
-            if (dragActor) dragActor.teammateDraggedRedFives += 1;
+            dragActor.teammateDraggedRedFives += 1;
             contributor.draggedByTeammateRedFives += 1;
           } else {
-            if (dragActor) dragActor.teammateDraggedDiamondFives += 1;
+            dragActor.teammateDraggedDiamondFives += 1;
             contributor.draggedByTeammateDiamondFives += 1;
           }
           return;
         }
-        if (dragActor) dragActor.enemyDragBenefit += value;
+        dragActor.enemyDragBenefit += value;
         contributor.enemyDragLoss += value;
         if (isRedFive) {
-          if (dragActor) dragActor.enemyDraggedRedFives += 1;
+          dragActor.enemyDraggedRedFives += 1;
           contributor.draggedByOpponentRedFives += 1;
         } else {
-          if (dragActor) dragActor.enemyDraggedDiamondFives += 1;
+          dragActor.enemyDraggedDiamondFives += 1;
           contributor.draggedByOpponentDiamondFives += 1;
         }
       });
