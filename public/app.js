@@ -145,6 +145,7 @@ let adminTaunts = null;
 let adminTauntsLoading = false;
 let adminShop = null;
 let adminShopLoading = false;
+const adminOpenModules = new Set();
 let homeJoinOpen = Boolean(roomFromUrl());
 const stateVersionWaiters = new Set();
 const dragSelectThreshold = 8;
@@ -748,6 +749,7 @@ async function loginAccount(event) {
     adminData = null;
     adminTaunts = null;
     adminShop = null;
+    adminOpenModules.clear();
     setMessage(`已登录：${data.account?.profile?.name || data.account?.username || "账号"}`);
     render();
   } catch (error) {
@@ -769,6 +771,7 @@ async function logoutAccount() {
   adminTauntsLoading = false;
   adminShop = null;
   adminShopLoading = false;
+  adminOpenModules.clear();
   homeView = "rooms";
   setMessage("已退出账号。", false);
   render();
@@ -968,6 +971,15 @@ function syncTauntAudienceInputs(formEl) {
   formEl.querySelectorAll('input[name="accountIds"]').forEach((input) => {
     input.disabled = availableToAll;
   });
+}
+
+function updateTauntAudienceSummary(container) {
+  if (!container) return;
+  const availableToAll = Boolean(container.querySelector('input[name="availableToAll"]')?.checked);
+  const selectedCount = [...container.querySelectorAll('input[name="accountIds"]')]
+    .filter((input) => input.checked).length;
+  const summary = container.querySelector("[data-taunt-audience-summary]");
+  if (summary) summary.textContent = availableToAll ? "所有玩家" : `指定 ${selectedCount} 人`;
 }
 
 async function toggleManagedAccount(accountId, enabled) {
@@ -3892,21 +3904,44 @@ function renderInventoryPage() {
   `);
 }
 
+function renderAdminModule(id, title, description, status, content) {
+  return `
+    <details class="admin-module panel" data-admin-module="${escapeHtml(id)}" ${adminOpenModules.has(id) ? "open" : ""}>
+      <summary class="admin-module-summary">
+        <div>
+          <h2>${escapeHtml(title)}</h2>
+          <p>${escapeHtml(description)}</p>
+        </div>
+        <div class="admin-module-summary-status">
+          ${status}
+          <span class="admin-disclosure-icon" aria-hidden="true">⌄</span>
+        </div>
+      </summary>
+      <div class="admin-module-body">${content}</div>
+    </details>
+  `;
+}
+
 function renderManagedAccount(account) {
   const profileName = account.profile?.name || "未绑定玩家";
   return `
-    <form class="managed-account-row" data-form="reset-password" data-account-id="${escapeHtml(account.id)}">
+    <article class="managed-account-row">
       <div class="managed-account-main">
-        ${account.profile ? avatarHtml(account.profile.name, account.profile.avatarUrl, "small", account.profile.avatarFrame) : `<span class="avatar small">管</span>`}
-        <div><b>${escapeHtml(account.username)}</b><span>${escapeHtml(profileName)}</span></div>
+        ${account.profile ? avatarHtml(account.profile.name, account.profile.avatarUrl, "small", account.profile.avatarFrame) : `<span class="avatar small">玩</span>`}
+        <div><b>${escapeHtml(profileName)}</b><span>${escapeHtml(account.username)}</span></div>
       </div>
       <span class="tag ${account.enabled ? "good" : ""}">${account.enabled ? "已启用" : "已停用"}</span>
-      ${account.role === "player" ? `
-        <label>重置密码<input name="password" type="password" minlength="6" maxlength="72" placeholder="输入新密码" required></label>
-        <button type="submit" class="secondary compact-button">重置</button>
-        <button type="button" class="${account.enabled ? "danger" : "secondary"} compact-button" data-action="toggle-account" data-account-id="${escapeHtml(account.id)}" data-enabled="${account.enabled ? "false" : "true"}">${account.enabled ? "停用" : "启用"}</button>
-      ` : `<span class="tag accent">管理员</span>`}
-    </form>
+      <details class="managed-account-tools">
+        <summary class="secondary compact-button">账号操作</summary>
+        <div class="managed-account-actions">
+          <form class="managed-password-reset" data-form="reset-password" data-account-id="${escapeHtml(account.id)}">
+            <label>重置密码<input name="password" type="password" minlength="6" maxlength="72" placeholder="至少 6 位" required></label>
+            <button type="submit" class="secondary compact-button">确认重置</button>
+          </form>
+          <button type="button" class="${account.enabled ? "danger" : "secondary"} compact-button" data-action="toggle-account" data-account-id="${escapeHtml(account.id)}" data-enabled="${account.enabled ? "false" : "true"}">${account.enabled ? "停用账号" : "重新启用"}</button>
+        </div>
+      </details>
+    </article>
   `;
 }
 
@@ -3938,12 +3973,17 @@ function renderSeasonForm(season = null) {
 }
 
 function renderSeasonManager() {
+  const currentSeason = statisticsSeasons.find((season) => season.is_active);
   return `
-    <section class="panel stack season-manager">
-      <div class="section-head">
-        <div><h2>赛季管理</h2><div class="meta">排行榜按牌局结束时间归入赛季；调整时间不会修改原始牌局记录。</div></div>
+    <section class="admin-module-section season-manager">
+      <div class="admin-module-section-head">
+        <div><h3>赛季</h3><div class="meta">按牌局结束时间归入赛季。</div></div>
+        <span class="tag ${currentSeason ? "good" : ""}">${currentSeason ? `当前：${escapeHtml(currentSeason.name)}` : "暂无当前赛季"}</span>
       </div>
-      ${renderSeasonForm()}
+      <details class="admin-inline-tool">
+        <summary><span>创建新赛季</span><small>需要时展开</small></summary>
+        <div class="admin-inline-tool-body">${renderSeasonForm()}</div>
+      </details>
       <form class="module-settings-form" data-form="save-seasons">
         <div class="season-list">
           ${statisticsSeasonsLoaded
@@ -3961,9 +4001,9 @@ function renderAdminShopManager() {
   const accounts = adminShop?.accounts || [];
   const cosmetics = products.filter((product) => product.productType === "avatar_frame" || product.productType === "card_skin");
   return `
-    <section class="panel stack shop-admin-manager">
-      <div class="section-head">
-        <div><h2>钻石商城管理</h2><div class="meta">修改价格或上下架商品；历史订单仍保留成交时价格。</div></div>
+    <section class="admin-module-section shop-admin-manager">
+      <div class="admin-module-section-head">
+        <div><h3>商品设置</h3><div class="meta">价格与上下架支持批量编辑、统一保存。</div></div>
         <span class="tag">${products.filter((product) => product.isListed).length}/${products.length} 上架</span>
       </div>
       ${adminShopLoading && !adminShop ? `<div class="empty">正在读取商品...</div>` : `
@@ -3984,13 +4024,17 @@ function renderAdminShopManager() {
           </div>
           <div class="module-save-actions"><button type="submit" data-module-save ${products.length ? "" : "disabled"}>统一保存商品设置</button></div>
         </form>
-        <form class="shop-grant-form" data-form="grant-cosmetic">
-          <div><strong>直接发放皮肤</strong><span class="meta">只增加永久拥有权，不替玩家修改当前装备。</span></div>
-          <label>玩家<select name="accountId" required><option value="">选择玩家</option>${accounts.filter((account) => account.role === "player").map((account) => `<option value="${escapeHtml(account.id)}">${escapeHtml(account.profile?.name || account.username)}（${escapeHtml(account.username)}）</option>`).join("")}</select></label>
-          <label>皮肤<select name="productId" required><option value="">选择皮肤</option>${cosmetics.map((product) => `<option value="${escapeHtml(product.id)}">${escapeHtml(product.name)}</option>`).join("")}</select></label>
-          <label>备注<input name="reason" maxlength="160" placeholder="可选，例如：活动奖励"></label>
-          <button type="submit">发放</button>
-        </form>
+        <details class="admin-inline-tool">
+          <summary><span>直接发放皮肤</span><small>只增加拥有权</small></summary>
+          <div class="admin-inline-tool-body">
+            <form class="shop-grant-form" data-form="grant-cosmetic">
+              <label>玩家<select name="accountId" required><option value="">选择玩家</option>${accounts.filter((account) => account.role === "player").map((account) => `<option value="${escapeHtml(account.id)}">${escapeHtml(account.profile?.name || account.username)}（${escapeHtml(account.username)}）</option>`).join("")}</select></label>
+              <label>皮肤<select name="productId" required><option value="">选择皮肤</option>${cosmetics.map((product) => `<option value="${escapeHtml(product.id)}">${escapeHtml(product.name)}</option>`).join("")}</select></label>
+              <label>备注<input name="reason" maxlength="160" placeholder="可选，例如：活动奖励"></label>
+              <button type="submit">确认发放</button>
+            </form>
+          </div>
+        </details>
       `}
     </section>
   `;
@@ -3999,18 +4043,18 @@ function renderAdminShopManager() {
 function renderAdminDiamondGrant() {
   const accounts = (adminData?.accounts || []).filter((account) => account.role === "player");
   return `
-    <section class="panel stack admin-diamond-grant">
-      <div class="section-head">
-        <div><h2>钻石发放</h2><div class="meta">选择玩家并发放钻石；到账后不可在后台直接撤回，每笔操作都会写入钻石流水。</div></div>
+    <details class="admin-inline-tool admin-risk-tool">
+      <summary><span>发放钻石</span><small>到账后不可撤回</small></summary>
+      <div class="admin-inline-tool-body">
+        <div class="admin-action-warning">每笔操作都会写入钻石流水，提交前会再次确认。</div>
+        <form class="shop-grant-form admin-diamond-grant-form" data-form="grant-diamonds">
+          <label>玩家<select name="accountId" required><option value="">选择玩家</option>${accounts.map((account) => `<option value="${escapeHtml(account.id)}">${escapeHtml(account.profile?.name || account.username)}（${escapeHtml(account.username)}）</option>`).join("")}</select></label>
+          <label>数量<input name="amount" type="number" min="1" max="1000000" step="1" required placeholder="1～1000000"></label>
+          <label>备注<input name="note" maxlength="160" placeholder="可选，例如：活动奖励"></label>
+          <button type="submit" data-module-save ${accounts.length ? "" : "disabled"}>确认发放</button>
+        </form>
       </div>
-      <form class="shop-grant-form admin-diamond-grant-form" data-form="grant-diamonds">
-        <div><strong>给玩家发放钻石</strong><span class="meta">单次可发放 1～1000000 钻石。</span></div>
-        <label>玩家<select name="accountId" required><option value="">选择玩家</option>${accounts.map((account) => `<option value="${escapeHtml(account.id)}">${escapeHtml(account.profile?.name || account.username)}（${escapeHtml(account.username)}）</option>`).join("")}</select></label>
-        <label>数量<input name="amount" type="number" min="1" max="1000000" step="1" required placeholder="输入钻石数量"></label>
-        <label>备注<input name="note" maxlength="160" placeholder="可选，例如：活动奖励"></label>
-        <button type="submit" data-module-save ${accounts.length ? "" : "disabled"}>发放钻石</button>
-      </form>
-    </section>
+    </details>
   `;
 }
 
@@ -4023,59 +4067,115 @@ function renderProfileManager() {
   ensureAdminTaunts();
   ensureAdminShop();
   const managedProfiles = adminData?.profiles || [];
-  const managedAccounts = adminData?.accounts || [];
+  const managedAccounts = (adminData?.accounts || []).filter((account) => account.role === "player");
+  const enabledAccountCount = managedAccounts.filter((account) => account.enabled).length;
+  const products = adminShop?.products || [];
+  const listedProductCount = products.filter((product) => product.isListed).length;
+  const taunts = adminTaunts?.taunts || [];
+  const enabledTauntCount = taunts.filter((taunt) => taunt.enabled).length;
+  const currentSeason = statisticsSeasons.find((season) => season.is_active);
   renderShell(`
-    <section class="panel stack admin-own-password">
-      <div class="section-head">
-        <div><h2>管理员密码</h2><div class="meta">修改当前登录管理员账号的密码。</div></div>
+    <section class="panel admin-hero">
+      <div class="admin-hero-head">
+        <div>
+          <span class="eyebrow">ADMIN CONSOLE</span>
+          <h2>管理后台</h2>
+          <p>先看概览，再按业务模块展开操作；修改类配置仍在模块内统一保存。</p>
+        </div>
         <button type="button" class="secondary compact-button" data-action="show-rooms">返回房间</button>
       </div>
-      <form class="admin-password-form" data-form="change-password">
-        <label>当前密码<input type="password" name="currentPassword" autocomplete="current-password" required maxlength="72"></label>
-        <label>新密码<input type="password" name="newPassword" autocomplete="new-password" required minlength="6" maxlength="72"></label>
-        <label>确认新密码<input type="password" name="confirmPassword" autocomplete="new-password" required minlength="6" maxlength="72"></label>
-        <button type="submit">保存新密码</button>
-      </form>
-    </section>
-
-    ${renderSeasonManager()}
-
-    ${renderAdminShopManager()}
-
-    ${renderAdminDiamondGrant()}
-
-    <section class="panel stack admin-account-create">
-      <div class="section-head">
-        <div><h2>创建玩家账号</h2><div class="meta">创建账号时会同时生成对应的玩家资料。</div></div>
-      </div>
-      <form class="admin-create-form" data-form="create-account">
-        <label>玩家昵称<input name="displayName" required maxlength="16" placeholder="例如 新玩家"></label>
-        <label>登录用户名<input name="username" required minlength="3" maxlength="24" pattern="[a-z0-9_-]+" placeholder="例如 benlei"></label>
-        <label>初始密码<input name="password" type="password" required minlength="6" maxlength="72"></label>
-        <button type="submit">创建账号</button>
-      </form>
-    </section>
-
-    <section class="panel stack">
-      <h2>账号状态</h2>
-      <div class="managed-account-list">
-        ${adminDataLoading && !adminData ? `<div class="empty">正在加载账号...</div>` : managedAccounts.map(renderManagedAccount).join("") || `<div class="empty">暂无账号。</div>`}
+      <div class="admin-overview-grid">
+        <button type="button" class="admin-overview-card" data-action="open-admin-module" data-admin-module-id="accounts">
+          <span>玩家账号</span><strong>${adminData ? managedAccounts.length : "…"}</strong><small>${adminData ? `${enabledAccountCount} 启用 · ${managedAccounts.length - enabledAccountCount} 停用` : "正在读取"}</small>
+        </button>
+        <button type="button" class="admin-overview-card" data-action="open-admin-module" data-admin-module-id="profiles">
+          <span>玩家资料</span><strong>${adminData ? managedProfiles.length : "…"}</strong><small>昵称、头像、出牌特效</small>
+        </button>
+        <button type="button" class="admin-overview-card" data-action="open-admin-module" data-admin-module-id="economy">
+          <span>商城商品</span><strong>${adminShop ? products.length : "…"}</strong><small>${adminShop ? `${listedProductCount} 件上架` : "正在读取"}</small>
+        </button>
+        <button type="button" class="admin-overview-card" data-action="open-admin-module" data-admin-module-id="content">
+          <span>牌局内容</span><strong>${adminTaunts ? taunts.length : "…"}</strong><small>${adminTaunts ? `${enabledTauntCount} 条嘲讽启用` : "正在读取"}</small>
+        </button>
+        <button type="button" class="admin-overview-card" data-action="open-admin-module" data-admin-module-id="content">
+          <span>当前赛季</span><strong class="admin-overview-text">${statisticsSeasonsLoaded ? escapeHtml(currentSeason?.name || "未设置") : "…"}</strong><small>${statisticsSeasonsLoaded ? `${statisticsSeasons.length} 个赛季` : "正在读取"}</small>
+        </button>
       </div>
     </section>
 
-    ${renderTauntManager()}
+    <div class="admin-module-list">
+      ${renderAdminModule(
+        "accounts",
+        "玩家账号",
+        "管理登录账号的创建、启停与密码重置。",
+        `<span class="tag ${managedAccounts.length && enabledAccountCount === managedAccounts.length ? "good" : ""}">${adminData ? `${enabledAccountCount}/${managedAccounts.length} 启用` : "加载中"}</span>`,
+        `
+          <details class="admin-inline-tool">
+            <summary><span>创建玩家账号</span><small>同时生成玩家资料</small></summary>
+            <div class="admin-inline-tool-body">
+              <form class="admin-create-form" data-form="create-account">
+                <label>玩家昵称<input name="displayName" required maxlength="16" placeholder="例如 新玩家"></label>
+                <label>登录用户名<input name="username" required minlength="3" maxlength="24" pattern="[a-z0-9_-]+" placeholder="例如 benlei"></label>
+                <label>初始密码<input name="password" type="password" required minlength="6" maxlength="72"></label>
+                <button type="submit">创建账号</button>
+              </form>
+            </div>
+          </details>
+          <div class="admin-module-section-head compact">
+            <h3>账号状态</h3><span class="meta">点“账号操作”后重置密码或停用账号。</span>
+          </div>
+          <div class="managed-account-list">
+            ${adminDataLoading && !adminData ? `<div class="empty">正在加载账号...</div>` : managedAccounts.map(renderManagedAccount).join("") || `<div class="empty">暂无玩家账号。</div>`}
+          </div>
+        `
+      )}
 
-    <section class="panel stack">
-      <div class="section-head">
-        <div><h2>玩家资料</h2><div class="meta">昵称、头像和出牌特效由管理员管理；皮肤由管理员发放，玩家在钻石商城中自行装备。</div></div>
-      </div>
-      <form class="module-settings-form" data-form="save-profiles">
-        <div class="profile-list">
-          ${managedProfiles.length ? managedProfiles.map(renderProfileRow).join("") : `<div class="empty">暂无玩家。</div>`}
-        </div>
-        <div class="module-save-actions"><button type="submit" data-module-save ${managedProfiles.length ? "" : "disabled"}>统一保存玩家资料</button></div>
-      </form>
-    </section>
+      ${renderAdminModule(
+        "profiles",
+        "玩家资料",
+        "编辑昵称、头像和出牌特效；皮肤由玩家自行装备。",
+        `<span class="tag">${adminData ? `${managedProfiles.length} 位玩家` : "加载中"}</span>`,
+        `
+          <form class="module-settings-form" data-form="save-profiles">
+            <div class="profile-list">
+              ${managedProfiles.length ? managedProfiles.map(renderProfileRow).join("") : `<div class="empty">暂无玩家。</div>`}
+            </div>
+            <div class="module-save-actions"><button type="submit" data-module-save ${managedProfiles.length ? "" : "disabled"}>统一保存玩家资料</button></div>
+          </form>
+        `
+      )}
+
+      ${renderAdminModule(
+        "economy",
+        "钻石与商城",
+        "批量管理商品；钻石和皮肤发放按需展开。",
+        `<span class="tag">${adminShop ? `${listedProductCount}/${products.length} 上架` : "加载中"}</span>`,
+        `${renderAdminShopManager()}${renderAdminDiamondGrant()}`
+      )}
+
+      ${renderAdminModule(
+        "content",
+        "牌局内容配置",
+        "集中管理赛季与预设嘲讽词。",
+        `<span class="tag">${statisticsSeasonsLoaded ? `${statisticsSeasons.length} 赛季` : "…"} · ${adminTaunts ? `${enabledTauntCount}/${taunts.length} 嘲讽启用` : "加载中"}</span>`,
+        `${renderSeasonManager()}${renderTauntManager()}`
+      )}
+
+      ${renderAdminModule(
+        "security",
+        "管理员安全",
+        "仅用于修改当前管理员账号密码。",
+        `<span class="tag accent">${escapeHtml(authState.account?.username || "管理员")}</span>`,
+        `
+          <form class="admin-password-form" data-form="change-password">
+            <label>当前密码<input type="password" name="currentPassword" autocomplete="current-password" required maxlength="72"></label>
+            <label>新密码<input type="password" name="newPassword" autocomplete="new-password" required minlength="6" maxlength="72"></label>
+            <label>确认新密码<input type="password" name="confirmPassword" autocomplete="new-password" required minlength="6" maxlength="72"></label>
+            <button type="submit">保存新密码</button>
+          </form>
+        `
+      )}
+    </div>
   `);
 }
 
@@ -4084,29 +4184,34 @@ function renderTauntManager() {
   const taunts = adminTaunts?.taunts || [];
   const loading = adminTauntsLoading && !adminTaunts;
   return `
-    <section class="panel stack taunt-admin-manager">
-      <div class="section-head">
+    <section class="admin-module-section taunt-admin-manager">
+      <div class="admin-module-section-head">
         <div>
-          <h2>牌局嘲讽词</h2>
-          <div class="meta">新增或停用固定文案，并为每条嘲讽指定所有玩家或部分玩家可用。</div>
+          <h3>牌局嘲讽词</h3>
+          <div class="meta">文案、启停与使用范围支持统一保存。</div>
         </div>
-        <span class="tag">${taunts.length} 条</span>
+        <span class="tag">${taunts.filter((taunt) => taunt.enabled).length}/${taunts.length} 启用</span>
       </div>
       ${loading ? `<div class="empty">正在读取嘲讽词...</div>` : `
-        <form class="taunt-admin-card taunt-admin-create" data-form="create-taunt">
-          <div class="taunt-admin-head">
-            <label class="taunt-text-field">
-              新嘲讽词
-              <input name="text" required maxlength="40" placeholder="输入不超过 40 个字符的固定文案">
-            </label>
-            <label class="check-label">
-              <input type="checkbox" name="enabled" checked>
-              立即启用
-            </label>
-            <button type="submit">添加</button>
+        <details class="admin-inline-tool">
+          <summary><span>添加嘲讽词</span><small>新增后立即生效</small></summary>
+          <div class="admin-inline-tool-body">
+            <form class="taunt-admin-card taunt-admin-create" data-form="create-taunt">
+              <div class="taunt-admin-head">
+                <label class="taunt-text-field">
+                  新嘲讽词
+                  <input name="text" required maxlength="40" placeholder="输入不超过 40 个字符的固定文案">
+                </label>
+                <label class="check-label">
+                  <input type="checkbox" name="enabled" checked>
+                  立即启用
+                </label>
+                <button type="submit">添加</button>
+              </div>
+              ${renderTauntAudienceControls(null, accounts)}
+            </form>
           </div>
-          ${renderTauntAudienceControls(null, accounts)}
-        </form>
+        </details>
         <form class="module-settings-form" data-form="save-taunts">
           <div class="taunt-admin-list">
             ${taunts.length
@@ -4124,33 +4229,38 @@ function renderTauntAudienceControls(taunt, accounts) {
   const availableToAll = taunt?.availableToAll !== false;
   const availableAccountIds = new Set(taunt?.availableAccountIds || []);
   return `
-    <fieldset class="taunt-audience">
-      <legend>可使用玩家</legend>
-      <label class="check-label taunt-all-users">
-        <input
-          type="checkbox"
-          name="availableToAll"
-          data-action="taunt-all-users"
-          ${availableToAll ? "checked" : ""}
-        >
-        所有玩家可用
-      </label>
-      <div class="taunt-account-grid ${availableToAll ? "is-disabled" : ""}">
-        ${accounts.length ? accounts.map((account) => `
-          <label class="check-label">
-            <input
-              type="checkbox"
-              name="accountIds"
-              value="${escapeHtml(account.id)}"
-              ${availableAccountIds.has(account.id) ? "checked" : ""}
-              ${availableToAll ? "disabled" : ""}
-            >
-            <span>${escapeHtml(account.profile?.name || account.username)}</span>
-            <small>${escapeHtml(account.username)}${account.enabled ? "" : " · 已停用"}</small>
-          </label>
-        `).join("") : `<span class="meta">暂无玩家账号。</span>`}
+    <details class="taunt-audience">
+      <summary>
+        <span>使用范围</span>
+        <span class="tag" data-taunt-audience-summary>${availableToAll ? "所有玩家" : `指定 ${availableAccountIds.size} 人`}</span>
+      </summary>
+      <div class="taunt-audience-body">
+        <label class="check-label taunt-all-users">
+          <input
+            type="checkbox"
+            name="availableToAll"
+            data-action="taunt-all-users"
+            ${availableToAll ? "checked" : ""}
+          >
+          所有玩家可用
+        </label>
+        <div class="taunt-account-grid ${availableToAll ? "is-disabled" : ""}">
+          ${accounts.length ? accounts.map((account) => `
+            <label class="check-label">
+              <input
+                type="checkbox"
+                name="accountIds"
+                value="${escapeHtml(account.id)}"
+                ${availableAccountIds.has(account.id) ? "checked" : ""}
+                ${availableToAll ? "disabled" : ""}
+              >
+              <span>${escapeHtml(account.profile?.name || account.username)}</span>
+              <small>${escapeHtml(account.username)}${account.enabled ? "" : " · 已停用"}</small>
+            </label>
+          `).join("") : `<span class="meta">暂无玩家账号。</span>`}
+        </div>
       </div>
-    </fieldset>
+    </details>
   `;
 }
 
@@ -4182,34 +4292,38 @@ function renderTauntAdminRow(taunt, accounts) {
 
 function renderProfileRow(profile) {
   return `
-    <div
+    <article
       class="profile-row"
       data-profile-id="${escapeHtml(profile.id)}"
       data-original-name="${escapeHtml(profile.name)}"
       data-original-play-effect="${escapeHtml(profile.playEffect || "")}"
     >
-      ${avatarHtml(profile.name, profile.avatarUrl, "normal", profile.avatarFrame)}
-      <div class="profile-fields">
-        <label>
-          玩家名称
-          <input name="name" maxlength="16" required value="${escapeHtml(profile.name)}">
-        </label>
-        <label>
-          出牌特效
-          <select name="playEffect">
-            <option value="" ${profile.playEffect ? "" : "selected"}>无</option>
-            <option value="fireworks" ${profile.playEffect === "fireworks" ? "selected" : ""}>烟花（至少8张且当前最大）</option>
-          </select>
-        </label>
-        <label>
-          管理员更换头像
-          <input type="file" name="avatar" accept="image/png,image/jpeg,image/webp">
-        </label>
+      <div class="profile-row-summary">
+        ${avatarHtml(profile.name, profile.avatarUrl, "small", profile.avatarFrame)}
+        <div><b>${escapeHtml(profile.name)}</b><span>${escapeHtml(profile.account?.username || "未绑定账号")}</span></div>
+        <span class="tag ${profile.account?.enabled ? "good" : ""}">${profile.playEffect ? "已设出牌特效" : "默认特效"}</span>
       </div>
-      <div class="profile-row-actions">
-        ${profile.account ? `<span class="tag ${profile.account.enabled ? "good" : ""}">${escapeHtml(profile.account.username)}</span>` : `<span class="tag">未绑定账号</span>`}
-      </div>
-    </div>
+      <details class="profile-editor">
+        <summary class="secondary compact-button">编辑资料</summary>
+        <div class="profile-fields">
+          <label>
+            玩家名称
+            <input name="name" maxlength="16" required value="${escapeHtml(profile.name)}">
+          </label>
+          <label>
+            出牌特效
+            <select name="playEffect">
+              <option value="" ${profile.playEffect ? "" : "selected"}>无</option>
+              <option value="fireworks" ${profile.playEffect === "fireworks" ? "selected" : ""}>烟花（至少 8 张且当前最大）</option>
+            </select>
+          </label>
+          <label>
+            更换头像
+            <input type="file" name="avatar" accept="image/png,image/jpeg,image/webp">
+          </label>
+        </div>
+      </details>
+    </article>
   `;
 }
 
@@ -6571,6 +6685,12 @@ document.addEventListener("change", (event) => {
     const cardEl = tauntAudienceTarget.closest(".taunt-admin-card");
     syncTauntAudienceInputs(cardEl);
     cardEl?.querySelector(".taunt-account-grid")?.classList.toggle("is-disabled", tauntAudienceTarget.checked);
+    updateTauntAudienceSummary(cardEl);
+    return;
+  }
+  const tauntAccountTarget = event.target.closest('input[name="accountIds"]');
+  if (tauntAccountTarget) {
+    updateTauntAudienceSummary(tauntAccountTarget.closest(".taunt-admin-card"));
     return;
   }
   const seasonActiveTarget = event.target.closest('[data-action="season-active"]');
@@ -6604,6 +6724,15 @@ document.addEventListener("change", (event) => {
   ensurePlayerStatistics(true);
   render();
 });
+
+document.addEventListener("toggle", (event) => {
+  const module = event.target.closest?.("details[data-admin-module]");
+  if (!module || module !== event.target) return;
+  const moduleId = module.dataset.adminModule || "";
+  if (!moduleId) return;
+  if (module.open) adminOpenModules.add(moduleId);
+  else adminOpenModules.delete(moduleId);
+}, true);
 
 document.addEventListener("click", (event) => {
   const action = event.target.closest("[data-action]")?.dataset.action;
@@ -6654,6 +6783,14 @@ document.addEventListener("click", (event) => {
   if (action === "show-admin") {
     homeView = "admin";
     render();
+  }
+  if (action === "open-admin-module") {
+    const moduleId = event.target.closest("[data-admin-module-id]")?.dataset.adminModuleId || "";
+    if (moduleId) {
+      adminOpenModules.add(moduleId);
+      render();
+      document.querySelector(`details[data-admin-module="${moduleId}"]`)?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
   }
   if (action === "logout-account") logoutAccount();
   if (action === "buy-shop-product") {

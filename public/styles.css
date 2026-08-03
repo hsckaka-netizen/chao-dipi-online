@@ -5836,3 +5836,460 @@ button.auto-play-toggle.active {
     justify-items: start;
   }
 }
+
+/* Admin console */
+.admin-hero {
+  display: grid;
+  gap: 18px;
+  background:
+    radial-gradient(circle at top right, rgba(199, 124, 36, 0.12), transparent 34%),
+    rgba(255, 255, 255, 0.96);
+}
+
+.admin-hero-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.admin-hero h2 {
+  margin: 4px 0 6px;
+  font-size: 28px;
+}
+
+.admin-hero p,
+.admin-module-summary p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.admin-overview-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 9px;
+}
+
+.admin-overview-card {
+  min-width: 0;
+  display: grid;
+  justify-items: start;
+  gap: 3px;
+  border: 1px solid rgba(33, 126, 102, 0.17);
+  background: rgba(247, 251, 249, 0.94);
+  padding: 12px;
+  color: var(--text);
+  text-align: left;
+}
+
+.admin-overview-card:hover {
+  border-color: rgba(33, 126, 102, 0.42);
+  background: #f2f9f5;
+  transform: translateY(-1px);
+}
+
+.admin-overview-card > span,
+.admin-overview-card > small {
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  color: var(--muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.admin-overview-card > span {
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.admin-overview-card > strong {
+  max-width: 100%;
+  overflow: hidden;
+  font-size: 23px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.admin-overview-card > strong.admin-overview-text {
+  font-size: 15px;
+  line-height: 32px;
+}
+
+.admin-module-list {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.admin-module.panel {
+  padding: 0;
+  overflow: hidden;
+  scroll-margin-top: 12px;
+}
+
+.admin-module-summary,
+.admin-inline-tool > summary,
+.taunt-audience > summary,
+.managed-account-tools > summary,
+.profile-editor > summary {
+  list-style: none;
+  cursor: pointer;
+}
+
+.admin-module-summary::-webkit-details-marker,
+.admin-inline-tool > summary::-webkit-details-marker,
+.taunt-audience > summary::-webkit-details-marker,
+.managed-account-tools > summary::-webkit-details-marker,
+.profile-editor > summary::-webkit-details-marker {
+  display: none;
+}
+
+.admin-module-summary {
+  min-height: 84px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 16px 18px;
+}
+
+.admin-module-summary:hover {
+  background: #fafcfb;
+}
+
+.admin-module-summary h2 {
+  margin: 0 0 4px;
+  font-size: 19px;
+}
+
+.admin-module-summary-status {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.admin-disclosure-icon {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background: #eef4f0;
+  color: var(--primary);
+  font-size: 20px;
+  line-height: 1;
+  transition: transform 160ms ease;
+}
+
+.admin-module[open] .admin-disclosure-icon {
+  transform: rotate(180deg);
+}
+
+.admin-module-body {
+  display: grid;
+  gap: 18px;
+  border-top: 1px solid var(--line);
+  background: rgba(249, 251, 250, 0.72);
+  padding: 18px;
+}
+
+.admin-module-section {
+  display: grid;
+  gap: 12px;
+}
+
+.admin-module-section + .admin-module-section,
+.admin-module-section + .admin-inline-tool,
+.admin-inline-tool + .admin-inline-tool {
+  border-top: 1px solid var(--line);
+  padding-top: 18px;
+}
+
+.admin-module-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.admin-module-section-head.compact {
+  margin-top: 4px;
+}
+
+.admin-module-section-head h3 {
+  margin: 0 0 3px;
+  font-size: 16px;
+}
+
+.admin-inline-tool {
+  border: 1px solid #dce6e0;
+  border-radius: 8px;
+  background: #fff;
+  overflow: hidden;
+}
+
+.admin-inline-tool > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 11px 13px;
+  color: var(--primary);
+  font-size: 13px;
+  font-weight: 850;
+}
+
+.admin-inline-tool > summary:hover {
+  background: #f5faf7;
+}
+
+.admin-inline-tool > summary small {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.admin-inline-tool[open] > summary {
+  border-bottom: 1px solid var(--line);
+  background: #f7faf8;
+}
+
+.admin-inline-tool-body {
+  display: grid;
+  gap: 10px;
+  padding: 13px;
+}
+
+.admin-risk-tool > summary {
+  color: #9a5c18;
+}
+
+.admin-action-warning {
+  border-left: 3px solid #c77c24;
+  background: #fff8ef;
+  padding: 9px 11px;
+  color: #805019;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.admin-create-form {
+  grid-template-columns: minmax(160px, 1fr) minmax(150px, .8fr) minmax(180px, 1fr) auto;
+}
+
+.managed-account-row {
+  grid-template-columns: minmax(180px, 1fr) auto auto;
+  align-items: center;
+  padding: 10px 12px;
+}
+
+.managed-account-tools {
+  justify-self: end;
+}
+
+.managed-account-tools > summary,
+.profile-editor > summary {
+  min-height: 30px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  background: #e8eee9;
+  padding: 0 10px;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.managed-account-tools > summary:hover,
+.profile-editor > summary:hover {
+  background: #dbe5df;
+}
+
+.managed-account-tools[open] {
+  grid-column: 1 / -1;
+  width: 100%;
+  display: grid;
+  justify-items: end;
+}
+
+.managed-account-actions {
+  width: 100%;
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 9px;
+  border-top: 1px solid var(--line);
+  padding-top: 10px;
+}
+
+.managed-password-reset {
+  display: grid;
+  grid-template-columns: minmax(180px, 260px) auto;
+  align-items: end;
+  gap: 8px;
+}
+
+.profile-row {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+}
+
+.profile-row-summary {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+}
+
+.profile-row-summary > div {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.profile-row-summary b,
+.profile-row-summary span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.profile-row-summary > div span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.profile-editor {
+  justify-self: end;
+}
+
+.profile-editor[open] {
+  grid-column: 1 / -1;
+  width: 100%;
+  display: grid;
+  justify-items: end;
+}
+
+.profile-fields {
+  width: 100%;
+  grid-template-columns: minmax(160px, .8fr) minmax(220px, 1fr) minmax(220px, 1fr);
+  margin-top: 9px;
+  border-top: 1px solid var(--line);
+  padding-top: 10px;
+}
+
+.taunt-admin-manager {
+  margin-top: 0;
+}
+
+.taunt-audience {
+  border: 1px solid #dfe6e1;
+  border-radius: 8px;
+  background: #fff;
+  overflow: hidden;
+}
+
+.taunt-audience > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 10px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.taunt-audience > summary:hover {
+  background: #f8faf9;
+}
+
+.taunt-audience[open] > summary {
+  border-bottom: 1px solid var(--line);
+}
+
+.taunt-audience-body {
+  display: grid;
+  gap: 9px;
+  padding: 10px;
+}
+
+.taunt-account-grid.is-disabled {
+  display: none;
+}
+
+.admin-module .shop-grant-form {
+  grid-template-columns: minmax(170px, 1fr) minmax(180px, 1fr) minmax(170px, 1fr) auto;
+  border: 0;
+  background: transparent;
+  padding: 0;
+}
+
+@media (max-width: 980px) {
+  .admin-overview-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .admin-module .shop-grant-form,
+  .profile-fields {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+@media (max-width: 620px) {
+  .admin-hero-head,
+  .admin-module-summary,
+  .admin-module-section-head,
+  .managed-account-actions {
+    align-items: stretch;
+    display: grid;
+  }
+
+  .admin-overview-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .admin-module-summary-status {
+    justify-content: space-between;
+  }
+
+  .admin-module-body {
+    padding: 12px;
+  }
+
+  .admin-create-form,
+  .managed-account-row,
+  .managed-password-reset,
+  .profile-row,
+  .profile-row-summary,
+  .profile-fields,
+  .admin-module .shop-grant-form {
+    grid-template-columns: 1fr;
+  }
+
+  .managed-account-tools,
+  .profile-editor {
+    width: 100%;
+    justify-self: stretch;
+  }
+
+  .managed-account-tools > summary,
+  .profile-editor > summary {
+    width: 100%;
+  }
+
+  .profile-row-summary > .tag {
+    justify-self: start;
+  }
+
+  .taunt-admin-actions {
+    grid-template-columns: 1fr;
+  }
+}
