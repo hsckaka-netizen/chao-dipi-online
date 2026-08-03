@@ -52,7 +52,11 @@ test("hero cards and consumable items have an independent fixed shop catalog", (
 
 test("avatar frame migration unlists retired themes and keeps audit rows", async () => {
   const migrationPath = fileURLToPath(new URL("../db/migrations/016_avatar_class_frames.sql", import.meta.url));
-  const migration = await readFile(migrationPath, "utf8");
+  const gameHistoryPath = fileURLToPath(new URL("../game-history.js", import.meta.url));
+  const [migration, gameHistorySource] = await Promise.all([
+    readFile(migrationPath, "utf8"),
+    readFile(gameHistoryPath, "utf8")
+  ]);
 
   assert.match(migration, /SET avatar_frame = ''[\s\S]*'vip'[\s\S]*'emerald'[\s\S]*'violet'[\s\S]*'champion'/);
   assert.match(migration, /SET is_listed = false[\s\S]*avatar-frame:vip[\s\S]*avatar-frame:champion/);
@@ -60,6 +64,7 @@ test("avatar frame migration unlists retired themes and keeps audit rows", async
   assert.match(migration, /'avatar-frame:vip-legend'[\s\S]*?, 500, true, 107\)/);
   assert.match(migration, /'avatar-frame:minions'[\s\S]*?, 300, true, 115\)/);
   assert.doesNotMatch(migration, /DELETE FROM cdp_cosmetic_entitlements/);
+  assert.match(gameHistorySource, /version: 16,[\s\S]*016_avatar_class_frames\.sql/);
 });
 
 test("game items allow AI games without charging inventory", () => {

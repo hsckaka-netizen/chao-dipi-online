@@ -77,6 +77,10 @@ const MIGRATIONS = [
     version: 15,
     path: fileURLToPath(new URL("./db/migrations/015_forced_dragged_five_attribution.sql", import.meta.url)),
     apply: recalculateStoredGameEvaluations
+  },
+  {
+    version: 16,
+    path: fileURLToPath(new URL("./db/migrations/016_avatar_class_frames.sql", import.meta.url))
   }
 ];
 const HISTORY_ENABLED = String(process.env.GAME_HISTORY_ENABLED || "").toLowerCase() === "true";
