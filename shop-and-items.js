@@ -1,31 +1,34 @@
-export const SHOP_RULES_VERSION = "2026-07-30-v1";
+export const SHOP_RULES_VERSION = "2026-08-03-v1";
+
+export const RESTART_CARD_STAGE = "restart-card-using";
+export const OTHER_CARDS_STAGE = "other-cards-using";
 
 export const CONSUMABLE_ITEMS = Object.freeze([
   {
     id: "restart-card",
     name: "重开卡",
-    description: "叫庄结束前使用，作废当前牌局并立即重新洗牌发牌。",
+    description: "发牌后的重开卡阶段使用，作废当前牌局并立即重新洗牌发牌。",
     defaultPrice: 80,
     sortOrder: 10
   },
   {
     id: "war-god-card",
     name: "战神卡",
-    description: "叫庄结束前使用，原始积分翻倍，额外积分由最终对方阵营承担。",
+    description: "其他卡牌阶段使用，原始积分翻倍，额外积分由最终对方阵营承担。",
     defaultPrice: 50,
     sortOrder: 20
   },
   {
     id: "colorful-card",
     name: "缤纷卡",
-    description: "叫庄结束前使用，随机改变本局炒底阶段四种花色 2 的压制顺序。",
+    description: "其他卡牌阶段使用，随机改变本局炒底阶段四种花色 2 的压制顺序，最后一次使用结果生效。",
     defaultPrice: 30,
     sortOrder: 30
   },
   {
     id: "luck-card",
     name: "牌运卡",
-    description: "叫庄结束前使用，本局头像展示牌运之神的庇佑效果。",
+    description: "其他卡牌阶段使用，本局头像展示牌运之神的庇佑效果。",
     defaultPrice: 10,
     sortOrder: 40
   }
@@ -97,7 +100,13 @@ export function shopProductIdFromPath(value) {
 }
 
 export function isItemUseStage(stage) {
-  return stage === "bidding" || stage === "score-bidding";
+  return stage === RESTART_CARD_STAGE || stage === OTHER_CARDS_STAGE;
+}
+
+export function itemAllowedInStage(stage, itemId) {
+  if (stage === RESTART_CARD_STAGE) return itemId === "restart-card";
+  if (stage === OTHER_CARDS_STAGE) return itemId !== "restart-card" && isConsumableItemId(itemId);
+  return false;
 }
 
 export function gameItemAccess(room) {

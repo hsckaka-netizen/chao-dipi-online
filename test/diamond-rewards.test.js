@@ -24,6 +24,7 @@ test("diamond rewards combine the base amount and positive title bonuses", () =>
   assert.equal(winner.totalAmount, 10);
   assert.equal(mvpWinner.totalAmount, 13);
   assert.equal(mvpWinner.titleBonus, 3);
+  assert.equal(Object.hasOwn(DIAMOND_REWARD_RULES, "dailyRewardGameLimit"), false);
 });
 
 test("negative titles do not earn diamonds and duplicate tags count once", () => {
@@ -158,4 +159,7 @@ test("administrator diamond grants are idempotent and recorded in the wallet led
   assert.match(serverSource, /pathParts\[2\] === "diamonds" && pathParts\[3\] === "grants"/);
   assert.match(appSource, /data-form="grant-diamonds"/);
   assert.match(appSource, /发放后会立即到账并写入流水/);
+  assert.doesNotMatch(historySource, /dailyRewardGameLimit/);
+  assert.doesNotMatch(historySource, /daily-capped/);
+  assert.doesNotMatch(appSource, /今日奖励局数已满/);
 });

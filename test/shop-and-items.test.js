@@ -9,8 +9,11 @@ import {
   DEFAULT_SHOP_PRODUCTS,
   frySuitStrength,
   gameItemAccess,
+  itemAllowedInStage,
   isItemUseStage,
+  OTHER_CARDS_STAGE,
   randomFrySuitOrder,
+  RESTART_CARD_STAGE,
   shopProductIdFromPath
 } from "../shop-and-items.js";
 
@@ -18,9 +21,16 @@ test("hero cards and consumable items have an independent fixed shop catalog", (
   assert.ok(DEFAULT_SHOP_PRODUCTS.some((product) => product.id === "consumable:restart-card"));
   assert.ok(DEFAULT_SHOP_PRODUCTS.some((product) => product.id === "avatar-frame:emerald"));
   assert.ok(DEFAULT_SHOP_PRODUCTS.some((product) => product.id === "card-skin:emerald"));
-  assert.equal(isItemUseStage("bidding"), true);
-  assert.equal(isItemUseStage("score-bidding"), true);
+  assert.equal(isItemUseStage(RESTART_CARD_STAGE), true);
+  assert.equal(isItemUseStage(OTHER_CARDS_STAGE), true);
+  assert.equal(isItemUseStage("score-bidding"), false);
   assert.equal(isItemUseStage("burying"), false);
+  assert.equal(itemAllowedInStage(RESTART_CARD_STAGE, "restart-card"), true);
+  assert.equal(itemAllowedInStage(RESTART_CARD_STAGE, "colorful-card"), false);
+  assert.equal(itemAllowedInStage(OTHER_CARDS_STAGE, "restart-card"), false);
+  assert.equal(itemAllowedInStage(OTHER_CARDS_STAGE, "war-god-card"), true);
+  assert.equal(itemAllowedInStage(OTHER_CARDS_STAGE, "colorful-card"), true);
+  assert.equal(itemAllowedInStage(OTHER_CARDS_STAGE, "luck-card"), true);
 });
 
 test("game items allow AI games without charging inventory", () => {
@@ -123,6 +133,11 @@ test("server and browser expose the shop, self-equipped cosmetics, and game-item
   assert.match(serverSource, /pathParts\[1\] === "shop"/);
   assert.match(serverSource, /pathParts\[1\] === "cosmetics"/);
   assert.match(serverSource, /pathParts\[3\] === "item-use"/);
+  assert.match(serverSource, /pathParts\[3\] === "item-stage-complete"/);
+  assert.match(serverSource, /GAME_ITEM_STAGE_SECONDS/);
+  assert.match(serverSource, /restartCardUsedPlayerIds/);
+  assert.match(serverSource, /announceRoomNotice\(room, noticeText\)/);
+  assert.doesNotMatch(serverSource, /本局已经有缤纷卡生效/);
   assert.match(serverSource, /\{ freeUse: access\.freeUse \}/);
   assert.match(appSource, /本局含 AI，不消耗卡片/);
   assert.match(serverSource, /refundOrphanedGameItemUses/);
@@ -144,6 +159,8 @@ test("server and browser expose the shop, self-equipped cosmetics, and game-item
   assert.doesNotMatch(appSource, /data-form="update-profile"/);
   assert.match(appSource, /牌运之神庇佑着你/);
   assert.match(appSource, /function currentFrySuitStrength/);
+  assert.match(appSource, /function renderWarGodMark/);
+  assert.match(appSource, /data-action="complete-item-stage"/);
   assert.match(appSource, /label: "缤纷顺序（大 → 小）"/);
   assert.match(appSource, /花色 2 大小（大 → 小）/);
   assert.match(appSource, /bidBeats\(current, bid, frySuitStrength \|\| undefined\)/);

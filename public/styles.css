@@ -3734,13 +3734,13 @@ button.joinable-room-player.spectate-player {
 
 .table-circle .seat-left .seat-play,
 .table-circle .seat-right .seat-play {
-  width: clamp(180px, 21vw, 230px);
-  max-width: clamp(180px, 21vw, 230px);
+  width: clamp(220px, 28vw, 360px);
+  max-width: clamp(220px, 28vw, 360px);
 }
 
 .table-circle .seat-left .mini-cards,
 .table-circle .seat-right .mini-cards {
-  --mini-card-overlap: -28px;
+  --mini-card-overlap: -18px;
 }
 
 .table-circle .seat-left .seat-play .mini-cards,
@@ -4344,9 +4344,23 @@ button.auto-play-toggle.active {
   --mini-card-overlap: -35px;
 }
 
+.mini-cards.mini-cards-packed {
+  --mini-card-overlap: -39px;
+}
+
 .table-circle .seat-left .mini-cards.mini-cards-dense,
 .table-circle .seat-right .mini-cards.mini-cards-dense {
-  --mini-card-overlap: -39px;
+  --mini-card-overlap: -28px;
+}
+
+.table-circle .seat-left .mini-cards.mini-cards-folded,
+.table-circle .seat-right .mini-cards.mini-cards-folded {
+  --mini-card-overlap: -23px;
+}
+
+.table-circle .seat-left .mini-cards.mini-cards-packed,
+.table-circle .seat-right .mini-cards.mini-cards-packed {
+  --mini-card-overlap: -31px;
 }
 
 .dogleg-hand-mark {
@@ -4817,11 +4831,6 @@ button.auto-play-toggle.active {
     padding: 0;
   }
 
-  .table-circle .seat-left .mini-cards.mini-cards-folded,
-  .table-circle .seat-right .mini-cards.mini-cards-folded {
-    --mini-card-overlap: -33px;
-  }
-
   .table-seats-9 .seat-top .mini-cards.mini-cards-folded {
     --mini-card-overlap: -40px;
   }
@@ -5079,11 +5088,26 @@ button.auto-play-toggle.active {
   }
 
   .trick-grid.table-circle .trick-seat .seat-play {
-    width: auto;
+    width: 100%;
+    max-width: none;
+  }
+
+  .trick-grid.table-circle .trick-seat .seat-play .mini-cards {
+    width: 100%;
+    max-width: 100%;
+    max-height: none;
+    flex-wrap: wrap;
+    row-gap: 4px;
+    padding-left: 0;
+    padding-bottom: 30px;
+  }
+
+  .trick-grid.table-circle .trick-seat .seat-play .mini-card {
+    margin-bottom: -30px;
   }
 
   .trick-grid.table-circle .trick-seat .mini-card:not(:first-child) {
-    margin-left: -20px;
+    margin-left: -16px;
   }
 
   .table-circle .viewer-seat .seat-play {
@@ -5643,6 +5667,23 @@ button.auto-play-toggle.active {
   background: linear-gradient(90deg, rgba(55, 125, 195, 0.12), rgba(197, 77, 155, 0.12), rgba(54, 160, 105, 0.12));
 }
 
+.game-item-use-summary {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 5px;
+}
+
+.game-item-use-summary span {
+  border: 1px solid rgba(142, 87, 25, 0.2);
+  border-radius: 999px;
+  background: rgba(255, 248, 228, 0.94);
+  padding: 3px 8px;
+  color: #70440e;
+  font-size: 11px;
+  font-weight: 800;
+}
+
 .player-identity,
 .table-player-avatar-stage,
 .seat-hand-avatar-stage {
@@ -5688,6 +5729,42 @@ button.auto-play-toggle.active {
 .seat-hand-avatar-stage .lucky-deity-mark {
   left: -8px;
   top: -9px;
+}
+
+.war-god-mark {
+  position: absolute;
+  z-index: 13;
+  right: -10px;
+  top: -10px;
+  display: grid;
+  justify-items: center;
+  pointer-events: none;
+  filter: drop-shadow(0 2px 5px rgba(128, 22, 20, 0.38));
+}
+
+.war-god-mark > span {
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  border: 2px solid #f3c56c;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 30%, #d96049, #6f1420 72%);
+  box-shadow: 0 0 0 3px rgba(173, 39, 32, 0.22), 0 0 14px rgba(184, 44, 36, 0.55);
+  color: #fff7da;
+  font-size: 16px;
+}
+
+.war-god-mark small {
+  margin-top: -3px;
+  border: 1px solid rgba(111, 20, 32, 0.24);
+  border-radius: 999px;
+  background: rgba(255, 241, 213, 0.97);
+  padding: 1px 5px;
+  color: #721a20;
+  font-size: 9px;
+  font-weight: 900;
+  line-height: 1.2;
 }
 
 .result-final-score {
@@ -5748,6 +5825,10 @@ button.auto-play-toggle.active {
   }
 
   .lucky-deity-mark small {
+    display: none;
+  }
+
+  .war-god-mark small {
     display: none;
   }
 

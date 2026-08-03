@@ -1,9 +1,8 @@
 export const DIAMOND_REWARD_RULES = Object.freeze({
-  version: "2026-07-30-v1",
+  version: "2026-08-03-v1",
   baseAmount: 10,
   winBonus: 0,
   titleBonusCap: 5,
-  dailyRewardGameLimit: 10,
   timezone: "Asia/Shanghai",
   titleBonuses: Object.freeze({
     mvp: 3,
@@ -94,7 +93,6 @@ export function attachDiamondRewards(room) {
   const roomPlayers = new Map((room.players || []).map((player) => [player.id, player]));
 
   room.result.diamondRewardRulesVersion = DIAMOND_REWARD_RULES.version;
-  room.result.diamondRewardGameLimit = DIAMOND_REWARD_RULES.dailyRewardGameLimit;
   room.result.diamondRewardsEligible = eligible;
   room.result.playerResults.forEach((playerResult) => {
     const roomPlayer = roomPlayers.get(playerResult.playerId);

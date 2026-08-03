@@ -36,9 +36,12 @@ import {
   CONSUMABLE_ITEMS,
   frySuitStrength,
   gameItemAccess,
+  itemAllowedInStage,
   isConsumableItemId,
   isItemUseStage,
+  OTHER_CARDS_STAGE,
   randomFrySuitOrder,
+  RESTART_CARD_STAGE,
   shopProductIdFromPath
 } from "./shop-and-items.js";
 import { versionedAssetUrl } from "./public/asset-versions.js";
@@ -98,6 +101,8 @@ const OPENING_BID_PERCENTAGES = new Set([10, 20, 30, 40]);
 const DEFAULT_OPENING_BID_PERCENT = 40;
 const SCORE_BID_SECONDS = 20;
 const FRY_SECONDS = 20;
+const GAME_ITEM_STAGE_SECONDS = Math.max(1, Number(process.env.GAME_ITEM_STAGE_SECONDS) || 20);
+const GAME_ITEM_NOTICE_MS = Math.max(1000, Number(process.env.GAME_ITEM_NOTICE_MS) || 5000);
 const TAUNT_DURATION_MS = Math.max(100, Number(process.env.TAUNT_DURATION_MS) || 4500);
 const TAUNT_COOLDOWN_MS = Math.max(0, Number(process.env.TAUNT_COOLDOWN_MS) || 1500);
 const AVATAR_FRAMES = new Set(["", "vip", "emerald", "champion", "violet", "stormwind", "idol", "hellfire", "blood-elf", "endless-winter", "cr7", "paladin", "vip-legend"]);
@@ -326,6 +331,7 @@ function profilesList() {
 
 function roomStatusLabel(room) {
   if (room.status === "lobby") {
+    if (room.stage === "finished") return "等待下一局";
     if (room.players.length >= MAX_PLAYERS) return "已满";
     return "可加入";
   }
@@ -415,6 +421,7 @@ function createPlayer(profileOrName, host = false, test = false) {
     test,
     connected: false,
     ready: Boolean(test),
+    nextRoundEntered: Boolean(test),
     autoPlayEnabled: false,
     score: 0,
     draggedRedFives: 0,
@@ -793,6 +800,95 @@ function createScoreBidSetup(room) {
   };
 }
 
+function emptyGameItems() {
+  return {
+    uses: [],
+    frySuitOrder: null,
+    luckyPlayerIds: [],
+    stage: null
+  };
+}
+
+function announceRoomNotice(room, text, bad = false) {
+  const createdAt = now();
+  room.notice = {
+    id: id(8),
+    text,
+    bad: Boolean(bad),
+    createdAt,
+    expiresAt: new Date(new Date(createdAt).getTime() + GAME_ITEM_NOTICE_MS).toISOString()
+  };
+}
+
+function beginScoreBidding(room) {
+  clearGameItemStageTimer(room);
+  room.stage = "score-bidding";
+  room.phase = "叫分抢庄";
+  room.gameItems.stage = null;
+  room.setup.scoreBid = createScoreBidSetup(room);
+  if (!room.setup.scoreBid?.current) return;
+  const scoreBid = room.setup.scoreBid;
+  room.phase = `${playerName(room, scoreBid.current.playerId)} 以 ${scoreBid.current.score} 分起叫，等待其他玩家加分或过`;
+  addEvent(room, `${playerName(room, scoreBid.current.playerId)} 以 ${scoreBid.current.score} 分起叫抢庄`);
+}
+
+function completedGameItemPlayerIds(room) {
+  return new Set(room.gameItems?.stage?.completedPlayerIds || []);
+}
+
+function allPlayersCompletedGameItemStage(room) {
+  const completedIds = completedGameItemPlayerIds(room);
+  return room.players.every((player) => player.test || completedIds.has(player.id));
+}
+
+function beginGameItemStage(room, stage) {
+  clearGameItemStageTimer(room);
+  const completedPlayerIds = room.players
+    .filter((player) => player.test || (
+      stage === RESTART_CARD_STAGE
+      && (room.restartCardUsedPlayerIds || []).includes(player.id)
+    ))
+    .map((player) => player.id);
+  const openedAt = now();
+  room.stage = stage;
+  room.phase = stage === RESTART_CARD_STAGE ? "重开卡使用阶段" : "其他卡牌使用阶段";
+  room.gameItems.stage = {
+    type: stage,
+    openedAt,
+    deadlineAt: new Date(new Date(openedAt).getTime() + GAME_ITEM_STAGE_SECONDS * 1000).toISOString(),
+    completedPlayerIds
+  };
+  if (allPlayersCompletedGameItemStage(room)) advanceGameItemStage(room);
+}
+
+function advanceGameItemStage(room) {
+  if (room.stage === RESTART_CARD_STAGE) {
+    beginGameItemStage(room, OTHER_CARDS_STAGE);
+    return true;
+  }
+  if (room.stage === OTHER_CARDS_STAGE) {
+    beginScoreBidding(room);
+    return true;
+  }
+  return false;
+}
+
+function autoAdvanceExpiredGameItemStage(room) {
+  if (!isItemUseStage(room?.stage)) return false;
+  const deadline = new Date(room.gameItems?.stage?.deadlineAt || "").getTime();
+  if (!Number.isFinite(deadline) || Date.now() < deadline) return false;
+  return advanceGameItemStage(room);
+}
+
+function completeGameItemStageForPlayer(room, player) {
+  if (!isItemUseStage(room.stage)) return { error: "当前不是卡牌使用阶段", status: 409 };
+  const completedIds = completedGameItemPlayerIds(room);
+  completedIds.add(player.id);
+  room.gameItems.stage.completedPlayerIds = [...completedIds];
+  const advanced = allPlayersCompletedGameItemStage(room) ? advanceGameItemStage(room) : false;
+  return { ok: true, advanced };
+}
+
 function createDeck(deckCount) {
   const deck = [];
   for (let deckIndex = 1; deckIndex <= deckCount; deckIndex += 1) {
@@ -866,11 +962,12 @@ function sortHand(hand) {
   return [...hand].sort((a, b) => a.sort - b.sort || a.deck - b.deck || a.id.localeCompare(b.id));
 }
 
-function deal(room) {
+function deal(room, options = {}) {
   clearAiSetupTimer(room);
   clearAiPlayTimer(room);
   clearScoreBidTimer(room);
   clearFryTimer(room);
+  clearGameItemStageTimer(room);
   clearRoomTaunts(room);
   room.events = [];
   const count = room.players.length;
@@ -885,13 +982,14 @@ function deal(room) {
     player.draggedDiamondFives = 0;
     player.throwFailures = 0;
     player.ready = false;
+    player.nextRoundEntered = false;
   });
   room.kitty = deck.slice(count * HAND_SIZE);
   room.status = "dealt";
   room.callMode = CALL_MODE_SCORE;
   room.openingBidPercent = normalizedOpeningBidPercent(room.openingBidPercent);
-  room.stage = "score-bidding";
-  room.phase = "叫分抢庄";
+  room.stage = RESTART_CARD_STAGE;
+  room.phase = "重开卡使用阶段";
   room.startedAt = now();
   room.kittySize = room.kitty.length;
   room.bankerId = null;
@@ -901,26 +999,19 @@ function deal(room) {
   room.doglegNeeded = clampDoglegCount(room.doglegNeeded, count);
   room.result = null;
   room.setup = emptySetup();
-  room.setup.scoreBid = createScoreBidSetup(room);
   room.currentTrick = null;
   room.trickHistory = [];
   room.settledTrickHistory = [];
   room.provisionalWinnerPlayerIds = [];
   room.playPauseUntil = null;
   room.notice = null;
-  room.gameItems = {
-    uses: [],
-    frySuitOrder: null,
-    luckyPlayerIds: []
-  };
+  room.gameItems = emptyGameItems();
+  if (!options.preserveRestartUsage) room.restartCardUsedPlayerIds = [];
   if (room.removedCards.length) {
     addEvent(room, `本局开局移除 ${room.removedCards.map((card) => card.label).join("、")}，底牌保持 ${room.kittySize} 张`);
   }
-  if (room.setup.scoreBid?.current) {
-    const scoreBid = room.setup.scoreBid;
-    room.phase = `${playerName(room, scoreBid.current.playerId)} 以 ${scoreBid.current.score} 分起叫，等待其他玩家加分或过`;
-    addEvent(room, `${playerName(room, scoreBid.current.playerId)} 以 ${scoreBid.current.score} 分起叫抢庄`);
-  }
+  if (gameItemAccess(room).eligible) beginGameItemStage(room, RESTART_CARD_STAGE);
+  else beginScoreBidding(room);
 }
 
 function readyPlayerCount(room) {
@@ -931,11 +1022,23 @@ function allPlayersReady(room) {
   return room.players.length > 0 && room.players.every((player) => player.ready);
 }
 
+function allPlayersEnteredNextRound(room) {
+  return room.players.length > 0 && room.players.every((player) => player.test || player.nextRoundEntered);
+}
+
+function finalizeNextRoundLobby(room) {
+  if (room.stage !== "finished" || !allPlayersEnteredNextRound(room)) return false;
+  resetRoomToLobby(room, { preserveReady: true });
+  addEvent(room, "所有玩家已确认下一局，等待房主开始");
+  return true;
+}
+
 function resetRoomToLobby(room, options = {}) {
   clearAiSetupTimer(room);
   clearAiPlayTimer(room);
   clearScoreBidTimer(room);
   clearFryTimer(room);
+  clearGameItemStageTimer(room);
   clearRoomTaunts(room);
   const readyPlayerId = options.readyPlayerId || null;
   const previousReady = new Map(room.players.map((player) => [player.id, Boolean(player.ready)]));
@@ -960,8 +1063,8 @@ function resetRoomToLobby(room, options = {}) {
   room.provisionalWinnerPlayerIds = [];
   room.playPauseUntil = null;
   room.notice = null;
-  room.gameItems = { uses: [], frySuitOrder: null, luckyPlayerIds: [] };
-  room.restartChainUsed = false;
+  room.gameItems = emptyGameItems();
+  room.restartCardUsedPlayerIds = [];
   room.events = [];
   room.players.forEach((player) => {
     player.hand = [];
@@ -971,6 +1074,7 @@ function resetRoomToLobby(room, options = {}) {
     player.draggedDiamondFives = 0;
     player.throwFailures = 0;
     player.ready = player.test || player.id === readyPlayerId || (options.preserveReady && previousReady.get(player.id));
+    player.nextRoundEntered = false;
   });
 }
 
@@ -1087,17 +1191,26 @@ function setupSnapshot(room) {
   };
 }
 
-function gameItemsSnapshot(room) {
-  const gameItems = room.gameItems || { uses: [], frySuitOrder: null, luckyPlayerIds: [] };
+function gameItemsSnapshot(room, viewer = null) {
+  const gameItems = room.gameItems || emptyGameItems();
   const access = gameItemAccess(room);
+  const completedPlayerIds = [...(gameItems.stage?.completedPlayerIds || [])];
+  const viewerCompleted = Boolean(viewer && completedPlayerIds.includes(viewer.id));
   return {
     eligible: access.eligible,
     freeUse: access.freeUse,
-    canUse: room.status === "dealt" && isItemUseStage(room.stage) && access.eligible,
-    restartUsed: Boolean(room.restartChainUsed),
+    canUse: room.status === "dealt" && isItemUseStage(room.stage) && access.eligible && !viewerCompleted,
+    stageType: isItemUseStage(room.stage) ? room.stage : null,
+    deadlineAt: gameItems.stage?.deadlineAt || null,
+    completedPlayerIds,
+    viewerCompleted,
+    restartUsedPlayerIds: [...(room.restartCardUsedPlayerIds || [])],
     frySuitOrder: gameItems.frySuitOrder ? [...gameItems.frySuitOrder] : null,
     frySuitOrderNames: gameItems.frySuitOrder?.map(suitName) || [],
     luckyPlayerIds: [...(gameItems.luckyPlayerIds || [])],
+    warGodPlayerIds: (gameItems.uses || [])
+      .filter((use) => use.itemId === "war-god-card")
+      .map((use) => use.playerId),
     uses: (gameItems.uses || []).map((use) => ({
       useId: use.useId,
       playerId: use.playerId,
@@ -1195,6 +1308,7 @@ function playedProtectedFiveCounts(room) {
 }
 
 function roomSnapshot(room, viewer = null) {
+  autoAdvanceExpiredGameItemStage(room);
   autoAdvanceExpiredScoreBid(room);
   autoAdvanceExpiredFry(room);
   const canViewKitty = Boolean(viewer && room.kitty.length && room.setup?.fry?.lastFryerId === viewer.id);
@@ -1228,7 +1342,7 @@ function roomSnapshot(room, viewer = null) {
     notice: room.notice?.expiresAt && Date.now() < new Date(room.notice.expiresAt).getTime() ? room.notice : null,
     tauntPresets: availableTauntPresets(tauntPresets, viewer?.accountId || null),
     taunts: activeTauntsSnapshot(room),
-    gameItems: gameItemsSnapshot(room),
+    gameItems: gameItemsSnapshot(room, viewer),
     hostId: room.hostId,
     setup: setupSnapshot(room),
     viewer: viewer ? {
@@ -1238,6 +1352,7 @@ function roomSnapshot(room, viewer = null) {
       avatarUrl: viewer.avatarUrl || "",
       host: viewer.host,
       ready: Boolean(viewer.ready),
+      nextRoundEntered: Boolean(viewer.nextRoundEntered),
       autoPlayEnabled: Boolean(viewer.autoPlayEnabled)
     } : null,
     players: room.players.map((player) => ({
@@ -1254,6 +1369,7 @@ function roomSnapshot(room, viewer = null) {
       role: playerRole(room, player.id),
       connected: player.connected,
       ready: Boolean(player.ready),
+      nextRoundEntered: Boolean(player.nextRoundEntered),
       autoPlayEnabled: Boolean(player.autoPlayEnabled),
       score: player.score || 0,
       draggedRedFives: player.draggedRedFives || 0,
@@ -1356,7 +1472,13 @@ async function submitGameItem(room, player, itemIdValue, requestId) {
   if (!isConsumableItemId(itemId)) return { error: "对局道具不存在", status: 404 };
   if (room.itemUseInFlight) return { error: "正在处理其他道具，请稍后重试", status: 409 };
   if (room.status !== "dealt" || !isItemUseStage(room.stage)) {
-    return { error: "只能在发牌后至叫庄结束前使用对局道具", status: 409 };
+    return { error: "只能在对应的卡牌使用阶段使用对局道具", status: 409 };
+  }
+  if (!itemAllowedInStage(room.stage, itemId)) {
+    return {
+      error: room.stage === RESTART_CARD_STAGE ? "当前只能使用重开卡" : "重开卡只能在重开卡阶段使用",
+      status: 409
+    };
   }
   const access = gameItemAccess(room);
   if (!access.eligible) {
@@ -1364,16 +1486,16 @@ async function submitGameItem(room, player, itemIdValue, requestId) {
   }
   if (!player.accountId) return { error: "请先登录玩家账号", status: 403 };
   if (!room.gameRecordId) return { error: "本局尚未生成有效标识", status: 409 };
-  const gameItems = room.gameItems || { uses: [], frySuitOrder: null, luckyPlayerIds: [] };
+  const gameItems = room.gameItems || emptyGameItems();
   room.gameItems = gameItems;
+  if (completedGameItemPlayerIds(room).has(player.id)) {
+    return { error: "你已经完成本阶段选择", status: 409 };
+  }
   if (gameItems.uses.some((use) => use.playerId === player.id && use.itemId === itemId)) {
     return { error: "本局已经使用过这个对局道具", status: 409 };
   }
-  if (itemId === "colorful-card" && gameItems.uses.some((use) => use.itemId === itemId)) {
-    return { error: "本局已经有缤纷卡生效", status: 409 };
-  }
-  if (itemId === "restart-card" && room.restartChainUsed) {
-    return { error: "本轮连续牌局已经使用过重开卡", status: 409 };
+  if (itemId === "restart-card" && (room.restartCardUsedPlayerIds || []).includes(player.id)) {
+    return { error: "你在本轮连续牌局已经使用过重开卡", status: 409 };
   }
 
   room.itemUseInFlight = true;
@@ -1407,23 +1529,28 @@ async function submitGameItem(room, player, itemIdValue, requestId) {
     if (itemId === "restart-card") {
       const oldGameId = room.gameRecordId;
       await resolveRestartGameItemUses(oldGameId, use.useId);
-      room.restartChainUsed = true;
-      deal(room);
+      room.restartCardUsedPlayerIds = [...new Set([...(room.restartCardUsedPlayerIds || []), player.id])];
+      deal(room, { preserveRestartUsage: true });
       room.gameRecordId = randomUUID();
-      addEvent(room, `${player.name} 使用重开卡，本局已重新洗牌发牌`);
+      const text = `${player.name} 使用重开卡，本局已重新洗牌发牌`;
+      addEvent(room, text);
+      announceRoomNotice(room, text);
       return { ok: true, restarted: true, use };
     }
 
     gameItems.uses.push(use);
+    let noticeText = `${player.name} 使用了 ${consumableItemById.get(itemId)?.name || itemId}`;
     if (itemId === "colorful-card") {
       gameItems.frySuitOrder = [...use.effectData.frySuitOrder];
-      addEvent(room, `${player.name} 使用缤纷卡，本局炒底花色顺序变为 ${gameItems.frySuitOrder.map(suitName).join(" > ")}`);
+      noticeText = `${player.name} 使用缤纷卡，本局炒底花色顺序变为 ${gameItems.frySuitOrder.map(suitName).join(" > ")}`;
     } else if (itemId === "luck-card") {
       if (!gameItems.luckyPlayerIds.includes(player.id)) gameItems.luckyPlayerIds.push(player.id);
-      addEvent(room, `${player.name} 使用牌运卡，牌运之神开始庇佑`);
+      noticeText = `${player.name} 使用牌运卡，牌运之神开始庇佑`;
     } else if (itemId === "war-god-card") {
-      addEvent(room, `${player.name} 使用战神卡，本局积分将在原始结算后翻倍`);
+      noticeText = `${player.name} 使用战神卡，本局积分将在原始结算后翻倍`;
     }
+    addEvent(room, noticeText);
+    announceRoomNotice(room, noticeText);
     return { ok: true, use };
   } catch (error) {
     return { error: error.message || "对局道具使用失败", status: error.status || 503 };
@@ -1520,6 +1647,7 @@ function dissolveRoom(room, messageText) {
   clearAiPlayTimer(room);
   clearScoreBidTimer(room);
   clearFryTimer(room);
+  clearGameItemStageTimer(room);
   clearRoomTaunts(room);
   if (room.gameRecordId && room.gameItems?.uses?.length) {
     void refundGameItemUses(room.gameRecordId).catch((error) => {
@@ -1555,6 +1683,7 @@ function removePlayerFromRoom(room, playerId, messageText) {
 
   room.kittySize = room.status === "lobby" ? room.players.length : room.kittySize;
   syncLobbyDoglegCount(room);
+  finalizeNextRoundLobby(room);
   return removed;
 }
 
@@ -1627,6 +1756,7 @@ function finishGame(room, completedTrick) {
   clearAiPlayTimer(room);
   clearScoreBidTimer(room);
   clearFryTimer(room);
+  clearGameItemStageTimer(room);
   room.players.forEach((player) => {
     player.autoPlayEnabled = false;
   });
@@ -1718,6 +1848,7 @@ function finishGame(room, completedTrick) {
   room.currentTrick = null;
   room.players.forEach((player) => {
     player.ready = Boolean(player.test);
+    player.nextRoundEntered = Boolean(player.test);
   });
   room.result = {
     finishedAt: now(),
@@ -3105,6 +3236,27 @@ function clearFryTimer(room) {
   room.fryTimer = null;
 }
 
+function clearGameItemStageTimer(room) {
+  if (!room?.gameItemStageTimer) return;
+  clearTimeout(room.gameItemStageTimer);
+  room.gameItemStageTimer = null;
+}
+
+function scheduleGameItemStageTimer(room) {
+  clearGameItemStageTimer(room);
+  const deadlineAt = isItemUseStage(room?.stage) ? room.gameItems?.stage?.deadlineAt : null;
+  if (!deadlineAt) return false;
+  const deadline = new Date(deadlineAt).getTime();
+  if (!Number.isFinite(deadline)) return false;
+  room.gameItemStageTimer = setTimeout(() => {
+    room.gameItemStageTimer = null;
+    if (rooms.get(room.id) !== room || room.status !== "dealt") return;
+    if (autoAdvanceExpiredGameItemStage(room)) broadcastAndContinueAutomation(room);
+  }, Math.max(0, deadline - Date.now()) + 50);
+  room.gameItemStageTimer.unref?.();
+  return true;
+}
+
 function scheduleScoreBidTimer(room) {
   clearScoreBidTimer(room);
   const deadlineAt = room?.stage === "score-bidding" ? room.setup?.scoreBid?.deadlineAt : null;
@@ -3151,6 +3303,7 @@ function scheduleNextAiSetupAction(room, delayMs = AI_SETUP_DELAY_MS) {
 
 function broadcastAndContinueAutomation(room) {
   broadcast(room);
+  scheduleGameItemStageTimer(room);
   scheduleScoreBidTimer(room);
   scheduleFryTimer(room);
   if (room.stage === "playing") scheduleNextAiPlay(room);
@@ -4652,6 +4805,7 @@ async function handleApi(req, res, pathParts, url) {
       aiPlayTimer: null,
       scoreBidTimer: null,
       fryTimer: null,
+      gameItemStageTimer: null,
       notice: null,
       events: [],
       clients: new Set(),
@@ -4659,8 +4813,8 @@ async function handleApi(req, res, pathParts, url) {
       taunts: new Map(),
       tauntTimers: new Map(),
       tauntLastSentAt: new Map(),
-      gameItems: { uses: [], frySuitOrder: null, luckyPlayerIds: [] },
-      restartChainUsed: false,
+      gameItems: emptyGameItems(),
+      restartCardUsedPlayerIds: [],
       itemUseInFlight: false,
       snapshotVersion: 0
     };
@@ -4759,9 +4913,14 @@ async function handleApi(req, res, pathParts, url) {
       if (room.players.length >= MAX_PLAYERS) return writeJson(res, 409, { error: "房间已满" });
 
       const player = createPlayer(profile, false);
+      if (room.stage === "finished") {
+        player.nextRoundEntered = true;
+        player.ready = true;
+      }
       room.players.push(player);
       syncLobbyDoglegCount(room);
       addEvent(room, `${profile.name} 加入了房间`);
+      finalizeNextRoundLobby(room);
       broadcast(room);
       return writeJson(res, 201, {
         roomId: room.id,
@@ -4919,6 +5078,9 @@ async function handleApi(req, res, pathParts, url) {
       const viewer = requirePlayer(res, room, body.playerId, body.token);
       if (!viewer) return;
       if (room.status !== "lobby") return writeJson(res, 409, { error: "只有等待开局时可以准备" });
+      if (room.stage === "finished" && !viewer.nextRoundEntered) {
+        return writeJson(res, 409, { error: "请先在结算页点击再来一局" });
+      }
       const nextReady = Boolean(body.ready);
       if (viewer.ready !== nextReady) {
         viewer.ready = nextReady;
@@ -4933,7 +5095,9 @@ async function handleApi(req, res, pathParts, url) {
       const viewer = playerFor(room, body.playerId, body.token);
       if (!viewer) return writeJson(res, 401, { error: "玩家身份已失效" });
       if (!viewer.host) return writeJson(res, 403, { error: "只有房主可以开始" });
-      if (room.status !== "lobby") return writeJson(res, 409, { error: "牌局已经开始" });
+      if (room.status !== "lobby" || room.stage !== "lobby") {
+        return writeJson(res, 409, { error: room.stage === "finished" ? "还有玩家正在查看结算" : "牌局已经开始" });
+      }
       if (room.players.length < MIN_PLAYERS || room.players.length > MAX_PLAYERS) {
         return writeJson(res, 400, { error: `需要 ${MIN_PLAYERS}-${MAX_PLAYERS} 人才能开始` });
       }
@@ -4941,10 +5105,20 @@ async function handleApi(req, res, pathParts, url) {
         return writeJson(res, 409, { error: `还有玩家未准备：${readyPlayerCount(room)}/${room.players.length}` });
       }
 
-      room.restartChainUsed = false;
+      room.restartCardUsedPlayerIds = [];
       deal(room);
       room.gameRecordId = randomUUID();
       addEvent(room, `房主开始牌局：${room.players.length} 人，每人 ${HAND_SIZE} 张，底牌 ${room.kitty.length} 张`);
+      broadcastAndContinueAutomation(room);
+      return writeJson(res, 200, roomStateAck(room));
+    }
+
+    if (req.method === "POST" && pathParts[3] === "item-stage-complete") {
+      const body = await readJson(req);
+      const viewer = requirePlayer(res, room, body.playerId, body.token);
+      if (!viewer) return;
+      const result = completeGameItemStageForPlayer(room, viewer);
+      if (result.error) return writeJson(res, result.status, { error: result.error });
       broadcastAndContinueAutomation(room);
       return writeJson(res, 200, roomStateAck(room));
     }
@@ -5189,8 +5363,12 @@ async function handleApi(req, res, pathParts, url) {
         return writeJson(res, 409, { error: "本局还未结束，暂不能再来一局" });
       }
       if (room.stage === "finished") {
-        resetRoomToLobby(room);
-        addEvent(room, `${viewer.name} 发起下一局，房间已进入开局前准备`);
+        viewer.nextRoundEntered = true;
+        viewer.ready = true;
+        addEvent(room, `${viewer.name} 已进入下一局准备`);
+        finalizeNextRoundLobby(room);
+      } else if (room.stage === "lobby") {
+        viewer.ready = true;
       }
       broadcast(room);
       return writeJson(res, 200, roomStateAck(room));

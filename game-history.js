@@ -11,7 +11,7 @@ import {
 } from "./diamond-rewards.js";
 import { buildGameEvaluations } from "./game-evaluations.js";
 import { annotateForcedProtectedFives } from "./dragged-five-attribution.js";
-import { SHOP_RULES_VERSION, shopProductIdFromPath } from "./shop-and-items.js";
+import { CONSUMABLE_ITEMS, SHOP_RULES_VERSION, shopProductIdFromPath } from "./shop-and-items.js";
 
 const { Pool } = pg;
 const RULES_VERSION = "2026-07-31";
@@ -554,12 +554,15 @@ function normalizedRequestId(value) {
 }
 
 function publicShopProduct(row) {
+  const currentConsumable = row.product_type === "consumable_item"
+    ? CONSUMABLE_ITEMS.find((item) => item.id === row.asset_key)
+    : null;
   return {
     id: row.product_id,
     productType: row.product_type,
     assetKey: row.asset_key,
     name: row.name,
-    description: row.description || "",
+    description: currentConsumable?.description || row.description || "",
     price: Number(row.price) || 0,
     isListed: Boolean(row.is_listed),
     sortOrder: Number(row.sort_order) || 0,
@@ -1515,20 +1518,11 @@ async function saveDiamondRewards(client, record) {
       continue;
     }
 
-    const rewardedGames = await client.query(
-      `SELECT count(*)::integer AS count
-       FROM cdp_game_diamond_rewards
-       WHERE account_id = $1::uuid
-         AND reward_date = $2::date
-         AND status = 'awarded'`,
-      [player.accountId, rewardDate]
-    );
-    const dailyCapped = Number(rewardedGames.rows[0]?.count || 0) >= DIAMOND_REWARD_RULES.dailyRewardGameLimit;
     const reward = player.diamondReward || calculateDiamondReward({
       gameScore: player.baseGameScore,
       tags: player.tags
     });
-    const awardedAmount = dailyCapped ? 0 : Number(reward.totalAmount) || 0;
+    const awardedAmount = Number(reward.totalAmount) || 0;
     let balanceAfter = 0;
 
     if (awardedAmount > 0) {
@@ -1552,7 +1546,6 @@ async function saveDiamondRewards(client, record) {
       balanceAfter = Number(wallet.rows[0]?.balance) || 0;
     }
 
-    const statusName = dailyCapped ? "daily-capped" : "awarded";
     const inserted = await client.query(
       `INSERT INTO cdp_game_diamond_rewards (
         game_id, room_player_id, account_id, reward_date, rules_version,
@@ -1570,7 +1563,7 @@ async function saveDiamondRewards(client, record) {
         player.accountId,
         rewardDate,
         reward.rulesVersion || DIAMOND_REWARD_RULES.version,
-        statusName,
+        "awarded",
         Number(reward.baseAmount) || 0,
         Number(reward.winBonus) || 0,
         Number(reward.titleBonus) || 0,
@@ -1813,21 +1806,12 @@ function requirePool() {
 export async function getDiamondWallet(accountId, limit = 20) {
   const database = requirePool();
   const safeLimit = Math.max(1, Math.min(50, Number(limit) || 20));
-  const rewardDate = diamondRewardDate(new Date().toISOString());
-  const [walletResult, dailyResult, rewardResult] = await Promise.all([
+  const [walletResult, rewardResult] = await Promise.all([
     database.query(
       `SELECT balance, lifetime_earned, updated_at
        FROM cdp_diamond_wallets
        WHERE account_id = $1::uuid`,
       [accountId]
-    ),
-    database.query(
-      `SELECT count(*)::integer AS rewarded_games
-       FROM cdp_game_diamond_rewards
-       WHERE account_id = $1::uuid
-         AND reward_date = $2::date
-         AND status = 'awarded'`,
-      [accountId, rewardDate]
     ),
     database.query(
       `SELECT
@@ -1849,9 +1833,6 @@ export async function getDiamondWallet(accountId, limit = 20) {
     balance: Number(wallet?.balance) || 0,
     lifetimeEarned: Number(wallet?.lifetime_earned) || 0,
     updatedAt: wallet?.updated_at ? new Date(wallet.updated_at).toISOString() : null,
-    rewardDate,
-    rewardedGamesToday: Number(dailyResult.rows[0]?.rewarded_games) || 0,
-    dailyRewardGameLimit: DIAMOND_REWARD_RULES.dailyRewardGameLimit,
     rulesVersion: DIAMOND_REWARD_RULES.version,
     recentRewards: rewardResult.rows.map((row) => ({
       gameId: row.game_id,

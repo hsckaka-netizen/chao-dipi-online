@@ -200,7 +200,7 @@ function expectedAutoCards(state) {
 }
 
 test("trustee state is public, plays the smallest legal cards, and can be cancelled", async (t) => {
-  const server = await startServer();
+  const server = await startServer({ AI_SETUP_DELAY_MS: "25" });
   t.after(() => server.child.kill());
 
   const created = await jsonRequest(`${server.baseUrl}/api/rooms`, {
@@ -275,7 +275,7 @@ test("trustee state is public, plays the smallest legal cards, and can be cancel
   assert.equal(stillWaiting.hand.length, handCountAfterCancel, "取消托管后不应继续自动出牌");
 });
 
-test("any player can move a finished room into a fresh next-game lobby", async (t) => {
+test("players leave a finished result independently and auto-ready for the next game", async (t) => {
   const server = await startServer({ AI_PLAY_DELAY_MS: "0" });
   t.after(() => server.child.kill());
 
@@ -325,19 +325,19 @@ test("any player can move a finished room into a fresh next-game lobby", async (
     body: JSON.stringify({ profileId: "player-biesan" })
   });
   assert.equal(nextPlayer.snapshot.viewer.host, false);
+  assert.equal(nextPlayer.snapshot.viewer.nextRoundEntered, true);
+  assert.equal(nextPlayer.snapshot.viewer.ready, true);
+  assert.equal(nextPlayer.snapshot.stage, "finished");
   await jsonRequest(actionUrl("again"), {
     method: "POST",
     body: JSON.stringify({ playerId: nextPlayer.playerId, token: nextPlayer.token })
   });
-  const nextLobby = await jsonRequest(stateUrl);
-  assert.equal(nextLobby.status, "lobby");
-  assert.equal(nextLobby.stage, "lobby");
-  assert.equal(nextLobby.result, null);
-  assert.equal(nextLobby.startedAt, null);
-  assert.deepEqual(nextLobby.trickHistory, []);
-  assert.deepEqual(nextLobby.hand, []);
-  assert.equal(nextLobby.viewer.ready, false);
-  assert.equal(nextLobby.players.filter((player) => player.ready).length, 4);
+  const hostStillOnResult = await jsonRequest(stateUrl);
+  assert.equal(hostStillOnResult.status, "lobby");
+  assert.equal(hostStillOnResult.stage, "finished");
+  assert.ok(hostStillOnResult.result);
+  assert.equal(hostStillOnResult.viewer.nextRoundEntered, false);
+  assert.equal(hostStillOnResult.viewer.ready, false);
 
   await jsonRequest(actionUrl("opening-bid-percent"), {
     method: "POST",
@@ -351,9 +351,22 @@ test("any player can move a finished room into a fresh next-game lobby", async (
     method: "POST",
     body: JSON.stringify(credentials)
   });
+  const nextLobby = await jsonRequest(stateUrl);
+  assert.equal(nextLobby.stage, "lobby");
+  assert.equal(nextLobby.result, null);
+  assert.equal(nextLobby.startedAt, null);
+  assert.deepEqual(nextLobby.trickHistory, []);
+  assert.deepEqual(nextLobby.hand, []);
+  assert.equal(nextLobby.viewer.ready, true);
+  assert.equal(nextLobby.players.filter((player) => player.ready).length, 6);
+
+  await jsonRequest(actionUrl("again"), {
+    method: "POST",
+    body: JSON.stringify(credentials)
+  });
   const idempotentLobby = await jsonRequest(stateUrl);
   assert.equal(idempotentLobby.stage, "lobby");
-  assert.equal(idempotentLobby.viewer.ready, false);
+  assert.equal(idempotentLobby.viewer.ready, true);
 });
 
 test("preset taunts are validated, visible to the room, and expire", async (t) => {

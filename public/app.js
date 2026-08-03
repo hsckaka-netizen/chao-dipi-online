@@ -48,11 +48,13 @@ const CARD_SKIN_OPTIONS = [
   { value: "vip-legend", label: "至尊星耀 VIP（动态）" }
 ];
 const CONSUMABLE_ITEM_FALLBACKS = Object.freeze([
-  { assetKey: "restart-card", name: "重开卡", description: "作废当前牌局并立即重新洗牌发牌。" },
-  { assetKey: "war-god-card", name: "战神卡", description: "本局原始积分翻倍，额外积分由最终对方阵营承担。" },
-  { assetKey: "colorful-card", name: "缤纷卡", description: "随机改变炒底阶段四种花色 2 的压制顺序。" },
-  { assetKey: "luck-card", name: "牌运卡", description: "本局头像展示牌运之神的庇佑效果。" }
+  { assetKey: "restart-card", name: "重开卡", description: "重开卡阶段使用，作废当前牌局并立即重新洗牌发牌。" },
+  { assetKey: "war-god-card", name: "战神卡", description: "其他卡牌阶段使用，本局原始积分翻倍，额外积分由最终对方阵营承担。" },
+  { assetKey: "colorful-card", name: "缤纷卡", description: "其他卡牌阶段使用，随机改变炒底阶段四种花色 2 的压制顺序，最后一次结果生效。" },
+  { assetKey: "luck-card", name: "牌运卡", description: "其他卡牌阶段使用，本局头像展示牌运之神的庇佑效果。" }
 ]);
+const RESTART_CARD_STAGE = "restart-card-using";
+const OTHER_CARDS_STAGE = "other-cards-using";
 const AVATAR_FRAME_VALUES = new Set(AVATAR_FRAME_OPTIONS.map((option) => option.value));
 const CARD_SKIN_VALUES = new Set(CARD_SKIN_OPTIONS.map((option) => option.value));
 const storageKey = "chaoDipiOnlineSession";
@@ -450,6 +452,12 @@ function transitionNotice(previousState, nextState) {
   });
   if (draggedNotices.length) return draggedNotices.join("，");
   if (previousState.stage === nextState.stage) return "";
+  if (previousState.stage === RESTART_CARD_STAGE && nextState.stage === OTHER_CARDS_STAGE) {
+    return "重开卡阶段结束，进入其他卡牌使用阶段。";
+  }
+  if (previousState.stage === OTHER_CARDS_STAGE && nextState.stage === "score-bidding") {
+    return "卡牌使用阶段结束，开始叫庄。";
+  }
   if (previousState.stage === "bidding" && nextState.stage === "burying") {
     return `叫主成功：${nextState.setup?.bankerName || "庄家"} 成为庄家，已拿底等待贴底。`;
   }
@@ -1549,15 +1557,29 @@ async function useGameItem(itemId) {
         requestId: requestId()
       })
     });
-    activeDialog = null;
+    if (itemId === "restart-card") activeDialog = null;
     ensureShopState(true);
-    const successText = itemId === "restart-card" ? "重开卡已生效，牌局已经重新发牌。" : "对局道具已生效。";
+    const successText = state?.notice?.text || (itemId === "restart-card" ? "重开卡已生效，牌局已经重新发牌。" : "对局道具已生效。");
     setMessage(freeUse ? `${successText} 本局含 AI，不消耗卡片。` : successText, false);
   } catch (error) {
     setMessage(error.message, true);
   } finally {
     itemUseInFlight = "";
     render();
+  }
+}
+
+async function completeGameItemStage() {
+  if (!session || isSpectating() || state?.gameItems?.viewerCompleted) return;
+  try {
+    await roomAction(`/api/rooms/${session.roomId}/item-stage-complete`, {
+      method: "POST",
+      body: JSON.stringify({ playerId: session.playerId, token: session.token })
+    });
+    activeDialog = null;
+    setMessage(state?.stage === OTHER_CARDS_STAGE ? "已进入其他卡牌使用阶段。" : "已完成卡牌选择。");
+  } catch (error) {
+    setMessage(error.message, true);
   }
 }
 
@@ -2029,6 +2051,7 @@ function canStart() {
   return !isSpectating()
     && state?.viewer?.host
     && state.status === "lobby"
+    && state.stage === "lobby"
     && state.players.length >= state.minPlayers
     && state.players.length <= state.maxPlayers
     && state.players.every((player) => player.ready);
@@ -2040,6 +2063,10 @@ function isViewer(playerId) {
 
 function viewerPlayer() {
   return state?.players?.find((player) => player.id === state.viewer?.id) || null;
+}
+
+function viewerEnteredNextRound() {
+  return !isSpectating() && state?.stage === "finished" && Boolean(state?.viewer?.nextRoundEntered);
 }
 
 function readyStatusText() {
@@ -2133,6 +2160,9 @@ function scheduleScoreBidAutoPass() {
 }
 
 function currentSetupCountdownDeadline() {
+  if (state?.stage === RESTART_CARD_STAGE || state?.stage === OTHER_CARDS_STAGE) {
+    return state.gameItems?.deadlineAt || null;
+  }
   if (state?.stage === "score-bidding") return state.setup?.scoreBid?.deadlineAt || null;
   if (state?.stage === "frying") return state.setup?.fry?.deadlineAt || null;
   return null;
@@ -2669,14 +2699,15 @@ function renderTauntControl() {
 function renderGameItemControl() {
   if (isSpectating() || !state?.gameItems?.canUse) return "";
   const available = Object.values(shopState?.inventory || {}).reduce((total, item) => total + Number(item?.available || 0), 0);
+  const stageLabel = state.gameItems?.stageType === RESTART_CARD_STAGE ? "选择重开卡" : "选择卡牌";
   return `
     <button
       type="button"
       class="secondary item-use-toggle"
       data-action="open-items"
       aria-haspopup="dialog"
-      title="在叫庄结束前使用对局道具"
-    >道具${available ? ` ${available}` : ""}</button>
+      title="在当前卡牌使用阶段选择对局道具"
+    >${escapeHtml(stageLabel)}${available ? ` ${available}` : ""}</button>
   `;
 }
 
@@ -3845,7 +3876,7 @@ function renderInventoryPage() {
         : `
           <section class="panel stack">
             <div class="section-head">
-              <div><h2>对局道具卡</h2><div class="meta">与未来的英雄卡系统相互独立；符合牌局条件时可在叫庄结束前使用。</div></div>
+              <div><h2>对局道具卡</h2><div class="meta">与未来的英雄卡系统相互独立；符合牌局条件时在叫庄前的对应卡牌阶段使用。</div></div>
               <span class="tag">${items.length} 种</span>
             </div>
             <div class="game-items-list">
@@ -4187,10 +4218,10 @@ function renderRoom() {
   ensureShopState();
   const viewer = viewerPlayer();
   const spectating = isSpectating();
-  const waitingNextRound = !spectating && state.stage === "finished" && Boolean(viewer?.ready);
+  const waitingNextRound = viewerEnteredNextRound();
   const inLobbyView = state.status === "lobby";
   const gameInProgress = state.status === "dealt";
-  const showTable = state.stage !== "lobby";
+  const showTable = state.stage !== "lobby" && !waitingNextRound;
   selectedCardIds = new Set([...selectedCardIds].filter((cardId) => state.hand.some((card) => card.id === cardId)));
   maybeAutoOpenActionDialog();
   const waitingText = state.players.length < state.minPlayers
@@ -4211,7 +4242,7 @@ function renderRoom() {
             <div class="tags">
               <span class="tag accent">${state.players.length}/${state.maxPlayers} 人</span>
               ${spectating ? `<span class="tag good">观战 · ${escapeHtml(state.spectator?.targetPlayerName || state.viewer?.name || "玩家")}</span>` : ""}
-              <span class="tag">${escapeHtml(state.phase)}</span>
+              <span class="tag">${escapeHtml(waitingNextRound ? "等待其他玩家进入下一局" : state.phase)}</span>
               ${inLobbyView ? `<span class="tag">起叫 ${escapeHtml(state.openingBidPercent || 40)}%</span>` : ""}
               ${inLobbyView ? `<span class="tag good">${escapeHtml(readyStatusText())}</span>` : ""}
             </div>
@@ -4400,6 +4431,34 @@ function renderSetupCenter() {
     ? { label: "当前主牌", value: escapeHtml(setup.currentTrumpSuitName) }
     : null;
 
+  if (stage === RESTART_CARD_STAGE || stage === OTHER_CARDS_STAGE) {
+    const completedIds = state.gameItems?.completedPlayerIds || [];
+    const uses = state.gameItems?.uses || [];
+    const viewerUses = uses.filter((use) => use.playerId === state.viewer?.id);
+    const restartNames = (state.gameItems?.restartUsedPlayerIds || [])
+      .map((playerId) => state.players.find((player) => player.id === playerId)?.name)
+      .filter(Boolean);
+    const useSummary = stage === RESTART_CARD_STAGE
+      ? restartNames.map((name) => `${name}已重开`)
+      : uses.map((use) => `${use.playerName}使用${use.itemName}`);
+    const completed = Boolean(state.gameItems?.viewerCompleted);
+    const completeLabel = viewerUses.length ? "完成使用" : "不使用";
+    body = `
+      ${renderSetupLines([
+        { label: "当前阶段", value: stage === RESTART_CARD_STAGE ? "重开卡" : "战神卡、缤纷卡、牌运卡" },
+        { label: "倒计时", value: setupCountdownTag(state.gameItems?.deadlineAt, " 后自动完成") },
+        { label: "已完成", value: `${completedIds.length}/${state.players.length}` }
+      ])}
+      ${useSummary.length ? `<div class="game-item-use-summary">${useSummary.map((text) => `<span>${escapeHtml(text)}</span>`).join("")}</div>` : `<div class="meta">尚无玩家使用本阶段卡牌</div>`}
+      <div class="row">
+        ${!isSpectating() && !completed ? renderGameItemControl() : ""}
+        ${!isSpectating() && !completed ? `<button type="button" class="secondary" data-action="complete-item-stage">${escapeHtml(completeLabel)}</button>` : ""}
+        ${!isSpectating() && completed ? `<span class="tag good">你已完成选择</span>` : ""}
+        ${isSpectating() ? `<span class="tag">观战中</span>` : ""}
+      </div>
+    `;
+  }
+
   if (stage === "bidding") {
     const turnText = setup.bid
       ? `轮到 ${setup.biddingTurnPlayerName} 抢主或过`
@@ -4557,7 +4616,7 @@ function renderActiveDialog() {
   if (activeDialog === "players") return renderPlayersDialog();
   if (activeDialog === "events") return renderHistoryDialog();
   if (activeDialog === "spectators") return renderSpectatorsDialog();
-  if (activeDialog === "result" && state.stage === "finished") return renderResultPanel();
+  if (activeDialog === "result" && state.stage === "finished" && !viewerEnteredNextRound()) return renderResultPanel();
   return "";
 }
 
@@ -4586,18 +4645,24 @@ function renderRoomActionConfirmDialog() {
 }
 
 function renderGameItemsDialog() {
+  const stageType = state.gameItems?.stageType;
+  const itemMatchesStage = (item) => stageType === RESTART_CARD_STAGE
+    ? item.assetKey === "restart-card"
+    : item.assetKey !== "restart-card";
   const catalog = (shopState?.products || []).filter((product) =>
     product.productType === "consumable_item"
     && (product.isListed || Number(shopState?.inventory?.[product.assetKey]?.available || 0) > 0)
+    && itemMatchesStage(product)
   );
-  const items = catalog.length ? catalog : CONSUMABLE_ITEM_FALLBACKS;
+  const fallbackItems = CONSUMABLE_ITEM_FALLBACKS.filter(itemMatchesStage);
+  const items = catalog.length ? catalog : fallbackItems;
   const uses = state.gameItems?.uses || [];
   const viewerId = state.viewer?.id;
   return `
     <div class="modal-backdrop">
       <section class="modal-card game-items-modal" role="dialog" aria-modal="true" aria-label="使用对局道具">
         <div class="section-head">
-          <div><h2>对局道具</h2><div class="meta">${state.gameItems?.freeUse ? "本局含 AI，使用后不消耗卡片；" : ""}每位玩家每局同一道具限用一次。</div></div>
+          <div><h2>${stageType === RESTART_CARD_STAGE ? "重开卡阶段" : "其他卡牌阶段"}</h2><div class="meta">${state.gameItems?.freeUse ? "本局含 AI，使用后不消耗卡片；" : ""}每位玩家每局每种卡牌限用一次，可使用多种。</div></div>
           <button type="button" class="secondary compact-button" data-action="close-dialog">关闭</button>
         </div>
         ${colorfulFryOrderText() ? `<div class="colorful-order">缤纷卡顺序（大 → 小）：<strong>${escapeHtml(colorfulFryOrderText())}</strong></div>` : ""}
@@ -4605,14 +4670,13 @@ function renderGameItemsDialog() {
           ${items.map((item) => {
             const count = Number(shopState?.inventory?.[item.assetKey]?.available || 0);
             const usedByViewer = uses.some((use) => use.playerId === viewerId && use.itemId === item.assetKey);
-            const globallyUsed = item.assetKey === "colorful-card" && uses.some((use) => use.itemId === item.assetKey);
-            const restartUsed = item.assetKey === "restart-card" && state.gameItems?.restartUsed;
-            const disabled = !count || usedByViewer || globallyUsed || restartUsed || Boolean(itemUseInFlight);
+            const restartUsed = item.assetKey === "restart-card" && (state.gameItems?.restartUsedPlayerIds || []).includes(viewerId);
+            const disabled = !count || usedByViewer || restartUsed || state.gameItems?.viewerCompleted || Boolean(itemUseInFlight);
             return `
               <article class="game-item-row">
                 ${shopProductPreview({ ...item, productType: "consumable_item" })}
                 <div><strong>${escapeHtml(item.name)}</strong><p>${escapeHtml(item.description)}</p><span class="tag">${state.gameItems?.freeUse ? "AI 局免费使用 · " : ""}背包 ${count}</span></div>
-                <button type="button" data-action="use-game-item" data-item-id="${escapeHtml(item.assetKey)}" ${disabled ? "disabled" : ""}>${itemUseInFlight === item.assetKey ? "使用中…" : usedByViewer ? "本局已用" : globallyUsed || restartUsed ? "本轮已生效" : count ? "使用" : "暂无"}</button>
+                <button type="button" data-action="use-game-item" data-item-id="${escapeHtml(item.assetKey)}" ${disabled ? "disabled" : ""}>${itemUseInFlight === item.assetKey ? "使用中…" : usedByViewer || restartUsed ? "本局已用" : count ? "使用" : "暂无"}</button>
               </article>
             `;
           }).join("")}
@@ -4793,9 +4857,6 @@ function renderDiamondReward(reward) {
       : "含机器人、未登录或重复账号席位的牌局不发钻石";
     return `<span class="result-diamond muted" title="${escapeHtml(ineligibleTitle)}">💎 不发放</span>`;
   }
-  if (reward.status === "daily-capped") {
-    return `<span class="result-diamond capped" title="今日奖励局数已满">💎 今日已满</span>`;
-  }
   if (reward.status === "awarded") {
     return `<span class="result-diamond awarded" title="${escapeHtml(title)}">💎 +${escapeHtml(reward.awardedAmount ?? reward.totalAmount ?? 0)}</span>`;
   }
@@ -4816,9 +4877,6 @@ function renderViewerDiamondSummary(result) {
     return reward.reason === "spectator"
       ? `<div class="diamond-reward-summary muted"><strong>观战不获得钻石</strong><span>观战用户只查看牌局，不参与本局奖励结算。</span></div>`
       : `<div class="diamond-reward-summary muted"><strong>本局不发钻石</strong><span>只有全部席位均为已登录真人账号时才会发放。</span></div>`;
-  }
-  if (reward.status === "daily-capped") {
-    return `<div class="diamond-reward-summary capped"><strong>今日奖励局数已满</strong><span>本局原可获得 ${escapeHtml(reward.totalAmount || 0)} 钻石，牌局积分和称号仍正常记录。</span></div>`;
   }
   const amount = reward.status === "awarded"
     ? reward.awardedAmount ?? reward.totalAmount ?? 0
@@ -4852,7 +4910,7 @@ function renderResultPanel() {
         <div class="section-head">
           <div>
             <h2>总结看板</h2>
-            <div class="meta">${escapeHtml(spectating ? "观战用户不参与下一局准备和钻石结算。" : "任意玩家点击再来一局后，全房间进入下一局准备页。")}</div>
+            <div class="meta">${escapeHtml(spectating ? "观战用户不参与下一局准备和钻石结算。" : "点击再来一局后，只有你自己进入准备页并自动准备，其他玩家仍可继续查看结算。")}</div>
           </div>
           <div class="row">
             ${spectating
@@ -5170,6 +5228,8 @@ function renderPlayTable() {
 function renderSetupTable() {
   const setup = state.setup || {};
   const titleByStage = {
+    [RESTART_CARD_STAGE]: "重开卡阶段",
+    [OTHER_CARDS_STAGE]: "其他卡牌阶段",
     bidding: "叫主牌桌",
     "score-bidding": "叫分牌桌",
     "trump-selecting": "定主牌桌",
@@ -5220,6 +5280,13 @@ function renderSetupTable() {
 function setupSeatStatus(player) {
   const setup = state.setup || {};
   const fry = setup.fry || {};
+  if (state.stage === RESTART_CARD_STAGE || state.stage === OTHER_CARDS_STAGE) {
+    if ((state.gameItems?.completedPlayerIds || []).includes(player.id)) return { text: "已完成", tone: "good" };
+    const usedCount = state.stage === RESTART_CARD_STAGE
+      ? ((state.gameItems?.restartUsedPlayerIds || []).includes(player.id) ? 1 : 0)
+      : (state.gameItems?.uses || []).filter((use) => use.playerId === player.id).length;
+    return usedCount ? { text: `已用 ${usedCount} 张`, tone: "accent" } : { text: "选择卡牌", tone: "" };
+  }
   if (state.stage === "bidding") {
     if (!setup.bid) return { text: "等待叫主", tone: "" };
     if (setup.biddingTurnPlayerId === player.id) return { text: "抢主/过", tone: "good" };
@@ -5318,6 +5385,7 @@ function renderSeatHand(action, play, trick, index, options = {}) {
           <div class="seat-hand-avatar-stage" tabindex="0" aria-label="查看${escapeHtml(play.playerName)}的历史数据">
             ${avatarHtml(play.playerName, play.avatarUrl, "seat-profile", play.avatarFrame || roomPlayer.avatarFrame)}
             ${renderLuckyMark(play.playerId)}
+            ${renderWarGodMark(play.playerId)}
             ${renderTauntBubble(play.playerId, true)}
             ${renderPlayerHistoryMini(play.playerId, { overlay: true })}
           </div>
@@ -5510,6 +5578,17 @@ function renderLuckyMark(playerId) {
   `;
 }
 
+function renderWarGodMark(playerId) {
+  if (!(state?.gameItems?.warGodPlayerIds || []).includes(playerId)) return "";
+  const playerName = state?.players?.find((player) => player.id === playerId)?.name || "该玩家";
+  return `
+    <span class="war-god-mark" title="${escapeHtml(`${playerName}已使用战神卡`)}" aria-label="${escapeHtml(`${playerName}已使用战神卡`)}">
+      <span aria-hidden="true">⚔</span>
+      <small>战神</small>
+    </span>
+  `;
+}
+
 function normalizedCardSkin(value) {
   return CARD_SKIN_VALUES.has(value) ? value : "";
 }
@@ -5532,6 +5611,7 @@ function playerIdentity(name, role, avatarUrl = "", suffix = "", playerId = "", 
     <span class="player-identity">
       ${avatarHtml(name, avatarUrl, "small", avatarFrame)}
       ${renderLuckyMark(playerId)}
+      ${renderWarGodMark(playerId)}
       ${roleMark(role, playerId)}
       <span class="name-text">${escapeHtml(`${name}${suffix}`)}</span>
     </span>
@@ -5551,6 +5631,7 @@ function tablePlayerIdentity(play) {
       <span class="table-player-avatar-stage" tabindex="0" aria-label="查看${escapeHtml(play.playerName)}的历史数据">
         ${avatarHtml(play.playerName, play.avatarUrl, "small", avatarFrame)}
         ${renderLuckyMark(play.playerId)}
+        ${renderWarGodMark(play.playerId)}
         ${renderTauntBubble(play.playerId)}
         ${renderPlayerHistoryMini(play.playerId, { overlay: true })}
       </span>
@@ -5572,6 +5653,7 @@ function renderTablePlayerSummary(play, statusText, statusTone) {
       <span class="table-player-avatar-stage" tabindex="0" aria-label="查看${escapeHtml(play.playerName)}的历史数据">
         ${avatarHtml(play.playerName, play.avatarUrl, "small", avatarFrame)}
         ${renderLuckyMark(play.playerId)}
+        ${renderWarGodMark(play.playerId)}
         ${renderTauntBubble(play.playerId)}
         ${renderPlayerHistoryMini(play.playerId, { overlay: true })}
       </span>
@@ -6232,7 +6314,9 @@ function playedCardEffectClass(play, card, trickNumber) {
 function renderMiniCards(cards, options = {}) {
   if (!cards.length) return `<div class="meta">未出牌</div>`;
   const sortedCards = sortCardsForPlay(cards, options.trumpSuit ?? currentTrumpSuit());
-  const densityClass = sortedCards.length >= 10
+  const densityClass = sortedCards.length >= 18
+    ? "mini-cards-packed"
+    : sortedCards.length >= 10
     ? "mini-cards-dense"
     : sortedCards.length >= 6
       ? "mini-cards-folded"
@@ -6444,7 +6528,8 @@ const mutatingActions = new Set([
   "score-bid-30", "score-pass", "trump-suit-S", "trump-suit-H", "trump-suit-C",
   "trump-suit-D", "bury-selected", "fry-selected",
   "fry-pass", "dogleg-selected", "play-selected", "confirm-throw", "play-again",
-  "send-taunt", "delete-taunt", "kick-player", "buy-shop-product", "use-game-item"
+  "send-taunt", "delete-taunt", "kick-player", "buy-shop-product", "use-game-item",
+  "complete-item-stage"
 ]);
 
 function isRapidMutatingAction(action) {
@@ -6696,6 +6781,7 @@ document.addEventListener("click", (event) => {
   if (action === "use-game-item") {
     useGameItem(event.target.closest("[data-item-id]")?.dataset.itemId || "");
   }
+  if (action === "complete-item-stage") completeGameItemStage();
   if (action === "send-taunt") {
     sendTaunt(event.target.closest("[data-preset-id]")?.dataset.presetId || "");
   }
