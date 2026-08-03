@@ -1,6 +1,6 @@
 import { applyStatePatch } from "./state-patch.js?v=9330552c7e1e";
 import { detectNewDraggedFiveEffects, detectNewLargePlayEffects } from "./gameplay-effects.js?v=14791e626d30";
-import { ASSET_URLS } from "./asset-versions.js?v=5090adf14306";
+import { ASSET_URLS } from "./asset-versions.js?v=c51f35802d50";
 import { createHistoryTrickEntry, filterHistoryTimelineEntries } from "./history-records.js?v=874ba3c97732";
 
 const app = document.querySelector("#app");
@@ -20,10 +20,6 @@ Object.entries(ASSET_URLS.staticCardFrames).forEach(([key, url]) => {
 });
 const AVATAR_FRAME_OPTIONS = [
   { value: "", label: "默认方框" },
-  { value: "vip", label: "经典 VIP" },
-  { value: "emerald", label: "翡翠" },
-  { value: "violet", label: "紫晶" },
-  { value: "champion", label: "冠军" },
   { value: "stormwind", label: "皇家蓝城邦（暴风城主题）" },
   { value: "idol", label: "剧场偶像（AKB48 主题）" },
   { value: "hellfire", label: "暗黑地狱（暗黑主题）" },
@@ -31,7 +27,17 @@ const AVATAR_FRAME_OPTIONS = [
   { value: "endless-winter", label: "无尽冬日（冰雪熔炉）" },
   { value: "cr7", label: "7号传奇（C罗主题）" },
   { value: "paladin", label: "圣光骑士（魔兽圣骑士主题）" },
-  { value: "vip-legend", label: "至尊星耀 VIP（动态）" }
+  { value: "warrior", label: "魔兽战士" },
+  { value: "mage", label: "魔兽法师" },
+  { value: "warlock", label: "魔兽术士" },
+  { value: "rogue", label: "魔兽盗贼" },
+  { value: "druid", label: "魔兽德鲁伊" },
+  { value: "shaman", label: "魔兽萨满祭司" },
+  { value: "death-knight", label: "魔兽死亡骑士" },
+  { value: "vip-legend", label: "至尊星耀 VIP" },
+  { value: "minions", label: "小黄人工坊（小黄人主题）" },
+  { value: "usagi", label: "乌萨奇萌兔" },
+  { value: "toy-story", label: "玩具总动员" }
 ];
 const CARD_SKIN_OPTIONS = [
   { value: "", label: "默认牌框" },
@@ -3802,8 +3808,10 @@ function renderShopProduct(product) {
 function renderOwnedCosmetics() {
   const profile = authState.account?.profile;
   if (!profile) return "";
-  const avatarFrameKeys = ["", ...(shopState?.entitlements?.avatarFrames || [])];
-  const cardSkinKeys = ["", ...(shopState?.entitlements?.cardSkins || [])];
+  const avatarFrameKeys = ["", ...new Set((shopState?.entitlements?.avatarFrames || [])
+    .filter((key) => key && AVATAR_FRAME_VALUES.has(key)))];
+  const cardSkinKeys = ["", ...new Set((shopState?.entitlements?.cardSkins || [])
+    .filter((key) => key && CARD_SKIN_VALUES.has(key)))];
   const avatarLabels = new Map(AVATAR_FRAME_OPTIONS.map((option) => [option.value, option.label]));
   const cardLabels = new Map(CARD_SKIN_OPTIONS.map((option) => [option.value, option.label]));
   return `

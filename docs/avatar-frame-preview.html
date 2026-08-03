@@ -35,7 +35,7 @@
     .avatar-photo { width: 100%; height: 100%; display: none; object-fit: cover; }
     .avatar.has-photo .avatar-photo { display: block; }
     .avatar.has-photo .initial { display: none; }
-    .frame { position: absolute; inset: -22% -16%; z-index: 2; width: 132%; height: 144%; object-fit: cover; pointer-events: none; filter: drop-shadow(0 3px 4px rgba(18, 38, 30, .28)); }
+    .frame { position: absolute; left: -18.8%; top: -18.8%; z-index: 2; width: 137.6%; height: 137.6%; object-fit: fill; pointer-events: none; filter: drop-shadow(0 3px 4px rgba(18, 38, 30, .28)); }
     .empty-note { border: 1px dashed #a9bbb2; border-radius: 12px; padding: 16px; color: #66776f; text-align: center; }
     code { border-radius: 5px; background: #edf2ef; padding: 2px 5px; }
     @media (max-width: 640px) { body { padding: 12px; } header, section { padding: 15px; } .uploads { grid-template-columns: 1fr; } }
@@ -59,7 +59,7 @@
     <section>
       <h2>人工验收提醒</h2>
       <p>重点看 38 px：主题是否仍能凭轮廓或主色辨认；头像是否清楚；浅色和深色背景是否都有边界。自动检查通过不代表视觉质量已经通过。</p>
-      <p>坐标标准：画布 <code>512 × 512</code>，8 px 外边距透明，头像开口 <code>x=92..420、y=92..420</code> 完全透明。</p>
+      <p>坐标标准：画布 <code>512 × 512</code>，8 px 外边距透明，基础内开口固定为 <code>x=96..416、y=96..416</code> 的正方形，核心安全区 <code>x=128..384、y=128..384</code> 完全透明。</p>
     </section>
   </main>
   <script>
@@ -113,21 +113,21 @@
       context.drawImage(image, 0, 0, 512, 512);
       const data = context.getImageData(0, 0, 512, 512).data;
       let outerClear = true;
-      let openingClear = true;
+      let faceCoreClear = true;
       if (image.naturalWidth === 512 && image.naturalHeight === 512) {
         for (let y = 0; y < 512 && outerClear; y += 1) {
           for (let x = 0; x < 512; x += 1) {
             if ((x < 8 || x >= 504 || y < 8 || y >= 504) && alphaAt(data, x, y) > 4) { outerClear = false; break; }
           }
         }
-        for (let y = 92; y < 420 && openingClear; y += 1) {
-          for (let x = 92; x < 420; x += 1) {
-            if (alphaAt(data, x, y) > 4) { openingClear = false; break; }
+        for (let y = 128; y < 384 && faceCoreClear; y += 1) {
+          for (let x = 128; x < 384; x += 1) {
+            if (alphaAt(data, x, y) > 4) { faceCoreClear = false; break; }
           }
         }
       } else {
         outerClear = false;
-        openingClear = false;
+        faceCoreClear = false;
       }
       const formatGood = ["image/png", "image/webp"].includes(file.type);
       const sizeGood = image.naturalWidth === 512 && image.naturalHeight === 512;
@@ -137,7 +137,7 @@
         badge(`${image.naturalWidth} × ${image.naturalHeight} px`, sizeGood),
         badge(`${Math.round(file.size / 1024)} KB（建议不超过 300 KB）`, weightGood),
         badge("8 px 外边距透明", outerClear),
-        badge("328 × 328 px 头像开口透明", openingClear)
+        badge("256 × 256 px 五官核心安全区透明", faceCoreClear)
       ].join("");
     }
 

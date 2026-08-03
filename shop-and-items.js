@@ -1,4 +1,4 @@
-export const SHOP_RULES_VERSION = "2026-08-03-v2";
+export const SHOP_RULES_VERSION = "2026-08-03-v4";
 
 export const RESTART_CARD_STAGE = "restart-card-using";
 export const OTHER_CARDS_STAGE = "other-cards-using";
@@ -48,11 +48,74 @@ const COSMETIC_THEME_LABELS = Object.freeze({
   "endless-winter": "无尽冬日",
   cr7: "7号传奇",
   paladin: "圣光骑士",
-  "vip-legend": "至尊星耀 VIP"
+  "vip-legend": "至尊星耀 VIP",
+  warrior: "魔兽战士",
+  mage: "魔兽法师",
+  warlock: "魔兽术士",
+  rogue: "魔兽盗贼",
+  druid: "魔兽德鲁伊",
+  shaman: "魔兽萨满祭司",
+  "death-knight": "魔兽死亡骑士",
+  minions: "小黄人工坊",
+  usagi: "乌萨奇萌兔",
+  "toy-story": "玩具总动员"
 });
 
-export const AVATAR_FRAME_KEYS = Object.freeze(Object.keys(COSMETIC_THEME_LABELS));
-export const CARD_SKIN_KEYS = Object.freeze(AVATAR_FRAME_KEYS.filter((key) => key !== "vip"));
+export const AVATAR_FRAME_KEYS = Object.freeze([
+  "stormwind",
+  "idol",
+  "hellfire",
+  "blood-elf",
+  "endless-winter",
+  "cr7",
+  "paladin",
+  "vip-legend",
+  "warrior",
+  "mage",
+  "warlock",
+  "rogue",
+  "druid",
+  "shaman",
+  "death-knight",
+  "minions",
+  "usagi",
+  "toy-story"
+]);
+
+const AVATAR_FRAME_DEFAULT_PRICES = Object.freeze({
+  stormwind: 450,
+  idol: 350,
+  hellfire: 400,
+  "blood-elf": 450,
+  "endless-winter": 400,
+  cr7: 400,
+  paladin: 450,
+  "vip-legend": 500,
+  warrior: 500,
+  mage: 450,
+  warlock: 400,
+  rogue: 400,
+  druid: 400,
+  shaman: 500,
+  "death-knight": 450,
+  minions: 300,
+  usagi: 300,
+  "toy-story": 300
+});
+
+export const CARD_SKIN_KEYS = Object.freeze([
+  "emerald",
+  "violet",
+  "champion",
+  "stormwind",
+  "idol",
+  "hellfire",
+  "blood-elf",
+  "endless-winter",
+  "cr7",
+  "paladin",
+  "vip-legend"
+]);
 
 export const DEFAULT_SHOP_PRODUCTS = Object.freeze([
   ...AVATAR_FRAME_KEYS.map((assetKey, index) => ({
@@ -61,7 +124,7 @@ export const DEFAULT_SHOP_PRODUCTS = Object.freeze([
     assetKey,
     name: `${COSMETIC_THEME_LABELS[assetKey]}头像框`,
     description: "永久解锁，可在我的皮肤中自由装备或卸下。",
-    defaultPrice: assetKey === "vip-legend" ? 300 : 100,
+    defaultPrice: AVATAR_FRAME_DEFAULT_PRICES[assetKey],
     sortOrder: 100 + index
   })),
   ...CARD_SKIN_KEYS.map((assetKey, index) => ({

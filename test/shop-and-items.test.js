@@ -4,7 +4,9 @@ import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 
 import {
+  AVATAR_FRAME_KEYS,
   applyWarGodAdjustments,
+  CARD_SKIN_KEYS,
   DEFAULT_FRY_SUIT_ORDER,
   DEFAULT_SHOP_PRODUCTS,
   frySuitStrength,
@@ -19,8 +21,23 @@ import {
 
 test("hero cards and consumable items have an independent fixed shop catalog", () => {
   assert.ok(DEFAULT_SHOP_PRODUCTS.some((product) => product.id === "consumable:restart-card"));
-  assert.ok(DEFAULT_SHOP_PRODUCTS.some((product) => product.id === "avatar-frame:emerald"));
+  assert.ok(DEFAULT_SHOP_PRODUCTS.some((product) => product.id === "avatar-frame:warrior"));
+  assert.ok(DEFAULT_SHOP_PRODUCTS.some((product) => product.id === "avatar-frame:minions"));
+  assert.ok(DEFAULT_SHOP_PRODUCTS.some((product) => product.id === "avatar-frame:usagi"));
+  assert.ok(DEFAULT_SHOP_PRODUCTS.some((product) => product.id === "avatar-frame:toy-story"));
+  assert.ok(!DEFAULT_SHOP_PRODUCTS.some((product) => product.id === "avatar-frame:emerald"));
+  assert.ok(!DEFAULT_SHOP_PRODUCTS.some((product) => product.id === "avatar-frame:vip"));
   assert.ok(DEFAULT_SHOP_PRODUCTS.some((product) => product.id === "card-skin:emerald"));
+  assert.ok(!DEFAULT_SHOP_PRODUCTS.some((product) => product.id === "card-skin:warrior"));
+  assert.ok(!DEFAULT_SHOP_PRODUCTS.some((product) => product.id === "card-skin:minions"));
+  assert.ok(AVATAR_FRAME_KEYS.includes("death-knight"));
+  assert.ok(!AVATAR_FRAME_KEYS.includes("champion"));
+  assert.ok(CARD_SKIN_KEYS.includes("champion"));
+  const avatarFrameProducts = DEFAULT_SHOP_PRODUCTS.filter((product) => product.productType === "avatar_frame");
+  assert.equal(avatarFrameProducts.length, AVATAR_FRAME_KEYS.length);
+  assert.ok(avatarFrameProducts.every((product) => product.defaultPrice >= 300 && product.defaultPrice <= 500));
+  assert.equal(avatarFrameProducts.find((product) => product.assetKey === "vip-legend")?.defaultPrice, 500);
+  assert.equal(avatarFrameProducts.find((product) => product.assetKey === "minions")?.defaultPrice, 300);
   assert.equal(isItemUseStage(RESTART_CARD_STAGE), true);
   assert.equal(isItemUseStage(OTHER_CARDS_STAGE), true);
   assert.equal(isItemUseStage("score-bidding"), false);
@@ -31,6 +48,18 @@ test("hero cards and consumable items have an independent fixed shop catalog", (
   assert.equal(itemAllowedInStage(OTHER_CARDS_STAGE, "war-god-card"), true);
   assert.equal(itemAllowedInStage(OTHER_CARDS_STAGE, "colorful-card"), true);
   assert.equal(itemAllowedInStage(OTHER_CARDS_STAGE, "luck-card"), true);
+});
+
+test("avatar frame migration unlists retired themes and keeps audit rows", async () => {
+  const migrationPath = fileURLToPath(new URL("../db/migrations/016_avatar_class_frames.sql", import.meta.url));
+  const migration = await readFile(migrationPath, "utf8");
+
+  assert.match(migration, /SET avatar_frame = ''[\s\S]*'vip'[\s\S]*'emerald'[\s\S]*'violet'[\s\S]*'champion'/);
+  assert.match(migration, /SET is_listed = false[\s\S]*avatar-frame:vip[\s\S]*avatar-frame:champion/);
+  assert.match(migration, /avatar_frame IN \([\s\S]*'warrior'[\s\S]*'death-knight'[\s\S]*'minions'[\s\S]*'usagi'[\s\S]*'toy-story'/);
+  assert.match(migration, /'avatar-frame:vip-legend'[\s\S]*?, 500, true, 107\)/);
+  assert.match(migration, /'avatar-frame:minions'[\s\S]*?, 300, true, 115\)/);
+  assert.doesNotMatch(migration, /DELETE FROM cdp_cosmetic_entitlements/);
 });
 
 test("game items allow AI games without charging inventory", () => {

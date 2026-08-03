@@ -2156,39 +2156,16 @@ button.joinable-room-player.spectate-player {
   border-radius: 4px;
 }
 
-.avatar.avatar-frame-vip {
-  --avatar-frame-image: var(--avatar-frame-vip-image);
-  --avatar-frame-inset-block: -31%;
-  --avatar-frame-inset-inline: -24%;
-  --avatar-frame-aura: rgba(112, 83, 145, 0.28);
-  overflow: visible;
-  border: 0;
-  border-radius: 7px;
-  background: transparent;
-  margin-right: 0;
-  padding: 0;
-  box-shadow: none;
-}
-
-.avatar.avatar-frame-vip .avatar-core {
-  position: absolute;
-  inset: 4px;
-  width: auto;
-  height: auto;
-  border: 1px solid rgba(225, 216, 239, 0.86);
-  border-radius: 5px;
-  background: #e8eee9;
-  box-shadow: 0 0 0 1px rgba(30, 25, 39, 0.45);
-  z-index: 1;
-}
-
 .avatar.avatar-frame::after {
   content: "";
   position: absolute;
-  inset: var(--avatar-frame-inset-block, -22%) var(--avatar-frame-inset-inline, -16%);
+  left: -18.8%;
+  top: -18.8%;
+  width: 137.6%;
+  height: 137.6%;
   z-index: 2;
   border-radius: inherit;
-  background: var(--avatar-frame-image) center / cover no-repeat;
+  background: var(--avatar-frame-image) center / 100% 100% no-repeat;
   filter:
     drop-shadow(0 3px 4px var(--avatar-frame-shadow, rgba(31, 45, 38, 0.24)))
     drop-shadow(0 0 5px var(--avatar-frame-aura, rgba(31, 45, 38, 0.12)));
@@ -2212,9 +2189,6 @@ button.joinable-room-player.spectate-player {
   pointer-events: none;
 }
 
-.avatar.avatar-frame-emerald,
-.avatar.avatar-frame-violet,
-.avatar.avatar-frame-champion,
 .avatar.avatar-frame-stormwind,
 .avatar.avatar-frame-idol,
 .avatar.avatar-frame-hellfire,
@@ -2222,6 +2196,16 @@ button.joinable-room-player.spectate-player {
 .avatar.avatar-frame-endless-winter,
 .avatar.avatar-frame-cr7,
 .avatar.avatar-frame-paladin,
+.avatar.avatar-frame-warrior,
+.avatar.avatar-frame-mage,
+.avatar.avatar-frame-warlock,
+.avatar.avatar-frame-rogue,
+.avatar.avatar-frame-druid,
+.avatar.avatar-frame-shaman,
+.avatar.avatar-frame-death-knight,
+.avatar.avatar-frame-minions,
+.avatar.avatar-frame-usagi,
+.avatar.avatar-frame-toy-story,
 .avatar.avatar-frame-vip-legend {
   overflow: visible;
   border: 0;
@@ -2229,24 +2213,6 @@ button.joinable-room-player.spectate-player {
   background: transparent;
   padding: 0;
   box-shadow: none;
-}
-
-.avatar.avatar-frame-emerald {
-  --avatar-frame-image: var(--avatar-frame-emerald-image);
-  --avatar-frame-shadow: rgba(13, 96, 73, 0.28);
-  --avatar-frame-aura: rgba(23, 151, 111, 0.34);
-}
-
-.avatar.avatar-frame-violet {
-  --avatar-frame-image: var(--avatar-frame-violet-image);
-  --avatar-frame-shadow: rgba(89, 45, 145, 0.3);
-  --avatar-frame-aura: rgba(129, 76, 193, 0.32);
-}
-
-.avatar.avatar-frame-champion {
-  --avatar-frame-image: var(--avatar-frame-champion-image);
-  --avatar-frame-shadow: rgba(126, 24, 14, 0.32);
-  --avatar-frame-aura: rgba(187, 66, 32, 0.3);
 }
 
 .avatar.avatar-frame-stormwind {
@@ -2291,21 +2257,79 @@ button.joinable-room-player.spectate-player {
   --avatar-frame-aura: rgba(233, 186, 71, 0.34);
 }
 
+.avatar.avatar-frame-warrior {
+  --avatar-frame-image: var(--avatar-frame-warrior-image);
+  --avatar-frame-shadow: rgba(87, 24, 18, 0.38);
+  --avatar-frame-aura: rgba(154, 48, 35, 0.24);
+}
+
+.avatar.avatar-frame-mage {
+  --avatar-frame-image: var(--avatar-frame-mage-image);
+  --avatar-frame-shadow: rgba(42, 32, 103, 0.38);
+  --avatar-frame-aura: rgba(91, 85, 215, 0.26);
+}
+
+.avatar.avatar-frame-warlock {
+  --avatar-frame-image: var(--avatar-frame-warlock-image);
+  --avatar-frame-shadow: rgba(48, 20, 63, 0.4);
+  --avatar-frame-aura: rgba(91, 148, 35, 0.22);
+}
+
+.avatar.avatar-frame-rogue {
+  --avatar-frame-image: var(--avatar-frame-rogue-image);
+  --avatar-frame-shadow: rgba(24, 22, 17, 0.42);
+  --avatar-frame-aura: rgba(128, 109, 35, 0.2);
+}
+
+.avatar.avatar-frame-druid {
+  --avatar-frame-image: var(--avatar-frame-druid-image);
+  --avatar-frame-shadow: rgba(48, 45, 22, 0.38);
+  --avatar-frame-aura: rgba(67, 126, 50, 0.22);
+}
+
+.avatar.avatar-frame-shaman {
+  --avatar-frame-image: var(--avatar-frame-shaman-image);
+  --avatar-frame-shadow: rgba(21, 58, 69, 0.4);
+  --avatar-frame-aura: rgba(36, 160, 181, 0.24);
+}
+
+.avatar.avatar-frame-death-knight {
+  --avatar-frame-image: var(--avatar-frame-death-knight-image);
+  --avatar-frame-shadow: rgba(18, 43, 61, 0.42);
+  --avatar-frame-aura: rgba(45, 139, 184, 0.25);
+}
+
 .avatar.avatar-frame-vip-legend {
   --avatar-frame-image: var(--avatar-frame-vip-legend-image);
-  --avatar-frame-inset-block: -16%;
-  --avatar-frame-inset-inline: -12%;
   --avatar-frame-shadow: rgba(30, 132, 230, 0.48);
   --avatar-frame-aura: rgba(54, 153, 244, 0.42);
-  animation: vip-legend-avatar-aura 2.4s ease-in-out infinite;
+  animation: vip-legend-avatar-aura 3.2s ease-in-out infinite;
+}
+
+.avatar.avatar-frame-minions {
+  --avatar-frame-image: var(--avatar-frame-minions-image);
+  --avatar-frame-shadow: rgba(46, 83, 120, 0.28);
+  --avatar-frame-aura: rgba(251, 204, 41, 0.22);
+}
+
+.avatar.avatar-frame-usagi {
+  --avatar-frame-image: var(--avatar-frame-usagi-image);
+  --avatar-frame-shadow: rgba(147, 105, 45, 0.24);
+  --avatar-frame-aura: rgba(255, 204, 92, 0.2);
+}
+
+.avatar.avatar-frame-toy-story {
+  --avatar-frame-image: var(--avatar-frame-toy-story-image);
+  --avatar-frame-shadow: rgba(36, 91, 142, 0.28);
+  --avatar-frame-aura: rgba(74, 161, 226, 0.2);
 }
 
 @keyframes vip-legend-avatar-aura {
-  0%, 100% { filter: drop-shadow(0 0 2px rgba(64, 176, 255, 0.35)); }
-  50% { filter: drop-shadow(0 0 6px rgba(76, 192, 255, 0.72)); }
+  0%, 100% { filter: drop-shadow(0 0 2px rgba(64, 176, 255, 0.24)); }
+  50% { filter: drop-shadow(0 0 4px rgba(76, 192, 255, 0.44)); }
 }
 
-.avatar.avatar-frame:not(.avatar-frame-vip) .avatar-core {
+.avatar.avatar-frame .avatar-core {
   position: absolute;
   inset: 4px;
   width: auto;
