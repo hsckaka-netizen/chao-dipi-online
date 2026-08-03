@@ -1,6 +1,6 @@
 import { applyStatePatch } from "./state-patch.js?v=9330552c7e1e";
 import { detectNewDraggedFiveEffects, detectNewLargePlayEffects } from "./gameplay-effects.js?v=14791e626d30";
-import { ASSET_URLS } from "./asset-versions.js?v=b62e391a838d";
+import { ASSET_URLS } from "./asset-versions.js?v=5090adf14306";
 import { createHistoryTrickEntry, filterHistoryTimelineEntries } from "./history-records.js?v=874ba3c97732";
 
 const app = document.querySelector("#app");
@@ -138,6 +138,7 @@ let shopState = null;
 let shopStateLoading = false;
 let shopStateAccountId = "";
 let shopPurchaseInFlight = "";
+let avatarFrameEquipInFlight = "";
 let itemUseInFlight = "";
 let adminData = null;
 let adminDataLoading = false;
@@ -618,6 +619,7 @@ function resetShopState() {
   shopStateLoading = false;
   shopStateAccountId = "";
   shopPurchaseInFlight = "";
+  avatarFrameEquipInFlight = "";
 }
 
 function requestId() {
@@ -1433,6 +1435,27 @@ async function purchaseShopItem(productId) {
     setMessage(error.message, true);
   } finally {
     shopPurchaseInFlight = "";
+    render();
+  }
+}
+
+async function equipAvatarFrame(avatarFrame) {
+  const profile = authState.account?.profile;
+  if (!profile || avatarFrameEquipInFlight || profile.avatarFrame === avatarFrame) return;
+  avatarFrameEquipInFlight = avatarFrame;
+  render();
+  try {
+    const data = await api("/api/cosmetics/me", {
+      method: "PATCH",
+      body: JSON.stringify({ avatarFrame, cardSkin: profile.cardSkin || "" })
+    });
+    shopState = data;
+    authState.account = data.account;
+    setMessage("头像框已经佩戴，牌桌和房间列表会同步展示。", false);
+  } catch (error) {
+    setMessage(error.message, true);
+  } finally {
+    avatarFrameEquipInFlight = "";
     render();
   }
 }
@@ -3698,12 +3721,28 @@ function ownedShopProduct(product) {
 
 function shopProductPreview(product) {
   if (product.productType === "avatar_frame") {
-    return `<div class="shop-avatar-preview">${avatarHtml(product.name, "", "normal", product.assetKey)}</div>`;
+    const profile = authState.account?.profile;
+    const previewName = profile?.name || product.name;
+    const previewAvatarUrl = profile?.avatarUrl || "";
+    return `
+      <div class="shop-avatar-preview">
+        <span class="shop-preview-label">牌桌实装</span>
+        <span class="shop-avatar-hero-stage">
+          ${avatarHtml(previewName, previewAvatarUrl, "shop-feature", product.assetKey)}
+        </span>
+        <span class="shop-avatar-mini-preview">
+          ${avatarHtml(previewName, previewAvatarUrl, "small", product.assetKey)}
+          <span><b>${escapeHtml(previewName)}</b><small>房间列表效果</small></span>
+        </span>
+      </div>
+    `;
   }
   if (product.productType === "card_skin") {
     return `
-      <div class="shop-card-preview ${cardSkinClass(product.assetKey)}" aria-hidden="true">
-        <span class="shop-card-rank">A</span><span class="shop-card-suit">♥</span>
+      <div class="shop-card-preview" aria-hidden="true">
+        <span class="shop-preview-card black ${cardSkinClass(product.assetKey)}"><span><b>K</b><i>♠</i></span></span>
+        <span class="shop-preview-card red ${cardSkinClass(product.assetKey)}"><span><b>Q</b><i>♦</i></span></span>
+        <span class="shop-preview-card red ${cardSkinClass(product.assetKey)}"><span><b>A</b><i>♥</i></span></span>
       </div>
     `;
   }
@@ -3718,29 +3757,43 @@ function shopProductPreview(product) {
 
 function renderShopProduct(product) {
   const owned = ownedShopProduct(product);
+  const profile = authState.account?.profile;
+  const isAvatarFrame = product.productType === "avatar_frame";
+  const equipped = isAvatarFrame && profile?.avatarFrame === product.assetKey;
   const itemCount = product.productType === "consumable_item"
     ? Number(shopState?.inventory?.[product.assetKey]?.available || 0)
     : 0;
   const purchasing = shopPurchaseInFlight === product.id;
+  const equipping = avatarFrameEquipInFlight === product.assetKey;
   const cannotAfford = Number(shopState?.balance || 0) < Number(product.price || 0);
   return `
-    <article class="shop-product-card ${owned ? "owned" : ""}">
+    <article class="shop-product-card ${isAvatarFrame ? "avatar-frame-product" : ""} ${owned ? "owned" : ""} ${equipped ? "equipped" : ""}">
       ${shopProductPreview(product)}
       <div class="shop-product-copy">
         <div class="shop-product-title">
           <strong>${escapeHtml(product.name)}</strong>
-          ${owned ? `<span class="tag good">已拥有</span>` : itemCount ? `<span class="tag">背包 ${itemCount}</span>` : ""}
+          ${equipped ? `<span class="tag good">佩戴中</span>` : owned ? `<span class="tag good">已拥有</span>` : itemCount ? `<span class="tag">背包 ${itemCount}</span>` : ""}
         </div>
         <p>${escapeHtml(product.description)}</p>
+        ${isAvatarFrame ? `<div class="shop-avatar-visibility"><span>牌桌头像</span><span>房间列表</span><span>数据榜单</span></div>` : ""}
       </div>
       <div class="shop-product-buy">
-        <b>💎 ${escapeHtml(product.price)}</b>
-        <button
-          type="button"
-          data-action="buy-shop-product"
-          data-product-id="${escapeHtml(product.id)}"
-          ${owned || purchasing || shopPurchaseInFlight || cannotAfford ? "disabled" : ""}
-        >${owned ? "已解锁" : purchasing ? "购买中…" : cannotAfford ? "钻石不足" : "购买"}</button>
+        <b>${owned && isAvatarFrame ? "永久拥有" : `💎 ${escapeHtml(product.price)}`}</b>
+        ${owned && isAvatarFrame ? `
+          <button
+            type="button"
+            data-action="equip-avatar-frame"
+            data-avatar-frame="${escapeHtml(product.assetKey)}"
+            ${equipped || equipping || avatarFrameEquipInFlight ? "disabled" : ""}
+          >${equipped ? "当前佩戴" : equipping ? "佩戴中…" : "立即佩戴"}</button>
+        ` : `
+          <button
+            type="button"
+            data-action="buy-shop-product"
+            data-product-id="${escapeHtml(product.id)}"
+            ${owned || purchasing || shopPurchaseInFlight || cannotAfford ? "disabled" : ""}
+          >${owned ? "已解锁" : purchasing ? "购买中…" : cannotAfford ? "钻石不足" : "购买"}</button>
+        `}
       </div>
     </article>
   `;
@@ -3756,26 +3809,39 @@ function renderOwnedCosmetics() {
   return `
     <section class="panel stack owned-cosmetics-panel">
       <div class="section-head">
-        <div><h2>我的皮肤</h2><div class="meta">购买或由管理员发放后永久拥有；装备只影响你自己的当前皮肤。</div></div>
+        <div><h2>我的头像框</h2><div class="meta">先看实际效果再选择，保存后会同步到牌桌、房间列表和数据榜单。</div></div>
       </div>
       <form class="owned-cosmetics-form" data-form="own-cosmetics">
-        <div class="account-profile-preview">
-          ${avatarHtml(profile.name, profile.avatarUrl, "normal", profile.avatarFrame)}
-          <div><b>${escapeHtml(profile.name)}</b><span>当前头像框与牌面边框</span></div>
+        <div class="owned-avatar-current">
+          <span>当前佩戴</span>
+          <span class="owned-avatar-current-stage">
+            ${avatarHtml(profile.name, profile.avatarUrl, "shop-feature", profile.avatarFrame)}
+          </span>
+          <div><b>${escapeHtml(avatarLabels.get(profile.avatarFrame) || profile.avatarFrame)}</b><small>${escapeHtml(profile.name)}</small></div>
         </div>
-        <label>
-          头像框
-          <select name="avatarFrame">
-            ${avatarFrameKeys.map((key) => `<option value="${escapeHtml(key)}" ${profile.avatarFrame === key ? "selected" : ""}>${escapeHtml(avatarLabels.get(key) || key)}</option>`).join("")}
-          </select>
-        </label>
-        <label>
-          牌面边框
-          <select name="cardSkin">
-            ${cardSkinKeys.map((key) => `<option value="${escapeHtml(key)}" ${profile.cardSkin === key ? "selected" : ""}>${escapeHtml(cardLabels.get(key) || key)}</option>`).join("")}
-          </select>
-        </label>
-        <button type="submit">保存当前使用</button>
+        <fieldset class="owned-avatar-frame-picker">
+          <legend>选择头像框</legend>
+          <div class="owned-avatar-frame-grid">
+            ${avatarFrameKeys.map((key) => `
+              <label class="owned-avatar-frame-option ${profile.avatarFrame === key ? "selected" : ""}">
+                <input type="radio" name="avatarFrame" value="${escapeHtml(key)}" ${profile.avatarFrame === key ? "checked" : ""}>
+                <span class="owned-avatar-frame-stage">${avatarHtml(profile.name, profile.avatarUrl, "normal", key)}</span>
+                <b>${escapeHtml(avatarLabels.get(key) || key)}</b>
+                <small>${profile.avatarFrame === key ? "当前佩戴" : "点击选择"}</small>
+              </label>
+            `).join("")}
+          </div>
+        </fieldset>
+        <details class="owned-card-skin-setting">
+          <summary>牌面边框</summary>
+          <label>
+            保留现有设置
+            <select name="cardSkin">
+              ${cardSkinKeys.map((key) => `<option value="${escapeHtml(key)}" ${profile.cardSkin === key ? "selected" : ""}>${escapeHtml(cardLabels.get(key) || key)}</option>`).join("")}
+            </select>
+          </label>
+        </details>
+        <button class="owned-avatar-save" type="submit">保存佩戴</button>
       </form>
     </section>
   `;
@@ -3793,7 +3859,8 @@ function renderShopPage() {
   }
   ensureShopState();
   const products = shopState?.products || [];
-  const cosmetics = products.filter((product) => product.isListed && product.productType !== "consumable_item");
+  const avatarFrames = products.filter((product) => product.isListed && product.productType === "avatar_frame");
+  const cardSkins = products.filter((product) => product.isListed && product.productType === "card_skin");
   const consumables = products.filter((product) => product.isListed && product.productType === "consumable_item");
   renderShell(`
     <section class="shop-hero panel">
@@ -3808,9 +3875,15 @@ function renderShopPage() {
     ${shopStateLoading && !shopState ? `<section class="panel"><div class="empty">正在读取商品与背包...</div></section>` : shopState?.unavailable ? `<section class="panel"><div class="empty">商城暂不可用，请稍后再试。</div></section>` : `
       ${renderOwnedCosmetics()}
       <section class="panel stack shop-catalog">
-        <div class="section-head"><div><h2>永久皮肤</h2><div class="meta">头像框和牌面边框购买一次即可永久使用。</div></div><span class="tag">${cosmetics.length} 件</span></div>
-        <div class="shop-product-grid">${cosmetics.map(renderShopProduct).join("") || `<div class="empty">暂无上架皮肤。</div>`}</div>
+        <div class="section-head"><div><h2>头像框</h2><div class="meta">使用你的真实头像预览；购买一次永久拥有，并可立即佩戴。</div></div><span class="tag">${avatarFrames.length} 款</span></div>
+        <div class="shop-product-grid avatar-frame-grid">${avatarFrames.map(renderShopProduct).join("") || `<div class="empty">暂无上架头像框。</div>`}</div>
       </section>
+      ${cardSkins.length ? `
+        <section class="panel stack shop-catalog shop-card-skin-catalog">
+          <div class="section-head"><div><h2>牌面边框</h2><div class="meta">改为低饱和哑光边线；重叠手牌靠左侧主题色识别，不使用持续闪烁光效。</div></div><span class="tag">${cardSkins.length} 款</span></div>
+          <div class="shop-product-grid">${cardSkins.map(renderShopProduct).join("")}</div>
+        </section>
+      ` : ""}
       <section class="panel stack shop-catalog">
         <div class="section-head"><div><h2>对局道具</h2><div class="meta">每次购买增加 1 张；真人局正常消耗，含 AI 的牌局可免费使用。</div></div><span class="tag">${consumables.length} 种</span></div>
         <div class="shop-product-grid consumables">${consumables.map(renderShopProduct).join("") || `<div class="empty">暂无上架道具。</div>`}</div>
@@ -6646,7 +6719,7 @@ const mutatingActions = new Set([
   "score-bid-30", "score-pass", "trump-suit-S", "trump-suit-H", "trump-suit-C",
   "trump-suit-D", "bury-selected", "fry-selected",
   "fry-pass", "dogleg-selected", "play-selected", "confirm-throw", "play-again",
-  "send-taunt", "delete-taunt", "kick-player", "buy-shop-product", "use-game-item",
+  "send-taunt", "delete-taunt", "kick-player", "buy-shop-product", "equip-avatar-frame", "use-game-item",
   "complete-item-stage"
 ]);
 
@@ -6795,6 +6868,9 @@ document.addEventListener("click", (event) => {
   if (action === "logout-account") logoutAccount();
   if (action === "buy-shop-product") {
     purchaseShopItem(event.target.closest("[data-product-id]")?.dataset.productId || "");
+  }
+  if (action === "equip-avatar-frame") {
+    equipAvatarFrame(event.target.closest("[data-avatar-frame]")?.dataset.avatarFrame || "");
   }
   if (action === "toggle-account") {
     const target = event.target.closest("[data-account-id]");

@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>炒地皮头像框本地自检</title>
+  <style>
+    :root { color-scheme: light; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: #1f2d28; background: #eef3f0; }
+    * { box-sizing: border-box; }
+    body { margin: 0; padding: 28px; }
+    main { width: min(1120px, 100%); margin: auto; display: grid; gap: 18px; }
+    header, section { border: 1px solid #d9e3dd; border-radius: 18px; background: #fff; padding: 20px; box-shadow: 0 10px 32px rgba(28, 47, 38, .07); }
+    h1, h2, p { margin-top: 0; }
+    h1 { margin-bottom: 8px; font-size: clamp(26px, 4vw, 40px); }
+    h2 { margin-bottom: 14px; font-size: 20px; }
+    p { color: #607068; line-height: 1.6; }
+    .uploads { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+    label.upload { display: grid; gap: 8px; border: 1px dashed #9eb5aa; border-radius: 13px; background: #f7faf8; padding: 14px; color: #426055; font-size: 13px; font-weight: 800; }
+    input { width: 100%; }
+    .checks { display: flex; flex-wrap: wrap; gap: 8px; min-height: 28px; margin-top: 14px; }
+    .check { border-radius: 999px; background: #edf1ef; padding: 6px 10px; color: #64716b; font-size: 12px; font-weight: 800; }
+    .check.good { background: #e5f5ec; color: #176f4d; }
+    .check.bad { background: #fbe9e9; color: #a42c32; }
+    .preview-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 12px; }
+    .surface { min-height: 270px; display: grid; align-content: start; gap: 18px; overflow: hidden; border-radius: 15px; padding: 18px; }
+    .surface.light { border: 1px solid #dde5e0; background: #f8faf9; }
+    .surface.dark { background: #1d252d; color: #fff; }
+    .surface.table { background: radial-gradient(circle at 50% 20%, #41765e, #183f32 72%); color: #fff; }
+    .surface h3 { margin: 0; font-size: 14px; }
+    .sizes { display: flex; flex-wrap: wrap; align-items: end; gap: 26px 30px; padding: 18px 12px; }
+    .sample { display: grid; justify-items: center; gap: 13px; }
+    .sample small { opacity: .78; font-size: 11px; }
+    .avatar { --size: 48px; position: relative; width: var(--size); height: var(--size); display: grid; place-items: center; overflow: visible; border-radius: 8px; background: linear-gradient(145deg, #2b7f78, #182e58); color: #fff; font-weight: 900; isolation: isolate; }
+    .avatar-core { position: absolute; inset: 4px; z-index: 1; display: grid; place-items: center; overflow: hidden; border: 1px solid rgba(255,255,255,.75); border-radius: 5px; background: linear-gradient(145deg, #2b7f78, #182e58); }
+    .avatar-photo { width: 100%; height: 100%; display: none; object-fit: cover; }
+    .avatar.has-photo .avatar-photo { display: block; }
+    .avatar.has-photo .initial { display: none; }
+    .frame { position: absolute; inset: -22% -16%; z-index: 2; width: 132%; height: 144%; object-fit: cover; pointer-events: none; filter: drop-shadow(0 3px 4px rgba(18, 38, 30, .28)); }
+    .empty-note { border: 1px dashed #a9bbb2; border-radius: 12px; padding: 16px; color: #66776f; text-align: center; }
+    code { border-radius: 5px; background: #edf2ef; padding: 2px 5px; }
+    @media (max-width: 640px) { body { padding: 12px; } header, section { padding: 15px; } .uploads { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <h1>头像框本地自检</h1>
+      <p>文件只在当前浏览器中处理，不会上传。请先选择最终 PNG/WebP，再检查自动结果和三种背景下的四种实装尺寸。</p>
+      <div class="uploads">
+        <label class="upload">头像框文件（必选）<input id="frameFile" type="file" accept="image/png,image/webp"></label>
+        <label class="upload">测试头像（可选）<input id="avatarFile" type="file" accept="image/png,image/jpeg,image/webp"></label>
+      </div>
+      <div id="checks" class="checks"><span class="check">等待选择头像框文件</span></div>
+    </header>
+    <section>
+      <h2>实装尺寸</h2>
+      <div id="previews" class="preview-grid"><div class="empty-note">选择头像框后显示预览</div></div>
+    </section>
+    <section>
+      <h2>人工验收提醒</h2>
+      <p>重点看 38 px：主题是否仍能凭轮廓或主色辨认；头像是否清楚；浅色和深色背景是否都有边界。自动检查通过不代表视觉质量已经通过。</p>
+      <p>坐标标准：画布 <code>512 × 512</code>，8 px 外边距透明，头像开口 <code>x=92..420、y=92..420</code> 完全透明。</p>
+    </section>
+  </main>
+  <script>
+    const frameInput = document.querySelector("#frameFile");
+    const avatarInput = document.querySelector("#avatarFile");
+    const checks = document.querySelector("#checks");
+    const previews = document.querySelector("#previews");
+    let frameUrl = "";
+    let avatarUrl = "";
+    const sizes = [38, 48, 80, 104];
+    const surfaces = [
+      ["light", "浅色界面"],
+      ["dark", "深色界面"],
+      ["table", "牌桌绿色"]
+    ];
+
+    function makePreview() {
+      if (!frameUrl) return;
+      previews.innerHTML = surfaces.map(([tone, label]) => `
+        <div class="surface ${tone}">
+          <h3>${label}</h3>
+          <div class="sizes">
+            ${sizes.map((size) => `
+              <div class="sample">
+                <span class="avatar ${avatarUrl ? "has-photo" : ""}" style="--size:${size}px;font-size:${Math.max(12, Math.round(size * .24))}px">
+                  <span class="avatar-core"><span class="initial">玩</span><img class="avatar-photo" src="${avatarUrl}" alt=""></span>
+                  <img class="frame" src="${frameUrl}" alt="">
+                </span>
+                <small>${size} px</small>
+              </div>
+            `).join("")}
+          </div>
+        </div>
+      `).join("");
+    }
+
+    function badge(text, good) {
+      return `<span class="check ${good ? "good" : "bad"}">${good ? "通过" : "不通过"} · ${text}</span>`;
+    }
+
+    function alphaAt(data, x, y) {
+      return data[(y * 512 + x) * 4 + 3];
+    }
+
+    function inspectFrame(file, image) {
+      const canvas = document.createElement("canvas");
+      canvas.width = 512;
+      canvas.height = 512;
+      const context = canvas.getContext("2d", { willReadFrequently: true });
+      context.clearRect(0, 0, 512, 512);
+      context.drawImage(image, 0, 0, 512, 512);
+      const data = context.getImageData(0, 0, 512, 512).data;
+      let outerClear = true;
+      let openingClear = true;
+      if (image.naturalWidth === 512 && image.naturalHeight === 512) {
+        for (let y = 0; y < 512 && outerClear; y += 1) {
+          for (let x = 0; x < 512; x += 1) {
+            if ((x < 8 || x >= 504 || y < 8 || y >= 504) && alphaAt(data, x, y) > 4) { outerClear = false; break; }
+          }
+        }
+        for (let y = 92; y < 420 && openingClear; y += 1) {
+          for (let x = 92; x < 420; x += 1) {
+            if (alphaAt(data, x, y) > 4) { openingClear = false; break; }
+          }
+        }
+      } else {
+        outerClear = false;
+        openingClear = false;
+      }
+      const formatGood = ["image/png", "image/webp"].includes(file.type);
+      const sizeGood = image.naturalWidth === 512 && image.naturalHeight === 512;
+      const weightGood = file.size <= 300 * 1024;
+      checks.innerHTML = [
+        badge(`${file.type || "未知格式"}`, formatGood),
+        badge(`${image.naturalWidth} × ${image.naturalHeight} px`, sizeGood),
+        badge(`${Math.round(file.size / 1024)} KB（建议不超过 300 KB）`, weightGood),
+        badge("8 px 外边距透明", outerClear),
+        badge("328 × 328 px 头像开口透明", openingClear)
+      ].join("");
+    }
+
+    frameInput.addEventListener("change", () => {
+      const file = frameInput.files[0];
+      if (!file) return;
+      if (frameUrl) URL.revokeObjectURL(frameUrl);
+      frameUrl = URL.createObjectURL(file);
+      const image = new Image();
+      image.onload = () => { inspectFrame(file, image); makePreview(); };
+      image.src = frameUrl;
+    });
+
+    avatarInput.addEventListener("change", () => {
+      const file = avatarInput.files[0];
+      if (!file) return;
+      if (avatarUrl) URL.revokeObjectURL(avatarUrl);
+      avatarUrl = URL.createObjectURL(file);
+      makePreview();
+    });
+  </script>
+</body>
+</html>

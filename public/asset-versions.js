@@ -75,7 +75,7 @@ export const ASSET_URLS = Object.freeze({
     "endless-winter": versionedAssetUrl("/assets/cosmetics/card-frame-endless-winter.svg"),
     cr7: versionedAssetUrl("/assets/cosmetics/card-frame-cr7.svg"),
     paladin: versionedAssetUrl("/assets/cosmetics/card-frame-paladin.svg"),
-    "vip-legend": versionedAssetUrl("/assets/cosmetics/card-frame-vip-legend.gif")
+    "vip-legend": versionedAssetUrl("/assets/cosmetics/card-frame-vip-legend.svg")
   }),
   staticAvatarFrames: Object.freeze({
     "vip-legend": versionedAssetUrl("/assets/cosmetics/avatar-frame-vip-legend.png")

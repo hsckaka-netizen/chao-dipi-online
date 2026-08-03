@@ -148,6 +148,12 @@ test("server and browser expose the shop, self-equipped cosmetics, and game-item
   assert.match(appSource, /function renderInventoryPage/);
   assert.match(appSource, /预占中/);
   assert.match(appSource, /data-form="own-cosmetics"/);
+  assert.match(appSource, /class="owned-avatar-frame-grid"/);
+  assert.match(appSource, /牌桌实装/);
+  assert.match(appSource, /房间列表效果/);
+  assert.match(appSource, /data-action="equip-avatar-frame"/);
+  assert.match(appSource, /头像框已经佩戴/);
+  assert.match(appSource, /低饱和哑光边线/);
   assert.match(appSource, /data-form="save-shop-products"/);
   assert.match(appSource, /data-form="save-seasons"/);
   assert.match(appSource, /data-form="save-taunts"/);

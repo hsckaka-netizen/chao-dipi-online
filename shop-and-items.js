@@ -1,4 +1,4 @@
-export const SHOP_RULES_VERSION = "2026-08-03-v1";
+export const SHOP_RULES_VERSION = "2026-08-03-v2";
 
 export const RESTART_CARD_STAGE = "restart-card-using";
 export const OTHER_CARDS_STAGE = "other-cards-using";

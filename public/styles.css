@@ -2133,6 +2133,12 @@ button.joinable-room-player.spectate-player {
   font-size: 14px;
 }
 
+.avatar.shop-feature {
+  width: 88px;
+  height: 88px;
+  font-size: 23px;
+}
+
 .avatar img {
   width: 100%;
   height: 100%;
@@ -2152,7 +2158,9 @@ button.joinable-room-player.spectate-player {
 
 .avatar.avatar-frame-vip {
   --avatar-frame-image: var(--avatar-frame-vip-image);
-  --avatar-frame-inset: -31%;
+  --avatar-frame-inset-block: -31%;
+  --avatar-frame-inset-inline: -24%;
+  --avatar-frame-aura: rgba(112, 83, 145, 0.28);
   overflow: visible;
   border: 0;
   border-radius: 7px;
@@ -2177,11 +2185,13 @@ button.joinable-room-player.spectate-player {
 .avatar.avatar-frame::after {
   content: "";
   position: absolute;
-  inset: var(--avatar-frame-inset, -22%);
+  inset: var(--avatar-frame-inset-block, -22%) var(--avatar-frame-inset-inline, -16%);
   z-index: 2;
   border-radius: inherit;
   background: var(--avatar-frame-image) center / cover no-repeat;
-  filter: drop-shadow(0 3px 4px var(--avatar-frame-shadow, rgba(31, 45, 38, 0.22)));
+  filter:
+    drop-shadow(0 3px 4px var(--avatar-frame-shadow, rgba(31, 45, 38, 0.24)))
+    drop-shadow(0 0 5px var(--avatar-frame-aura, rgba(31, 45, 38, 0.12)));
   pointer-events: none;
 }
 
@@ -2189,6 +2199,17 @@ button.joinable-room-player.spectate-player {
   z-index: 2;
   isolation: isolate;
   margin-inline-end: 8px;
+}
+
+.avatar.avatar-frame::before {
+  content: "";
+  position: absolute;
+  inset: -13%;
+  z-index: 0;
+  border-radius: 22%;
+  background: radial-gradient(circle, var(--avatar-frame-aura, rgba(31, 45, 38, 0.12)), transparent 70%);
+  opacity: 0.72;
+  pointer-events: none;
 }
 
 .avatar.avatar-frame-emerald,
@@ -2213,57 +2234,69 @@ button.joinable-room-player.spectate-player {
 .avatar.avatar-frame-emerald {
   --avatar-frame-image: var(--avatar-frame-emerald-image);
   --avatar-frame-shadow: rgba(13, 96, 73, 0.28);
+  --avatar-frame-aura: rgba(23, 151, 111, 0.34);
 }
 
 .avatar.avatar-frame-violet {
   --avatar-frame-image: var(--avatar-frame-violet-image);
   --avatar-frame-shadow: rgba(89, 45, 145, 0.3);
+  --avatar-frame-aura: rgba(129, 76, 193, 0.32);
 }
 
 .avatar.avatar-frame-champion {
   --avatar-frame-image: var(--avatar-frame-champion-image);
   --avatar-frame-shadow: rgba(126, 24, 14, 0.32);
+  --avatar-frame-aura: rgba(187, 66, 32, 0.3);
 }
 
 .avatar.avatar-frame-stormwind {
   --avatar-frame-image: var(--avatar-frame-stormwind-image);
   --avatar-frame-shadow: rgba(18, 67, 152, 0.3);
+  --avatar-frame-aura: rgba(47, 111, 211, 0.32);
 }
 
 .avatar.avatar-frame-idol {
   --avatar-frame-image: var(--avatar-frame-idol-image);
   --avatar-frame-shadow: rgba(190, 22, 55, 0.3);
+  --avatar-frame-aura: rgba(224, 69, 116, 0.3);
 }
 
 .avatar.avatar-frame-hellfire {
   --avatar-frame-image: var(--avatar-frame-hellfire-image);
   --avatar-frame-shadow: rgba(104, 18, 10, 0.36);
+  --avatar-frame-aura: rgba(224, 70, 22, 0.32);
 }
 
 .avatar.avatar-frame-blood-elf {
   --avatar-frame-image: var(--avatar-frame-blood-elf-image);
   --avatar-frame-shadow: rgba(151, 20, 43, 0.32);
+  --avatar-frame-aura: rgba(207, 39, 75, 0.32);
 }
 
 .avatar.avatar-frame-endless-winter {
   --avatar-frame-image: var(--avatar-frame-endless-winter-image);
   --avatar-frame-shadow: rgba(34, 98, 151, 0.34);
+  --avatar-frame-aura: rgba(84, 166, 224, 0.34);
 }
 
 .avatar.avatar-frame-cr7 {
   --avatar-frame-image: var(--avatar-frame-cr7-image);
   --avatar-frame-shadow: rgba(157, 111, 18, 0.34);
+  --avatar-frame-aura: rgba(213, 164, 48, 0.32);
 }
 
 .avatar.avatar-frame-paladin {
   --avatar-frame-image: var(--avatar-frame-paladin-image);
   --avatar-frame-shadow: rgba(193, 137, 25, 0.34);
+  --avatar-frame-aura: rgba(233, 186, 71, 0.34);
 }
 
 .avatar.avatar-frame-vip-legend {
   --avatar-frame-image: var(--avatar-frame-vip-legend-image);
-  --avatar-frame-inset: -16%;
+  --avatar-frame-inset-block: -16%;
+  --avatar-frame-inset-inline: -12%;
   --avatar-frame-shadow: rgba(30, 132, 230, 0.48);
+  --avatar-frame-aura: rgba(54, 153, 244, 0.42);
   animation: vip-legend-avatar-aura 2.4s ease-in-out infinite;
 }
 
@@ -2695,79 +2728,124 @@ button.joinable-room-player.spectate-player {
 }
 
 .card.card-skin,
-.mini-card.card-skin {
-  border-color: transparent;
+.mini-card.card-skin,
+.shop-preview-card.card-skin {
+  border-color: var(--card-skin-edge, #7b8580);
   background-color: #fff;
-  background-image: var(--card-frame-image);
-  background-position: center;
-  background-repeat: no-repeat;
-  background-size: 100% 100%;
+  background-image: none;
+  box-shadow:
+    inset 3px 0 0 var(--card-skin-accent, #63716b),
+    inset 0 2px 0 var(--card-skin-keyline, rgba(38, 49, 44, 0.24)),
+    0 3px 10px rgba(26, 38, 32, 0.09);
+}
+
+.card.card-skin::before,
+.mini-card.card-skin::before,
+.shop-preview-card.card-skin::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  border-radius: inherit;
+  background: var(--card-frame-image) center / 100% 100% no-repeat;
+  filter: saturate(0.72) contrast(0.96);
+  opacity: 0.74;
+  pointer-events: none;
+}
+
+.card-skin .card-corner,
+.shop-preview-card > span {
+  position: relative;
+  z-index: 2;
+}
+
+.card-skin .card-joker-face {
+  z-index: 2;
 }
 
 .card-skin-emerald {
   --card-frame-image: var(--card-frame-emerald-image);
-  --card-skin-glow: rgba(24, 120, 95, 0.38);
+  --card-skin-accent: #18785f;
+  --card-skin-edge: #477266;
+  --card-skin-keyline: rgba(207, 169, 71, 0.38);
 }
 
 .card-skin-violet {
   --card-frame-image: var(--card-frame-violet-image);
-  --card-skin-glow: rgba(101, 64, 154, 0.4);
+  --card-skin-accent: #6f4d98;
+  --card-skin-edge: #6e6379;
+  --card-skin-keyline: rgba(191, 157, 213, 0.4);
 }
 
 .card-skin-champion {
   --card-frame-image: var(--card-frame-champion-image);
-  --card-skin-glow: rgba(165, 60, 22, 0.42);
+  --card-skin-accent: #8f3325;
+  --card-skin-edge: #73534b;
+  --card-skin-keyline: rgba(209, 164, 73, 0.4);
 }
 
 .card-skin-stormwind {
   --card-frame-image: var(--card-frame-stormwind-image);
-  --card-skin-glow: rgba(18, 79, 177, 0.42);
+  --card-skin-accent: #315f9d;
+  --card-skin-edge: #566a84;
+  --card-skin-keyline: rgba(193, 165, 90, 0.4);
 }
 
 .card-skin-idol {
   --card-frame-image: var(--card-frame-idol-image);
-  --card-skin-glow: rgba(190, 22, 55, 0.4);
+  --card-skin-accent: #a93d5d;
+  --card-skin-edge: #805f69;
+  --card-skin-keyline: rgba(217, 179, 109, 0.42);
 }
 
 .card-skin-hellfire {
   --card-frame-image: var(--card-frame-hellfire-image);
-  --card-skin-glow: rgba(213, 49, 12, 0.42);
+  --card-skin-accent: #a9472c;
+  --card-skin-edge: #765b52;
+  --card-skin-keyline: rgba(194, 109, 68, 0.38);
 }
 
 .card-skin-blood-elf {
   --card-frame-image: var(--card-frame-blood-elf-image);
-  --card-skin-glow: rgba(186, 27, 58, 0.4);
+  --card-skin-accent: #9d3552;
+  --card-skin-edge: #765661;
+  --card-skin-keyline: rgba(199, 151, 76, 0.4);
 }
 
 .card-skin-endless-winter {
   --card-frame-image: var(--card-frame-endless-winter-image);
-  --card-skin-glow: rgba(48, 131, 193, 0.43);
+  --card-skin-accent: #397ca8;
+  --card-skin-edge: #5b7483;
+  --card-skin-keyline: rgba(165, 211, 229, 0.45);
 }
 
 .card-skin-cr7 {
   --card-frame-image: var(--card-frame-cr7-image);
-  --card-skin-glow: rgba(193, 139, 26, 0.44);
+  --card-skin-accent: #8d742f;
+  --card-skin-edge: #746b51;
+  --card-skin-keyline: rgba(208, 182, 100, 0.42);
 }
 
 .card-skin-paladin {
   --card-frame-image: var(--card-frame-paladin-image);
-  --card-skin-glow: rgba(225, 173, 51, 0.45);
+  --card-skin-accent: #9c7932;
+  --card-skin-edge: #776c54;
+  --card-skin-keyline: rgba(220, 188, 102, 0.44);
 }
 
 .card-skin-vip-legend {
   --card-frame-image: var(--card-frame-vip-legend-image);
-  --card-skin-glow: rgba(54, 153, 244, 0.5);
-  animation: vip-legend-card-aura 2s ease-in-out infinite;
-}
-
-@keyframes vip-legend-card-aura {
-  0%, 100% { filter: drop-shadow(0 0 1px rgba(56, 167, 255, 0.25)); }
-  50% { filter: drop-shadow(0 0 4px rgba(56, 167, 255, 0.62)); }
+  --card-skin-accent: #2f78a6;
+  --card-skin-edge: #536d7f;
+  --card-skin-keyline: rgba(205, 179, 96, 0.46);
 }
 
 .card.card-skin.selected {
-  outline-color: var(--card-skin-glow);
-  box-shadow: 0 8px 18px var(--card-skin-glow);
+  outline-color: rgba(17, 106, 85, 0.34);
+  box-shadow:
+    inset 3px 0 0 var(--card-skin-accent),
+    inset 0 2px 0 var(--card-skin-keyline),
+    0 8px 16px rgba(26, 76, 59, 0.16);
 }
 
 .card.static {
@@ -4329,7 +4407,11 @@ button.auto-play-toggle.active {
 }
 
 .mini-card.card-skin {
-  border-color: transparent;
+  border-color: var(--card-skin-edge, #7b8580);
+  box-shadow:
+    inset 2px 0 0 var(--card-skin-accent, #63716b),
+    inset 0 1px 0 var(--card-skin-keyline, rgba(38, 49, 44, 0.24)),
+    0 4px 12px rgba(26, 38, 32, 0.09);
 }
 
 .mini-card:first-child {
@@ -5446,6 +5528,10 @@ button.auto-play-toggle.active {
   gap: 14px;
 }
 
+.shop-product-grid.avatar-frame-grid {
+  grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+}
+
 .shop-product-card {
   min-width: 0;
   display: grid;
@@ -5460,6 +5546,26 @@ button.auto-play-toggle.active {
 .shop-product-card.owned {
   border-color: rgba(28, 132, 99, 0.28);
   background: linear-gradient(160deg, #fbfffd, #eef8f3);
+}
+
+.shop-product-card.equipped {
+  border-color: rgba(28, 132, 99, 0.54);
+  box-shadow: 0 0 0 3px rgba(28, 132, 99, 0.09);
+}
+
+.shop-product-card.avatar-frame-product {
+  grid-template-columns: 136px minmax(0, 1fr);
+  min-height: 220px;
+  overflow: hidden;
+  background:
+    radial-gradient(circle at 64px 72px, rgba(45, 123, 104, 0.1), transparent 82px),
+    linear-gradient(160deg, #fff, #f7faf8);
+}
+
+.shop-product-card.avatar-frame-product.owned {
+  background:
+    radial-gradient(circle at 64px 72px, rgba(45, 123, 104, 0.13), transparent 82px),
+    linear-gradient(160deg, #fbfffd, #eef8f3);
 }
 
 .shop-avatar-preview,
@@ -5477,31 +5583,133 @@ button.auto-play-toggle.active {
   height: 70px;
 }
 
+.shop-avatar-preview {
+  position: relative;
+  width: 126px;
+  height: 166px;
+  align-content: start;
+  gap: 7px;
+  border: 1px solid rgba(76, 101, 90, 0.12);
+  border-radius: 14px;
+  background:
+    linear-gradient(rgba(255, 255, 255, 0.72), rgba(248, 251, 249, 0.9)),
+    linear-gradient(135deg, #eaf2ee, #f7f1e7);
+  padding: 9px 7px 8px;
+}
+
+.shop-preview-label {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 0.12em;
+}
+
+.shop-avatar-hero-stage {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 96px;
+}
+
+.shop-avatar-preview .avatar.shop-feature {
+  width: 88px;
+  height: 88px;
+}
+
+.shop-avatar-preview .avatar.small {
+  width: 38px;
+  height: 38px;
+}
+
+.shop-avatar-preview .avatar.avatar-frame,
+.owned-avatar-current .avatar.avatar-frame,
+.owned-avatar-frame-option .avatar.avatar-frame {
+  margin-inline-end: 0;
+}
+
+.shop-avatar-mini-preview {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border-top: 1px solid rgba(76, 101, 90, 0.12);
+  padding: 8px 2px 0 6px;
+}
+
+.shop-avatar-mini-preview > span:last-child {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.shop-avatar-mini-preview b,
+.shop-avatar-mini-preview small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.shop-avatar-mini-preview b {
+  font-size: 11px;
+}
+
+.shop-avatar-mini-preview small {
+  color: var(--muted);
+  font-size: 9px;
+}
+
+.shop-avatar-visibility {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 10px;
+}
+
+.shop-avatar-visibility span {
+  border-radius: 999px;
+  background: rgba(41, 102, 83, 0.08);
+  padding: 3px 7px;
+  color: #42675b;
+  font-size: 10px;
+  font-weight: 800;
+}
+
 .shop-card-preview {
   position: relative;
-  align-content: start;
-  justify-content: start;
-  padding: 10px;
-  border: 1px solid transparent;
-  border-radius: 9px;
-  background-color: #fff;
-  background-image: var(--card-frame-image);
-  background-position: center;
-  background-repeat: no-repeat;
-  background-size: 100% 100%;
-  color: #c63843;
+  width: 82px;
+  height: 88px;
+  display: block;
+}
+
+.shop-preview-card {
+  position: absolute;
+  left: 12px;
+  top: 5px;
+  width: 50px;
+  height: 63px;
+  display: block;
+  border: 1px solid #ccd8d1;
+  border-radius: 7px;
+  background: #fff;
+  padding: 5px;
   box-shadow: 0 7px 18px rgba(24, 45, 35, 0.11);
+  transform-origin: 50% 100%;
 }
 
-.shop-card-rank {
-  font-size: 22px;
-  font-weight: 900;
+.shop-preview-card:nth-child(1) { transform: translateX(-8px) rotate(-9deg); }
+.shop-preview-card:nth-child(2) { transform: translateX(8px) rotate(9deg); }
+.shop-preview-card:nth-child(3) { transform: translateY(3px); }
+
+.shop-preview-card > span {
+  display: grid;
+  justify-items: center;
   line-height: 1;
 }
 
-.shop-card-suit {
-  font-size: 18px;
-  line-height: 1;
+.shop-preview-card b { font-size: 17px; }
+.shop-preview-card i { font-size: 15px; font-style: normal; }
+.shop-preview-card.red { color: #b92929; }
+.shop-preview-card.black { color: #1e2925; }
 }
 
 .shop-item-preview {
@@ -5553,9 +5761,9 @@ button.auto-play-toggle.active {
 
 .owned-cosmetics-form {
   display: grid;
-  grid-template-columns: minmax(210px, 1fr) minmax(150px, 0.7fr) minmax(150px, 0.7fr) auto;
-  align-items: end;
-  gap: 14px;
+  grid-template-columns: 150px minmax(0, 1fr) auto;
+  align-items: stretch;
+  gap: 18px;
 }
 
 .owned-cosmetics-form label,
@@ -5566,6 +5774,151 @@ button.auto-play-toggle.active {
   color: var(--muted);
   font-size: 12px;
   font-weight: 700;
+}
+
+.owned-avatar-current {
+  display: grid;
+  justify-items: center;
+  align-content: start;
+  gap: 8px;
+  border: 1px solid rgba(42, 106, 84, 0.16);
+  border-radius: 14px;
+  background: linear-gradient(155deg, #f8fcfa, #eef6f2);
+  padding: 12px 10px;
+}
+
+.owned-avatar-current > span:first-child {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 0.12em;
+}
+
+.owned-avatar-current-stage {
+  width: 112px;
+  height: 112px;
+  display: grid;
+  place-items: center;
+}
+
+.owned-avatar-current div {
+  min-width: 0;
+  display: grid;
+  justify-items: center;
+  gap: 2px;
+  text-align: center;
+}
+
+.owned-avatar-current b {
+  max-width: 130px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+}
+
+.owned-avatar-current small {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.owned-avatar-frame-picker {
+  min-width: 0;
+  margin: 0;
+  border: 0;
+  padding: 0;
+}
+
+.owned-avatar-frame-picker legend {
+  margin-bottom: 8px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.owned-avatar-frame-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(112px, 1fr));
+  gap: 9px;
+}
+
+.owned-avatar-frame-option {
+  position: relative;
+  min-width: 0;
+  display: grid !important;
+  justify-items: center;
+  gap: 5px !important;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #fbfcfb;
+  padding: 10px 7px 8px;
+  color: var(--text) !important;
+  text-align: center;
+  cursor: pointer;
+}
+
+.owned-avatar-frame-option:has(input:checked) {
+  border-color: rgba(25, 126, 92, 0.54);
+  background: #eef8f3;
+  box-shadow: 0 0 0 3px rgba(25, 126, 92, 0.09);
+}
+
+.owned-avatar-frame-option input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.owned-avatar-frame-stage {
+  width: 76px;
+  height: 76px;
+  display: grid;
+  place-items: center;
+}
+
+.owned-avatar-frame-option b {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+}
+
+.owned-avatar-frame-option small {
+  color: var(--muted);
+  font-size: 9px;
+}
+
+.owned-card-skin-setting {
+  grid-column: 2;
+  align-self: end;
+  border-top: 1px solid var(--line);
+  padding-top: 10px;
+}
+
+.owned-card-skin-setting summary,
+.shop-card-skin-legacy > summary {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.owned-card-skin-setting label {
+  margin-top: 10px;
+}
+
+.owned-avatar-save {
+  align-self: end;
+}
+
+.shop-card-skin-legacy > summary {
+  color: var(--text);
+  font-size: 16px;
+}
+
+.shop-card-skin-legacy[open] > summary {
+  margin-bottom: 16px;
 }
 
 .shop-admin-products {
@@ -5788,8 +6141,12 @@ button.auto-play-toggle.active {
 
   .shop-hero > div:first-child,
   .shop-grant-form > div:first-child,
-  .owned-cosmetics-form .account-profile-preview {
+  .owned-avatar-frame-picker {
     grid-column: 1 / -1;
+  }
+
+  .owned-card-skin-setting {
+    grid-column: 1;
   }
 }
 
@@ -5809,6 +6166,33 @@ button.auto-play-toggle.active {
   .shop-product-grid,
   .shop-admin-products {
     grid-template-columns: 1fr;
+  }
+
+  .shop-product-grid.avatar-frame-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .owned-avatar-current,
+  .owned-avatar-frame-picker,
+  .owned-card-skin-setting,
+  .owned-avatar-save {
+    grid-column: 1;
+  }
+
+  .owned-avatar-save {
+    width: 100%;
+  }
+
+  .shop-product-card.avatar-frame-product {
+    grid-template-columns: 124px minmax(0, 1fr);
+  }
+
+  .shop-avatar-preview {
+    width: 116px;
+  }
+
+  .owned-avatar-frame-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .module-save-actions button {
