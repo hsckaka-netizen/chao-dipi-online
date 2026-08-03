@@ -16,9 +16,9 @@
     <circle cx="454" cy="58" r="34" fill="#c34848" fill-opacity="0.08" stroke="#c34848" stroke-dasharray="4 4" />
     <g fill="#26342f" stroke="none">
       <text x="16" y="28">8 px 透明外边距</text>
-      <text x="256" y="238" text-anchor="middle">五官核心安全区 256 × 256</text>
-      <text x="256" y="258" text-anchor="middle">此区域 Alpha 必须为 0</text>
-      <text x="256" y="108" text-anchor="middle">橙色虚线：统一正方形开口 320 × 320</text>
+      <text x="256" y="238" text-anchor="middle">统一正方形开口 320 × 320</text>
+      <text x="256" y="258" text-anchor="middle">整个开口 Alpha 必须为 0</text>
+      <text x="256" y="108" text-anchor="middle">橙色虚线：固定内沿，不得非等比压缩</text>
       <text x="256" y="52" text-anchor="middle">顶部主设计区（主要视觉重量）</text>
       <text x="60" y="256" text-anchor="middle" transform="rotate(-90 60 256)">窄导轨 24–40 px</text>
       <text x="452" y="256" text-anchor="middle" transform="rotate(90 452 256)">窄导轨 24–40 px</text>

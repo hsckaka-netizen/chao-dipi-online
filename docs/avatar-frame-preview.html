@@ -59,7 +59,7 @@
     <section>
       <h2>人工验收提醒</h2>
       <p>重点看 38 px：主题是否仍能凭轮廓或主色辨认；头像是否清楚；浅色和深色背景是否都有边界。自动检查通过不代表视觉质量已经通过。</p>
-      <p>坐标标准：画布 <code>512 × 512</code>，8 px 外边距透明，基础内开口固定为 <code>x=96..416、y=96..416</code> 的正方形，核心安全区 <code>x=128..384、y=128..384</code> 完全透明。</p>
+      <p>坐标标准：画布 <code>512 × 512</code>，8 px 外边距透明，基础内开口固定为 <code>x=96..416、y=96..416</code> 的正方形，整个 320 × 320 px 内开口完全透明。</p>
     </section>
   </main>
   <script>
@@ -113,21 +113,21 @@
       context.drawImage(image, 0, 0, 512, 512);
       const data = context.getImageData(0, 0, 512, 512).data;
       let outerClear = true;
-      let faceCoreClear = true;
+      let openingClear = true;
       if (image.naturalWidth === 512 && image.naturalHeight === 512) {
         for (let y = 0; y < 512 && outerClear; y += 1) {
           for (let x = 0; x < 512; x += 1) {
             if ((x < 8 || x >= 504 || y < 8 || y >= 504) && alphaAt(data, x, y) > 4) { outerClear = false; break; }
           }
         }
-        for (let y = 128; y < 384 && faceCoreClear; y += 1) {
-          for (let x = 128; x < 384; x += 1) {
-            if (alphaAt(data, x, y) > 4) { faceCoreClear = false; break; }
+        for (let y = 96; y < 416 && openingClear; y += 1) {
+          for (let x = 96; x < 416; x += 1) {
+            if (alphaAt(data, x, y) > 4) { openingClear = false; break; }
           }
         }
       } else {
         outerClear = false;
-        faceCoreClear = false;
+        openingClear = false;
       }
       const formatGood = ["image/png", "image/webp"].includes(file.type);
       const sizeGood = image.naturalWidth === 512 && image.naturalHeight === 512;
@@ -137,7 +137,7 @@
         badge(`${image.naturalWidth} × ${image.naturalHeight} px`, sizeGood),
         badge(`${Math.round(file.size / 1024)} KB（建议不超过 300 KB）`, weightGood),
         badge("8 px 外边距透明", outerClear),
-        badge("256 × 256 px 五官核心安全区透明", faceCoreClear)
+        badge("320 × 320 px 内开口完整透明", openingClear)
       ].join("");
     }
 

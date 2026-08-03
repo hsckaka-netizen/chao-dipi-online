@@ -1,6 +1,6 @@
 import { applyStatePatch } from "./state-patch.js?v=9330552c7e1e";
 import { detectNewDraggedFiveEffects, detectNewLargePlayEffects } from "./gameplay-effects.js?v=14791e626d30";
-import { ASSET_URLS } from "./asset-versions.js?v=c51f35802d50";
+import { ASSET_URLS } from "./asset-versions.js?v=2da6575de9af";
 import { createHistoryTrickEntry, filterHistoryTimelineEntries } from "./history-records.js?v=874ba3c97732";
 
 const app = document.querySelector("#app");

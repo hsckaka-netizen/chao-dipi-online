@@ -15,7 +15,7 @@ test("avatar-frame designer kit shares one canvas and opening contract", async (
   assert.match(spec, /512 × 512/);
   assert.match(spec, /x=96\.\.416、y=96\.\.416/);
   assert.match(spec, /320 × 320/);
-  assert.match(spec, /x=128\.\.384、y=128\.\.384/);
+  assert.match(spec, /整个标准内开口内所有像素的 Alpha 必须为 0/);
   assert.match(spec, /两侧窄导轨/);
   assert.match(spec, /24–40 px/);
   assert.match(spec, /不依赖游戏页面/);
@@ -28,7 +28,7 @@ test("avatar-frame designer kit shares one canvas and opening contract", async (
   assert.match(preview, /const sizes = \[38, 48, 80, 104\]/);
   assert.match(preview, /alphaAt\(data, x, y\)/);
   assert.match(preview, /file\.size <= 300 \* 1024/);
-  assert.match(preview, /for \(let y = 128; y < 384/);
+  assert.match(preview, /for \(let y = 96; y < 416/);
 });
 
 test("card skins use matte rails and the VIP card frame is static", async () => {
