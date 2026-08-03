@@ -518,6 +518,15 @@ test("score bidding banker selects a trump suit without requiring twos", async (
   assert.doesNotMatch(appSource, /亮选中的2定主|等待亮2定主/);
 });
 
+test("hand grouping adopts the final trump order as soon as frying ends", async () => {
+  const appPath = fileURLToPath(new URL("../public/app.js", import.meta.url));
+  const source = await readFile(appPath, "utf8");
+  assert.match(source, /function handUsesFinalTrumpOrder\(\) \{[\s\S]*?state\?\.stage === "dogleg" \|\| state\?\.stage === "playing"/);
+  assert.match(source, /const usesFinalTrumpOrder = handUsesFinalTrumpOrder\(\)/);
+  assert.match(source, /handUsesFinalTrumpOrder\(\) && trumpSuit \? "主牌\/比牌" : "比牌"/);
+  assert.match(source, /group\.id !== "rank" \|\| !handUsesFinalTrumpOrder\(\)/);
+});
+
 test("setup countdowns refresh locally and expire on the server", async () => {
   const serverPath = fileURLToPath(new URL("../server.js", import.meta.url));
   const appPath = fileURLToPath(new URL("../public/app.js", import.meta.url));

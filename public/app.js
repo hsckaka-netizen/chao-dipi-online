@@ -6039,17 +6039,21 @@ function currentTrumpSuit() {
   return state?.setup?.currentTrumpSuit || state?.setup?.trumpSuit || null;
 }
 
+function handUsesFinalTrumpOrder() {
+  return state?.stage === "dogleg" || state?.stage === "playing";
+}
+
 function isCounselor(card, trumpSuit) {
   return card.type === "normal" && card.rank === "3" && trumpSuit && suitColor(card.suit) === suitColor(trumpSuit);
 }
 
 function isFixedRankCard(card) {
   const trumpSuit = currentTrumpSuit();
-  const isPlaying = state?.stage === "playing";
+  const usesFinalTrumpOrder = handUsesFinalTrumpOrder();
   if (card.type === "joker") return true;
   if (card.rank === "2") return true;
-  if (isPlaying && isCounselor(card, trumpSuit)) return true;
-  if (isPlaying && trumpSuit && card.suit === trumpSuit) return true;
+  if (usesFinalTrumpOrder && isCounselor(card, trumpSuit)) return true;
+  if (usesFinalTrumpOrder && trumpSuit && card.suit === trumpSuit) return true;
   return (card.suit === "H" && card.rank === "5") || (card.suit === "D" && card.rank === "5");
 }
 
@@ -6113,7 +6117,7 @@ function fixedRankTieSort(a, b) {
 
 function handGroups(hand) {
   const trumpSuit = currentTrumpSuit();
-  const rankGroupLabel = state?.stage === "playing" && trumpSuit ? "主牌/比牌" : "比牌";
+  const rankGroupLabel = handUsesFinalTrumpOrder() && trumpSuit ? "主牌/比牌" : "比牌";
   const groups = [
     { id: "rank", label: rankGroupLabel, cards: [] },
     { id: "S", label: trumpSuit === "S" ? "主牌（黑桃）" : "黑桃", cards: [] },
@@ -6175,12 +6179,12 @@ function cardSuitClass(card) {
 }
 
 function compactHandGroupLabel(group) {
-  if (group.id === "rank") return state?.stage === "playing" ? "主" : "比";
+  if (group.id === "rank") return handUsesFinalTrumpOrder() ? "主" : "比";
   return ({ S: "♠", H: "♥", C: "♣", D: "♦" })[group.id] || group.label;
 }
 
 function renderCompactHandGroupLabel(group) {
-  if (group.id !== "rank" || state?.stage !== "playing") {
+  if (group.id !== "rank" || !handUsesFinalTrumpOrder()) {
     return escapeHtml(compactHandGroupLabel(group));
   }
   const trumpSuit = currentTrumpSuit();
