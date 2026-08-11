@@ -275,6 +275,73 @@ test("trustee state is public, plays the smallest legal cards, and can be cancel
   assert.equal(stillWaiting.hand.length, handCountAfterCancel, "取消托管后不应继续自动出牌");
 });
 
+test("动态狗腿跳过庄家选牌，并以最终实时排名结算", async (t) => {
+  const server = await startServer({ AI_SETUP_DELAY_MS: "0", AI_PLAY_DELAY_MS: "0" });
+  t.after(() => server.child.kill());
+
+  const created = await jsonRequest(`${server.baseUrl}/api/rooms`, {
+    method: "POST",
+    body: JSON.stringify({ profileId: "player-benlei" })
+  });
+  const credentials = { playerId: created.playerId, token: created.token };
+  const stateParams = new URLSearchParams(credentials);
+  const stateUrl = `${server.baseUrl}/api/rooms/${created.roomId}/state?${stateParams.toString()}`;
+  const actionUrl = (action) => `${server.baseUrl}/api/rooms/${created.roomId}/${action}`;
+
+  await jsonRequest(actionUrl("test-players"), {
+    method: "POST",
+    body: JSON.stringify({ ...credentials, targetCount: 5 })
+  });
+  await jsonRequest(actionUrl("dogleg-mode"), {
+    method: "POST",
+    body: JSON.stringify({ ...credentials, mode: "dynamic" })
+  });
+  await jsonRequest(actionUrl("doglegs"), {
+    method: "POST",
+    body: JSON.stringify({ ...credentials, count: 1 })
+  });
+  await jsonRequest(actionUrl("ready"), {
+    method: "POST",
+    body: JSON.stringify({ ...credentials, ready: true })
+  });
+  await jsonRequest(actionUrl("start"), {
+    method: "POST",
+    body: JSON.stringify(credentials)
+  });
+
+  const playing = await waitForHumanPlayingTurn(stateUrl, actionUrl, credentials);
+  assert.equal(playing.stage, "playing", "动态狗腿不应停在庄家选狗腿牌阶段");
+  assert.equal(playing.setup.doglegMode, "dynamic");
+  if (playing.setup.bankerId === credentials.playerId) {
+    assert.equal(playing.setup.doglegMarkedCardId, null, "庄家不应获得动态狗腿牌");
+  } else {
+    assert.ok(playing.hand.some((card) => card.id === playing.setup.doglegMarkedCardId));
+  }
+
+  await jsonRequest(actionUrl("auto-play"), {
+    method: "POST",
+    body: JSON.stringify({ ...credentials, enabled: true })
+  });
+  const finished = await waitForState(
+    stateUrl,
+    (snapshot) => snapshot.stage === "finished",
+    "动态狗腿托管牌局没有在预期时间内结束",
+    20_000
+  );
+
+  const markByPlayerId = new Map(finished.result.doglegMarks.map((item) => [item.playerId, item.count]));
+  assert.equal(markByPlayerId.get(finished.setup.bankerId), 0);
+  finished.players
+    .filter((player) => player.id !== finished.setup.bankerId)
+    .forEach((player) => assert.ok(markByPlayerId.get(player.id) >= 1, `${player.name} 应至少打出初始狗腿牌`));
+  assert.equal(finished.setup.doglegPlayerIds.length, 1);
+  assert.notEqual(finished.setup.doglegPlayerIds[0], finished.setup.bankerId);
+  const winnerCount = markByPlayerId.get(finished.setup.doglegPlayerIds[0]);
+  assert.equal(winnerCount, Math.max(...[...markByPlayerId.entries()]
+    .filter(([playerId]) => playerId !== finished.setup.bankerId)
+    .map(([, count]) => count)));
+});
+
 test("players leave a finished result independently and auto-ready for the next game", async (t) => {
   const server = await startServer({ AI_PLAY_DELAY_MS: "0" });
   t.after(() => server.child.kill());

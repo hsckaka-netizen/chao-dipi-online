@@ -14,7 +14,7 @@ import { annotateForcedProtectedFives } from "./dragged-five-attribution.js";
 import { CONSUMABLE_ITEMS, SHOP_RULES_VERSION, shopProductIdFromPath } from "./shop-and-items.js";
 
 const { Pool } = pg;
-const RULES_VERSION = "2026-07-31";
+const RULES_VERSION = "2026-08-11";
 const ADMIN_DIAMOND_GRANT_RULES_VERSION = "2026-07-29-admin-grant-v1";
 const MIGRATIONS = [
   {
@@ -1568,6 +1568,8 @@ export function buildGameRecord(room) {
     removedCards: (room.removedCards || []).map(compactCardId),
     setup: {
       ...jsonValue(room.setup, {}),
+      doglegMode: room.doglegMode || "traditional",
+      dynamicDogleg: jsonValue(room.dynamicDogleg, null),
       events: jsonValue([...(room.events || [])].reverse(), [])
     },
     result: compactResult(result),

@@ -384,15 +384,30 @@ function captureGameplayEffects(previousState, nextState) {
     const newDraggedFiveEffects = detectNewDraggedFiveEffects(previousState, nextState, nowMs);
 
     const previousDoglegs = new Set(previousState.setup?.doglegPlayerIds || []);
-    const doglegCard = nextState.setup?.doglegCard;
-    (nextState.setup?.doglegPlayerIds || [])
-      .filter((playerId) => !previousDoglegs.has(playerId))
-      .forEach((playerId) => {
-        const card = findPlayedCard(nextState, playerId, (item) =>
-          item.type === doglegCard?.type && item.suit === doglegCard?.suit && item.rank === doglegCard?.rank
-        );
-        doglegRevealEffects.push({ playerId, cardId: card?.id || null, until: nowMs + 900 });
-      });
+    const nextDoglegs = new Set(nextState.setup?.doglegPlayerIds || []);
+    if (nextState.setup?.doglegMode === "dynamic") {
+      const previousSequence = Number(previousState.setup?.doglegHitSequence) || 0;
+      (nextState.setup?.doglegHits || [])
+        .filter((hit) => Number(hit.sequence) > previousSequence)
+        .forEach((hit) => {
+          doglegRevealEffects.push({
+            playerId: hit.playerId,
+            cardId: hit.cardId || null,
+            roleChanged: !previousDoglegs.has(hit.playerId) && nextDoglegs.has(hit.playerId),
+            until: nowMs + 900
+          });
+        });
+    } else {
+      const doglegCard = nextState.setup?.doglegCard;
+      (nextState.setup?.doglegPlayerIds || [])
+        .filter((playerId) => !previousDoglegs.has(playerId))
+        .forEach((playerId) => {
+          const card = findPlayedCard(nextState, playerId, (item) =>
+            item.type === doglegCard?.type && item.suit === doglegCard?.suit && item.rank === doglegCard?.rank
+          );
+          doglegRevealEffects.push({ playerId, cardId: card?.id || null, roleChanged: true, until: nowMs + 900 });
+        });
+    }
 
     if (draggedFiveEffect) {
       const currentTrick = nextState.currentTrick;
@@ -444,6 +459,16 @@ function scheduleGameplayEffectEnd() {
 
 function transitionNotice(previousState, nextState) {
   if (!previousState || !nextState || previousState.roomId !== nextState.roomId) return "";
+  if (nextState.setup?.doglegMode === "dynamic") {
+    const previousSequence = Number(previousState.setup?.doglegHitSequence) || 0;
+    const hits = (nextState.setup?.doglegHits || []).filter((hit) => Number(hit.sequence) > previousSequence);
+    const latestHit = hits[hits.length - 1];
+    if (latestHit) {
+      const name = nextState.players?.find((player) => player.id === latestHit.playerId)?.name || "玩家";
+      const currentNames = (nextState.setup?.doglegPlayerNames || []).join("、") || "暂无";
+      return `${name} 打出狗腿牌，获得第 ${latestHit.count} 个狗腿标记。当前狗腿：${currentNames}。`;
+    }
+  }
   const previousDoglegs = new Set(previousState.setup?.doglegPlayerIds || []);
   const newDoglegIds = (nextState.setup?.doglegPlayerIds || []).filter((playerId) => !previousDoglegs.has(playerId));
   if (newDoglegIds.length) {
@@ -482,6 +507,13 @@ function transitionNotice(previousState, nextState) {
   if ((previousState.stage === "frying" || previousState.stage === "fry-burying") && nextState.stage === "dogleg") {
     const trump = nextState.setup?.currentTrumpSuitName || nextState.setup?.trumpSuitName || "随机花色";
     return `炒底结束：主牌确定为${trump}，等待庄家选择狗腿牌。`;
+  }
+  if ((previousState.stage === "frying" || previousState.stage === "fry-burying")
+    && nextState.stage === "playing"
+    && nextState.setup?.doglegMode === "dynamic"
+    && Number(nextState.setup?.doglegNeeded) > 0) {
+    const trump = nextState.setup?.currentTrumpSuitName || nextState.setup?.trumpSuitName || "主牌";
+    return `炒底结束：主牌确定为${trump}，动态狗腿已生效，开始出牌。`;
   }
   if (previousState.stage === "dogleg" && nextState.stage === "playing") {
     const trump = nextState.setup?.currentTrumpSuitName || nextState.setup?.trumpSuitName || "主牌";
@@ -1794,6 +1826,19 @@ async function setDoglegCount(count) {
   }
 }
 
+async function setDoglegMode(mode) {
+  if (!session) return;
+  try {
+    await roomAction(`/api/rooms/${session.roomId}/dogleg-mode`, {
+      method: "POST",
+      body: JSON.stringify({ playerId: session.playerId, token: session.token, mode })
+    });
+    setMessage(`本局已切换为${state.doglegModeName || (mode === "dynamic" ? "动态狗腿" : "传统狗腿")}。`);
+  } catch (error) {
+    setMessage(error.message, true);
+  }
+}
+
 async function bidSelectedCards() {
   if (!session) return;
   try {
@@ -3040,6 +3085,31 @@ function renderDoglegCountControl() {
     <span class="dogleg-count-control">
       <span class="meta">狗腿</span>
       <span class="segmented">${buttons}</span>
+    </span>
+  `;
+}
+
+function renderDoglegModeControl() {
+  const current = state.doglegMode === "dynamic" ? "dynamic" : "traditional";
+  const options = [
+    { id: "traditional", label: "传统狗腿", title: "由庄家选择统一狗腿牌" },
+    { id: "dynamic", label: "动态狗腿", title: "每名非庄家玩家独立随机狗腿牌，按标记数实时排名" }
+  ];
+  return `
+    <span class="dogleg-count-control dogleg-mode-control">
+      <span class="meta">狗腿机制</span>
+      <span class="segmented" aria-label="狗腿机制">
+        ${options.map((option) => `
+          <button
+            type="button"
+            class="${option.id === current ? "" : "secondary"}"
+            data-action="dogleg-mode"
+            data-mode="${escapeHtml(option.id)}"
+            title="${escapeHtml(option.title)}"
+            ${option.id === current ? "disabled" : ""}
+          >${escapeHtml(option.label)}</button>
+        `).join("")}
+      </span>
     </span>
   `;
 }
@@ -4649,6 +4719,7 @@ function renderRoom() {
               ${state.canViewKitty ? `<button type="button" class="secondary" data-action="open-kitty">查看底牌</button>` : ""}
               ${spectating ? "" : `
                 ${state.viewer.host && state.status === "lobby" ? renderOpeningBidPercentControl() : ""}
+                ${state.viewer.host && state.status === "lobby" ? renderDoglegModeControl() : ""}
                 ${state.viewer.host && state.status === "lobby" ? renderDoglegCountControl() : ""}
                 ${inLobbyView ? renderReadyControls({ waitingNextRound }) : ""}
                 ${state.viewer.host && state.status === "lobby" ? `<button type="button" class="secondary" data-action="add-robot" ${state.players.length >= state.maxPlayers ? "disabled" : ""}>添加机器人</button>` : ""}
@@ -5536,10 +5607,19 @@ function renderGameInfoTags() {
 
 function renderDoglegTableTag() {
   const setup = state.setup || {};
-  const card = setup.doglegCard;
-  if (!card) return "";
   const names = setup.doglegPlayerNames || [];
   const needed = Number(setup.doglegNeeded) || 0;
+  if (setup.doglegMode === "dynamic") {
+    if (!needed || (state.stage !== "playing" && state.stage !== "finished")) return "";
+    const revealText = names.length ? `当前狗腿：${names.join("、")}` : "尚无玩家获得狗腿标记";
+    return `
+      <span class="tag table-dogleg-tag dynamic" title="${escapeHtml(revealText)}">
+        动态狗腿 <i>${names.length}/${needed}</i>
+      </span>
+    `;
+  }
+  const card = setup.doglegCard;
+  if (!card) return "";
   const revealText = names.length ? `已出现：${names.join("、")}` : "尚未出现";
   return `
     <span class="tag table-dogleg-tag" title="${escapeHtml(revealText)}">
@@ -5771,6 +5851,7 @@ function renderSeatHand(action, play, trick, index, options = {}) {
         <aside class="seat-hand-profile-card">
           <div class="seat-hand-avatar-stage" tabindex="0" aria-label="查看${escapeHtml(play.playerName)}的历史数据">
             ${avatarHtml(play.playerName, play.avatarUrl, "seat-profile", play.avatarFrame || roomPlayer.avatarFrame)}
+            ${renderDoglegMarks(play.playerId)}
             ${renderLuckyMark(play.playerId)}
             ${renderWarGodMark(play.playerId)}
             ${renderTauntBubble(play.playerId, true)}
@@ -5915,8 +5996,34 @@ function roleMark(role, playerId = "") {
   if (!role) return "";
   const text = role === "狗腿" ? "狗腿" : role === "庄家" || role === "主" ? "庄家" : "闲";
   const tone = role === "狗腿" ? "dogleg" : role === "庄家" || role === "主" ? "accent" : "idle";
-  const reveal = role === "狗腿" && doglegRevealEffects.some((effect) => effect.playerId === playerId && effect.until > Date.now());
+  const reveal = role === "狗腿" && doglegRevealEffects.some((effect) =>
+    effect.playerId === playerId && effect.roleChanged && effect.until > Date.now()
+  );
   return `<span class="role-mark ${tone} ${reveal ? "dogleg-role-reveal" : ""}" title="${escapeHtml(role)}">${escapeHtml(text)}</span>`;
+}
+
+function doglegPawSvg() {
+  return `
+    <svg viewBox="0 0 32 30" aria-hidden="true" focusable="false">
+      <ellipse cx="16" cy="20" rx="8" ry="7"></ellipse>
+      <circle cx="6.5" cy="12" r="3.4"></circle>
+      <circle cx="12.5" cy="6" r="3.4"></circle>
+      <circle cx="20" cy="5.5" r="3.4"></circle>
+      <circle cx="26" cy="11.5" r="3.4"></circle>
+    </svg>
+  `;
+}
+
+function renderDoglegMarks(playerId) {
+  if (state?.setup?.doglegMode !== "dynamic") return "";
+  const count = Math.max(0, Number(state.players?.find((player) => player.id === playerId)?.doglegMarkCount) || 0);
+  if (!count) return "";
+  const revealing = doglegRevealEffects.some((effect) => effect.playerId === playerId && effect.until > Date.now());
+  return `
+    <span class="dogleg-mark-icons ${revealing ? "dogleg-mark-icons-reveal" : ""}" title="${escapeHtml(`狗腿标记 ${count} 个`)}" aria-label="${escapeHtml(`狗腿标记 ${count} 个`)}">
+      ${Array.from({ length: count }, () => `<span class="dogleg-mark-icon" aria-hidden="true">${doglegPawSvg()}</span>`).join("")}
+    </span>
+  `;
 }
 
 function roleClass(role) {
@@ -6000,6 +6107,7 @@ function playerIdentity(name, role, avatarUrl = "", suffix = "", playerId = "", 
   return `
     <span class="player-identity">
       ${avatarHtml(name, avatarUrl, "small", avatarFrame)}
+      ${renderDoglegMarks(playerId)}
       ${renderLuckyMark(playerId)}
       ${renderWarGodMark(playerId)}
       ${roleMark(role, playerId)}
@@ -6020,6 +6128,7 @@ function tablePlayerIdentity(play) {
     <span class="player-identity table-player-identity">
       <span class="table-player-avatar-stage" tabindex="0" aria-label="查看${escapeHtml(play.playerName)}的历史数据">
         ${avatarHtml(play.playerName, play.avatarUrl, "small", avatarFrame)}
+        ${renderDoglegMarks(play.playerId)}
         ${renderLuckyMark(play.playerId)}
         ${renderWarGodMark(play.playerId)}
         ${renderTauntBubble(play.playerId)}
@@ -6042,6 +6151,7 @@ function renderTablePlayerSummary(play, statusText, statusTone) {
       </span>
       <span class="table-player-avatar-stage" tabindex="0" aria-label="查看${escapeHtml(play.playerName)}的历史数据">
         ${avatarHtml(play.playerName, play.avatarUrl, "small", avatarFrame)}
+        ${renderDoglegMarks(play.playerId)}
         ${renderLuckyMark(play.playerId)}
         ${renderWarGodMark(play.playerId)}
         ${renderTauntBubble(play.playerId)}
@@ -6582,8 +6692,11 @@ function renderCompactHandGroupLabel(group) {
   return `主牌${symbol ? `<em class="hand-trump-suit suit-${escapeHtml(trumpSuit)}">${escapeHtml(symbol)}</em>` : ""}`;
 }
 
-function isHiddenDoglegHandCard(card) {
+function isDoglegHandCard(card) {
   const setup = state?.setup || {};
+  if (setup.doglegMode === "dynamic") {
+    return Boolean(state?.stage === "playing" && setup.doglegMarkedCardId && card?.id === setup.doglegMarkedCardId);
+  }
   const doglegCard = setup.doglegCard;
   const revealedIds = setup.doglegPlayerIds || [];
   const needed = Number(setup.doglegNeeded) || 0;
@@ -6594,16 +6707,10 @@ function isHiddenDoglegHandCard(card) {
 }
 
 function renderDoglegHandMark(card) {
-  if (!isHiddenDoglegHandCard(card)) return "";
+  if (!isDoglegHandCard(card)) return "";
   return `
     <span class="dogleg-hand-mark" aria-label="狗腿牌" title="狗腿牌">
-      <svg viewBox="0 0 32 30" aria-hidden="true" focusable="false">
-        <ellipse cx="16" cy="20" rx="8" ry="7"></ellipse>
-        <circle cx="6.5" cy="12" r="3.4"></circle>
-        <circle cx="12.5" cy="6" r="3.4"></circle>
-        <circle cx="20" cy="5.5" r="3.4"></circle>
-        <circle cx="26" cy="11.5" r="3.4"></circle>
-      </svg>
+      ${doglegPawSvg()}
     </span>
   `;
 }
@@ -6638,9 +6745,9 @@ function renderHand(hand, options = {}) {
           ${compactCards.map((card, index) => `
             <button
               type="button"
-              class="card ${card.color} ${cardSuitClass(card)} ${cardSkinClass(viewerCardSkin())} ${isHiddenDoglegHandCard(card) ? "dogleg-hand-card" : ""} ${selectedCardIds.has(card.id) ? "selected" : ""} ${isThrowDraftCard(card.id) ? "throw-queued" : ""}"
+              class="card ${card.color} ${cardSuitClass(card)} ${cardSkinClass(viewerCardSkin())} ${isDoglegHandCard(card) ? "dogleg-hand-card" : ""} ${selectedCardIds.has(card.id) ? "selected" : ""} ${isThrowDraftCard(card.id) ? "throw-queued" : ""}"
               style="--i:${index}"
-              title="${escapeHtml(`${displayCardLabel(card)}${isHiddenDoglegHandCard(card) ? " · 狗腿牌" : ""}`)}"
+              title="${escapeHtml(`${displayCardLabel(card)}${isDoglegHandCard(card) ? " · 狗腿牌" : ""}`)}"
               aria-pressed="${selectedCardIds.has(card.id) ? "true" : "false"}"
               aria-disabled="${isSpectating() || isThrowDraftCard(card.id) ? "true" : "false"}"
               ${isSpectating() ? 'tabindex="-1"' : ""}
@@ -6667,9 +6774,9 @@ function renderHand(hand, options = {}) {
             ${group.cards.map((card, index) => `
               <button
                 type="button"
-                class="card ${card.color} ${cardSuitClass(card)} ${cardSkinClass(viewerCardSkin())} ${isHiddenDoglegHandCard(card) ? "dogleg-hand-card" : ""} ${selectedCardIds.has(card.id) ? "selected" : ""} ${isThrowDraftCard(card.id) ? "throw-queued" : ""}"
+                class="card ${card.color} ${cardSuitClass(card)} ${cardSkinClass(viewerCardSkin())} ${isDoglegHandCard(card) ? "dogleg-hand-card" : ""} ${selectedCardIds.has(card.id) ? "selected" : ""} ${isThrowDraftCard(card.id) ? "throw-queued" : ""}"
                 style="--i:${index}"
-                title="${escapeHtml(`${displayCardLabel(card)}${isHiddenDoglegHandCard(card) ? " · 狗腿牌" : ""}`)}"
+                title="${escapeHtml(`${displayCardLabel(card)}${isDoglegHandCard(card) ? " · 狗腿牌" : ""}`)}"
                 aria-pressed="${selectedCardIds.has(card.id) ? "true" : "false"}"
                 aria-disabled="${isSpectating() || isThrowDraftCard(card.id) ? "true" : "false"}"
                 ${isSpectating() ? 'tabindex="-1"' : ""}
@@ -6916,7 +7023,7 @@ function clearSelectionFromPageClick(event) {
 }
 
 const mutatingActions = new Set([
-  "room-leave", "confirm-room-action", "opening-bid-percent", "dogleg-count",
+  "room-leave", "confirm-room-action", "opening-bid-percent", "dogleg-mode", "dogleg-count",
   "add-robot", "random-seats", "start", "ready-on", "ready-off", "bid-selected",
   "bid-pass", "random-bid", "score-bid-start", "score-bid-10", "score-bid-20",
   "score-bid-30", "score-pass", "trump-suit-S", "trump-suit-H", "trump-suit-C",
@@ -7168,6 +7275,7 @@ document.addEventListener("click", (event) => {
   if (action === "opening-bid-percent") {
     setOpeningBidPercent(Number(event.target.closest("[data-percent]")?.dataset.percent || 0));
   }
+  if (action === "dogleg-mode") setDoglegMode(event.target.closest("[data-mode]")?.dataset.mode || "traditional");
   if (action === "dogleg-count") setDoglegCount(Number(event.target.closest("[data-count]")?.dataset.count || 0));
   if (action === "add-robot") addRobot();
   if (action === "random-seats") randomizeSeats();

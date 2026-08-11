@@ -109,6 +109,22 @@ test("host configures the opening bid from 10% to 40% before a score-bidding gam
 
   assert.equal(created.snapshot.callMode, "score");
   assert.equal(created.snapshot.openingBidPercent, 40);
+  assert.equal(created.snapshot.doglegMode, "traditional");
+
+  await jsonRequest(`${roomUrl}/dogleg-mode`, {
+    method: "POST",
+    body: JSON.stringify({ ...credentials, mode: "dynamic" })
+  });
+  const dynamicDoglegLobby = await jsonRequest(`${roomUrl}/state?${stateParams.toString()}`);
+  assert.equal(dynamicDoglegLobby.doglegMode, "dynamic");
+  assert.equal(dynamicDoglegLobby.setup.doglegModeName, "动态狗腿");
+
+  const invalidDoglegModeResponse = await fetch(`${roomUrl}/dogleg-mode`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ ...credentials, mode: "random" })
+  });
+  assert.equal(invalidDoglegModeResponse.status, 400);
 
   await jsonRequest(`${roomUrl}/opening-bid-percent`, {
     method: "POST",
@@ -148,6 +164,7 @@ test("host configures the opening bid from 10% to 40% before a score-bidding gam
   const started = await jsonRequest(`${roomUrl}/state?${stateParams.toString()}`);
   assert.equal(started.stage, "score-bidding");
   assert.equal(started.setup.openingBidPercent, 20);
+  assert.equal(started.setup.doglegMode, "dynamic");
   assert.equal(started.setup.scoreBid.minimum, 100);
   assert.equal(started.setup.scoreBid.currentScore, 100);
 

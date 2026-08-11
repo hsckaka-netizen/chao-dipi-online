@@ -236,6 +236,12 @@ section.game-room-overview {
   text-align: center;
 }
 
+.table-dogleg-tag.dynamic {
+  border-color: #d8c28a;
+  background: #fff8e3;
+  color: #79530a;
+}
+
 .topbar-actions {
   display: flex;
   flex-wrap: wrap;
@@ -2361,6 +2367,61 @@ button.joinable-room-player.spectate-player {
   animation: dogleg-role-reveal 700ms cubic-bezier(.2, .9, .25, 1.25) both;
 }
 
+.dogleg-mark-icons {
+  z-index: 16;
+  display: inline-flex;
+  flex-wrap: wrap-reverse;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 1px;
+  max-width: 58px;
+  pointer-events: none;
+  filter: drop-shadow(0 1px 2px rgba(47, 74, 53, 0.28));
+}
+
+.player-identity > .dogleg-mark-icons {
+  position: absolute;
+  left: 30px;
+  bottom: -4px;
+}
+
+.table-player-avatar-stage > .dogleg-mark-icons,
+.seat-hand-avatar-stage > .dogleg-mark-icons {
+  position: absolute;
+  right: -12px;
+  bottom: -7px;
+}
+
+.dogleg-mark-icon {
+  width: 14px;
+  height: 14px;
+  display: grid;
+  flex: 0 0 14px;
+  place-items: center;
+  border: 1px solid rgba(19, 104, 61, 0.36);
+  border-radius: 50%;
+  background: rgba(242, 251, 246, 0.97);
+  color: #17834f;
+  box-shadow: 0 1px 3px rgba(25, 79, 52, 0.2);
+}
+
+.dogleg-mark-icon svg {
+  width: 10px;
+  height: 10px;
+  display: block;
+  fill: currentColor;
+}
+
+.dogleg-mark-icons-reveal .dogleg-mark-icon:last-child {
+  animation: dogleg-mark-reveal 700ms cubic-bezier(.2, .9, .25, 1.25) both;
+}
+
+@keyframes dogleg-mark-reveal {
+  0% { opacity: 0; transform: scale(.2) rotate(-20deg); }
+  60% { opacity: 1; transform: scale(1.45) rotate(6deg); }
+  100% { opacity: 1; transform: scale(1) rotate(0); }
+}
+
 @keyframes dogleg-role-reveal {
   0% { opacity: 0; transform: scale(.2) rotate(-18deg); }
   58% { opacity: 1; transform: scale(1.35) rotate(5deg); }
@@ -2646,6 +2707,10 @@ button.joinable-room-player.spectate-player {
 .dogleg-count-control .segmented button {
   min-width: 34px;
   padding: 0 8px;
+}
+
+.dogleg-mode-control .segmented button {
+  min-width: 74px;
 }
 
 .meta {
@@ -4572,6 +4637,7 @@ button.auto-play-toggle.active {
 
 @media (prefers-reduced-motion: reduce) {
   .role-mark.dogleg-role-reveal,
+  .dogleg-mark-icons-reveal .dogleg-mark-icon:last-child,
   .mini-card.dogleg-card-reveal,
   .mini-card.dragged-five-animated,
   .mini-card.dragged-five-animated::after,
