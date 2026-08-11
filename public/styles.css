@@ -2178,6 +2178,12 @@ button.joinable-room-player.spectate-player {
   isolation: isolate;
   aspect-ratio: 1;
   margin-inline-end: 8px;
+  overflow: visible;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  padding: 0;
+  box-shadow: none;
 }
 
 .avatar.avatar-frame::before {
@@ -6647,12 +6653,40 @@ button.auto-play-toggle.active {
   padding: 0;
 }
 
+.admin-module .avatar-frame-upload-form {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  align-items: end;
+  gap: 12px;
+  border: 0;
+  background: transparent;
+  padding: 0;
+}
+
+.avatar-frame-upload-form label {
+  display: grid;
+  gap: 5px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.avatar-frame-upload-form textarea {
+  min-height: 72px;
+  resize: vertical;
+}
+
+.avatar-frame-upload-wide {
+  grid-column: 1 / -1;
+}
+
 @media (max-width: 980px) {
   .admin-overview-grid {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
   .admin-module .shop-grant-form,
+  .admin-module .avatar-frame-upload-form,
   .profile-fields {
     grid-template-columns: 1fr 1fr;
   }
@@ -6685,7 +6719,8 @@ button.auto-play-toggle.active {
   .profile-row,
   .profile-row-summary,
   .profile-fields,
-  .admin-module .shop-grant-form {
+  .admin-module .shop-grant-form,
+  .admin-module .avatar-frame-upload-form {
     grid-template-columns: 1fr;
   }
 

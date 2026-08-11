@@ -62,6 +62,9 @@ const CONSUMABLE_ITEM_FALLBACKS = Object.freeze([
 const RESTART_CARD_STAGE = "restart-card-using";
 const OTHER_CARDS_STAGE = "other-cards-using";
 const AVATAR_FRAME_VALUES = new Set(AVATAR_FRAME_OPTIONS.map((option) => option.value));
+const avatarFrameAssets = new Map(Object.entries(ASSET_URLS.avatarFrames));
+let avatarFrameAssetsLoading = false;
+let avatarFrameAssetsLoaded = false;
 const CARD_SKIN_VALUES = new Set(CARD_SKIN_OPTIONS.map((option) => option.value));
 const storageKey = "chaoDipiOnlineSession";
 let session = loadSession();
@@ -597,7 +600,38 @@ async function api(path, options = {}) {
     error.status = res.status;
     throw error;
   }
+  rememberAvatarFrameAssets(data?.products);
   return data;
+}
+
+function rememberAvatarFrameAssets(products) {
+  (Array.isArray(products) ? products : []).forEach((product) => {
+    if (product?.productType !== "avatar_frame") return;
+    const assetKey = String(product.assetKey || "");
+    const assetUrl = String(product.assetUrl || "");
+    if (/^[a-z0-9][a-z0-9-]{1,38}[a-z0-9]$/.test(assetKey) && /^https:\/\//.test(assetUrl)) {
+      avatarFrameAssets.set(assetKey, assetUrl);
+    }
+  });
+}
+
+function avatarFrameAssetUrl(value) {
+  return avatarFrameAssets.get(String(value || "")) || "";
+}
+
+function ensureAvatarFrameAssets() {
+  if (avatarFrameAssetsLoaded || avatarFrameAssetsLoading) return;
+  avatarFrameAssetsLoading = true;
+  api("/api/avatar-frames")
+    .then((data) => {
+      rememberAvatarFrameAssets(data?.products);
+      avatarFrameAssetsLoaded = true;
+      render();
+    })
+    .catch(() => {})
+    .finally(() => {
+      avatarFrameAssetsLoading = false;
+    });
 }
 
 function ensureAuth(force = false) {
@@ -852,6 +886,17 @@ async function prepareAvatarDataUrl(file) {
   return blobDataUrl(blob);
 }
 
+async function prepareAvatarFrameDataUrl(file) {
+  if (!(file instanceof File) || !file.size) throw new Error("请选择头像框 PNG 文件");
+  if (file.type !== "image/png") throw new Error("头像框只支持 PNG 格式");
+  if (file.size > 1_200_000) throw new Error("头像框文件不能超过 1.2MB");
+  const image = await imageElementForFile(file);
+  if (image.naturalWidth !== 512 || image.naturalHeight !== 512) {
+    throw new Error("头像框必须是 512 × 512 px");
+  }
+  return blobDataUrl(file);
+}
+
 async function uploadOwnAvatar(event) {
   event.preventDefault();
   const formEl = event.target.closest("form");
@@ -867,6 +912,32 @@ async function uploadOwnAvatar(event) {
     profiles = profiles.map((profile) => profile.id === data.player.id ? data.player : profile);
     formEl.reset();
     setMessage("头像已更新，7 天后可以再次更换。", false);
+    render();
+  } catch (error) {
+    setMessage(error.message, true);
+  }
+}
+
+async function uploadAvatarFrame(event) {
+  event.preventDefault();
+  const formEl = event.target.closest("form");
+  const form = new FormData(formEl);
+  try {
+    const avatarFrameDataUrl = await prepareAvatarFrameDataUrl(form.get("avatarFrame"));
+    const data = await api("/api/admin/avatar-frames", {
+      method: "POST",
+      body: JSON.stringify({
+        assetKey: form.get("assetKey"),
+        name: form.get("name"),
+        description: form.get("description"),
+        price: Number(form.get("price")),
+        isListed: Boolean(form.get("isListed")),
+        avatarFrameDataUrl
+      })
+    });
+    adminShop = { products: data.products || [], accounts: data.accounts || [] };
+    formEl.reset();
+    setMessage(data.product?.isListed ? "头像框已校验、上传并上架。" : "头像框已校验并上传，当前为草稿；可在商品设置中上架。", false);
     render();
   } catch (error) {
     setMessage(error.message, true);
@@ -3809,10 +3880,15 @@ function renderOwnedCosmetics() {
   const profile = authState.account?.profile;
   if (!profile) return "";
   const avatarFrameKeys = ["", ...new Set((shopState?.entitlements?.avatarFrames || [])
-    .filter((key) => key && AVATAR_FRAME_VALUES.has(key)))];
+    .filter((key) => key && avatarFrameAssetUrl(key)))];
   const cardSkinKeys = ["", ...new Set((shopState?.entitlements?.cardSkins || [])
     .filter((key) => key && CARD_SKIN_VALUES.has(key)))];
-  const avatarLabels = new Map(AVATAR_FRAME_OPTIONS.map((option) => [option.value, option.label]));
+  const avatarLabels = new Map([
+    ...AVATAR_FRAME_OPTIONS.map((option) => [option.value, option.label]),
+    ...(shopState?.products || [])
+      .filter((product) => product.productType === "avatar_frame")
+      .map((product) => [product.assetKey, product.name])
+  ]);
   const cardLabels = new Map(CARD_SKIN_OPTIONS.map((option) => [option.value, option.label]));
   return `
     <section class="panel stack owned-cosmetics-panel">
@@ -4105,6 +4181,21 @@ function renderAdminShopManager() {
           </div>
           <div class="module-save-actions"><button type="submit" data-module-save ${products.length ? "" : "disabled"}>统一保存商品设置</button></div>
         </form>
+        <details class="admin-inline-tool">
+          <summary><span>上传聊天生成头像框</span><small>先校验，默认草稿</small></summary>
+          <div class="admin-inline-tool-body">
+            <form class="avatar-frame-upload-form" data-form="upload-avatar-frame">
+              <div class="admin-action-warning avatar-frame-upload-wide">仅接受 PNG：512 × 512 px、最多 1.2MB。服务端会检查四边 8 px 与中央 320 × 320 px 开口是否完全透明。</div>
+              <label>主题编号<input name="assetKey" pattern="[a-z0-9][a-z0-9-]{1,38}[a-z0-9]" minlength="3" maxlength="40" required placeholder="jade-dragon"></label>
+              <label>显示名称<input name="name" maxlength="80" required placeholder="玉龙祥瑞"></label>
+              <label>价格<input name="price" type="number" min="1" max="1000000" step="1" required value="300"></label>
+              <label class="avatar-frame-upload-wide">说明<textarea name="description" maxlength="240" required placeholder="在聊天中生成后导出的头像框。"></textarea></label>
+              <label>PNG 素材<input name="avatarFrame" type="file" accept="image/png" required></label>
+              <label class="check-label"><input name="isListed" type="checkbox">立即上架</label>
+              <button type="submit">校验并上传</button>
+            </form>
+          </div>
+        </details>
         <details class="admin-inline-tool">
           <summary><span>直接发放皮肤</span><small>只增加拥有权</small></summary>
           <div class="admin-inline-tool-body">
@@ -5736,12 +5827,13 @@ function roleClass(role) {
 
 function avatarHtml(name, avatarUrl = "", size = "normal", avatarFrame = "") {
   const initial = String(name || "玩").trim().slice(0, 1) || "玩";
-  const frameKey = AVATAR_FRAME_VALUES.has(avatarFrame) ? avatarFrame : "";
-  const frameClass = frameKey ? `avatar-frame avatar-frame-${frameKey}` : "";
+  const frameUrl = avatarFrameAssetUrl(avatarFrame);
+  const frameClass = frameUrl ? "avatar-frame" : "";
+  const frameStyle = frameUrl ? ` style="--avatar-frame-image: url('${escapeHtml(frameUrl)}')"` : "";
   const content = avatarUrl
     ? `<img src="${escapeHtml(avatarUrl)}" alt="" decoding="async" draggable="false">`
     : escapeHtml(initial);
-  return `<span class="avatar ${size} ${frameClass}" title="${escapeHtml(name)}"><span class="avatar-core">${content}</span></span>`;
+  return `<span class="avatar ${size} ${frameClass}" title="${escapeHtml(name)}"${frameStyle}><span class="avatar-core">${content}</span></span>`;
 }
 
 function activeTauntForPlayer(playerId) {
@@ -6747,6 +6839,7 @@ document.addEventListener("submit", (event) => {
   if (form.dataset.form === "account-login") return loginAccount(event);
   if (form.dataset.form === "change-password") return changeAccountPassword(event);
   if (form.dataset.form === "own-avatar") return uploadOwnAvatar(event);
+  if (form.dataset.form === "upload-avatar-frame") return uploadAvatarFrame(event);
   if (form.dataset.form === "own-cosmetics") return saveOwnCosmetics(event);
   if (form.dataset.form === "create-account") return createManagedAccount(event);
   if (form.dataset.form === "create-taunt") return createManagedTaunt(event);
@@ -7102,6 +7195,7 @@ window.addEventListener("pageshow", () => {
 });
 
 async function resume() {
+  ensureAvatarFrameAssets();
   await refreshAuth().catch(() => {});
   if (!session) return render();
   try {

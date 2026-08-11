@@ -81,6 +81,10 @@ const MIGRATIONS = [
   {
     version: 16,
     path: fileURLToPath(new URL("./db/migrations/016_avatar_class_frames.sql", import.meta.url))
+  },
+  {
+    version: 17,
+    path: fileURLToPath(new URL("./db/migrations/017_uploaded_avatar_frames.sql", import.meta.url))
   }
 ];
 const HISTORY_ENABLED = String(process.env.GAME_HISTORY_ENABLED || "").toLowerCase() === "true";
@@ -567,6 +571,8 @@ function publicShopProduct(row) {
     assetKey: row.asset_key,
     name: row.name,
     description: currentConsumable?.description || row.description || "",
+    assetUrl: row.asset_url || "",
+    assetVersion: row.asset_version || "",
     price: Number(row.price) || 0,
     isListed: Boolean(row.is_listed),
     sortOrder: Number(row.sort_order) || 0,
@@ -577,7 +583,7 @@ function publicShopProduct(row) {
 export async function listShopProducts({ includeUnlisted = false } = {}) {
   const result = await requirePool().query(
     `SELECT product_id, product_type, asset_key, name, description,
-            price, is_listed, sort_order, updated_at
+            asset_url, asset_version, price, is_listed, sort_order, updated_at
      FROM cdp_shop_products
      WHERE $1::boolean OR is_listed
      ORDER BY sort_order, product_id`,
@@ -781,7 +787,7 @@ export async function updateShopProducts(updates, administratorId) {
     for (const update of normalizedUpdates) {
       const currentResult = await client.query(
         `SELECT product_id, product_type, asset_key, name, description,
-                price, is_listed, sort_order, updated_at
+                asset_url, asset_version, price, is_listed, sort_order, updated_at
          FROM cdp_shop_products
          WHERE product_id = $1
          FOR UPDATE`,
@@ -802,7 +808,7 @@ export async function updateShopProducts(updates, administratorId) {
          SET price = $2, is_listed = $3, updated_by = $4::uuid, updated_at = now()
          WHERE product_id = $1
          RETURNING product_id, product_type, asset_key, name, description,
-                   price, is_listed, sort_order, updated_at`,
+                   asset_url, asset_version, price, is_listed, sort_order, updated_at`,
         [current.product_id, price, isListed, administratorId]
       );
       await client.query(
@@ -830,6 +836,103 @@ export async function updateShopProduct(productId, body, administratorId) {
   if (Object.hasOwn(body || {}, "isListed")) update.isListed = body.isListed;
   const [updated] = await updateShopProducts([update], administratorId);
   return updated;
+}
+
+function normalizeUploadedAvatarFrameProduct(input) {
+  const assetKey = String(input?.assetKey || "").trim();
+  if (!/^[a-z0-9][a-z0-9-]{1,38}[a-z0-9]$/.test(assetKey)) {
+    throw commerceError("主题编号需为 3-40 位小写字母、数字或连字符，且不能以连字符开头或结尾");
+  }
+  const name = String(input?.name || "").trim().replace(/\s+/g, " ");
+  if (!name || name.length > 80) throw commerceError("头像框名称需为 1-80 个字符");
+  const description = String(input?.description || "").trim();
+  if (description.length > 240) throw commerceError("头像框说明不能超过 240 个字符");
+  const price = Number(input?.price);
+  if (!Number.isInteger(price) || price <= 0 || price > 1_000_000) {
+    throw commerceError("头像框价格必须是 1 至 1000000 的整数");
+  }
+  const assetUrl = String(input?.assetUrl || "").trim();
+  const assetVersion = String(input?.assetVersion || "").trim();
+  if (!/^https:\/\//.test(assetUrl) || assetUrl.length > 1000 || !/^[a-f0-9]{16}$/.test(assetVersion)) {
+    throw commerceError("头像框素材地址或内容版本不正确");
+  }
+  return {
+    productId: `avatar-frame:${assetKey}`,
+    assetKey,
+    name,
+    description: description || "永久解锁，可在我的皮肤中自由装备或卸下。",
+    assetUrl,
+    assetVersion,
+    price,
+    isListed: Boolean(input?.isListed)
+  };
+}
+
+export async function avatarFrameProductExists(assetKeyValue) {
+  const assetKey = String(assetKeyValue || "").trim();
+  if (!assetKey) return false;
+  const result = await requirePool().query(
+    `SELECT 1 FROM cdp_shop_products
+     WHERE product_type = 'avatar_frame' AND asset_key = $1`,
+    [assetKey]
+  );
+  return Boolean(result.rows[0]);
+}
+
+export async function createUploadedAvatarFrameProduct(input, administratorId) {
+  const product = normalizeUploadedAvatarFrameProduct(input);
+  const database = requirePool();
+  const client = await database.connect();
+  try {
+    await client.query("BEGIN");
+    const existing = await client.query(
+      `SELECT 1 FROM cdp_shop_products
+       WHERE product_type = 'avatar_frame' AND asset_key = $1
+       FOR UPDATE`,
+      [product.assetKey]
+    );
+    if (existing.rows[0]) throw commerceError("这个主题编号已经存在，请换一个新的编号", 409);
+    const sortResult = await client.query(
+      `SELECT coalesce(max(sort_order), 99) + 1 AS next_sort_order
+       FROM cdp_shop_products
+       WHERE product_type = 'avatar_frame'`
+    );
+    const inserted = await client.query(
+      `INSERT INTO cdp_shop_products (
+        product_id, product_type, asset_key, name, description,
+        asset_url, asset_version, price, is_listed, sort_order, updated_by
+      ) VALUES ($1, 'avatar_frame', $2, $3, $4, $5, $6, $7, $8, $9, $10::uuid)
+      RETURNING product_id, product_type, asset_key, name, description,
+                asset_url, asset_version, price, is_listed, sort_order, updated_at`,
+      [
+        product.productId,
+        product.assetKey,
+        product.name,
+        product.description,
+        product.assetUrl,
+        product.assetVersion,
+        product.price,
+        product.isListed,
+        Number(sortResult.rows[0]?.next_sort_order) || 100,
+        administratorId
+      ]
+    );
+    await client.query(
+      `INSERT INTO cdp_shop_product_audit (
+        product_id, admin_account_id, before_data, after_data
+      ) VALUES ($1, $2::uuid, '{}'::jsonb, $3::jsonb)`,
+      [product.productId, administratorId, JSON.stringify(inserted.rows[0])]
+    );
+    await client.query("COMMIT");
+    return publicShopProduct(inserted.rows[0]);
+  } catch (error) {
+    await client.query("ROLLBACK");
+    rememberError(error);
+    if (error.code === "23505") throw commerceError("这个主题编号已经存在，请换一个新的编号", 409);
+    throw error;
+  } finally {
+    client.release();
+  }
 }
 
 export async function grantDiamondsByAdmin(administratorId, accountId, amountValue, requestIdValue, noteValue = "") {

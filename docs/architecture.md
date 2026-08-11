@@ -15,6 +15,7 @@
 - 账号：Supabase Auth；服务端使用 Secret Key，前端不得接触密钥。
 - 数据库：Supabase PostgreSQL；迁移脚本在 `db/migrations`。
 - 头像：Supabase Storage 的 `player-avatars`；浏览器裁切压缩为 256×256，普通玩家 7 天最多更换一次。
+- 聊天生成的头像框：管理员从后台上传符合固定几何的 PNG；服务端验证透明边距与内开口后存入 Supabase Storage `avatar-frame-assets`，以内容版本 URL 作为商城商品资产。
 - GitHub：`hsckaka-netizen/chao-dipi-online`。
 - 部署：推送 `main` 后由 Render 自动部署。
 - 线上地址：<https://chao-dipi-online.onrender.com/>。
@@ -24,6 +25,7 @@
 - 实时牌局只发送变化，不重复发送整房状态；客户端发现版本缺口时才回退全量同步。
 - 图片、CSS、JS 等静态素材使用内容哈希版本 URL；版本不变可长期缓存，内容变化自动换 URL。
 - 头像 URL 使用头像版本号，不按固定天数强制重新下载。
+- 上传头像框的对象路径和公开 URL 均包含内容哈希；改图需以新的主题编号或新版本重新上传，不能覆盖既有商品资产。
 - 数据库只在全真人牌局结算后写入一次；包含机器人时不记录。
 - 积分榜和个人页按进入页面时读取，不做实时轮询；服务端可短时缓存聚合结果。
 - 列表返回聚合摘要，个人牌局明细按需分页读取，避免一次返回完整出牌历史。

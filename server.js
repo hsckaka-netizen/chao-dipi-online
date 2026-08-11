@@ -12,12 +12,15 @@ import {
   clearedSessionCookie,
   createSupabaseUser,
   decodeAvatarDataUrl,
+  decodeAvatarFrameDataUrl,
   deleteSupabaseUser,
   ensureAvatarBucket,
+  ensureAvatarFrameBucket,
   sessionCookie,
   signInSupabaseUser,
   updateSupabasePassword,
   uploadSupabaseAvatar,
+  uploadSupabaseAvatarFrame,
   validatePassword,
   validateUsername
 } from "./account-auth.js";
@@ -33,6 +36,7 @@ import {
 } from "./diamond-rewards.js";
 import {
   applyWarGodAdjustments,
+  AVATAR_FRAME_KEYS,
   CONSUMABLE_ITEMS,
   frySuitStrength,
   gameItemAccess,
@@ -48,7 +52,9 @@ import { versionedAssetUrl } from "./public/asset-versions.js";
 import { createStatePatch } from "./public/state-patch.js";
 import {
   gameHistoryStatus,
+  avatarFrameProductExists,
   consumeGameItemUses,
+  createUploadedAvatarFrameProduct,
   grantDiamondsByAdmin,
   getPlayerShopState,
   getDiamondWallet,
@@ -105,7 +111,8 @@ const GAME_ITEM_STAGE_SECONDS = Math.max(1, Number(process.env.GAME_ITEM_STAGE_S
 const GAME_ITEM_NOTICE_MS = Math.max(1000, Number(process.env.GAME_ITEM_NOTICE_MS) || 5000);
 const TAUNT_DURATION_MS = Math.max(100, Number(process.env.TAUNT_DURATION_MS) || 4500);
 const TAUNT_COOLDOWN_MS = Math.max(0, Number(process.env.TAUNT_COOLDOWN_MS) || 1500);
-const AVATAR_FRAMES = new Set(["", "vip", "emerald", "champion", "violet", "stormwind", "idol", "hellfire", "blood-elf", "endless-winter", "cr7", "paladin", "vip-legend"]);
+const BUILT_IN_AVATAR_FRAMES = new Set(["", ...AVATAR_FRAME_KEYS]);
+let avatarFrames = new Set(BUILT_IN_AVATAR_FRAMES);
 const CARD_SKINS = new Set(["", "emerald", "champion", "violet", "stormwind", "idol", "hellfire", "blood-elf", "endless-winter", "cr7", "paladin", "vip-legend"]);
 const PLAY_EFFECTS = new Set(["", "fireworks"]);
 const configuredAiSetupDelay = Number(process.env.AI_SETUP_DELAY_MS || 450);
@@ -150,6 +157,7 @@ const avatarUpdatesInFlight = new Set();
 const authRuntime = {
   initialized: false,
   avatarStorageReady: false,
+  avatarFrameStorageReady: false,
   bootstrapRequired: false,
   lastError: null
 };
@@ -181,7 +189,7 @@ const playerProfiles = new Map(initialPlayerProfiles.map((profile) => [
     avatarUrl: versionedAssetUrl(profile.avatarUrl || ""),
     avatarVersion: Number(profile.avatarVersion) || 0,
     avatarUpdatedAt: profile.avatarUpdatedAt || null,
-    avatarFrame: AVATAR_FRAMES.has(profile.avatarFrame) ? profile.avatarFrame : "",
+    avatarFrame: avatarFrames.has(profile.avatarFrame) ? profile.avatarFrame : "",
     cardSkin: CARD_SKINS.has(profile.cardSkin) ? profile.cardSkin : "",
     playEffect: PLAY_EFFECTS.has(profile.playEffect) ? profile.playEffect : "",
     builtIn: true,
@@ -206,7 +214,17 @@ function cleanName(value) {
 
 function normalizeAvatarFrame(value) {
   const normalized = String(value || "");
-  return AVATAR_FRAMES.has(normalized) ? normalized : "";
+  return avatarFrames.has(normalized) ? normalized : "";
+}
+
+async function refreshAvatarFrameCatalog() {
+  const products = await listShopProducts();
+  const uploadedKeys = products
+    .filter((product) => product.productType === "avatar_frame"
+      && product.assetUrl
+      && /^[a-z0-9][a-z0-9-]{1,38}[a-z0-9]$/.test(product.assetKey))
+    .map((product) => product.assetKey);
+  avatarFrames = new Set([...BUILT_IN_AVATAR_FRAMES, ...uploadedKeys]);
 }
 
 function normalizeCardSkin(value) {
@@ -313,6 +331,7 @@ function authStatusPayload(req) {
     ...service,
     initialized: authRuntime.initialized,
     avatarStorageReady: authRuntime.avatarStorageReady,
+    avatarFrameStorageReady: authRuntime.avatarFrameStorageReady,
     bootstrapRequired: authRuntime.bootstrapRequired,
     legacyProfileSelection: !service.configured || !authRuntime.initialized,
     account: publicAccount(accountForRequest(req))
@@ -467,6 +486,7 @@ function syncProfileToRooms(profile) {
 async function initializePersistence() {
   const databaseStatus = await initializeGameHistory();
   if (!databaseStatus.connected || !databaseStatus.profileStorageReady) return;
+  await refreshAvatarFrameCatalog();
   try {
     const itemRecovery = await refundOrphanedGameItemUses();
     if (itemRecovery.resolved) {
@@ -510,6 +530,7 @@ async function initializePersistence() {
   if (accountAuthStatus().storageConfigured) {
     try {
       authRuntime.avatarStorageReady = Boolean((await ensureAvatarBucket()).ready);
+      authRuntime.avatarFrameStorageReady = Boolean((await ensureAvatarFrameBucket()).ready);
     } catch (error) {
       authRuntime.lastError = error.message;
       console.error("[avatars] bucket initialization failed", error.message);
@@ -4577,6 +4598,30 @@ async function handleApi(req, res, pathParts, url) {
       broadcastTauntPresetChanges();
       return writeJson(res, 200, adminTauntsPayload());
     }
+    if (pathParts[2] === "avatar-frames" && pathParts.length === 3 && req.method === "POST") {
+      const body = await readJson(req, 1_700_000);
+      if (await avatarFrameProductExists(body.assetKey)) {
+        return writeJson(res, 409, { error: "这个主题编号已经存在，请换一个新的编号" });
+      }
+      const avatarFrame = decodeAvatarFrameDataUrl(body.avatarFrameDataUrl);
+      const assetUrl = await uploadSupabaseAvatarFrame(body.assetKey, avatarFrame);
+      const product = await createUploadedAvatarFrameProduct({
+        assetKey: body.assetKey,
+        name: body.name,
+        description: body.description,
+        price: body.price,
+        isListed: body.isListed,
+        assetUrl,
+        assetVersion: avatarFrame.contentVersion
+      }, admin.id);
+      authRuntime.avatarFrameStorageReady = true;
+      await refreshAvatarFrameCatalog();
+      return writeJson(res, 201, {
+        product,
+        products: await listShopProducts({ includeUnlisted: true }),
+        accounts: [...accounts.values()].filter((account) => account.role === "player").map(publicAccount)
+      });
+    }
     if (pathParts[2] === "shop" && pathParts.length === 3 && req.method === "GET") {
       return writeJson(res, 200, {
         products: await listShopProducts({ includeUnlisted: true }),
@@ -4599,6 +4644,7 @@ async function handleApi(req, res, pathParts, url) {
     if (pathParts[2] === "shop" && pathParts.length === 3 && req.method === "PATCH") {
       const body = await readJson(req);
       await updateShopProducts(body.products, admin.id);
+      await refreshAvatarFrameCatalog();
       return writeJson(res, 200, {
         products: await listShopProducts({ includeUnlisted: true }),
         accounts: [...accounts.values()].filter((account) => account.role === "player").map(publicAccount)
@@ -4607,6 +4653,7 @@ async function handleApi(req, res, pathParts, url) {
     if (pathParts[2] === "shop" && pathParts[3] && pathParts.length === 4 && req.method === "PATCH") {
       const body = await readJson(req);
       await updateShopProduct(shopProductIdFromPath(pathParts[3]), body, admin.id);
+      await refreshAvatarFrameCatalog();
       return writeJson(res, 200, {
         products: await listShopProducts({ includeUnlisted: true }),
         accounts: [...accounts.values()].filter((account) => account.role === "player").map(publicAccount)
@@ -4688,6 +4735,11 @@ async function handleApi(req, res, pathParts, url) {
     if (!account) return;
     if (account.role !== "player") return writeJson(res, 403, { error: "管理员账号没有玩家钻石钱包" });
     return writeJson(res, 200, await getDiamondWallet(account.id, url.searchParams.get("limit")));
+  }
+
+  if (pathParts[1] === "avatar-frames" && pathParts.length === 2 && req.method === "GET") {
+    const products = await listShopProducts();
+    return writeJson(res, 200, { products: products.filter((product) => product.productType === "avatar_frame") });
   }
 
   if (pathParts[1] === "shop") {

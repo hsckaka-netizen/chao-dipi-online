@@ -67,6 +67,31 @@ test("avatar frame migration unlists retired themes and keeps audit rows", async
   assert.match(gameHistorySource, /version: 16,[\s\S]*016_avatar_class_frames\.sql/);
 });
 
+test("uploaded avatar frames use a validated storage asset and normal product catalog", async () => {
+  const migrationPath = fileURLToPath(new URL("../db/migrations/017_uploaded_avatar_frames.sql", import.meta.url));
+  const serverPath = fileURLToPath(new URL("../server.js", import.meta.url));
+  const appPath = fileURLToPath(new URL("../public/app.js", import.meta.url));
+  const [migration, gameHistorySource, serverSource, appSource] = await Promise.all([
+    readFile(migrationPath, "utf8"),
+    readFile(fileURLToPath(new URL("../game-history.js", import.meta.url)), "utf8"),
+    readFile(serverPath, "utf8"),
+    readFile(appPath, "utf8")
+  ]);
+
+  assert.match(migration, /ADD COLUMN IF NOT EXISTS asset_url/);
+  assert.match(migration, /ADD COLUMN IF NOT EXISTS asset_version/);
+  assert.match(migration, /avatar_frame ~ '\^\[a-z0-9\]/);
+  assert.match(gameHistorySource, /version: 17,[\s\S]*017_uploaded_avatar_frames\.sql/);
+  assert.match(gameHistorySource, /createUploadedAvatarFrameProduct/);
+  assert.match(serverSource, /pathParts\[2\] === "avatar-frames"[\s\S]*req\.method === "POST"/);
+  assert.match(serverSource, /decodeAvatarFrameDataUrl/);
+  assert.match(serverSource, /uploadSupabaseAvatarFrame/);
+  assert.match(serverSource, /pathParts\[1\] === "avatar-frames"[\s\S]*req\.method === "GET"/);
+  assert.match(appSource, /data-form="upload-avatar-frame"/);
+  assert.match(appSource, /function prepareAvatarFrameDataUrl/);
+  assert.match(appSource, /function ensureAvatarFrameAssets/);
+});
+
 test("game items allow AI games without charging inventory", () => {
   assert.deepEqual(gameItemAccess({
     players: [

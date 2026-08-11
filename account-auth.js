@@ -1,4 +1,5 @@
-import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
+import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
+import { inflateSync } from "node:zlib";
 
 const SUPABASE_URL = String(process.env.SUPABASE_URL || "").trim().replace(/\/$/, "");
 const SUPABASE_SECRET_KEY = String(process.env.SUPABASE_SECRET_KEY || "").trim();
@@ -7,6 +8,9 @@ const AUTH_COOKIE_NAME = "cdp_auth";
 const AUTH_SESSION_SECONDS = 7 * 24 * 60 * 60;
 const AVATAR_BUCKET = "player-avatars";
 const AVATAR_MAX_BYTES = 300_000;
+const AVATAR_FRAME_BUCKET = "avatar-frame-assets";
+const AVATAR_FRAME_MAX_BYTES = 1_200_000;
+const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 
 export function normalizeUsername(value) {
   return String(value || "").trim().toLowerCase();
@@ -35,7 +39,8 @@ export function accountAuthStatus() {
   return {
     configured: Boolean(SUPABASE_URL && SUPABASE_SECRET_KEY && AUTH_SESSION_SECRET),
     storageConfigured: Boolean(SUPABASE_URL && SUPABASE_SECRET_KEY),
-    avatarBucket: AVATAR_BUCKET
+    avatarBucket: AVATAR_BUCKET,
+    avatarFrameBucket: AVATAR_FRAME_BUCKET
   };
 }
 
@@ -172,9 +177,9 @@ export async function signInSupabaseUser(email, password) {
   return data.user || null;
 }
 
-export async function ensureAvatarBucket() {
+async function ensurePublicStorageBucket(bucket, fileSizeLimit, allowedMimeTypes) {
   if (!accountAuthStatus().storageConfigured) return { ready: false };
-  const current = await fetch(`${SUPABASE_URL}/storage/v1/bucket/${AVATAR_BUCKET}`, {
+  const current = await fetch(`${SUPABASE_URL}/storage/v1/bucket/${bucket}`, {
     method: "GET",
     headers: supabaseHeaders()
   });
@@ -184,22 +189,30 @@ export async function ensureAvatarBucket() {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
-        id: AVATAR_BUCKET,
-        name: AVATAR_BUCKET,
+        id: bucket,
+        name: bucket,
         public: true,
-        file_size_limit: AVATAR_MAX_BYTES,
-        allowed_mime_types: ["image/webp", "image/jpeg", "image/png"]
+        file_size_limit: fileSizeLimit,
+        allowed_mime_types: allowedMimeTypes
       })
     });
     return { ready: true };
   } catch (createError) {
-    const retry = await fetch(`${SUPABASE_URL}/storage/v1/bucket/${AVATAR_BUCKET}`, {
+    const retry = await fetch(`${SUPABASE_URL}/storage/v1/bucket/${bucket}`, {
       method: "GET",
       headers: supabaseHeaders()
     });
     if (retry.ok) return { ready: true };
     throw createError;
   }
+}
+
+export async function ensureAvatarBucket() {
+  return ensurePublicStorageBucket(AVATAR_BUCKET, AVATAR_MAX_BYTES, ["image/webp", "image/jpeg", "image/png"]);
+}
+
+export async function ensureAvatarFrameBucket() {
+  return ensurePublicStorageBucket(AVATAR_FRAME_BUCKET, AVATAR_FRAME_MAX_BYTES, ["image/png"]);
 }
 
 function avatarImageType(buffer, declaredType) {
@@ -227,6 +240,125 @@ export function decodeAvatarDataUrl(dataUrl) {
   return { buffer, ...type };
 }
 
+function invalidAvatarFrame(message) {
+  return Object.assign(new Error(message), { status: 400 });
+}
+
+function paethPredictor(left, above, upperLeft) {
+  const prediction = left + above - upperLeft;
+  const leftDistance = Math.abs(prediction - left);
+  const aboveDistance = Math.abs(prediction - above);
+  const upperLeftDistance = Math.abs(prediction - upperLeft);
+  return leftDistance <= aboveDistance && leftDistance <= upperLeftDistance
+    ? left
+    : aboveDistance <= upperLeftDistance
+      ? above
+      : upperLeft;
+}
+
+function validateAvatarFramePng(buffer) {
+  if (buffer.length < 33 || !buffer.subarray(0, PNG_SIGNATURE.length).equals(PNG_SIGNATURE)) {
+    throw invalidAvatarFrame("头像框文件不是有效的 PNG");
+  }
+  let offset = PNG_SIGNATURE.length;
+  let header = null;
+  const imageDataChunks = [];
+  let ended = false;
+  while (offset + 12 <= buffer.length) {
+    const length = buffer.readUInt32BE(offset);
+    const dataStart = offset + 8;
+    const dataEnd = dataStart + length;
+    if (dataEnd + 4 > buffer.length) throw invalidAvatarFrame("头像框 PNG 文件不完整");
+    const type = buffer.subarray(offset + 4, offset + 8).toString("ascii");
+    const data = buffer.subarray(dataStart, dataEnd);
+    if (type === "IHDR") {
+      if (header || data.length !== 13) throw invalidAvatarFrame("头像框 PNG 头信息不正确");
+      header = {
+        width: data.readUInt32BE(0),
+        height: data.readUInt32BE(4),
+        bitDepth: data[8],
+        colorType: data[9],
+        compression: data[10],
+        filter: data[11],
+        interlace: data[12]
+      };
+    } else if (type === "IDAT") {
+      imageDataChunks.push(data);
+    } else if (type === "IEND") {
+      ended = true;
+      break;
+    }
+    offset = dataEnd + 4;
+  }
+  if (!header || !ended || !imageDataChunks.length) throw invalidAvatarFrame("头像框 PNG 缺少图片数据");
+  if (header.width !== 512 || header.height !== 512) throw invalidAvatarFrame("头像框必须是 512 × 512 px");
+  if (header.bitDepth !== 8 || header.colorType !== 6 || header.compression !== 0 || header.filter !== 0 || header.interlace !== 0) {
+    throw invalidAvatarFrame("头像框必须导出为非隔行的 8-bit RGBA PNG");
+  }
+
+  const bytesPerPixel = 4;
+  const stride = header.width * bytesPerPixel;
+  let pixels;
+  try {
+    pixels = inflateSync(Buffer.concat(imageDataChunks), { maxOutputLength: (stride + 1) * header.height });
+  } catch {
+    throw invalidAvatarFrame("头像框 PNG 图像数据无法读取");
+  }
+  if (pixels.length !== (stride + 1) * header.height) throw invalidAvatarFrame("头像框 PNG 像素数据不完整");
+
+  let pixelOffset = 0;
+  let previous = Buffer.alloc(stride);
+  let hasVisibleFramePixel = false;
+  for (let y = 0; y < header.height; y += 1) {
+    const filter = pixels[pixelOffset];
+    pixelOffset += 1;
+    const encoded = pixels.subarray(pixelOffset, pixelOffset + stride);
+    pixelOffset += stride;
+    const current = Buffer.alloc(stride);
+    for (let index = 0; index < stride; index += 1) {
+      const left = index >= bytesPerPixel ? current[index - bytesPerPixel] : 0;
+      const above = previous[index];
+      const upperLeft = index >= bytesPerPixel ? previous[index - bytesPerPixel] : 0;
+      const value = encoded[index];
+      if (filter === 0) current[index] = value;
+      else if (filter === 1) current[index] = (value + left) & 0xff;
+      else if (filter === 2) current[index] = (value + above) & 0xff;
+      else if (filter === 3) current[index] = (value + Math.floor((left + above) / 2)) & 0xff;
+      else if (filter === 4) current[index] = (value + paethPredictor(left, above, upperLeft)) & 0xff;
+      else throw invalidAvatarFrame("头像框 PNG 使用了不支持的滤镜");
+    }
+    for (let x = 0; x < header.width; x += 1) {
+      const alpha = current[x * bytesPerPixel + 3];
+      const outsideCanvasSafeEdge = x < 8 || x >= 504 || y < 8 || y >= 504;
+      const inAvatarOpening = x >= 96 && x < 416 && y >= 96 && y < 416;
+      if ((outsideCanvasSafeEdge || inAvatarOpening) && alpha !== 0) {
+        throw invalidAvatarFrame(outsideCanvasSafeEdge
+          ? "头像框四边 8 px 必须完全透明"
+          : "头像框中央 320 × 320 px 开口必须完全透明");
+      }
+      if (!outsideCanvasSafeEdge && !inAvatarOpening && alpha > 0) hasVisibleFramePixel = true;
+    }
+    previous = current;
+  }
+  if (!hasVisibleFramePixel) throw invalidAvatarFrame("头像框没有可见的框体内容");
+}
+
+export function decodeAvatarFrameDataUrl(dataUrl) {
+  const match = String(dataUrl || "").match(/^data:image\/png;base64,([A-Za-z0-9+/=]+)$/);
+  if (!match) throw invalidAvatarFrame("头像框只支持 PNG 格式");
+  const buffer = Buffer.from(match[1], "base64");
+  if (!buffer.length || buffer.length > AVATAR_FRAME_MAX_BYTES) {
+    throw Object.assign(new Error("头像框必须小于 1.2MB"), { status: 413 });
+  }
+  validateAvatarFramePng(buffer);
+  return {
+    buffer,
+    contentType: "image/png",
+    extension: "png",
+    contentVersion: createHash("sha256").update(buffer).digest("hex").slice(0, 16)
+  };
+}
+
 export async function uploadSupabaseAvatar(profileId, version, avatar) {
   await ensureAvatarBucket();
   const safeProfileId = String(profileId || "").replace(/[^a-zA-Z0-9_-]/g, "");
@@ -243,4 +375,25 @@ export async function uploadSupabaseAvatar(profileId, version, avatar) {
     body: avatar.buffer
   });
   return `${SUPABASE_URL}/storage/v1/object/public/${AVATAR_BUCKET}/${path}`;
+}
+
+export async function uploadSupabaseAvatarFrame(assetKey, avatarFrame) {
+  await ensureAvatarFrameBucket();
+  const safeAssetKey = String(assetKey || "").trim();
+  if (!/^[a-z0-9][a-z0-9-]{1,38}[a-z0-9]$/.test(safeAssetKey)) {
+    throw Object.assign(new Error("头像框主题编号不正确"), { status: 400 });
+  }
+  const contentVersion = String(avatarFrame?.contentVersion || "");
+  if (!/^[a-f0-9]{16}$/.test(contentVersion)) throw Object.assign(new Error("头像框内容版本不正确"), { status: 400 });
+  const path = `${safeAssetKey}/${contentVersion}.${avatarFrame.extension}`;
+  await supabaseRequest(`/storage/v1/object/${AVATAR_FRAME_BUCKET}/${path}`, {
+    method: "POST",
+    headers: {
+      "content-type": avatarFrame.contentType,
+      "cache-control": "31536000, immutable",
+      "x-upsert": "false"
+    },
+    body: avatarFrame.buffer
+  });
+  return `${SUPABASE_URL}/storage/v1/object/public/${AVATAR_FRAME_BUCKET}/${path}?v=${contentVersion}`;
 }
