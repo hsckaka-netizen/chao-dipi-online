@@ -4,24 +4,20 @@
   <g id="YOUR_FRAME_ARTWORK" />
   <g id="GUIDES_DO_NOT_EXPORT" font-family="Arial, sans-serif" font-size="13" fill="none">
     <rect width="512" height="512" fill="#f4f6f5" />
-    <path d="M0 0h512v512H0zM96 96h320v320H96z" fill="#4f8f7b" fill-opacity="0.12" fill-rule="evenodd" />
     <rect x="8" y="8" width="496" height="496" rx="12" stroke="#d48828" stroke-width="2" stroke-dasharray="8 6" />
-    <rect x="96" y="96" width="320" height="320" fill="#d48828" fill-opacity="0.05" stroke="#d48828" stroke-width="3" stroke-dasharray="8 6" />
-    <rect x="128" y="128" width="256" height="256" fill="#d73e55" fill-opacity="0.08" stroke="#d73e55" stroke-width="2" stroke-dasharray="8 6" />
     <rect x="20" y="8" width="472" height="88" rx="12" fill="#2878c8" fill-opacity="0.08" stroke="#2878c8" stroke-dasharray="6 5" />
-    <rect x="40" y="96" width="56" height="320" rx="12" fill="#7a55aa" fill-opacity="0.08" stroke="#7a55aa" stroke-dasharray="6 5" />
-    <rect x="416" y="96" width="56" height="320" rx="12" fill="#7a55aa" fill-opacity="0.08" stroke="#7a55aa" stroke-dasharray="6 5" />
     <rect x="20" y="416" width="472" height="88" rx="12" fill="#2878c8" fill-opacity="0.08" stroke="#2878c8" stroke-dasharray="6 5" />
     <circle cx="58" cy="58" r="34" fill="#c34848" fill-opacity="0.08" stroke="#c34848" stroke-dasharray="4 4" />
     <circle cx="454" cy="58" r="34" fill="#c34848" fill-opacity="0.08" stroke="#c34848" stroke-dasharray="4 4" />
     <g fill="#26342f" stroke="none">
       <text x="16" y="28">8 px 透明外边距</text>
-      <text x="256" y="238" text-anchor="middle">统一正方形开口 320 × 320</text>
-      <text x="256" y="258" text-anchor="middle">整个开口 Alpha 必须为 0</text>
-      <text x="256" y="108" text-anchor="middle">橙色虚线：固定内沿，不得非等比压缩</text>
+      <text x="256" y="228" text-anchor="middle">完整 512 × 512 透明前景图</text>
+      <text x="256" y="248" text-anchor="middle">只有框体保留像素，其余区域完全透明</text>
+      <text x="256" y="268" text-anchor="middle">可直接覆盖头像，不设内开口或安全区分割</text>
+      <text x="256" y="108" text-anchor="middle">所有可见像素留在橙色虚线内</text>
       <text x="256" y="52" text-anchor="middle">顶部主设计区（主要视觉重量）</text>
-      <text x="60" y="256" text-anchor="middle" transform="rotate(-90 60 256)">窄导轨 24–40 px</text>
-      <text x="452" y="256" text-anchor="middle" transform="rotate(90 452 256)">窄导轨 24–40 px</text>
+      <text x="60" y="256" text-anchor="middle" transform="rotate(-90 60 256)">可按主题自由构图</text>
+      <text x="452" y="256" text-anchor="middle" transform="rotate(90 452 256)">整体必须等比</text>
       <text x="256" y="468" text-anchor="middle">底部可居中或左右分布</text>
       <text x="20" y="454">红色圆：道具标记可能覆盖</text>
     </g>

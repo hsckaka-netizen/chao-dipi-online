@@ -7,7 +7,7 @@ import { decodeAvatarFrameDataUrl } from "../account-auth.js";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
 
-test("avatar-frame designer kit shares one canvas and opening contract", async () => {
+test("avatar-frame designer kit defines one transparent foreground canvas", async () => {
   const [spec, template, preview] = await Promise.all([
     readFile(`${root}docs/avatar-frame-design-spec.md`, "utf8"),
     readFile(`${root}docs/assets/avatar-frame-template.svg`, "utf8"),
@@ -15,23 +15,18 @@ test("avatar-frame designer kit shares one canvas and opening contract", async (
   ]);
 
   assert.match(spec, /512 × 512/);
-  assert.match(spec, /x=96\.\.416、y=96\.\.416/);
-  assert.match(spec, /320 × 320/);
-  assert.match(spec, /整个标准内开口内所有像素的 Alpha 必须为 0/);
-  assert.match(spec, /两侧窄导轨/);
-  assert.match(spec, /24–40 px/);
+  assert.match(spec, /只有框体、徽记、装饰、阴影和必要的主题效果保留像素；其余区域必须真实透明/);
+  assert.match(spec, /不设“内开口”“五官安全区”或其他强制透明分区/);
   assert.match(spec, /不依赖游戏页面/);
-  assert.match(spec, /每侧最多向外扩 88 px/);
   assert.match(spec, /数字、字母、徽记、徽章和人物主体保持自然纵横比/);
   assert.match(template, /viewBox="0 0 512 512"/);
   assert.match(template, /id="GUIDES_DO_NOT_EXPORT"/);
-  assert.match(template, /x="96" y="96" width="320" height="320"/);
-  assert.match(template, /x="128" y="128" width="256" height="256"/);
-  assert.match(template, /x="40" y="96" width="56" height="320"/);
+  assert.match(template, /只有框体保留像素，其余区域完全透明/);
+  assert.match(template, /不设内开口或安全区分割/);
   assert.match(preview, /const sizes = \[38, 48, 80, 104\]/);
   assert.match(preview, /alphaAt\(data, x, y\)/);
-  assert.match(preview, /file\.size <= 300 \* 1024/);
-  assert.match(preview, /for \(let y = 96; y < 416/);
+  assert.match(preview, /file\.size <= 1_200_000/);
+  assert.doesNotMatch(preview, /openingClear|320 × 320 px 内开口/);
 });
 
 test("card skins use matte rails and the VIP card frame is static", async () => {

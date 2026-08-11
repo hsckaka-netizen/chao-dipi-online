@@ -330,13 +330,10 @@ function validateAvatarFramePng(buffer) {
     for (let x = 0; x < header.width; x += 1) {
       const alpha = current[x * bytesPerPixel + 3];
       const outsideCanvasSafeEdge = x < 8 || x >= 504 || y < 8 || y >= 504;
-      const inAvatarOpening = x >= 96 && x < 416 && y >= 96 && y < 416;
-      if ((outsideCanvasSafeEdge || inAvatarOpening) && alpha !== 0) {
-        throw invalidAvatarFrame(outsideCanvasSafeEdge
-          ? "头像框四边 8 px 必须完全透明"
-          : "头像框中央 320 × 320 px 开口必须完全透明");
+      if (outsideCanvasSafeEdge && alpha !== 0) {
+        throw invalidAvatarFrame("头像框四边 8 px 必须完全透明");
       }
-      if (!outsideCanvasSafeEdge && !inAvatarOpening && alpha > 0) hasVisibleFramePixel = true;
+      if (!outsideCanvasSafeEdge && alpha > 0) hasVisibleFramePixel = true;
     }
     previous = current;
   }

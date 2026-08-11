@@ -15,7 +15,7 @@
 - 账号：Supabase Auth；服务端使用 Secret Key，前端不得接触密钥。
 - 数据库：Supabase PostgreSQL；迁移脚本在 `db/migrations`。
 - 头像：Supabase Storage 的 `player-avatars`；浏览器裁切压缩为 256×256，普通玩家 7 天最多更换一次。
-- 聊天生成的头像框：管理员从后台上传符合固定几何的 PNG；服务端验证透明边距与内开口后存入 Supabase Storage `avatar-frame-assets`，以内容版本 URL 作为商城商品资产。
+- 聊天生成的头像框：管理员从后台上传透明 PNG 前景图；服务端验证格式、尺寸和透明边距后存入 Supabase Storage `avatar-frame-assets`，以内容版本 URL 作为商城商品资产。
 - GitHub：`hsckaka-netizen/chao-dipi-online`。
 - 部署：推送 `main` 后由 Render 自动部署。
 - 线上地址：<https://chao-dipi-online.onrender.com/>。

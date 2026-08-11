@@ -2,7 +2,7 @@ export const ASSET_VERSIONS = Object.freeze({
   "/assets/joker-face-small.png": "f16ffbe9a2eb",
   "/assets/joker-face.png": "298272a943e8",
   "/assets/cosmetics/avatar-frame-blood-elf.png": "0a66589ce998",
-  "/assets/cosmetics/avatar-frame-cr7.png": "5cfcd212881a",
+  "/assets/cosmetics/avatar-frame-cr7.png": "eb9f5b09d5ff",
   "/assets/cosmetics/avatar-frame-death-knight.png": "601c0e09ab47",
   "/assets/cosmetics/avatar-frame-druid.png": "a89d5a643866",
   "/assets/cosmetics/avatar-frame-endless-winter.png": "d2ce23d1205d",

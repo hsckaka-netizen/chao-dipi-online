@@ -1,6 +1,6 @@
 import { applyStatePatch } from "./state-patch.js?v=9330552c7e1e";
 import { detectNewDraggedFiveEffects, detectNewLargePlayEffects } from "./gameplay-effects.js?v=14791e626d30";
-import { ASSET_URLS } from "./asset-versions.js?v=49e43b3b7076";
+import { ASSET_URLS } from "./asset-versions.js?v=fd9ef080a189";
 import { createHistoryTrickEntry, filterHistoryTimelineEntries } from "./history-records.js?v=874ba3c97732";
 
 const app = document.querySelector("#app");
@@ -4207,7 +4207,7 @@ function renderAdminShopManager() {
           <summary><span>上传聊天生成头像框</span><small>先校验，默认草稿</small></summary>
           <div class="admin-inline-tool-body">
             <form class="avatar-frame-upload-form" data-form="upload-avatar-frame">
-              <div class="admin-action-warning avatar-frame-upload-wide">仅接受 PNG：512 × 512 px、最多 1.2MB。服务端会检查四边 8 px 与中央 320 × 320 px 开口是否完全透明。</div>
+              <div class="admin-action-warning avatar-frame-upload-wide">仅接受 PNG：512 × 512 px、最多 1.2MB。头像框会作为透明前景直接覆盖头像；服务端会检查四边 8 px 透明和文件格式。</div>
               <label>主题编号<input name="assetKey" pattern="[a-z0-9][a-z0-9-]{1,38}[a-z0-9]" minlength="3" maxlength="40" required placeholder="jade-dragon"></label>
               <label>显示名称<input name="name" maxlength="80" required placeholder="玉龙祥瑞"></label>
               <label>价格<input name="price" type="number" min="1" max="1000000" step="1" required value="300"></label>
