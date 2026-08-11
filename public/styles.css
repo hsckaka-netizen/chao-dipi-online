@@ -846,10 +846,8 @@ section.game-room-overview {
 }
 
 .avatar.large {
-  --avatar-portrait-size: 68px;
-  --avatar-frame-box-size: 108.8px;
-  width: 76px;
-  height: 76px;
+  --avatar-portrait-size: 76px;
+  --avatar-frame-box-size: 104.576px;
   font-size: 20px;
 }
 
@@ -2112,23 +2110,26 @@ button.joinable-room-player.spectate-player {
 
 .avatar {
   /*
-   * 非框状态的可见头像内容是 40px。装备框后保留该内容尺寸，
-   * 以 320 / 512 = 62.5% 反推完整框体画布为 64px。
+   * 所有头像无论是否佩戴头像框，都预留同一个完整素材展示区。
+   * 头像始终居中，佩戴状态只决定是否显示上层框体。
+   * 512px 素材中的虚拟框架约为 372px，故完整展示区固定为头像外沿的 1.376 倍；
+   * 可见框体的内沿、下沿和装饰延伸均不参与头像尺寸计算。
    */
-  --avatar-portrait-size: 40px;
-  --avatar-frame-box-size: 64px;
+  --avatar-portrait-size: 48px;
+  --avatar-frame-box-size: 66.048px;
   position: relative;
   flex: 0 0 auto;
   display: inline-grid;
   place-items: center;
-  width: 48px;
-  height: 48px;
-  overflow: hidden;
-  border: 1px solid #aebbb4;
-  border-radius: 7px;
-  background: #dfe7e2;
-  padding: 3px;
-  box-shadow: inset 0 0 0 1px #fff, 0 2px 5px rgba(31, 45, 38, 0.12);
+  width: var(--avatar-frame-box-size);
+  height: var(--avatar-frame-box-size);
+  aspect-ratio: 1;
+  overflow: visible;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  padding: 0;
+  box-shadow: none;
   color: var(--primary);
   font-size: 14px;
   font-weight: 900;
@@ -2136,18 +2137,14 @@ button.joinable-room-player.spectate-player {
 }
 
 .avatar.small {
-  --avatar-portrait-size: 30px;
-  --avatar-frame-box-size: 48px;
-  width: 38px;
-  height: 38px;
+  --avatar-portrait-size: 38px;
+  --avatar-frame-box-size: 52.288px;
   font-size: 14px;
 }
 
 .avatar.shop-feature {
-  --avatar-portrait-size: 80px;
-  --avatar-frame-box-size: 128px;
-  width: 88px;
-  height: 88px;
+  --avatar-portrait-size: 88px;
+  --avatar-frame-box-size: 121.088px;
   font-size: 23px;
 }
 
@@ -2156,27 +2153,37 @@ button.joinable-room-player.spectate-player {
   height: 100%;
   object-fit: cover;
   display: block;
-  border-radius: 4px;
+  border-radius: inherit;
 }
 
 .avatar-core {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  z-index: 1;
   display: inline-grid;
   place-items: center;
-  width: 100%;
-  height: 100%;
+  width: var(--avatar-portrait-size);
+  height: var(--avatar-portrait-size);
   overflow: hidden;
-  border-radius: 4px;
+  border-radius: 7px;
+  background: #dfe7e2;
+  box-shadow:
+    inset 0 0 0 1px #aebbb4,
+    inset 0 0 0 2px #fff,
+    0 2px 5px rgba(31, 45, 38, 0.12);
+  transform: translate(-50%, -50%);
 }
 
 .avatar.avatar-frame > .avatar-frame-art {
   position: absolute;
   inset: 0;
-  z-index: 3;
+  z-index: 2;
   width: 100%;
   height: 100%;
   max-width: none;
-  /* 这一层是完整的 512 × 512 头像框画布，使用真实前景图片而非伪元素。 */
-  object-fit: fill;
+  /* 程序只完整、等比地叠加素材，不为单个主题做裁切或位移补偿。 */
+  object-fit: contain;
   display: block;
   border: 0;
   border-radius: 0;
@@ -2190,20 +2197,7 @@ button.joinable-room-player.spectate-player {
 .avatar.avatar-frame {
   z-index: 2;
   isolation: isolate;
-  /*
-   * 已装备时，元素本身就是完整框体画布；该尺寸等于旧版的实际外框尺寸。
-   * 这样父布局可以感知完整框体，框、头像和命中区域也只剩一套坐标。
-   */
-  width: var(--avatar-frame-box-size);
-  height: var(--avatar-frame-box-size);
-  aspect-ratio: 1;
   margin-inline-end: 0;
-  overflow: visible;
-  border: 0;
-  border-radius: 0;
-  background: transparent;
-  padding: 0;
-  box-shadow: none;
 }
 
 .avatar.avatar-frame-stormwind {
@@ -2321,22 +2315,9 @@ button.joinable-room-player.spectate-player {
 }
 
 .avatar.avatar-frame .avatar-core {
-  position: absolute;
-  /*
-   * 512px 母版中的内开口是 320px。头像内容始终沿用未装备时的
-   * 实际尺寸，并在完整画布中居中，画布与内容严格维持 1.6 : 1。
-   */
-  top: 50%;
-  left: 50%;
-  width: var(--avatar-portrait-size);
-  height: var(--avatar-portrait-size);
-  transform: translate(-50%, -50%);
-  border: 0;
   border-radius: 0;
-  background: transparent;
+  background: #dfe7e2;
   box-shadow: none;
-  overflow: hidden;
-  z-index: 1;
 }
 
 .avatar.avatar-frame .avatar-core img {
@@ -3387,10 +3368,8 @@ button.joinable-room-player.spectate-player {
 }
 
 .table-circle .trick-player .avatar.small {
-  --avatar-portrait-size: 72px;
-  --avatar-frame-box-size: 115.2px;
-  width: 80px;
-  height: 80px;
+  --avatar-portrait-size: 80px;
+  --avatar-frame-box-size: 110.08px;
   font-size: 21px;
 }
 
@@ -3408,9 +3387,10 @@ button.joinable-room-player.spectate-player {
 }
 
 .table-player-avatar-stage {
+  --avatar-stage-inset: 15.04px;
   display: inline-grid;
-  width: 80px;
-  height: 80px;
+  width: 110.08px;
+  height: 110.08px;
 }
 
 .trick-player-main > .table-player-avatar-stage {
@@ -3482,12 +3462,12 @@ button.joinable-room-player.spectate-player {
   z-index: 2;
   min-width: 0;
   display: grid;
-  grid-template-columns: 80px minmax(0, 1fr);
+  grid-template-columns: 110.08px minmax(0, 1fr);
   grid-template-areas:
     "player-avatar player-summary"
     "player-avatar player-meta";
   align-items: center;
-  gap: 8px 24px;
+  gap: 8px 12px;
 }
 
 .trick-player-meta {
@@ -3695,9 +3675,9 @@ button.joinable-room-player.spectate-player {
 
 .player-history-mini.overlay {
   position: absolute;
-  left: 4px;
-  right: 4px;
-  bottom: 4px;
+  left: var(--avatar-stage-inset, 4px);
+  right: var(--avatar-stage-inset, 4px);
+  bottom: var(--avatar-stage-inset, 4px);
   z-index: 4;
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -3937,7 +3917,7 @@ button.joinable-room-player.spectate-player {
 
 .seat-hand-layout {
   display: grid;
-  grid-template-columns: 150px minmax(0, 1fr);
+  grid-template-columns: 170px minmax(0, 1fr);
   gap: 10px;
   min-width: 0;
 }
@@ -3953,15 +3933,14 @@ button.joinable-room-player.spectate-player {
 }
 
 .seat-hand-avatar-stage {
-  width: 104px;
-  height: 104px;
+  --avatar-stage-inset: 19.552px;
+  width: 143.104px;
+  height: 143.104px;
 }
 
 .avatar.seat-profile {
-  --avatar-portrait-size: 96px;
-  --avatar-frame-box-size: 153.6px;
-  width: 104px;
-  height: 104px;
+  --avatar-portrait-size: 104px;
+  --avatar-frame-box-size: 143.104px;
   font-size: 24px;
 }
 
@@ -5287,7 +5266,7 @@ button.auto-play-toggle.active {
   }
 
   .seat-hand-profile-card {
-    grid-template-columns: 96px minmax(0, 1fr);
+    grid-template-columns: 99.072px minmax(0, 1fr);
     align-items: center;
     justify-items: stretch;
     border-inline-end: 0;
@@ -5295,12 +5274,15 @@ button.auto-play-toggle.active {
     padding: 0 0 8px;
   }
 
-  .seat-hand-avatar-stage,
+  .seat-hand-avatar-stage {
+    --avatar-stage-inset: 13.536px;
+    width: 99.072px;
+    height: 99.072px;
+  }
+
   .avatar.seat-profile {
-    --avatar-portrait-size: 64px;
-    --avatar-frame-box-size: 102.4px;
-    width: 72px;
-    height: 72px;
+    --avatar-portrait-size: 72px;
+    --avatar-frame-box-size: 99.072px;
   }
 
   .seat-hand-head {
@@ -5410,10 +5392,8 @@ button.auto-play-toggle.active {
   }
 
   .statistics-user-cell .avatar.small {
-    --avatar-portrait-size: 26px;
-    --avatar-frame-box-size: 41.6px;
-    width: 34px;
-    height: 34px;
+    --avatar-portrait-size: 34px;
+    --avatar-frame-box-size: 46.784px;
   }
 
   .statistics-player-button,
@@ -5652,10 +5632,8 @@ button.auto-play-toggle.active {
 }
 
 .shop-avatar-preview .avatar {
-  --avatar-portrait-size: 62px;
-  --avatar-frame-box-size: 99.2px;
-  width: 70px;
-  height: 70px;
+  --avatar-portrait-size: 70px;
+  --avatar-frame-box-size: 96.32px;
 }
 
 .shop-avatar-preview {
@@ -5687,17 +5665,13 @@ button.auto-play-toggle.active {
 }
 
 .shop-avatar-preview .avatar.shop-feature {
-  --avatar-portrait-size: 80px;
-  --avatar-frame-box-size: 128px;
-  width: 88px;
-  height: 88px;
+  --avatar-portrait-size: 88px;
+  --avatar-frame-box-size: 121.088px;
 }
 
 .shop-avatar-preview .avatar.small {
-  --avatar-portrait-size: 30px;
-  --avatar-frame-box-size: 48px;
-  width: 38px;
-  height: 38px;
+  --avatar-portrait-size: 38px;
+  --avatar-frame-box-size: 52.288px;
 }
 
 .shop-avatar-preview .avatar.avatar-frame,
@@ -6021,22 +5995,85 @@ button.auto-play-toggle.active {
   background: #fbfcfb;
 }
 
-.shop-admin-product > div {
+.shop-admin-product.avatar-frame-admin-product {
+  grid-template-columns: 116px minmax(140px, 1fr) 84px auto;
+}
+
+.shop-admin-product-copy {
   min-width: 0;
   display: grid;
   gap: 3px;
 }
 
-.shop-admin-product > div strong,
-.shop-admin-product > div span {
+.shop-admin-product-copy strong,
+.shop-admin-product-copy span,
+.shop-admin-product-copy small {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.shop-admin-product > div span {
+.shop-admin-product-copy span,
+.shop-admin-product-copy small {
   color: var(--muted);
   font-size: 12px;
+}
+
+.shop-admin-product-copy small {
+  font-size: 10px;
+}
+
+.admin-avatar-frame-product-preview {
+  display: grid;
+  grid-template-columns: 50px 64px;
+  align-items: center;
+  gap: 2px;
+}
+
+.admin-avatar-frame-raw,
+.avatar-frame-upload-raw-preview {
+  background-color: #f7f9f8;
+  background-image:
+    linear-gradient(45deg, #dfe5e1 25%, transparent 25%),
+    linear-gradient(-45deg, #dfe5e1 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, #dfe5e1 75%),
+    linear-gradient(-45deg, transparent 75%, #dfe5e1 75%);
+  background-position: 0 0, 0 6px, 6px -6px, -6px 0;
+  background-size: 12px 12px;
+}
+
+.admin-avatar-frame-raw {
+  width: 50px;
+  height: 50px;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.admin-avatar-frame-raw img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.admin-avatar-frame-equipped {
+  width: 64px;
+  height: 64px;
+  display: grid;
+  place-items: center;
+}
+
+.admin-avatar-frame-missing {
+  min-height: 50px;
+  display: grid;
+  place-items: center;
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+  color: var(--muted);
+  font-size: 10px;
+  text-align: center;
 }
 
 .shop-grant-form {
@@ -6723,6 +6760,101 @@ button.auto-play-toggle.active {
   grid-column: 1 / -1;
 }
 
+.avatar-frame-upload-status {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #f7faf8;
+  padding: 9px 11px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.avatar-frame-upload-status.good {
+  border-color: #b9dcc9;
+  background: #edf8f2;
+  color: var(--good);
+}
+
+.avatar-frame-upload-status.bad {
+  border-color: #efc8c8;
+  background: #fff2f2;
+  color: var(--bad);
+}
+
+.avatar-frame-upload-preview {
+  display: grid;
+  grid-template-columns: minmax(180px, 240px) minmax(0, 1fr);
+  align-items: center;
+  gap: 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #fbfcfb;
+  padding: 12px;
+}
+
+.avatar-frame-upload-preview[hidden] {
+  display: none;
+}
+
+.avatar-frame-upload-raw-preview {
+  min-height: 210px;
+  display: grid;
+  align-content: center;
+  justify-items: center;
+  gap: 8px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 10px;
+  overflow: hidden;
+}
+
+.avatar-frame-upload-raw-preview span {
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.9);
+  padding: 3px 8px;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.avatar-frame-upload-raw-preview img {
+  width: 180px;
+  height: 180px;
+  object-fit: contain;
+}
+
+.avatar-frame-upload-size-previews {
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  justify-content: space-around;
+  gap: 18px;
+}
+
+.avatar-frame-upload-sample {
+  display: grid;
+  justify-items: center;
+  gap: 7px;
+}
+
+.avatar-frame-upload-sample small {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.avatar.upload-table {
+  --avatar-portrait-size: 80px;
+  --avatar-frame-box-size: 110.08px;
+  font-size: 21px;
+}
+
+.avatar.upload-large {
+  --avatar-portrait-size: 104px;
+  --avatar-frame-box-size: 143.104px;
+  font-size: 24px;
+}
+
 @media (max-width: 980px) {
   .admin-overview-grid {
     grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -6767,6 +6899,10 @@ button.auto-play-toggle.active {
     grid-template-columns: 1fr;
   }
 
+  .avatar-frame-upload-preview {
+    grid-template-columns: 1fr;
+  }
+
   .managed-account-tools,
   .profile-editor {
     width: 100%;
@@ -6787,8 +6923,8 @@ button.auto-play-toggle.active {
   }
 }
 
-/* 保持在所有响应式尺寸和业务场景下，已装备框都以完整 512 画布作为元素本身。 */
-.avatar.avatar-frame {
+/* 保持所有响应式尺寸下的展示区不随佩戴状态改变。 */
+.avatar {
   width: var(--avatar-frame-box-size);
   height: var(--avatar-frame-box-size);
 }

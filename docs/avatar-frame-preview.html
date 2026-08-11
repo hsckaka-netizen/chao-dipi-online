@@ -35,7 +35,7 @@
     .avatar-photo { width: 100%; height: 100%; display: none; object-fit: cover; }
     .avatar.has-photo .avatar-photo { display: block; }
     .avatar.has-photo .initial { display: none; }
-    .frame { position: absolute; inset: 0; z-index: 2; width: 100%; height: 100%; object-fit: fill; pointer-events: none; filter: drop-shadow(0 3px 4px rgba(18, 38, 30, .28)); }
+    .frame { position: absolute; inset: 0; z-index: 2; width: 100%; height: 100%; object-fit: contain; pointer-events: none; filter: drop-shadow(0 3px 4px rgba(18, 38, 30, .28)); }
     .empty-note { border: 1px dashed #a9bbb2; border-radius: 12px; padding: 16px; color: #66776f; text-align: center; }
     code { border-radius: 5px; background: #edf2ef; padding: 2px 5px; }
     @media (max-width: 640px) { body { padding: 12px; } header, section { padding: 15px; } .uploads { grid-template-columns: 1fr; } }
@@ -59,7 +59,7 @@
     <section>
       <h2>人工验收提醒</h2>
       <p>重点看 38 px：主题是否仍能凭轮廓或主色辨认；头像是否清楚；浅色和深色背景是否都有边界。自动检查通过不代表视觉质量已经通过。</p>
-      <p>素材标准：画布 <code>512 × 512</code>，四边 8 px 透明。头像框是一张透明前景图：只有框体保留像素，其余区域透明，直接覆盖头像；不设内开口或五官安全区。</p>
+      <p>素材标准：画布 <code>512 × 512</code>，四边 8 px 透明；头像外沿对齐约 <code>372 × 372</code> 的虚拟框架，中央 <code>256 × 256</code> 头像核心区必须完全透明。可见设计向框架内外的延伸都随整张素材直接叠加。</p>
     </section>
   </main>
   <script>
@@ -84,7 +84,7 @@
           <div class="sizes">
             ${sizes.map((size) => `
               <div class="sample">
-                <span class="avatar ${avatarUrl ? "has-photo" : ""}" style="--portrait-size:${size}px;--frame-size:${size * 1.6}px;font-size:${Math.max(12, Math.round(size * .24))}px">
+                <span class="avatar ${avatarUrl ? "has-photo" : ""}" style="--portrait-size:${size}px;--frame-size:${size * 1.376}px;font-size:${Math.max(12, Math.round(size * .24))}px">
                   <span class="avatar-core"><span class="initial">玩</span><img class="avatar-photo" src="${avatarUrl}" alt=""></span>
                   <img class="frame" src="${frameUrl}" alt="">
                 </span>
@@ -113,6 +113,7 @@
       context.drawImage(image, 0, 0, 512, 512);
       const data = context.getImageData(0, 0, 512, 512).data;
       let outerClear = true;
+      let coreClear = true;
       if (image.naturalWidth === 512 && image.naturalHeight === 512) {
         for (let y = 0; y < 512 && outerClear; y += 1) {
           for (let x = 0; x < 512; x += 1) {
@@ -121,6 +122,14 @@
         }
       } else {
         outerClear = false;
+        coreClear = false;
+      }
+      if (coreClear) {
+        for (let y = 128; y < 384 && coreClear; y += 1) {
+          for (let x = 128; x < 384; x += 1) {
+            if (alphaAt(data, x, y) > 4) { coreClear = false; break; }
+          }
+        }
       }
       const formatGood = file.type === "image/png";
       const sizeGood = image.naturalWidth === 512 && image.naturalHeight === 512;
@@ -129,7 +138,8 @@
         badge(`${file.type || "未知格式"}`, formatGood),
         badge(`${image.naturalWidth} × ${image.naturalHeight} px`, sizeGood),
         badge(`${Math.round(file.size / 1024)} KB（不超过 1.2 MB）`, weightGood),
-        badge("8 px 外边距透明", outerClear)
+        badge("8 px 外边距透明", outerClear),
+        badge("256 × 256 px 头像核心区透明", coreClear)
       ].join("");
     }
 

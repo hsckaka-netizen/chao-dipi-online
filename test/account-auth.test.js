@@ -80,7 +80,7 @@ test("avatar uploads validate both declared type and file signature", () => {
   assert.throws(() => decodeAvatarDataUrl("data:image/gif;base64,R0lGODlh"), /格式不正确/);
 });
 
-test("avatar-frame uploads accept transparent foreground artwork that overlays the avatar", () => {
+test("avatar-frame uploads enforce transparent outer and portrait-core regions", () => {
   const valid = avatarFramePng();
   const decoded = decodeAvatarFrameDataUrl(`data:image/png;base64,${valid.toString("base64")}`);
   assert.equal(decoded.contentType, "image/png");
@@ -88,7 +88,10 @@ test("avatar-frame uploads accept transparent foreground artwork that overlays t
   assert.match(decoded.contentVersion, /^[a-f0-9]{16}$/);
 
   const artworkOverAvatar = avatarFramePng({ interiorAlpha: 1 });
-  assert.doesNotThrow(() => decodeAvatarFrameDataUrl(`data:image/png;base64,${artworkOverAvatar.toString("base64")}`));
+  assert.throws(
+    () => decodeAvatarFrameDataUrl(`data:image/png;base64,${artworkOverAvatar.toString("base64")}`),
+    /中央 256 × 256 px 头像核心区必须完全透明/
+  );
 
   const opaqueOuterEdge = avatarFramePng({ outerAlpha: 1 });
   assert.throws(

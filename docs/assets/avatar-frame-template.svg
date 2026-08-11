@@ -5,21 +5,18 @@
   <g id="GUIDES_DO_NOT_EXPORT" font-family="Arial, sans-serif" font-size="13" fill="none">
     <rect width="512" height="512" fill="#f4f6f5" />
     <rect x="8" y="8" width="496" height="496" rx="12" stroke="#d48828" stroke-width="2" stroke-dasharray="8 6" />
-    <rect x="20" y="8" width="472" height="88" rx="12" fill="#2878c8" fill-opacity="0.08" stroke="#2878c8" stroke-dasharray="6 5" />
-    <rect x="20" y="416" width="472" height="88" rx="12" fill="#2878c8" fill-opacity="0.08" stroke="#2878c8" stroke-dasharray="6 5" />
-    <circle cx="58" cy="58" r="34" fill="#c34848" fill-opacity="0.08" stroke="#c34848" stroke-dasharray="4 4" />
-    <circle cx="454" cy="58" r="34" fill="#c34848" fill-opacity="0.08" stroke="#c34848" stroke-dasharray="4 4" />
+    <rect x="70" y="70" width="372" height="372" stroke="#16744c" stroke-width="3" />
+    <rect x="128" y="128" width="256" height="256" fill="#16744c" fill-opacity="0.08" stroke="#16744c" stroke-width="2" stroke-dasharray="7 5" />
+    <path d="M70 70H442V442H70Z" stroke="#116a55" stroke-width="10" stroke-opacity="0.18" />
     <g fill="#26342f" stroke="none">
       <text x="16" y="28">8 px 透明外边距</text>
-      <text x="256" y="228" text-anchor="middle">完整 512 × 512 透明前景图</text>
-      <text x="256" y="248" text-anchor="middle">只有框体保留像素，其余区域完全透明</text>
-      <text x="256" y="268" text-anchor="middle">可直接覆盖头像，不设内开口或安全区分割</text>
-      <text x="256" y="108" text-anchor="middle">所有可见像素留在橙色虚线内</text>
-      <text x="256" y="52" text-anchor="middle">顶部主设计区（主要视觉重量）</text>
-      <text x="60" y="256" text-anchor="middle" transform="rotate(-90 60 256)">可按主题自由构图</text>
-      <text x="452" y="256" text-anchor="middle" transform="rotate(90 452 256)">整体必须等比</text>
-      <text x="256" y="468" text-anchor="middle">底部可居中或左右分布</text>
-      <text x="20" y="454">红色圆：道具标记可能覆盖</text>
+      <text x="256" y="56" text-anchor="middle">绿色实线：372 × 372 px 虚拟框架（不导出）</text>
+      <text x="256" y="88" text-anchor="middle">头像外沿与虚拟框架重合</text>
+      <text x="256" y="244" text-anchor="middle">256 × 256 px 头像核心区</text>
+      <text x="256" y="264" text-anchor="middle">必须完全透明</text>
+      <text x="256" y="284" text-anchor="middle">可见设计可向虚拟框架内外延伸</text>
+      <text x="256" y="458" text-anchor="middle">框体沿虚拟框架四边连续闭合</text>
+      <text x="256" y="478" text-anchor="middle">除设计本体外，其他区域全透明</text>
     </g>
     <path d="M256 0v512M0 256h512" stroke="#26342f" stroke-opacity="0.22" stroke-dasharray="3 5" />
   </g>

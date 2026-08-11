@@ -333,6 +333,10 @@ function validateAvatarFramePng(buffer) {
       if (outsideCanvasSafeEdge && alpha !== 0) {
         throw invalidAvatarFrame("头像框四边 8 px 必须完全透明");
       }
+      const insidePortraitCore = x >= 128 && x < 384 && y >= 128 && y < 384;
+      if (insidePortraitCore && alpha !== 0) {
+        throw invalidAvatarFrame("头像框中央 256 × 256 px 头像核心区必须完全透明");
+      }
       if (!outsideCanvasSafeEdge && alpha > 0) hasVisibleFramePixel = true;
     }
     previous = current;

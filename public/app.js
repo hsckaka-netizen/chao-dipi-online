@@ -894,7 +894,54 @@ async function prepareAvatarFrameDataUrl(file) {
   if (image.naturalWidth !== 512 || image.naturalHeight !== 512) {
     throw new Error("头像框必须是 512 × 512 px");
   }
+  const canvas = document.createElement("canvas");
+  canvas.width = 512;
+  canvas.height = 512;
+  const context = canvas.getContext("2d", { willReadFrequently: true });
+  context.clearRect(0, 0, 512, 512);
+  context.drawImage(image, 0, 0, 512, 512);
+  const pixels = context.getImageData(0, 0, 512, 512).data;
+  let hasVisibleFramePixel = false;
+  for (let y = 0; y < 512; y += 1) {
+    for (let x = 0; x < 512; x += 1) {
+      const alpha = pixels[(y * 512 + x) * 4 + 3];
+      const insideOuterClearance = x < 8 || x >= 504 || y < 8 || y >= 504;
+      if (insideOuterClearance && alpha !== 0) {
+        throw new Error("头像框四边 8 px 必须完全透明");
+      }
+      const insidePortraitCore = x >= 128 && x < 384 && y >= 128 && y < 384;
+      if (insidePortraitCore && alpha !== 0) {
+        throw new Error("头像框中央 256 × 256 px 头像核心区必须完全透明");
+      }
+      if (!insideOuterClearance && alpha > 0) hasVisibleFramePixel = true;
+    }
+  }
+  if (!hasVisibleFramePixel) throw new Error("头像框没有可见的框体内容");
   return blobDataUrl(file);
+}
+
+async function previewAvatarFrameUpload(input) {
+  const formEl = input.closest('form[data-form="upload-avatar-frame"]');
+  const previewEl = formEl?.querySelector("[data-avatar-frame-upload-preview]");
+  const statusEl = formEl?.querySelector("[data-avatar-frame-upload-status]");
+  const file = input.files?.[0];
+  if (!previewEl || !statusEl) return;
+  previewEl.hidden = true;
+  statusEl.className = "avatar-frame-upload-status";
+  statusEl.textContent = file ? "正在检查素材…" : "选择 PNG 后显示预览。";
+  if (!file) return;
+  try {
+    const dataUrl = await prepareAvatarFrameDataUrl(file);
+    previewEl.querySelectorAll("[data-avatar-frame-preview-image]").forEach((image) => {
+      image.src = dataUrl;
+    });
+    previewEl.hidden = false;
+    statusEl.classList.add("good");
+    statusEl.textContent = "文件自动检查通过，请再确认框体闭合、叠加顺序和各尺寸效果。";
+  } catch (error) {
+    statusEl.classList.add("bad");
+    statusEl.textContent = error.message;
+  }
 }
 
 async function uploadOwnAvatar(event) {
@@ -4179,6 +4226,16 @@ function renderAdminShopManager() {
   const products = adminShop?.products || [];
   const accounts = adminShop?.accounts || [];
   const cosmetics = products.filter((product) => product.productType === "avatar_frame" || product.productType === "card_skin");
+  const avatarFrameProductPreview = (product) => {
+    const assetUrl = avatarFrameAssetUrl(product.assetKey) || product.assetUrl || "";
+    if (!assetUrl) return `<div class="admin-avatar-frame-missing">暂无素材预览</div>`;
+    return `
+      <div class="admin-avatar-frame-product-preview">
+        <span class="admin-avatar-frame-raw" title="透明素材原图"><img src="${escapeHtml(assetUrl)}" alt="${escapeHtml(product.name)}素材" loading="lazy"></span>
+        <span class="admin-avatar-frame-equipped" title="叠加头像效果">${avatarHtml("预", "", "normal", product.assetKey)}</span>
+      </div>
+    `;
+  };
   return `
     <section class="admin-module-section shop-admin-manager">
       <div class="admin-module-section-head">
@@ -4190,12 +4247,17 @@ function renderAdminShopManager() {
           <div class="shop-admin-products">
             ${products.map((product) => `
               <div
-                class="shop-admin-product"
+                class="shop-admin-product ${product.productType === "avatar_frame" ? "avatar-frame-admin-product" : ""}"
                 data-product-id="${escapeHtml(product.id)}"
                 data-original-price="${escapeHtml(product.price)}"
                 data-original-listed="${product.isListed ? "true" : "false"}"
               >
-                <div><strong>${escapeHtml(product.name)}</strong><span>${product.productType === "consumable_item" ? "对局道具" : product.productType === "avatar_frame" ? "头像框" : "牌面边框"}</span></div>
+                ${product.productType === "avatar_frame" ? avatarFrameProductPreview(product) : ""}
+                <div class="shop-admin-product-copy">
+                  <strong>${escapeHtml(product.name)}</strong>
+                  <span>${product.productType === "consumable_item" ? "对局道具" : product.productType === "avatar_frame" ? `头像框 · ${escapeHtml(product.assetKey)}` : "牌面边框"}</span>
+                  ${product.productType === "avatar_frame" && product.assetVersion ? `<small>素材版本 ${escapeHtml(product.assetVersion)}</small>` : ""}
+                </div>
                 <label>价格<input name="price" type="number" min="1" step="1" required value="${escapeHtml(product.price)}"></label>
                 <label class="check-label"><input name="isListed" type="checkbox" ${product.isListed ? "checked" : ""}>上架</label>
               </div>
@@ -4207,7 +4269,7 @@ function renderAdminShopManager() {
           <summary><span>上传聊天生成头像框</span><small>先校验，默认草稿</small></summary>
           <div class="admin-inline-tool-body">
             <form class="avatar-frame-upload-form" data-form="upload-avatar-frame">
-              <div class="admin-action-warning avatar-frame-upload-wide">仅接受 PNG：512 × 512 px、最多 1.2MB。头像框会作为透明前景直接覆盖头像；服务端会检查四边 8 px 透明和文件格式。</div>
+              <div class="admin-action-warning avatar-frame-upload-wide">仅接受 PNG：512 × 512 px、最多 1.2MB、四边 8 px 透明、中央 256 × 256 px 头像核心区透明。素材会完整叠加在头像上方。</div>
               <label>主题编号<input name="assetKey" pattern="[a-z0-9][a-z0-9-]{1,38}[a-z0-9]" minlength="3" maxlength="40" required placeholder="jade-dragon"></label>
               <label>显示名称<input name="name" maxlength="80" required placeholder="玉龙祥瑞"></label>
               <label>价格<input name="price" type="number" min="1" max="1000000" step="1" required value="300"></label>
@@ -4215,6 +4277,28 @@ function renderAdminShopManager() {
               <label>PNG 素材<input name="avatarFrame" type="file" accept="image/png" required></label>
               <label class="check-label"><input name="isListed" type="checkbox">立即上架</label>
               <button type="submit">校验并上传</button>
+              <div class="avatar-frame-upload-status avatar-frame-upload-wide" data-avatar-frame-upload-status>选择 PNG 后显示预览。</div>
+              <div class="avatar-frame-upload-preview avatar-frame-upload-wide" data-avatar-frame-upload-preview hidden>
+                <div class="avatar-frame-upload-raw-preview">
+                  <span>透明素材原图</span>
+                  <img data-avatar-frame-preview-image alt="待上传头像框素材">
+                </div>
+                <div class="avatar-frame-upload-size-previews">
+                  ${[
+                    ["small", "38 px 紧凑头像"],
+                    ["upload-table", "80 px 牌桌头像"],
+                    ["upload-large", "104 px 大头像"]
+                  ].map(([sizeClass, label]) => `
+                    <div class="avatar-frame-upload-sample">
+                      <span class="avatar ${sizeClass} avatar-frame">
+                        <span class="avatar-core">预</span>
+                        <img class="avatar-frame-art" data-avatar-frame-preview-image alt="" aria-hidden="true">
+                      </span>
+                      <small>${label}</small>
+                    </div>
+                  `).join("")}
+                </div>
+              </div>
             </form>
           </div>
         </details>
@@ -6873,6 +6957,11 @@ document.addEventListener("submit", (event) => {
 });
 
 document.addEventListener("change", (event) => {
+  const avatarFrameUploadTarget = event.target.closest('input[name="avatarFrame"]');
+  if (avatarFrameUploadTarget) {
+    previewAvatarFrameUpload(avatarFrameUploadTarget);
+    return;
+  }
   const tauntAudienceTarget = event.target.closest('[data-action="taunt-all-users"]');
   if (tauntAudienceTarget) {
     const cardEl = tauntAudienceTarget.closest(".taunt-admin-card");
