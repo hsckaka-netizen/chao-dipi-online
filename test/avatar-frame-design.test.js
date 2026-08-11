@@ -22,6 +22,7 @@ test("avatar-frame designer kit shares one canvas and opening contract", async (
   assert.match(spec, /24–40 px/);
   assert.match(spec, /不依赖游戏页面/);
   assert.match(spec, /每侧最多向外扩 88 px/);
+  assert.match(spec, /数字、字母、徽记、徽章和人物主体保持自然纵横比/);
   assert.match(template, /viewBox="0 0 512 512"/);
   assert.match(template, /id="GUIDES_DO_NOT_EXPORT"/);
   assert.match(template, /x="96" y="96" width="320" height="320"/);
