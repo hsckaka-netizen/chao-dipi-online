@@ -5697,16 +5697,12 @@ button.auto-play-toggle.active {
   align-self: start;
 }
 
-.shop-avatar-preview .avatar {
-  --avatar-portrait-size: 70px;
-  --avatar-frame-box-size: 96.32px;
-}
-
 .shop-avatar-preview {
   position: relative;
   width: 136px;
-  min-height: 204px;
+  min-height: 164px;
   align-content: start;
+  justify-items: center;
   gap: 7px;
   border: 1px solid rgba(76, 101, 90, 0.12);
   border-radius: 14px;
@@ -5723,59 +5719,57 @@ button.auto-play-toggle.active {
   letter-spacing: 0.12em;
 }
 
-.shop-avatar-hero-stage {
+.avatar-frame-material-preview {
+  --avatar-frame-material-size: 66.048px;
+  width: var(--avatar-frame-material-size);
+  height: var(--avatar-frame-material-size);
+  flex: 0 0 auto;
   display: grid;
   place-items: center;
-  width: 100%;
-  height: 128px;
-}
-
-.shop-avatar-preview .avatar.shop-feature {
-  --avatar-portrait-size: 88px;
-  --avatar-frame-box-size: 121.088px;
-}
-
-.shop-avatar-preview .avatar.small {
-  --avatar-portrait-size: 38px;
-  --avatar-frame-box-size: 52.288px;
-}
-
-.shop-avatar-preview .avatar.avatar-frame,
-.owned-avatar-current .avatar.avatar-frame,
-.owned-avatar-frame-option .avatar.avatar-frame {
-  margin-inline-end: 0;
-}
-
-.shop-avatar-mini-preview {
-  min-height: 54px;
-  min-width: 0;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  border-top: 1px solid rgba(76, 101, 90, 0.12);
-  padding: 8px 2px 0 6px;
-}
-
-.shop-avatar-mini-preview > span:last-child {
-  min-width: 0;
-  display: grid;
-  gap: 2px;
-}
-
-.shop-avatar-mini-preview b,
-.shop-avatar-mini-preview small {
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  border: 1px solid rgba(76, 101, 90, 0.16);
+  border-radius: 9px;
+  background-color: #f7f9f8;
+  background-image:
+    linear-gradient(45deg, #dfe5e1 25%, transparent 25%),
+    linear-gradient(-45deg, #dfe5e1 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, #dfe5e1 75%),
+    linear-gradient(-45deg, transparent 75%, #dfe5e1 75%);
+  background-position: 0 0, 0 6px, 6px -6px, -6px 0;
+  background-size: 12px 12px;
 }
 
-.shop-avatar-mini-preview b {
-  font-size: 11px;
+.avatar-frame-material-preview.shop-feature {
+  --avatar-frame-material-size: 121.088px;
 }
 
-.shop-avatar-mini-preview small {
+.avatar-frame-material-preview.small {
+  --avatar-frame-material-size: 52.288px;
+}
+
+.avatar-frame-material-preview.admin {
+  --avatar-frame-material-size: 50px;
+}
+
+.avatar-frame-material-preview.upload-table {
+  --avatar-frame-material-size: 110.08px;
+}
+
+.avatar-frame-material-preview.upload-large {
+  --avatar-frame-material-size: 143.104px;
+}
+
+.avatar-frame-material-preview img {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: contain;
+}
+
+.avatar-frame-material-preview.empty {
   color: var(--muted);
-  font-size: 9px;
+  font-size: 11px;
+  font-weight: 900;
 }
 
 .shop-avatar-visibility {
@@ -6062,7 +6056,7 @@ button.auto-play-toggle.active {
 }
 
 .shop-admin-product.avatar-frame-admin-product {
-  grid-template-columns: 116px minmax(140px, 1fr) 84px auto;
+  grid-template-columns: 64px minmax(140px, 1fr) 84px auto;
 }
 
 .shop-admin-product-copy {
@@ -6091,12 +6085,11 @@ button.auto-play-toggle.active {
 
 .admin-avatar-frame-product-preview {
   display: grid;
-  grid-template-columns: 50px 64px;
+  place-items: center;
   align-items: center;
-  gap: 2px;
+  width: 64px;
 }
 
-.admin-avatar-frame-raw,
 .avatar-frame-upload-raw-preview {
   background-color: #f7f9f8;
   background-image:
@@ -6106,29 +6099,6 @@ button.auto-play-toggle.active {
     linear-gradient(-45deg, transparent 75%, #dfe5e1 75%);
   background-position: 0 0, 0 6px, 6px -6px, -6px 0;
   background-size: 12px 12px;
-}
-
-.admin-avatar-frame-raw {
-  width: 50px;
-  height: 50px;
-  display: grid;
-  place-items: center;
-  overflow: hidden;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-}
-
-.admin-avatar-frame-raw img {
-  width: 100%;
-  height: 100%;
-  object-fit: contain;
-}
-
-.admin-avatar-frame-equipped {
-  width: 64px;
-  height: 64px;
-  display: grid;
-  place-items: center;
 }
 
 .admin-avatar-frame-missing {
@@ -6907,18 +6877,6 @@ button.auto-play-toggle.active {
 .avatar-frame-upload-sample small {
   color: var(--muted);
   font-size: 10px;
-}
-
-.avatar.upload-table {
-  --avatar-portrait-size: 80px;
-  --avatar-frame-box-size: 110.08px;
-  font-size: 21px;
-}
-
-.avatar.upload-large {
-  --avatar-portrait-size: 104px;
-  --avatar-frame-box-size: 143.104px;
-  font-size: 24px;
 }
 
 @media (max-width: 980px) {

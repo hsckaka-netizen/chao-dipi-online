@@ -66,6 +66,8 @@ test("avatar frames always reserve one display box with portrait below frame art
   assert.doesNotMatch(styles, /--avatar-frame-(?:left|top|width|height):/);
   assert.match(app, /data-avatar-frame-upload-preview/);
   assert.match(app, /admin-avatar-frame-product-preview/);
+  assert.match(app, /avatar-frame-material-preview/);
+  assert.doesNotMatch(app, /admin-avatar-frame-equipped/);
   for (const key of ["warrior", "mage", "warlock", "rogue", "druid", "shaman", "death-knight", "minions", "usagi", "toy-story"]) {
     assert.match(styles, new RegExp(`\\.avatar\\.avatar-frame-${key} \\{[\\s\\S]*?--avatar-frame-image:`));
     assert.match(assets, new RegExp(`avatar-frame-${key}\\.png`));

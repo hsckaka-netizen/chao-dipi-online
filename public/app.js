@@ -3935,21 +3935,24 @@ function ownedShopProduct(product) {
   return false;
 }
 
+function avatarFrameArtworkHtml(avatarFrame, size = "normal", label = "头像框素材", sourceUrl = "") {
+  const frameUrl = sourceUrl || avatarFrameAssetUrl(avatarFrame);
+  if (!frameUrl) {
+    return `<span class="avatar-frame-material-preview ${size} empty" aria-label="无头像框">无</span>`;
+  }
+  return `
+    <span class="avatar-frame-material-preview ${size}">
+      <img src="${escapeHtml(frameUrl)}" alt="${escapeHtml(label)}" loading="lazy" decoding="async" draggable="false">
+    </span>
+  `;
+}
+
 function shopProductPreview(product) {
   if (product.productType === "avatar_frame") {
-    const profile = authState.account?.profile;
-    const previewName = profile?.name || product.name;
-    const previewAvatarUrl = profile?.avatarUrl || "";
     return `
       <div class="shop-avatar-preview">
-        <span class="shop-preview-label">牌桌实装</span>
-        <span class="shop-avatar-hero-stage">
-          ${avatarHtml(previewName, previewAvatarUrl, "shop-feature", product.assetKey)}
-        </span>
-        <span class="shop-avatar-mini-preview">
-          ${avatarHtml(previewName, previewAvatarUrl, "small", product.assetKey)}
-          <span><b>${escapeHtml(previewName)}</b><small>房间列表效果</small></span>
-        </span>
+        <span class="shop-preview-label">透明素材</span>
+        ${avatarFrameArtworkHtml(product.assetKey, "shop-feature", `${product.name}头像框素材`)}
       </div>
     `;
   }
@@ -4032,15 +4035,15 @@ function renderOwnedCosmetics() {
   return `
     <section class="panel stack owned-cosmetics-panel">
       <div class="section-head">
-        <div><h2>我的头像框</h2><div class="meta">先看实际效果再选择，保存后会同步到牌桌、房间列表和数据榜单。</div></div>
+        <div><h2>我的头像框</h2><div class="meta">这里只展示头像框透明素材；保存后会自动叠加到牌桌、房间列表和数据榜单的头像上。</div></div>
       </div>
       <form class="owned-cosmetics-form" data-form="own-cosmetics">
         <div class="owned-avatar-current">
           <span>当前佩戴</span>
           <span class="owned-avatar-current-stage">
-            ${avatarHtml(profile.name, profile.avatarUrl, "shop-feature", profile.avatarFrame)}
+            ${avatarFrameArtworkHtml(profile.avatarFrame, "shop-feature", `${avatarLabels.get(profile.avatarFrame) || "当前"}头像框素材`)}
           </span>
-          <div><b>${escapeHtml(avatarLabels.get(profile.avatarFrame) || profile.avatarFrame)}</b><small>${escapeHtml(profile.name)}</small></div>
+          <div><b>${escapeHtml(avatarLabels.get(profile.avatarFrame) || profile.avatarFrame)}</b><small>透明素材原图</small></div>
         </div>
         <fieldset class="owned-avatar-frame-picker">
           <legend>选择头像框</legend>
@@ -4048,7 +4051,7 @@ function renderOwnedCosmetics() {
             ${avatarFrameKeys.map((key) => `
               <label class="owned-avatar-frame-option ${profile.avatarFrame === key ? "selected" : ""}">
                 <input type="radio" name="avatarFrame" value="${escapeHtml(key)}" ${profile.avatarFrame === key ? "checked" : ""}>
-                <span class="owned-avatar-frame-stage">${avatarHtml(profile.name, profile.avatarUrl, "normal", key)}</span>
+                <span class="owned-avatar-frame-stage">${avatarFrameArtworkHtml(key, "normal", `${avatarLabels.get(key) || key}头像框素材`)}</span>
                 <b>${escapeHtml(avatarLabels.get(key) || key)}</b>
                 <small>${profile.avatarFrame === key ? "当前佩戴" : "点击选择"}</small>
               </label>
@@ -4301,8 +4304,7 @@ function renderAdminShopManager() {
     if (!assetUrl) return `<div class="admin-avatar-frame-missing">暂无素材预览</div>`;
     return `
       <div class="admin-avatar-frame-product-preview">
-        <span class="admin-avatar-frame-raw" title="透明素材原图"><img src="${escapeHtml(assetUrl)}" alt="${escapeHtml(product.name)}素材" loading="lazy"></span>
-        <span class="admin-avatar-frame-equipped" title="叠加头像效果">${avatarHtml("预", "", "normal", product.assetKey)}</span>
+        ${avatarFrameArtworkHtml(product.assetKey, "admin", `${product.name}头像框素材`, assetUrl)}
       </div>
     `;
   };
@@ -4355,14 +4357,13 @@ function renderAdminShopManager() {
                 </div>
                 <div class="avatar-frame-upload-size-previews">
                   ${[
-                    ["small", "38 px 紧凑头像"],
-                    ["upload-table", "80 px 牌桌头像"],
-                    ["upload-large", "104 px 大头像"]
+                    ["small", "52 px 紧凑展示区"],
+                    ["upload-table", "110 px 牌桌展示区"],
+                    ["upload-large", "143 px 大展示区"]
                   ].map(([sizeClass, label]) => `
                     <div class="avatar-frame-upload-sample">
-                      <span class="avatar ${sizeClass} avatar-frame">
-                        <span class="avatar-core">预</span>
-                        <img class="avatar-frame-art" data-avatar-frame-preview-image alt="" aria-hidden="true">
+                      <span class="avatar-frame-material-preview ${sizeClass}">
+                        <img data-avatar-frame-preview-image alt="待上传头像框缩放素材">
                       </span>
                       <small>${label}</small>
                     </div>

@@ -210,8 +210,10 @@ test("server and browser expose the shop, self-equipped cosmetics, and game-item
   assert.match(appSource, /预占中/);
   assert.match(appSource, /data-form="own-cosmetics"/);
   assert.match(appSource, /class="owned-avatar-frame-grid"/);
-  assert.match(appSource, /牌桌实装/);
-  assert.match(appSource, /房间列表效果/);
+  assert.match(appSource, /function avatarFrameArtworkHtml/);
+  assert.match(appSource, /shop-preview-label">透明素材/);
+  assert.match(appSource, /这里只展示头像框透明素材/);
+  assert.doesNotMatch(appSource, /牌桌实装|房间列表效果|title="叠加头像效果"/);
   assert.match(appSource, /data-action="equip-avatar-frame"/);
   assert.match(appSource, /头像框已经佩戴/);
   assert.match(appSource, /低饱和哑光边线/);
