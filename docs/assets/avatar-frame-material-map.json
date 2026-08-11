@@ -1,0 +1,150 @@
+{
+  "version": 1,
+  "canvas": {
+    "width": 512,
+    "height": 512
+  },
+  "virtualFrames": {
+    "fixed-372": {
+      "x": 70,
+      "y": 70,
+      "width": 372,
+      "height": 372
+    }
+  },
+  "runtimeTransform": {
+    "mode": "uniform-contain",
+    "horizontalScaleEqualsVerticalScale": true,
+    "crop": false,
+    "interiorMask": false,
+    "perThemeTransform": false
+  },
+  "materials": [
+    {
+      "theme": "blood-elf",
+      "path": "/assets/cosmetics/avatar-frame-blood-elf.png",
+      "sourceRevision": "1cfd1a378c090f20368218fc29cd76599044d90b",
+      "sha256": "5fc885896d0991d2c85b73f0b2708da73abef3f685b731fea8c68877086485a4",
+      "virtualFrame": "fixed-372"
+    },
+    {
+      "theme": "cr7",
+      "path": "/assets/cosmetics/avatar-frame-cr7.png",
+      "sourceRevision": "178d1db6cb54ca7f949249c6ca7dc1450d5b7013",
+      "sha256": "a04b8c0621db7034ae1f2218d0d748a8c67e02f3d13f676730480dacef823ecf",
+      "virtualFrame": "fixed-372"
+    },
+    {
+      "theme": "death-knight",
+      "path": "/assets/cosmetics/avatar-frame-death-knight.png",
+      "sourceRevision": "fed4ca42f304a6f9dc82e9c3c778e260d110539b",
+      "sha256": "1a44fb88e240b00951519ff73c772ff76b28d9e4d23880f9ce3abb6ddad1f359",
+      "virtualFrame": "fixed-372"
+    },
+    {
+      "theme": "druid",
+      "path": "/assets/cosmetics/avatar-frame-druid.png",
+      "sourceRevision": "fed4ca42f304a6f9dc82e9c3c778e260d110539b",
+      "sha256": "3ed48646b19653185ce3e7ede0b2a670e52ebf53ba45e44709c00752901fb117",
+      "virtualFrame": "fixed-372"
+    },
+    {
+      "theme": "endless-winter",
+      "path": "/assets/cosmetics/avatar-frame-endless-winter.png",
+      "sourceRevision": "178d1db6cb54ca7f949249c6ca7dc1450d5b7013",
+      "sha256": "d5780074e781d89bf5d95e55fcce844fd5f5be028d81299023be43862e72356c",
+      "virtualFrame": "fixed-372"
+    },
+    {
+      "theme": "hellfire",
+      "path": "/assets/cosmetics/avatar-frame-hellfire.png",
+      "sourceRevision": "1cfd1a378c090f20368218fc29cd76599044d90b",
+      "sha256": "7843cf593d98fb6dee04420c7eb4d99e1b09f91eaba736c099d02ff29298e1fb",
+      "virtualFrame": "fixed-372"
+    },
+    {
+      "theme": "idol",
+      "path": "/assets/cosmetics/avatar-frame-idol.png",
+      "sourceRevision": "1cfd1a378c090f20368218fc29cd76599044d90b",
+      "sha256": "efac6f2dc0a21f69ec102feb7b3198f7071bd95ebee15a9d0c836a75fe579685",
+      "virtualFrame": "fixed-372"
+    },
+    {
+      "theme": "mage",
+      "path": "/assets/cosmetics/avatar-frame-mage.png",
+      "sourceRevision": "fed4ca42f304a6f9dc82e9c3c778e260d110539b",
+      "sha256": "c3469fe57c07f31e5245c18f33ccc66352d43b9ea3b2b2bec78831b27bc71796",
+      "virtualFrame": "fixed-372"
+    },
+    {
+      "theme": "minions",
+      "path": "/assets/cosmetics/avatar-frame-minions.png",
+      "sourceRevision": "fed4ca42f304a6f9dc82e9c3c778e260d110539b",
+      "sha256": "aac7252fc2b810caccbe8846d2bc068c17ba1b837a2fb3200d3823d9c00c90dd",
+      "virtualFrame": "fixed-372"
+    },
+    {
+      "theme": "paladin",
+      "path": "/assets/cosmetics/avatar-frame-paladin.png",
+      "sourceRevision": "178d1db6cb54ca7f949249c6ca7dc1450d5b7013",
+      "sha256": "b11bf0818e3699cf136ea5f65c369eee488ba84d789a997cf9abaab6a2acf4e5",
+      "virtualFrame": "fixed-372"
+    },
+    {
+      "theme": "rogue",
+      "path": "/assets/cosmetics/avatar-frame-rogue.png",
+      "sourceRevision": "fed4ca42f304a6f9dc82e9c3c778e260d110539b",
+      "sha256": "9e0952f2f5f20e4bbbf3fcd7dd3c726715d9081a9f101a7e3ace3cc1cb604597",
+      "virtualFrame": "fixed-372"
+    },
+    {
+      "theme": "shaman",
+      "path": "/assets/cosmetics/avatar-frame-shaman.png",
+      "sourceRevision": "fed4ca42f304a6f9dc82e9c3c778e260d110539b",
+      "sha256": "569ed17404565781e1cd4bc7ac425eb80818b8c298d09450521dffc018130507",
+      "virtualFrame": "fixed-372"
+    },
+    {
+      "theme": "stormwind",
+      "path": "/assets/cosmetics/avatar-frame-stormwind.png",
+      "sourceRevision": "1cfd1a378c090f20368218fc29cd76599044d90b",
+      "sha256": "ccce9c8057aa9e1ae5f0e014e7c958b8e7230ba6be815826cd76eee3be22ec8a",
+      "virtualFrame": "fixed-372"
+    },
+    {
+      "theme": "toy-story",
+      "path": "/assets/cosmetics/avatar-frame-toy-story.png",
+      "sourceRevision": "fed4ca42f304a6f9dc82e9c3c778e260d110539b",
+      "sha256": "a978b3cc36e5af005879b4d9d8234bedf4d24ebbb4027d4944481d6020bc6f65",
+      "virtualFrame": "fixed-372"
+    },
+    {
+      "theme": "usagi",
+      "path": "/assets/cosmetics/avatar-frame-usagi.png",
+      "sourceRevision": "fed4ca42f304a6f9dc82e9c3c778e260d110539b",
+      "sha256": "a4410add883b84a9b831b71e6a153384b477704a97af234ff2f38ba977949ad4",
+      "virtualFrame": "fixed-372"
+    },
+    {
+      "theme": "vip-legend",
+      "path": "/assets/cosmetics/avatar-frame-vip-legend.png",
+      "sourceRevision": "178d1db6cb54ca7f949249c6ca7dc1450d5b7013",
+      "sha256": "90f5bfc0b6ec0725c536f6fa79f10023c321bac5d966e04b0a7ea76bbee36425",
+      "virtualFrame": "fixed-372"
+    },
+    {
+      "theme": "warlock",
+      "path": "/assets/cosmetics/avatar-frame-warlock.png",
+      "sourceRevision": "fed4ca42f304a6f9dc82e9c3c778e260d110539b",
+      "sha256": "dfd59ad244d12820f52b4695377e5a4af3fcf35e659bb0c09de6c29bfb243766",
+      "virtualFrame": "fixed-372"
+    },
+    {
+      "theme": "warrior",
+      "path": "/assets/cosmetics/avatar-frame-warrior.png",
+      "sourceRevision": "fed4ca42f304a6f9dc82e9c3c778e260d110539b",
+      "sha256": "8ca2032f28adb74da49a6adbcf3a0a50e81b2507b72c34084b7071757a480aca",
+      "virtualFrame": "fixed-372"
+    }
+  ]
+}

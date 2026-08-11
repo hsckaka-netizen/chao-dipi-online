@@ -1,24 +1,26 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { readFile, readdir } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
-
-import { decodeAvatarFrameDataUrl } from "../account-auth.js";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
 
 test("avatar-frame designer kit keeps the virtual framework without clipping interior artwork", async () => {
-  const [spec, template, preview] = await Promise.all([
+  const [spec, template, preview, materialMapSource] = await Promise.all([
     readFile(`${root}docs/avatar-frame-design-spec.md`, "utf8"),
     readFile(`${root}docs/assets/avatar-frame-template.svg`, "utf8"),
-    readFile(`${root}docs/avatar-frame-preview.html`, "utf8")
+    readFile(`${root}docs/avatar-frame-preview.html`, "utf8"),
+    readFile(`${root}docs/assets/avatar-frame-material-map.json`, "utf8")
   ]);
+  const materialMap = JSON.parse(materialMapSource);
 
   assert.match(spec, /512 × 512/);
   assert.match(spec, /除设计本体外，其他区域必须真实透明/);
   assert.match(spec, /x=70\.\.442/);
   assert.match(spec, /头像外沿.*虚拟框架完全重合/);
   assert.match(spec, /虚拟框架只负责对齐，不生成透明遮罩或裁切边界/);
+  assert.match(spec, /横向与纵向缩放比例必须完全相同/);
   assert.match(spec, /背景 < 头像图片 < 头像框/);
   assert.match(spec, /有无头像框都使用同一展示区/);
   assert.match(template, /viewBox="0 0 512 512"/);
@@ -30,6 +32,19 @@ test("avatar-frame designer kit keeps the virtual framework without clipping int
   assert.match(preview, /alphaAt\(data, x, y\)/);
   assert.match(preview, /file\.size <= 1_200_000/);
   assert.doesNotMatch(preview, /coreClear|头像核心区透明/);
+  assert.deepEqual(materialMap.virtualFrames["fixed-372"], {
+    x: 70,
+    y: 70,
+    width: 372,
+    height: 372
+  });
+  assert.deepEqual(materialMap.runtimeTransform, {
+    mode: "uniform-contain",
+    horizontalScaleEqualsVerticalScale: true,
+    crop: false,
+    interiorMask: false,
+    perThemeTransform: false
+  });
 });
 
 test("card skins use matte rails and the VIP card frame is static", async () => {
@@ -64,6 +79,8 @@ test("avatar frames always reserve one display box with portrait below frame art
   assert.doesNotMatch(styles, /left: -18\.8%|top: -18\.8%|width: 137\.6%|height: 137\.6%/);
   assert.doesNotMatch(styles, /\.avatar\.avatar-frame::(?:before|after)/);
   assert.doesNotMatch(styles, /--avatar-frame-(?:left|top|width|height):/);
+  const frameArtworkRule = styles.match(/\.avatar\.avatar-frame > \.avatar-frame-art \{([^}]+)\}/)?.[1] || "";
+  assert.doesNotMatch(frameArtworkRule, /transform:|object-fit:\s*cover/);
   assert.match(app, /data-avatar-frame-upload-preview/);
   assert.match(app, /admin-avatar-frame-product-preview/);
   assert.match(app, /avatar-frame-material-preview/);
@@ -76,17 +93,26 @@ test("avatar frames always reserve one display box with portrait below frame art
   assert.doesNotMatch(assets, /vip-avatar-frame\.png|avatar-frame-(?:emerald|violet|champion)\.png/);
 });
 
-test("every bundled avatar frame satisfies the same pixel contract used by uploads", async () => {
+test("every bundled avatar frame keeps its audited earliest material and fixed virtual framework", async () => {
   const cosmetics = `${root}public/assets/cosmetics`;
   const filenames = (await readdir(cosmetics))
-    .filter((filename) => /^avatar-frame-.+\.png$/.test(filename));
+    .filter((filename) => /^avatar-frame-.+\.png$/.test(filename))
+    .sort();
+  const materialMap = JSON.parse(await readFile(`${root}docs/assets/avatar-frame-material-map.json`, "utf8"));
+  const mappedFilenames = materialMap.materials
+    .map((material) => material.path.split("/").at(-1))
+    .sort();
 
   assert.ok(filenames.length >= 10);
-  for (const filename of filenames) {
+  assert.deepEqual(mappedFilenames, filenames);
+  for (const material of materialMap.materials) {
+    assert.equal(material.virtualFrame, "fixed-372", material.theme);
+    assert.match(material.sourceRevision, /^[0-9a-f]{40}$/, material.theme);
+    const filename = material.path.split("/").at(-1);
     const image = await readFile(`${cosmetics}/${filename}`);
-    assert.doesNotThrow(
-      () => decodeAvatarFrameDataUrl(`data:image/png;base64,${image.toString("base64")}`),
-      filename
-    );
+    assert.equal(image.subarray(0, 8).toString("hex"), "89504e470d0a1a0a", filename);
+    assert.equal(image.readUInt32BE(16), 512, `${filename} width`);
+    assert.equal(image.readUInt32BE(20), 512, `${filename} height`);
+    assert.equal(createHash("sha256").update(image).digest("hex"), material.sha256, filename);
   }
 });
