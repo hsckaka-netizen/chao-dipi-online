@@ -2164,7 +2164,8 @@ button.joinable-room-player.spectate-player {
   width: 137.6%;
   height: 137.6%;
   z-index: 2;
-  border-radius: inherit;
+  /* 512px 素材的可视外沿需要完整保留，不能被头像本身的圆角裁掉。 */
+  border-radius: 0;
   background: var(--avatar-frame-image) center / 100% 100% no-repeat;
   filter:
     drop-shadow(0 3px 4px var(--avatar-frame-shadow, rgba(31, 45, 38, 0.24)))
@@ -2175,6 +2176,7 @@ button.joinable-room-player.spectate-player {
 .avatar.avatar-frame {
   z-index: 2;
   isolation: isolate;
+  aspect-ratio: 1;
   margin-inline-end: 8px;
 }
 
@@ -2331,7 +2333,12 @@ button.joinable-room-player.spectate-player {
 
 .avatar.avatar-frame .avatar-core {
   position: absolute;
-  inset: 4px;
+  /*
+   * 512px 素材在 137.6% 的正方形图层中展示时，320px 内开口正好是头像
+   * 基准边长的 86%；两边各留 7%。必须用比例而非固定像素，才能在 38–104px
+   * 的所有头像尺寸中严格对齐。
+   */
+  inset: 7%;
   width: auto;
   height: auto;
   border: 1px solid rgba(255, 255, 255, 0.72);

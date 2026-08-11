@@ -52,6 +52,9 @@ test("avatar frames use one fixed square display box for every theme", async () 
 
   assert.match(styles, /background: var\(--avatar-frame-image\) center \/ 100% 100% no-repeat/);
   assert.match(styles, /left: -18\.8%;[\s\S]*top: -18\.8%;[\s\S]*width: 137\.6%;[\s\S]*height: 137\.6%/);
+  assert.match(styles, /\.avatar\.avatar-frame::after \{[\s\S]*?z-index: 2;[\s\S]*?border-radius: 0;/);
+  assert.match(styles, /\.avatar\.avatar-frame \{[\s\S]*?aspect-ratio: 1;/);
+  assert.match(styles, /\.avatar\.avatar-frame \.avatar-core \{[\s\S]*?inset: 7%;[\s\S]*?z-index: 1;/);
   assert.doesNotMatch(styles, /--avatar-frame-(?:left|top|width|height):/);
   for (const key of ["warrior", "mage", "warlock", "rogue", "druid", "shaman", "death-knight", "minions", "usagi", "toy-story"]) {
     assert.match(styles, new RegExp(`\\.avatar\\.avatar-frame-${key} \\{[\\s\\S]*?--avatar-frame-image:`));
