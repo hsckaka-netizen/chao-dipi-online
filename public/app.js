@@ -2534,6 +2534,28 @@ function colorfulFryOrderText() {
   return Array.isArray(names) && names.length === 4 ? names.join(" ＞ ") : "";
 }
 
+const COLORFUL_FRY_ORDER_VISIBLE_STAGES = new Set([
+  OTHER_CARDS_STAGE,
+  "bidding",
+  "score-bidding",
+  "trump-selecting",
+  "burying",
+  "frying",
+  "fry-burying"
+]);
+
+function renderColorfulFryOrderBanner() {
+  const order = colorfulFryOrderText();
+  if (!order || !COLORFUL_FRY_ORDER_VISIBLE_STAGES.has(state?.stage)) return "";
+  return `
+    <div class="colorful-fry-order-banner" role="note">
+      <span>✦ 缤纷顺序已生效</span>
+      <strong>花色 2：${escapeHtml(order)}</strong>
+      <em>由大到小</em>
+    </div>
+  `;
+}
+
 function bidBeats(current, next, suitStrength = { D: 0, C: 1, H: 2, S: 3 }) {
   if (!current) return next.count >= 1;
   if (current.direct) return next.count >= 2;
@@ -4709,10 +4731,6 @@ function renderSetupCenter() {
   const setup = state.setup || {};
   const stage = state.stage;
   let body = "";
-  const colorfulOrder = colorfulFryOrderText();
-  const colorfulOrderItem = colorfulOrder
-    ? { label: "缤纷顺序（大 → 小）", value: escapeHtml(colorfulOrder) }
-    : null;
   const currentTrumpItem = setup.currentTrumpSuitName
     ? { label: "当前主牌", value: escapeHtml(setup.currentTrumpSuitName) }
     : null;
@@ -4807,7 +4825,6 @@ function renderSetupCenter() {
       ${renderSetupLines([
         { label: "控底", value: escapeHtml(fry.lastFryerName || setup.bankerName) },
         { label: "门槛", value: escapeHtml(bidText(fry.lastBid)) },
-        colorfulOrderItem,
         { label: "当前", value: `轮到 ${escapeHtml(fry.currentPlayerName)} ${setupCountdownTag(deadline, " 后自动不炒")}` },
         currentTrumpItem
       ])}
@@ -4824,7 +4841,6 @@ function renderSetupCenter() {
       ${renderSetupLines([
         { label: "炒底玩家", value: escapeHtml(fry.currentPlayerName) },
         { label: "贴底", value: `选择 ${escapeHtml(state.kittySize)} 张` },
-        colorfulOrderItem,
         currentTrumpItem
       ])}
     `;
@@ -4843,6 +4859,7 @@ function renderSetupCenter() {
 
   return `
     <div class="setup-center-content">
+      ${renderColorfulFryOrderBanner()}
       ${body}
     </div>
   `;

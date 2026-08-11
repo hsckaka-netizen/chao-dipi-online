@@ -3249,6 +3249,39 @@ button.joinable-room-player.spectate-player {
   justify-items: center;
 }
 
+.colorful-fry-order-banner {
+  width: min(100%, 390px);
+  display: grid;
+  gap: 3px;
+  justify-items: center;
+  padding: 10px 14px;
+  border: 1px solid rgba(140, 74, 182, 0.56);
+  border-radius: 14px;
+  background: linear-gradient(110deg, rgba(61, 125, 200, 0.2), rgba(199, 81, 158, 0.24), rgba(54, 160, 105, 0.2));
+  box-shadow: 0 5px 14px rgba(110, 63, 142, 0.16);
+  color: #6a397e;
+  text-align: center;
+}
+
+.colorful-fry-order-banner span {
+  color: #7e3b91;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+}
+
+.colorful-fry-order-banner strong {
+  color: #4a255e;
+  font-size: 18px;
+  line-height: 1.25;
+}
+
+.colorful-fry-order-banner em {
+  color: #6c5681;
+  font-size: 11px;
+  font-style: normal;
+}
+
 .setup-lines {
   display: flex;
   flex-wrap: wrap;
@@ -5109,6 +5142,11 @@ button.auto-play-toggle.active {
     width: 100%;
     min-width: 0;
     justify-items: stretch;
+  }
+
+  .colorful-fry-order-banner {
+    width: 100%;
+    box-sizing: border-box;
   }
 
   .setup-stage-score-bidding .setup-lines {

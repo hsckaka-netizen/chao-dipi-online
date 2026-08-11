@@ -184,9 +184,11 @@ test("shop migration creates products, entitlements, inventory, uses, and split 
 test("server and browser expose the shop, self-equipped cosmetics, and game-item routes", async () => {
   const serverPath = fileURLToPath(new URL("../server.js", import.meta.url));
   const appPath = fileURLToPath(new URL("../public/app.js", import.meta.url));
-  const [serverSource, appSource] = await Promise.all([
+  const stylesPath = fileURLToPath(new URL("../public/styles.css", import.meta.url));
+  const [serverSource, appSource, styles] = await Promise.all([
     readFile(serverPath, "utf8"),
-    readFile(appPath, "utf8")
+    readFile(appPath, "utf8"),
+    readFile(stylesPath, "utf8")
   ]);
 
   assert.match(serverSource, /pathParts\[1\] === "shop"/);
@@ -226,7 +228,10 @@ test("server and browser expose the shop, self-equipped cosmetics, and game-item
   assert.match(appSource, /function currentFrySuitStrength/);
   assert.match(appSource, /function renderWarGodMark/);
   assert.match(appSource, /data-action="complete-item-stage"/);
-  assert.match(appSource, /label: "缤纷顺序（大 → 小）"/);
+  assert.match(appSource, /function renderColorfulFryOrderBanner/);
+  assert.match(appSource, /COLORFUL_FRY_ORDER_VISIBLE_STAGES = new Set\(\[\s*OTHER_CARDS_STAGE,[\s\S]*?"fry-burying"/);
+  assert.match(appSource, /花色 2：\$\{escapeHtml\(order\)\}/);
+  assert.match(styles, /\.colorful-fry-order-banner/);
   assert.match(appSource, /花色 2 大小（大 → 小）/);
   assert.match(appSource, /bidBeats\(current, bid, frySuitStrength \|\| undefined\)/);
 
