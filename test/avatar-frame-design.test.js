@@ -1,7 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { readFile, readdir } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
+
+import { decodeAvatarFrameDataUrl } from "../account-auth.js";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
 
@@ -51,10 +53,12 @@ test("avatar frames use one fixed square display box for every theme", async () 
   ]);
 
   assert.match(styles, /background: var\(--avatar-frame-image\) center \/ 100% 100% no-repeat/);
-  assert.match(styles, /left: -18\.8%;[\s\S]*top: -18\.8%;[\s\S]*width: 137\.6%;[\s\S]*height: 137\.6%/);
-  assert.match(styles, /\.avatar\.avatar-frame::after \{[\s\S]*?z-index: 2;[\s\S]*?border-radius: 0;/);
-  assert.match(styles, /\.avatar\.avatar-frame \{[\s\S]*?aspect-ratio: 1;/);
-  assert.match(styles, /\.avatar\.avatar-frame \.avatar-core \{[\s\S]*?inset: 7%;[\s\S]*?z-index: 1;/);
+  assert.match(styles, /\.avatar\.avatar-frame::after \{[\s\S]*?inset: 0;[\s\S]*?z-index: 2;[\s\S]*?border-radius: 0;/);
+  assert.match(styles, /\.avatar\.avatar-frame \{[\s\S]*?width: var\(--avatar-frame-box-size\);[\s\S]*?height: var\(--avatar-frame-box-size\);[\s\S]*?aspect-ratio: 1;/);
+  assert.match(styles, /\.avatar\.avatar-frame \.avatar-core \{[\s\S]*?inset: 18\.75%;[\s\S]*?border: 0;[\s\S]*?z-index: 1;/);
+  assert.match(styles, /\.avatar\.avatar-frame \.avatar-core img \{[\s\S]*?border-radius: 0;/);
+  assert.doesNotMatch(styles, /left: -18\.8%|top: -18\.8%|width: 137\.6%|height: 137\.6%/);
+  assert.doesNotMatch(styles, /\.avatar\.avatar-frame::before/);
   assert.doesNotMatch(styles, /--avatar-frame-(?:left|top|width|height):/);
   for (const key of ["warrior", "mage", "warlock", "rogue", "druid", "shaman", "death-knight", "minions", "usagi", "toy-story"]) {
     assert.match(styles, new RegExp(`\\.avatar\\.avatar-frame-${key} \\{[\\s\\S]*?--avatar-frame-image:`));
@@ -62,4 +66,19 @@ test("avatar frames use one fixed square display box for every theme", async () 
   }
   assert.doesNotMatch(app, /value: "(?:vip|emerald|violet|champion)", label: ".*头像/);
   assert.doesNotMatch(assets, /vip-avatar-frame\.png|avatar-frame-(?:emerald|violet|champion)\.png/);
+});
+
+test("every bundled avatar frame satisfies the same pixel contract used by uploads", async () => {
+  const cosmetics = `${root}public/assets/cosmetics`;
+  const filenames = (await readdir(cosmetics))
+    .filter((filename) => /^avatar-frame-.+\.png$/.test(filename));
+
+  assert.ok(filenames.length >= 10);
+  for (const filename of filenames) {
+    const image = await readFile(`${cosmetics}/${filename}`);
+    assert.doesNotThrow(
+      () => decodeAvatarFrameDataUrl(`data:image/png;base64,${image.toString("base64")}`),
+      filename
+    );
+  }
 });

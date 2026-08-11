@@ -846,6 +846,7 @@ section.game-room-overview {
 }
 
 .avatar.large {
+  --avatar-frame-box-size: 104.576px;
   width: 76px;
   height: 76px;
   font-size: 20px;
@@ -2109,6 +2110,8 @@ button.joinable-room-player.spectate-player {
 }
 
 .avatar {
+  /* 未装备头像框时，仍以头像本身作为尺寸基准。 */
+  --avatar-frame-box-size: 66.048px;
   position: relative;
   flex: 0 0 auto;
   display: inline-grid;
@@ -2128,12 +2131,14 @@ button.joinable-room-player.spectate-player {
 }
 
 .avatar.small {
+  --avatar-frame-box-size: 52.288px;
   width: 38px;
   height: 38px;
   font-size: 14px;
 }
 
 .avatar.shop-feature {
+  --avatar-frame-box-size: 121.088px;
   width: 88px;
   height: 88px;
   font-size: 23px;
@@ -2159,12 +2164,9 @@ button.joinable-room-player.spectate-player {
 .avatar.avatar-frame::after {
   content: "";
   position: absolute;
-  left: -18.8%;
-  top: -18.8%;
-  width: 137.6%;
-  height: 137.6%;
+  inset: 0;
   z-index: 2;
-  /* 512px 素材的可视外沿需要完整保留，不能被头像本身的圆角裁掉。 */
+  /* 这一层就是完整的 512 × 512 头像框画布，不再以头像尺寸二次放大。 */
   border-radius: 0;
   background: var(--avatar-frame-image) center / 100% 100% no-repeat;
   filter:
@@ -2176,45 +2178,14 @@ button.joinable-room-player.spectate-player {
 .avatar.avatar-frame {
   z-index: 2;
   isolation: isolate;
+  /*
+   * 已装备时，元素本身就是完整框体画布；该尺寸等于旧版的实际外框尺寸。
+   * 这样父布局可以感知完整框体，框、头像和命中区域也只剩一套坐标。
+   */
+  width: var(--avatar-frame-box-size);
+  height: var(--avatar-frame-box-size);
   aspect-ratio: 1;
-  margin-inline-end: 8px;
-  overflow: visible;
-  border: 0;
-  border-radius: 7px;
-  background: transparent;
-  padding: 0;
-  box-shadow: none;
-}
-
-.avatar.avatar-frame::before {
-  content: "";
-  position: absolute;
-  inset: -13%;
-  z-index: 0;
-  border-radius: 22%;
-  background: radial-gradient(circle, var(--avatar-frame-aura, rgba(31, 45, 38, 0.12)), transparent 70%);
-  opacity: 0.72;
-  pointer-events: none;
-}
-
-.avatar.avatar-frame-stormwind,
-.avatar.avatar-frame-idol,
-.avatar.avatar-frame-hellfire,
-.avatar.avatar-frame-blood-elf,
-.avatar.avatar-frame-endless-winter,
-.avatar.avatar-frame-cr7,
-.avatar.avatar-frame-paladin,
-.avatar.avatar-frame-warrior,
-.avatar.avatar-frame-mage,
-.avatar.avatar-frame-warlock,
-.avatar.avatar-frame-rogue,
-.avatar.avatar-frame-druid,
-.avatar.avatar-frame-shaman,
-.avatar.avatar-frame-death-knight,
-.avatar.avatar-frame-minions,
-.avatar.avatar-frame-usagi,
-.avatar.avatar-frame-toy-story,
-.avatar.avatar-frame-vip-legend {
+  margin-inline-end: 0;
   overflow: visible;
   border: 0;
   border-radius: 7px;
@@ -2339,19 +2310,19 @@ button.joinable-room-player.spectate-player {
 
 .avatar.avatar-frame .avatar-core {
   position: absolute;
-  /*
-   * 512px 素材在 137.6% 的正方形图层中展示时，320px 内开口正好是头像
-   * 基准边长的 86%；两边各留 7%。必须用比例而非固定像素，才能在 38–104px
-   * 的所有头像尺寸中严格对齐。
-   */
-  inset: 7%;
+  /* 512px 母版中的内开口是 x/y=96..416，因此每边固定留 18.75%。 */
+  inset: 18.75%;
   width: auto;
   height: auto;
-  border: 1px solid rgba(255, 255, 255, 0.72);
-  border-radius: 5px;
-  background: #e8eee9;
-  box-shadow: 0 0 0 1px rgba(30, 25, 39, 0.35);
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
   z-index: 1;
+}
+
+.avatar.avatar-frame .avatar-core img {
+  border-radius: 0;
 }
 
 .role-mark {
@@ -3398,6 +3369,7 @@ button.joinable-room-player.spectate-player {
 }
 
 .table-circle .trick-player .avatar.small {
+  --avatar-frame-box-size: 110.08px;
   width: 80px;
   height: 80px;
   font-size: 21px;
@@ -3413,6 +3385,7 @@ button.joinable-room-player.spectate-player {
   flex: 0 0 auto;
   z-index: 2;
   isolation: isolate;
+  place-items: center;
 }
 
 .table-player-avatar-stage {
@@ -3966,6 +3939,7 @@ button.joinable-room-player.spectate-player {
 }
 
 .avatar.seat-profile {
+  --avatar-frame-box-size: 143.104px;
   width: 104px;
   height: 104px;
   font-size: 24px;
@@ -5303,6 +5277,7 @@ button.auto-play-toggle.active {
 
   .seat-hand-avatar-stage,
   .avatar.seat-profile {
+    --avatar-frame-box-size: 99.072px;
     width: 72px;
     height: 72px;
   }
@@ -5414,6 +5389,7 @@ button.auto-play-toggle.active {
   }
 
   .statistics-user-cell .avatar.small {
+    --avatar-frame-box-size: 46.784px;
     width: 34px;
     height: 34px;
   }
@@ -5654,14 +5630,15 @@ button.auto-play-toggle.active {
 }
 
 .shop-avatar-preview .avatar {
+  --avatar-frame-box-size: 96.32px;
   width: 70px;
   height: 70px;
 }
 
 .shop-avatar-preview {
   position: relative;
-  width: 126px;
-  height: 166px;
+  width: 136px;
+  min-height: 204px;
   align-content: start;
   gap: 7px;
   border: 1px solid rgba(76, 101, 90, 0.12);
@@ -5683,15 +5660,17 @@ button.auto-play-toggle.active {
   display: grid;
   place-items: center;
   width: 100%;
-  height: 96px;
+  height: 128px;
 }
 
 .shop-avatar-preview .avatar.shop-feature {
+  --avatar-frame-box-size: 121.088px;
   width: 88px;
   height: 88px;
 }
 
 .shop-avatar-preview .avatar.small {
+  --avatar-frame-box-size: 52.288px;
   width: 38px;
   height: 38px;
 }
@@ -5703,6 +5682,7 @@ button.auto-play-toggle.active {
 }
 
 .shop-avatar-mini-preview {
+  min-height: 54px;
   min-width: 0;
   display: flex;
   align-items: center;
@@ -5870,8 +5850,8 @@ button.auto-play-toggle.active {
 }
 
 .owned-avatar-current-stage {
-  width: 112px;
-  height: 112px;
+  width: 128px;
+  height: 128px;
   display: grid;
   place-items: center;
 }
@@ -6259,11 +6239,11 @@ button.auto-play-toggle.active {
   }
 
   .shop-product-card.avatar-frame-product {
-    grid-template-columns: 124px minmax(0, 1fr);
+    grid-template-columns: 136px minmax(0, 1fr);
   }
 
   .shop-avatar-preview {
-    width: 116px;
+    width: 136px;
   }
 
   .owned-avatar-frame-grid {
@@ -6780,4 +6760,10 @@ button.auto-play-toggle.active {
   .taunt-admin-actions {
     grid-template-columns: 1fr;
   }
+}
+
+/* 保持在所有响应式尺寸和业务场景下，已装备框都以完整 512 画布作为元素本身。 */
+.avatar.avatar-frame {
+  width: var(--avatar-frame-box-size);
+  height: var(--avatar-frame-box-size);
 }
