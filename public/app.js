@@ -5846,11 +5846,13 @@ function avatarHtml(name, avatarUrl = "", size = "normal", avatarFrame = "") {
   const initial = String(name || "玩").trim().slice(0, 1) || "玩";
   const frameUrl = avatarFrameAssetUrl(avatarFrame);
   const frameClass = frameUrl ? "avatar-frame" : "";
-  const frameStyle = frameUrl ? ` style="--avatar-frame-image: url('${escapeHtml(frameUrl)}')"` : "";
   const content = avatarUrl
     ? `<img src="${escapeHtml(avatarUrl)}" alt="" decoding="async" draggable="false">`
     : escapeHtml(initial);
-  return `<span class="avatar ${size} ${frameClass}" title="${escapeHtml(name)}"${frameStyle}><span class="avatar-core">${content}</span></span>`;
+  const frameArt = frameUrl
+    ? `<img class="avatar-frame-art" src="${escapeHtml(frameUrl)}" alt="" aria-hidden="true" decoding="async" draggable="false">`
+    : "";
+  return `<span class="avatar ${size} ${frameClass}" title="${escapeHtml(name)}"><span class="avatar-core">${content}</span>${frameArt}</span>`;
 }
 
 function activeTauntForPlayer(playerId) {

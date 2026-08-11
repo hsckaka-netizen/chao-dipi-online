@@ -846,7 +846,8 @@ section.game-room-overview {
 }
 
 .avatar.large {
-  --avatar-frame-box-size: 104.576px;
+  --avatar-portrait-size: 68px;
+  --avatar-frame-box-size: 108.8px;
   width: 76px;
   height: 76px;
   font-size: 20px;
@@ -2110,8 +2111,12 @@ button.joinable-room-player.spectate-player {
 }
 
 .avatar {
-  /* 未装备头像框时，仍以头像本身作为尺寸基准。 */
-  --avatar-frame-box-size: 66.048px;
+  /*
+   * 非框状态的可见头像内容是 40px。装备框后保留该内容尺寸，
+   * 以 320 / 512 = 62.5% 反推完整框体画布为 64px。
+   */
+  --avatar-portrait-size: 40px;
+  --avatar-frame-box-size: 64px;
   position: relative;
   flex: 0 0 auto;
   display: inline-grid;
@@ -2131,14 +2136,16 @@ button.joinable-room-player.spectate-player {
 }
 
 .avatar.small {
-  --avatar-frame-box-size: 52.288px;
+  --avatar-portrait-size: 30px;
+  --avatar-frame-box-size: 48px;
   width: 38px;
   height: 38px;
   font-size: 14px;
 }
 
 .avatar.shop-feature {
-  --avatar-frame-box-size: 121.088px;
+  --avatar-portrait-size: 80px;
+  --avatar-frame-box-size: 128px;
   width: 88px;
   height: 88px;
   font-size: 23px;
@@ -2161,14 +2168,19 @@ button.joinable-room-player.spectate-player {
   border-radius: 4px;
 }
 
-.avatar.avatar-frame::after {
-  content: "";
+.avatar.avatar-frame > .avatar-frame-art {
   position: absolute;
   inset: 0;
-  z-index: 2;
-  /* 这一层就是完整的 512 × 512 头像框画布，不再以头像尺寸二次放大。 */
+  z-index: 3;
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  /* 这一层是完整的 512 × 512 头像框画布，使用真实前景图片而非伪元素。 */
+  object-fit: fill;
+  display: block;
+  border: 0;
   border-radius: 0;
-  background: var(--avatar-frame-image) center / 100% 100% no-repeat;
+  background: transparent;
   filter:
     drop-shadow(0 3px 4px var(--avatar-frame-shadow, rgba(31, 45, 38, 0.24)))
     drop-shadow(0 0 5px var(--avatar-frame-aura, rgba(31, 45, 38, 0.12)));
@@ -2188,7 +2200,7 @@ button.joinable-room-player.spectate-player {
   margin-inline-end: 0;
   overflow: visible;
   border: 0;
-  border-radius: 7px;
+  border-radius: 0;
   background: transparent;
   padding: 0;
   box-shadow: none;
@@ -2310,14 +2322,20 @@ button.joinable-room-player.spectate-player {
 
 .avatar.avatar-frame .avatar-core {
   position: absolute;
-  /* 512px 母版中的内开口是 x/y=96..416，因此每边固定留 18.75%。 */
-  inset: 18.75%;
-  width: auto;
-  height: auto;
+  /*
+   * 512px 母版中的内开口是 320px。头像内容始终沿用未装备时的
+   * 实际尺寸，并在完整画布中居中，画布与内容严格维持 1.6 : 1。
+   */
+  top: 50%;
+  left: 50%;
+  width: var(--avatar-portrait-size);
+  height: var(--avatar-portrait-size);
+  transform: translate(-50%, -50%);
   border: 0;
   border-radius: 0;
   background: transparent;
   box-shadow: none;
+  overflow: hidden;
   z-index: 1;
 }
 
@@ -3369,7 +3387,8 @@ button.joinable-room-player.spectate-player {
 }
 
 .table-circle .trick-player .avatar.small {
-  --avatar-frame-box-size: 110.08px;
+  --avatar-portrait-size: 72px;
+  --avatar-frame-box-size: 115.2px;
   width: 80px;
   height: 80px;
   font-size: 21px;
@@ -3939,7 +3958,8 @@ button.joinable-room-player.spectate-player {
 }
 
 .avatar.seat-profile {
-  --avatar-frame-box-size: 143.104px;
+  --avatar-portrait-size: 96px;
+  --avatar-frame-box-size: 153.6px;
   width: 104px;
   height: 104px;
   font-size: 24px;
@@ -5277,7 +5297,8 @@ button.auto-play-toggle.active {
 
   .seat-hand-avatar-stage,
   .avatar.seat-profile {
-    --avatar-frame-box-size: 99.072px;
+    --avatar-portrait-size: 64px;
+    --avatar-frame-box-size: 102.4px;
     width: 72px;
     height: 72px;
   }
@@ -5389,7 +5410,8 @@ button.auto-play-toggle.active {
   }
 
   .statistics-user-cell .avatar.small {
-    --avatar-frame-box-size: 46.784px;
+    --avatar-portrait-size: 26px;
+    --avatar-frame-box-size: 41.6px;
     width: 34px;
     height: 34px;
   }
@@ -5630,7 +5652,8 @@ button.auto-play-toggle.active {
 }
 
 .shop-avatar-preview .avatar {
-  --avatar-frame-box-size: 96.32px;
+  --avatar-portrait-size: 62px;
+  --avatar-frame-box-size: 99.2px;
   width: 70px;
   height: 70px;
 }
@@ -5664,13 +5687,15 @@ button.auto-play-toggle.active {
 }
 
 .shop-avatar-preview .avatar.shop-feature {
-  --avatar-frame-box-size: 121.088px;
+  --avatar-portrait-size: 80px;
+  --avatar-frame-box-size: 128px;
   width: 88px;
   height: 88px;
 }
 
 .shop-avatar-preview .avatar.small {
-  --avatar-frame-box-size: 52.288px;
+  --avatar-portrait-size: 30px;
+  --avatar-frame-box-size: 48px;
   width: 38px;
   height: 38px;
 }

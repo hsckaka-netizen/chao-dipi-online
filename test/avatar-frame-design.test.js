@@ -52,13 +52,14 @@ test("avatar frames use one fixed square display box for every theme", async () 
     readFile(`${root}public/asset-versions.js`, "utf8")
   ]);
 
-  assert.match(styles, /background: var\(--avatar-frame-image\) center \/ 100% 100% no-repeat/);
-  assert.match(styles, /\.avatar\.avatar-frame::after \{[\s\S]*?inset: 0;[\s\S]*?z-index: 2;[\s\S]*?border-radius: 0;/);
+  assert.match(app, /class="avatar-frame-art"/);
+  assert.match(styles, /\.avatar\.avatar-frame > \.avatar-frame-art \{[\s\S]*?inset: 0;[\s\S]*?z-index: 3;[\s\S]*?width: 100%;[\s\S]*?height: 100%;[\s\S]*?object-fit: fill;/);
   assert.match(styles, /\.avatar\.avatar-frame \{[\s\S]*?width: var\(--avatar-frame-box-size\);[\s\S]*?height: var\(--avatar-frame-box-size\);[\s\S]*?aspect-ratio: 1;/);
-  assert.match(styles, /\.avatar\.avatar-frame \.avatar-core \{[\s\S]*?inset: 18\.75%;[\s\S]*?border: 0;[\s\S]*?z-index: 1;/);
+  assert.match(styles, /\.avatar\.shop-feature \{[\s\S]*?--avatar-portrait-size: 80px;[\s\S]*?--avatar-frame-box-size: 128px;/);
+  assert.match(styles, /\.avatar\.avatar-frame \.avatar-core \{[\s\S]*?top: 50%;[\s\S]*?left: 50%;[\s\S]*?width: var\(--avatar-portrait-size\);[\s\S]*?height: var\(--avatar-portrait-size\);[\s\S]*?transform: translate\(-50%, -50%\);[\s\S]*?border: 0;[\s\S]*?overflow: hidden;[\s\S]*?z-index: 1;/);
   assert.match(styles, /\.avatar\.avatar-frame \.avatar-core img \{[\s\S]*?border-radius: 0;/);
-  assert.doesNotMatch(styles, /left: -18\.8%|top: -18\.8%|width: 137\.6%|height: 137\.6%/);
-  assert.doesNotMatch(styles, /\.avatar\.avatar-frame::before/);
+  assert.doesNotMatch(styles, /left: -18\.8%|top: -18\.8%|width: 137\.6%|height: 137\.6%|137\.6%/);
+  assert.doesNotMatch(styles, /\.avatar\.avatar-frame::(?:before|after)/);
   assert.doesNotMatch(styles, /--avatar-frame-(?:left|top|width|height):/);
   for (const key of ["warrior", "mage", "warlock", "rogue", "druid", "shaman", "death-knight", "minions", "usagi", "toy-story"]) {
     assert.match(styles, new RegExp(`\\.avatar\\.avatar-frame-${key} \\{[\\s\\S]*?--avatar-frame-image:`));
