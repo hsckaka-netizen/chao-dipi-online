@@ -14,7 +14,7 @@
     h1 { margin-bottom: 8px; font-size: clamp(26px, 4vw, 40px); }
     h2 { margin-bottom: 14px; font-size: 20px; }
     p { color: #607068; line-height: 1.6; }
-    .uploads { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+    .uploads { display: grid; gap: 12px; }
     label.upload { display: grid; gap: 8px; border: 1px dashed #9eb5aa; border-radius: 13px; background: #f7faf8; padding: 14px; color: #426055; font-size: 13px; font-weight: 800; }
     input { width: 100%; }
     .checks { display: flex; flex-wrap: wrap; gap: 8px; min-height: 28px; margin-top: 14px; }
@@ -30,12 +30,8 @@
     .sizes { display: flex; flex-wrap: wrap; align-items: end; gap: 26px 30px; padding: 18px 12px; }
     .sample { display: grid; justify-items: center; gap: 13px; }
     .sample small { opacity: .78; font-size: 11px; }
-    .avatar { --portrait-size: 48px; --frame-size: 76.8px; position: relative; width: var(--frame-size); height: var(--frame-size); display: grid; place-items: center; overflow: visible; color: #fff; font-weight: 900; isolation: isolate; }
-    .avatar-core { position: absolute; top: 50%; left: 50%; z-index: 1; width: var(--portrait-size); height: var(--portrait-size); display: grid; place-items: center; overflow: hidden; transform: translate(-50%, -50%); background: linear-gradient(145deg, #2b7f78, #182e58); }
-    .avatar-photo { width: 100%; height: 100%; display: none; object-fit: cover; }
-    .avatar.has-photo .avatar-photo { display: block; }
-    .avatar.has-photo .initial { display: none; }
-    .frame { position: absolute; inset: 0; z-index: 2; width: 100%; height: 100%; object-fit: contain; pointer-events: none; filter: drop-shadow(0 3px 4px rgba(18, 38, 30, .28)); }
+    .frame-stage { --frame-size: 66.048px; width: var(--frame-size); height: var(--frame-size); display: grid; place-items: center; overflow: hidden; border: 1px solid rgba(83, 106, 96, .2); border-radius: 8px; background-color: #f7f9f8; background-image: linear-gradient(45deg, #dfe5e1 25%, transparent 25%), linear-gradient(-45deg, #dfe5e1 25%, transparent 25%), linear-gradient(45deg, transparent 75%, #dfe5e1 75%), linear-gradient(-45deg, transparent 75%, #dfe5e1 75%); background-position: 0 0, 0 6px, 6px -6px, -6px 0; background-size: 12px 12px; }
+    .frame { width: 100%; height: 100%; display: block; object-fit: contain; pointer-events: none; filter: drop-shadow(0 3px 4px rgba(18, 38, 30, .28)); }
     .empty-note { border: 1px dashed #a9bbb2; border-radius: 12px; padding: 16px; color: #66776f; text-align: center; }
     code { border-radius: 5px; background: #edf2ef; padding: 2px 5px; }
     @media (max-width: 640px) { body { padding: 12px; } header, section { padding: 15px; } .uploads { grid-template-columns: 1fr; } }
@@ -45,30 +41,27 @@
   <main>
     <header>
       <h1>头像框本地自检</h1>
-      <p>文件只在当前浏览器中处理，不会上传。请先选择最终 PNG，再检查自动结果和三种背景下的四种实装尺寸。</p>
+      <p>文件只在当前浏览器中处理，不会上传。请选择最终 PNG，再检查自动结果和三种背景下的四种纯素材尺寸。</p>
       <div class="uploads">
         <label class="upload">头像框文件（必选）<input id="frameFile" type="file" accept="image/png"></label>
-        <label class="upload">测试头像（可选）<input id="avatarFile" type="file" accept="image/png,image/jpeg,image/webp"></label>
       </div>
       <div id="checks" class="checks"><span class="check">等待选择头像框文件</span></div>
     </header>
     <section>
-      <h2>实装尺寸</h2>
+      <h2>纯素材尺寸</h2>
       <div id="previews" class="preview-grid"><div class="empty-note">选择头像框后显示预览</div></div>
     </section>
     <section>
       <h2>人工验收提醒</h2>
-      <p>重点看 38 px：主题是否仍能凭轮廓或主色辨认；头像是否清楚；浅色和深色背景是否都有边界。自动检查通过不代表视觉质量已经通过。</p>
-      <p>素材标准：画布 <code>512 × 512</code>，四边 8 px 透明；头像外沿对齐约 <code>372 × 372</code> 的虚拟框架，中央 <code>256 × 256</code> 头像核心区必须完全透明。可见设计向框架内外的延伸都随整张素材直接叠加。</p>
+      <p>重点看紧凑尺寸：主题是否仍能凭轮廓或主色辨认；浅色和深色背景是否都有边界；内部装饰是否出现矩形硬裁切。自动检查通过不代表视觉质量已经通过。</p>
+      <p>素材标准：画布 <code>512 × 512</code>，四边 8 px 透明；头像外沿对齐约 <code>372 × 372</code> 的虚拟框架。素材内部不设强制透明区，可见设计向框架内外的延伸必须完整保留。</p>
     </section>
   </main>
   <script>
     const frameInput = document.querySelector("#frameFile");
-    const avatarInput = document.querySelector("#avatarFile");
     const checks = document.querySelector("#checks");
     const previews = document.querySelector("#previews");
     let frameUrl = "";
-    let avatarUrl = "";
     const sizes = [38, 48, 80, 104];
     const surfaces = [
       ["light", "浅色界面"],
@@ -84,11 +77,10 @@
           <div class="sizes">
             ${sizes.map((size) => `
               <div class="sample">
-                <span class="avatar ${avatarUrl ? "has-photo" : ""}" style="--portrait-size:${size}px;--frame-size:${size * 1.376}px;font-size:${Math.max(12, Math.round(size * .24))}px">
-                  <span class="avatar-core"><span class="initial">玩</span><img class="avatar-photo" src="${avatarUrl}" alt=""></span>
+                <span class="frame-stage" style="--frame-size:${size * 1.376}px">
                   <img class="frame" src="${frameUrl}" alt="">
                 </span>
-                <small>${size} px</small>
+                <small>${Math.round(size * 1.376)} px 展示区</small>
               </div>
             `).join("")}
           </div>
@@ -113,7 +105,6 @@
       context.drawImage(image, 0, 0, 512, 512);
       const data = context.getImageData(0, 0, 512, 512).data;
       let outerClear = true;
-      let coreClear = true;
       if (image.naturalWidth === 512 && image.naturalHeight === 512) {
         for (let y = 0; y < 512 && outerClear; y += 1) {
           for (let x = 0; x < 512; x += 1) {
@@ -122,14 +113,6 @@
         }
       } else {
         outerClear = false;
-        coreClear = false;
-      }
-      if (coreClear) {
-        for (let y = 128; y < 384 && coreClear; y += 1) {
-          for (let x = 128; x < 384; x += 1) {
-            if (alphaAt(data, x, y) > 4) { coreClear = false; break; }
-          }
-        }
       }
       const formatGood = file.type === "image/png";
       const sizeGood = image.naturalWidth === 512 && image.naturalHeight === 512;
@@ -138,8 +121,7 @@
         badge(`${file.type || "未知格式"}`, formatGood),
         badge(`${image.naturalWidth} × ${image.naturalHeight} px`, sizeGood),
         badge(`${Math.round(file.size / 1024)} KB（不超过 1.2 MB）`, weightGood),
-        badge("8 px 外边距透明", outerClear),
-        badge("256 × 256 px 头像核心区透明", coreClear)
+        badge("8 px 外边距透明", outerClear)
       ].join("");
     }
 
@@ -151,14 +133,6 @@
       const image = new Image();
       image.onload = () => { inspectFrame(file, image); makePreview(); };
       image.src = frameUrl;
-    });
-
-    avatarInput.addEventListener("change", () => {
-      const file = avatarInput.files[0];
-      if (!file) return;
-      if (avatarUrl) URL.revokeObjectURL(avatarUrl);
-      avatarUrl = URL.createObjectURL(file);
-      makePreview();
     });
   </script>
 </body>

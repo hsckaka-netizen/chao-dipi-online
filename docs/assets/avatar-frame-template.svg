@@ -6,15 +6,14 @@
     <rect width="512" height="512" fill="#f4f6f5" />
     <rect x="8" y="8" width="496" height="496" rx="12" stroke="#d48828" stroke-width="2" stroke-dasharray="8 6" />
     <rect x="70" y="70" width="372" height="372" stroke="#16744c" stroke-width="3" />
-    <rect x="128" y="128" width="256" height="256" fill="#16744c" fill-opacity="0.08" stroke="#16744c" stroke-width="2" stroke-dasharray="7 5" />
     <path d="M70 70H442V442H70Z" stroke="#116a55" stroke-width="10" stroke-opacity="0.18" />
     <g fill="#26342f" stroke="none">
       <text x="16" y="28">8 px 透明外边距</text>
       <text x="256" y="56" text-anchor="middle">绿色实线：372 × 372 px 虚拟框架（不导出）</text>
       <text x="256" y="88" text-anchor="middle">头像外沿与虚拟框架重合</text>
-      <text x="256" y="244" text-anchor="middle">256 × 256 px 头像核心区</text>
-      <text x="256" y="264" text-anchor="middle">必须完全透明</text>
-      <text x="256" y="284" text-anchor="middle">可见设计可向虚拟框架内外延伸</text>
+      <text x="256" y="244" text-anchor="middle">素材内部不设强制透明区</text>
+      <text x="256" y="264" text-anchor="middle">可见设计可向虚拟框架内外完整延伸</text>
+      <text x="256" y="284" text-anchor="middle">禁止按矩形区域裁切内部设计</text>
       <text x="256" y="458" text-anchor="middle">框体沿虚拟框架四边连续闭合</text>
       <text x="256" y="478" text-anchor="middle">除设计本体外，其他区域全透明</text>
     </g>

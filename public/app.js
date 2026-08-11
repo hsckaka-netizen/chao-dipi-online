@@ -1,6 +1,6 @@
 import { applyStatePatch } from "./state-patch.js?v=9330552c7e1e";
 import { detectNewDraggedFiveEffects, detectNewLargePlayEffects } from "./gameplay-effects.js?v=14791e626d30";
-import { ASSET_URLS } from "./asset-versions.js?v=fd9ef080a189";
+import { ASSET_URLS } from "./asset-versions.js?v=c51f35802d50";
 import { createHistoryTrickEntry, filterHistoryTimelineEntries } from "./history-records.js?v=874ba3c97732";
 
 const app = document.querySelector("#app");
@@ -940,10 +940,6 @@ async function prepareAvatarFrameDataUrl(file) {
       const insideOuterClearance = x < 8 || x >= 504 || y < 8 || y >= 504;
       if (insideOuterClearance && alpha !== 0) {
         throw new Error("头像框四边 8 px 必须完全透明");
-      }
-      const insidePortraitCore = x >= 128 && x < 384 && y >= 128 && y < 384;
-      if (insidePortraitCore && alpha !== 0) {
-        throw new Error("头像框中央 256 × 256 px 头像核心区必须完全透明");
       }
       if (!insideOuterClearance && alpha > 0) hasVisibleFramePixel = true;
     }
@@ -4341,7 +4337,7 @@ function renderAdminShopManager() {
           <summary><span>上传聊天生成头像框</span><small>先校验，默认草稿</small></summary>
           <div class="admin-inline-tool-body">
             <form class="avatar-frame-upload-form" data-form="upload-avatar-frame">
-              <div class="admin-action-warning avatar-frame-upload-wide">仅接受 PNG：512 × 512 px、最多 1.2MB、四边 8 px 透明、中央 256 × 256 px 头像核心区透明。素材会完整叠加在头像上方。</div>
+              <div class="admin-action-warning avatar-frame-upload-wide">仅接受 PNG：512 × 512 px、最多 1.2MB、四边 8 px 透明。素材内部不设强制透明区，完整图稿会叠加在头像上方。</div>
               <label>主题编号<input name="assetKey" pattern="[a-z0-9][a-z0-9-]{1,38}[a-z0-9]" minlength="3" maxlength="40" required placeholder="jade-dragon"></label>
               <label>显示名称<input name="name" maxlength="80" required placeholder="玉龙祥瑞"></label>
               <label>价格<input name="price" type="number" min="1" max="1000000" step="1" required value="300"></label>

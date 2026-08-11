@@ -7,7 +7,7 @@ import { decodeAvatarFrameDataUrl } from "../account-auth.js";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
 
-test("avatar-frame designer kit defines one virtual framework and transparent portrait core", async () => {
+test("avatar-frame designer kit keeps the virtual framework without clipping interior artwork", async () => {
   const [spec, template, preview] = await Promise.all([
     readFile(`${root}docs/avatar-frame-design-spec.md`, "utf8"),
     readFile(`${root}docs/assets/avatar-frame-template.svg`, "utf8"),
@@ -18,18 +18,18 @@ test("avatar-frame designer kit defines one virtual framework and transparent po
   assert.match(spec, /除设计本体外，其他区域必须真实透明/);
   assert.match(spec, /x=70\.\.442/);
   assert.match(spec, /头像外沿.*虚拟框架完全重合/);
-  assert.match(spec, /256 × 256 px.*必须完全透明/);
+  assert.match(spec, /虚拟框架只负责对齐，不生成透明遮罩或裁切边界/);
   assert.match(spec, /背景 < 头像图片 < 头像框/);
   assert.match(spec, /有无头像框都使用同一展示区/);
   assert.match(template, /viewBox="0 0 512 512"/);
   assert.match(template, /id="GUIDES_DO_NOT_EXPORT"/);
   assert.match(template, /x="70" y="70" width="372" height="372"/);
-  assert.match(template, /x="128" y="128" width="256" height="256"/);
+  assert.doesNotMatch(template, /x="128" y="128" width="256" height="256"/);
   assert.match(preview, /const sizes = \[38, 48, 80, 104\]/);
   assert.match(preview, /size \* 1\.376/);
   assert.match(preview, /alphaAt\(data, x, y\)/);
   assert.match(preview, /file\.size <= 1_200_000/);
-  assert.match(preview, /coreClear/);
+  assert.doesNotMatch(preview, /coreClear|头像核心区透明/);
 });
 
 test("card skins use matte rails and the VIP card frame is static", async () => {
