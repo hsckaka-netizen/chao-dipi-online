@@ -1,25 +1,23 @@
 export const ASSET_VERSIONS = Object.freeze({
   "/assets/joker-face-small.png": "f16ffbe9a2eb",
   "/assets/joker-face.png": "298272a943e8",
-  "/assets/cosmetics/avatar-frame-blood-elf.png": "5fc885896d09",
-  "/assets/cosmetics/avatar-frame-cr7.png": "a04b8c0621db",
-  "/assets/cosmetics/avatar-frame-death-knight.png": "1a44fb88e240",
-  "/assets/cosmetics/avatar-frame-druid.png": "3ed48646b196",
-  "/assets/cosmetics/avatar-frame-endless-winter.png": "d5780074e781",
-  "/assets/cosmetics/avatar-frame-hellfire.png": "7843cf593d98",
-  "/assets/cosmetics/avatar-frame-idol.png": "efac6f2dc0a2",
-  "/assets/cosmetics/avatar-frame-mage.png": "c3469fe57c07",
-  "/assets/cosmetics/avatar-frame-minions.png": "aac7252fc2b8",
-  "/assets/cosmetics/avatar-frame-paladin.png": "b11bf0818e36",
-  "/assets/cosmetics/avatar-frame-rogue.png": "9e0952f2f5f2",
-  "/assets/cosmetics/avatar-frame-shaman.png": "569ed1740456",
-  "/assets/cosmetics/avatar-frame-stormwind.png": "ccce9c8057aa",
-  "/assets/cosmetics/avatar-frame-toy-story.png": "a978b3cc36e5",
-  "/assets/cosmetics/avatar-frame-usagi.png": "a4410add883b",
-  "/assets/cosmetics/avatar-frame-vip-legend.gif": "12092c0cabba",
-  "/assets/cosmetics/avatar-frame-vip-legend.png": "90f5bfc0b6ec",
-  "/assets/cosmetics/avatar-frame-warlock.png": "dfd59ad244d1",
-  "/assets/cosmetics/avatar-frame-warrior.png": "8ca2032f28ad",
+  "/assets/cosmetics/avatar-frame-blood-elf.png": "85c485779c9b",
+  "/assets/cosmetics/avatar-frame-cr7.png": "87a2d4b9d13f",
+  "/assets/cosmetics/avatar-frame-death-knight.png": "dc144a4b9ee8",
+  "/assets/cosmetics/avatar-frame-druid.png": "7767f7908f29",
+  "/assets/cosmetics/avatar-frame-endless-winter.png": "8a4bb6b99f61",
+  "/assets/cosmetics/avatar-frame-hellfire.png": "366ade0a89b5",
+  "/assets/cosmetics/avatar-frame-idol.png": "7a67046a8630",
+  "/assets/cosmetics/avatar-frame-mage.png": "a460c2535d02",
+  "/assets/cosmetics/avatar-frame-minions.png": "22571e919506",
+  "/assets/cosmetics/avatar-frame-paladin.png": "3defad87ccfa",
+  "/assets/cosmetics/avatar-frame-rogue.png": "9b15223af6aa",
+  "/assets/cosmetics/avatar-frame-shaman.png": "3e8365616986",
+  "/assets/cosmetics/avatar-frame-stormwind.png": "b4792983b975",
+  "/assets/cosmetics/avatar-frame-toy-story.png": "74a7c5806170",
+  "/assets/cosmetics/avatar-frame-usagi.png": "da5fc65ec6c5",
+  "/assets/cosmetics/avatar-frame-warlock.png": "fc00e33ecddf",
+  "/assets/cosmetics/avatar-frame-warrior.png": "7d400be96a1d",
   "/assets/cosmetics/card-frame-blood-elf.svg": "6a1cae96500c",
   "/assets/cosmetics/card-frame-champion.svg": "d3f762619feb",
   "/assets/cosmetics/card-frame-cr7.svg": "5597d59e2319",
@@ -73,8 +71,7 @@ export const ASSET_URLS = Object.freeze({
     "death-knight": versionedAssetUrl("/assets/cosmetics/avatar-frame-death-knight.png"),
     minions: versionedAssetUrl("/assets/cosmetics/avatar-frame-minions.png"),
     usagi: versionedAssetUrl("/assets/cosmetics/avatar-frame-usagi.png"),
-    "toy-story": versionedAssetUrl("/assets/cosmetics/avatar-frame-toy-story.png"),
-    "vip-legend": versionedAssetUrl("/assets/cosmetics/avatar-frame-vip-legend.png")
+    "toy-story": versionedAssetUrl("/assets/cosmetics/avatar-frame-toy-story.png")
   }),
   cardFrames: Object.freeze({
     emerald: versionedAssetUrl("/assets/cosmetics/card-frame-emerald.svg"),
@@ -89,9 +86,7 @@ export const ASSET_URLS = Object.freeze({
     paladin: versionedAssetUrl("/assets/cosmetics/card-frame-paladin.svg"),
     "vip-legend": versionedAssetUrl("/assets/cosmetics/card-frame-vip-legend.svg")
   }),
-  staticAvatarFrames: Object.freeze({
-    "vip-legend": versionedAssetUrl("/assets/cosmetics/avatar-frame-vip-legend.png")
-  }),
+  staticAvatarFrames: Object.freeze({}),
   staticCardFrames: Object.freeze({
     "vip-legend": versionedAssetUrl("/assets/cosmetics/card-frame-vip-legend.svg")
   })

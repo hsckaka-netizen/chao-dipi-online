@@ -1,6 +1,6 @@
 import { applyStatePatch } from "./state-patch.js?v=9330552c7e1e";
 import { detectNewDraggedFiveEffects, detectNewLargePlayEffects } from "./gameplay-effects.js?v=14791e626d30";
-import { ASSET_URLS, versionedAssetUrl } from "./asset-versions.js?v=7a6386c608c4";
+import { ASSET_URLS, versionedAssetUrl } from "./asset-versions.js?v=4b09ef6cdbe7";
 import { createHistoryTrickEntry, filterHistoryTimelineEntries } from "./history-records.js?v=874ba3c97732";
 
 const app = document.querySelector("#app");
@@ -34,7 +34,6 @@ const AVATAR_FRAME_OPTIONS = [
   { value: "druid", label: "魔兽德鲁伊" },
   { value: "shaman", label: "魔兽萨满祭司" },
   { value: "death-knight", label: "魔兽死亡骑士" },
-  { value: "vip-legend", label: "至尊星耀 VIP" },
   { value: "minions", label: "小黄人工坊（小黄人主题）" },
   { value: "usagi", label: "乌萨奇萌兔" },
   { value: "toy-story", label: "玩具总动员" }

@@ -85,6 +85,10 @@ const MIGRATIONS = [
   {
     version: 17,
     path: fileURLToPath(new URL("./db/migrations/017_uploaded_avatar_frames.sql", import.meta.url))
+  },
+  {
+    version: 18,
+    path: fileURLToPath(new URL("./db/migrations/018_remove_vip_legend_avatar_frame.sql", import.meta.url))
   }
 ];
 const HISTORY_ENABLED = String(process.env.GAME_HISTORY_ENABLED || "").toLowerCase() === "true";

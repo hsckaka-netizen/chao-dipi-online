@@ -2297,13 +2297,6 @@ button.joinable-room-player.spectate-player {
   --avatar-frame-aura: rgba(45, 139, 184, 0.25);
 }
 
-.avatar.avatar-frame-vip-legend {
-  --avatar-frame-image: var(--avatar-frame-vip-legend-image);
-  --avatar-frame-shadow: rgba(30, 132, 230, 0.48);
-  --avatar-frame-aura: rgba(54, 153, 244, 0.42);
-  animation: vip-legend-avatar-aura 3.2s ease-in-out infinite;
-}
-
 .avatar.avatar-frame-minions {
   --avatar-frame-image: var(--avatar-frame-minions-image);
   --avatar-frame-shadow: rgba(46, 83, 120, 0.28);
@@ -2320,11 +2313,6 @@ button.joinable-room-player.spectate-player {
   --avatar-frame-image: var(--avatar-frame-toy-story-image);
   --avatar-frame-shadow: rgba(36, 91, 142, 0.28);
   --avatar-frame-aura: rgba(74, 161, 226, 0.2);
-}
-
-@keyframes vip-legend-avatar-aura {
-  0%, 100% { filter: drop-shadow(0 0 2px rgba(64, 176, 255, 0.24)); }
-  50% { filter: drop-shadow(0 0 4px rgba(76, 192, 255, 0.44)); }
 }
 
 .avatar.avatar-frame .avatar-core {
@@ -4650,11 +4638,6 @@ button.auto-play-toggle.active {
   .firework-burst i,
   .played-five-stats .five-stat-bump,
   .player-taunt {
-    animation: none;
-  }
-
-  .avatar.avatar-frame-vip-legend {
-    --avatar-frame-image: var(--avatar-frame-vip-legend-static-image);
     animation: none;
   }
 

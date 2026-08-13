@@ -36,7 +36,9 @@ test("hero cards and consumable items have an independent fixed shop catalog", (
   const avatarFrameProducts = DEFAULT_SHOP_PRODUCTS.filter((product) => product.productType === "avatar_frame");
   assert.equal(avatarFrameProducts.length, AVATAR_FRAME_KEYS.length);
   assert.ok(avatarFrameProducts.every((product) => product.defaultPrice >= 300 && product.defaultPrice <= 500));
-  assert.equal(avatarFrameProducts.find((product) => product.assetKey === "vip-legend")?.defaultPrice, 500);
+  assert.ok(!AVATAR_FRAME_KEYS.includes("vip-legend"));
+  assert.ok(!avatarFrameProducts.some((product) => product.assetKey === "vip-legend"));
+  assert.ok(CARD_SKIN_KEYS.includes("vip-legend"));
   assert.equal(avatarFrameProducts.find((product) => product.assetKey === "minions")?.defaultPrice, 300);
   assert.equal(isItemUseStage(RESTART_CARD_STAGE), true);
   assert.equal(isItemUseStage(OTHER_CARDS_STAGE), true);
@@ -92,6 +94,20 @@ test("uploaded avatar frames use a validated storage asset and normal product ca
   assert.match(appSource, /function prepareAvatarFrameDataUrl/);
   assert.match(appSource, /specConfirmed: Boolean\(form\.get\("specConfirmed"\)\)/);
   assert.match(appSource, /function ensureAvatarFrameAssets/);
+});
+
+test("retired VIP legend avatar frame is unequipped and unlisted while its card skin remains", async () => {
+  const migrationPath = fileURLToPath(new URL("../db/migrations/018_remove_vip_legend_avatar_frame.sql", import.meta.url));
+  const gameHistoryPath = fileURLToPath(new URL("../game-history.js", import.meta.url));
+  const [migration, gameHistorySource] = await Promise.all([
+    readFile(migrationPath, "utf8"),
+    readFile(gameHistoryPath, "utf8")
+  ]);
+
+  assert.match(migration, /SET avatar_frame = ''[\s\S]*avatar_frame = 'vip-legend'/);
+  assert.match(migration, /SET is_listed = false[\s\S]*avatar-frame:vip-legend/);
+  assert.doesNotMatch(migration, /card-skin:vip-legend/);
+  assert.match(gameHistorySource, /version: 18,[\s\S]*018_remove_vip_legend_avatar_frame\.sql/);
 });
 
 test("game items allow AI games without charging inventory", () => {
