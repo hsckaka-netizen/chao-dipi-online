@@ -122,6 +122,7 @@ let statisticsGameDate = "";
 let statisticsPlayerGamesLoadingKey = "";
 let statisticsGameLogId = "";
 let statisticsGameLogLoadingId = "";
+let statisticsGameLogView = "settlement";
 const statisticsRelationshipSorts = {
   bonds: { key: "games_played", direction: "desc" },
   opponents: { key: "games_played", direction: "desc" }
@@ -129,6 +130,7 @@ const statisticsRelationshipSorts = {
 let statisticsSeasonId = "all";
 let statisticsSeasons = [];
 let statisticsSeasonsLoaded = false;
+let statisticsSeasonInitialized = false;
 let joinableRooms = [];
 let joinableRoomsLoaded = false;
 let joinableRoomsLoading = false;
@@ -521,7 +523,11 @@ function transitionNotice(previousState, nextState) {
   }
   if (previousState.stage === "playing" && nextState.stage === "finished") {
     const result = nextState.result || {};
-    return `本局结束：${result.winnerTeamName || "胜方"}牌局获胜；积分结算为闲家每人 ${signedScore(result.idleEachScoreText, result.idleEachScore)} 分，庄队每人 ${signedScore(result.bankerEachScoreText, result.bankerEachScore)} 分。`;
+    const doglegCount = (result.playerResults || []).filter((player) => player.role === "狗腿").length;
+    const doglegText = doglegCount
+      ? `，狗腿每人 ${signedScore(result.doglegEachScoreText ?? result.bankerEachScoreText, result.doglegEachScore ?? result.bankerEachScore)} 分`
+      : "";
+    return `本局结束：${result.winnerTeamName || "胜方"}牌局获胜；闲家每人 ${signedScore(result.idleEachScoreText, result.idleEachScore)} 分，庄家 ${signedScore(result.bankerScoreText ?? result.bankerEachScoreText, result.bankerScore ?? result.bankerEachScore)} 分${doglegText}。`;
   }
   return "";
 }
@@ -1173,8 +1179,7 @@ function seasonPayloadFromContainer(container) {
   return {
     name: container.querySelector('[name="name"]')?.value || "",
     startsAt: startsAt ? new Date(startsAt).toISOString() : "",
-    endsAt: endsAt ? new Date(endsAt).toISOString() : null,
-    isActive: Boolean(container.querySelector('[name="isActive"]')?.checked)
+    endsAt: endsAt ? new Date(endsAt).toISOString() : null
   };
 }
 
@@ -1262,29 +1267,42 @@ function ensureProfiles() {
 function ensurePlayerStatistics(force = false) {
   if ((!force && playerStatisticsLoaded) || playerStatisticsLoading) return;
   playerStatisticsLoading = true;
-  const requestedSeasonId = statisticsSeasonId;
   Promise.all([
-    api(`/api/history/statistics?seasonId=${encodeURIComponent(requestedSeasonId)}`),
     statisticsSeasonsLoaded
       ? Promise.resolve({ seasons: statisticsSeasons })
       : api("/api/history/seasons").catch(() => ({ seasons: [] })),
     api("/api/history/status").catch(() => null)
   ])
-    .then(([data, seasonData, status]) => {
+    .then(([seasonData, status]) => {
+      statisticsSeasons = seasonData.seasons || [];
+      statisticsSeasonsLoaded = true;
+      historyStatus = status;
+      if (!statisticsSeasonInitialized) {
+        const currentSeason = statisticsSeasons.find((season) => season.is_active);
+        statisticsSeasonId = currentSeason ? String(currentSeason.season_id) : "all";
+        statisticsSeasonInitialized = true;
+      }
+      const requestedSeasonId = statisticsSeasonId;
+      return Promise.all([
+        api(`/api/history/statistics?seasonId=${encodeURIComponent(requestedSeasonId)}`),
+        requestedSeasonId === "all"
+          ? Promise.resolve(null)
+          : api("/api/history/statistics?seasonId=all").catch(() => null)
+      ]).then(([data, allTimeData]) => ({ data, allTimeData, requestedSeasonId }));
+    })
+    .then(({ data, allTimeData, requestedSeasonId }) => {
       if (requestedSeasonId !== statisticsSeasonId) {
         playerStatisticsLoading = false;
         return ensurePlayerStatistics(true);
       }
       playerStatisticsRows = data.players || [];
-      if (requestedSeasonId === "all") {
-        playerStatistics = new Map(playerStatisticsRows.map((row) => [row.profile_id, {
+      const allTimeRows = requestedSeasonId === "all" ? playerStatisticsRows : allTimeData?.players || [];
+      if (allTimeRows.length || requestedSeasonId === "all") {
+        playerStatistics = new Map(allTimeRows.map((row) => [row.profile_id, {
           games: Number(row.games_played) || 0,
           score: Number(row.total_score) || 0
         }]));
       }
-      statisticsSeasons = seasonData.seasons || [];
-      statisticsSeasonsLoaded = true;
-      historyStatus = status;
       playerStatisticsLoaded = true;
       playerStatisticsLoading = false;
       render();
@@ -1292,10 +1310,6 @@ function ensurePlayerStatistics(force = false) {
     .catch(() => {
       playerStatisticsLoaded = true;
       playerStatisticsLoading = false;
-      if (requestedSeasonId !== statisticsSeasonId) {
-        playerStatisticsLoaded = false;
-        return ensurePlayerStatistics(true);
-      }
       render();
     });
 }
@@ -1830,6 +1844,19 @@ async function setDoglegMode(mode) {
       body: JSON.stringify({ playerId: session.playerId, token: session.token, mode })
     });
     setMessage(`本局已切换为${state.doglegModeName || (mode === "dynamic" ? "动态狗腿" : "传统狗腿")}。`);
+  } catch (error) {
+    setMessage(error.message, true);
+  }
+}
+
+async function setBankerScoreMode(mode) {
+  if (!session) return;
+  try {
+    await roomAction(`/api/rooms/${session.roomId}/banker-score-mode`, {
+      method: "POST",
+      body: JSON.stringify({ playerId: session.playerId, token: session.token, mode })
+    });
+    setMessage(`庄腿积分已切换为${state.bankerScoreModeName || (mode === "team-average" ? "庄队均摊" : "庄家承余")}。`);
   } catch (error) {
     setMessage(error.message, true);
   }
@@ -3065,6 +3092,31 @@ function renderOpeningBidPercentControl() {
   `;
 }
 
+function renderBankerScoreModeControl() {
+  const current = state.bankerScoreMode === "team-average" ? "team-average" : "banker-remainder";
+  const options = [
+    { id: "banker-remainder", label: "庄家承余", title: "狗腿与闲家单人积分相反，庄家承担庄队剩余积分" },
+    { id: "team-average", label: "庄队均摊", title: "庄家与狗腿平均分摊庄队积分" }
+  ];
+  return `
+    <span class="dogleg-count-control banker-score-mode-control">
+      <span class="meta">庄腿积分</span>
+      <span class="segmented" aria-label="庄腿积分模式">
+        ${options.map((option) => `
+          <button
+            type="button"
+            class="${option.id === current ? "" : "secondary"}"
+            data-action="banker-score-mode"
+            data-mode="${escapeHtml(option.id)}"
+            title="${escapeHtml(option.title)}"
+            ${option.id === current ? "disabled" : ""}
+          >${escapeHtml(option.label)}</button>
+        `).join("")}
+      </span>
+    </span>
+  `;
+}
+
 function renderDoglegCountControl() {
   const max = Number.isFinite(state.setup?.doglegMax) ? state.setup.doglegMax : Math.max(0, state.players.length - 3);
   const current = Math.max(0, Math.min(max, state.setup?.doglegNeeded ?? 0));
@@ -3276,6 +3328,7 @@ function renderJoinableRoom(room) {
           ${room.status === "lobby" ? `<span class="tag good">准备 ${escapeHtml(room.readyCount)}/${escapeHtml(room.playerCount)}</span>` : ""}
           <span class="tag">房主 ${escapeHtml(room.hostName || "未知")}</span>
           <span class="tag">起叫 ${escapeHtml(room.openingBidPercent || 40)}%</span>
+          <span class="tag">${escapeHtml(room.bankerScoreModeName || "庄家承余")}</span>
           ${room.phase ? `<span class="tag">${escapeHtml(room.phase)}</span>` : ""}
           <span class="tag">${escapeHtml(fmtTime(room.createdAt))}</span>
         </div>
@@ -3610,9 +3663,10 @@ function ensurePlayerGameHistory(accountId, force = false) {
     });
 }
 
-function openStoredGameHistory(gameId) {
+function openStoredGameHistory(gameId, view = "settlement") {
   if (!gameId) return;
   statisticsGameLogId = gameId;
+  statisticsGameLogView = view === "history" ? "history" : "settlement";
   historyFilter = "all";
   if (statisticsGameLogs.has(gameId) || statisticsGameLogLoadingId === gameId) {
     render();
@@ -3778,7 +3832,10 @@ function renderPlayerGameHistorySection(accountId) {
                   <small>牌分 ${escapeHtml(game.trick_score || 0)} · 闲家 ${escapeHtml(game.idle_score || 0)}/${escapeHtml(game.threshold || 0)}</small>
                 </div>
                 <div class="statistics-game-players" title="${escapeHtml(teammates)}">${escapeHtml(teammates)}</div>
-                <button type="button" class="secondary compact-button" data-action="open-stored-game-history" data-game-id="${escapeHtml(game.game_id)}">查看牌局记录</button>
+                <div class="statistics-game-actions">
+                  <button type="button" class="compact-button" data-action="open-stored-game-history" data-history-view="settlement" data-game-id="${escapeHtml(game.game_id)}">查看结算</button>
+                  <button type="button" class="secondary compact-button" data-action="open-stored-game-history" data-history-view="history" data-game-id="${escapeHtml(game.game_id)}">出牌记录</button>
+                </div>
               </article>
             `;
           }).join("")}
@@ -4248,7 +4305,6 @@ function renderSeasonForm(season = null) {
         <label>赛季名称<input name="name" required maxlength="64" value="${escapeHtml(season.name || "")}"></label>
         <label>开始时间<input name="startsAt" type="datetime-local" required value="${escapeHtml(dateTimeLocalValue(season.starts_at))}"></label>
         <label>结束时间<input name="endsAt" type="datetime-local" value="${escapeHtml(dateTimeLocalValue(season.ends_at))}"></label>
-        <label class="season-active-field"><input name="isActive" type="checkbox" data-action="season-active" ${season.is_active ? "checked" : ""}><span>设为当前赛季</span></label>
         <div class="season-form-action"><span class="tag ${season.is_active ? "good" : ""}">${season.is_active ? "当前赛季" : seasonDateRange(season)}</span></div>
       </div>
     `;
@@ -4258,9 +4314,8 @@ function renderSeasonForm(season = null) {
       <label>赛季名称<input name="name" required maxlength="64" value="" placeholder="例如 2026 夏季赛"></label>
       <label>开始时间<input name="startsAt" type="datetime-local" required value="${escapeHtml(dateTimeLocalValue(new Date()))}"></label>
       <label>结束时间<input name="endsAt" type="datetime-local" value=""></label>
-      <label class="season-active-field"><input name="isActive" type="checkbox"><span>设为当前赛季</span></label>
       <div class="season-form-action">
-        <span class="meta">结束时间可留空</span>
+        <span class="meta">当前赛季由时间自动判断，结束时间可留空</span>
         <button type="submit">创建赛季</button>
       </div>
     </form>
@@ -4272,7 +4327,7 @@ function renderSeasonManager() {
   return `
     <section class="admin-module-section season-manager">
       <div class="admin-module-section-head">
-        <div><h3>赛季</h3><div class="meta">按牌局结束时间归入赛季。</div></div>
+        <div><h3>赛季</h3><div class="meta">按牌局结束时间归入赛季，当前赛季由时间自动判断。</div></div>
         <span class="tag ${currentSeason ? "good" : ""}">${currentSeason ? `当前：${escapeHtml(currentSeason.name)}` : "暂无当前赛季"}</span>
       </div>
       <details class="admin-inline-tool">
@@ -4703,6 +4758,7 @@ function renderRoom() {
               ${spectating ? `<span class="tag good">观战 · ${escapeHtml(state.spectator?.targetPlayerName || state.viewer?.name || "玩家")}</span>` : ""}
               <span class="tag">${escapeHtml(waitingNextRound ? "等待其他玩家进入下一局" : state.phase)}</span>
               ${inLobbyView ? `<span class="tag">起叫 ${escapeHtml(state.openingBidPercent || 40)}%</span>` : ""}
+              ${inLobbyView ? `<span class="tag">${escapeHtml(state.bankerScoreModeName || "庄家承余")}</span>` : ""}
               ${inLobbyView ? `<span class="tag good">${escapeHtml(readyStatusText())}</span>` : ""}
             </div>
           </div>
@@ -4716,6 +4772,7 @@ function renderRoom() {
               ${state.canViewKitty ? `<button type="button" class="secondary" data-action="open-kitty">查看底牌</button>` : ""}
               ${spectating ? "" : `
                 ${state.viewer.host && state.status === "lobby" ? renderOpeningBidPercentControl() : ""}
+                ${state.viewer.host && state.status === "lobby" ? renderBankerScoreModeControl() : ""}
                 ${state.viewer.host && state.status === "lobby" ? renderDoglegModeControl() : ""}
                 ${state.viewer.host && state.status === "lobby" ? renderDoglegCountControl() : ""}
                 ${inLobbyView ? renderReadyControls({ waitingNextRound }) : ""}
@@ -5356,7 +5413,7 @@ function renderResultPanel() {
       </section>
     </div>
   `;
-  const winnerEachScore = result.winnerTeam === "idle" ? result.idleEachScore : result.bankerEachScore;
+  const winnerEachScore = result.winnerTeam === "idle" ? result.idleEachScore : result.bankerScore ?? result.bankerEachScore;
   const scoreDirectionReversed = Number(winnerEachScore) < 0;
   const spectating = isSpectating();
   return `
@@ -5379,6 +5436,7 @@ function renderResultPanel() {
           <span class="tag accent">牌局胜方：${escapeHtml(result.winnerTeamName)}</span>
           <span class="tag good">闲家 ${result.idleScore}/${result.threshold} 分</span>
           ${result.bankerBidScore ? `<span class="tag">叫分 ${escapeHtml(result.bankerBidScore)} / 总分 ${escapeHtml(result.totalGamePoints)}</span>` : ""}
+          <span class="tag">庄腿积分：${escapeHtml(result.bankerScoreModeName || "庄队均摊（旧规则）")}</span>
           <span class="tag">${state.trickHistory.length} 轮</span>
         </div>
         <div class="result-grid">
@@ -5396,8 +5454,9 @@ function renderResultPanel() {
             <span>${result.bottomPoints} 底分${result.bottomScoreAddedToIdle ? `，闲家加 ${result.bottomScoreAddedToIdle}` : ""}</span>
           </div>
           <div>
-            <div class="meta">每人积分</div>
-            <strong>闲家 ${signedScore(result.idleEachScoreText, result.idleEachScore)} / 庄队 ${signedScore(result.bankerEachScoreText, result.bankerEachScore)}</strong>
+            <div class="meta">身份积分</div>
+            <strong>闲家 ${signedScore(result.idleEachScoreText, result.idleEachScore)} / 庄家 ${signedScore(result.bankerScoreText, result.bankerScore ?? result.bankerEachScore)}</strong>
+            ${(result.playerResults || []).some((player) => player.role === "狗腿") ? `<span>狗腿每人 ${signedScore(result.doglegEachScoreText, result.doglegEachScore ?? result.bankerEachScore)}</span>` : ""}
           </div>
         </div>
         <div class="result-score-note ${scoreDirectionReversed ? "warning" : ""}">
@@ -6442,6 +6501,7 @@ function renderHistoryRecordDialog(source, options = {}) {
           </div>
           <button type="button" class="secondary compact-button" data-action="${escapeHtml(options.closeAction || "close-dialog")}">关闭</button>
         </div>
+        ${options.toolbar || ""}
         <div class="history-filters" role="group" aria-label="筛选牌局记录">
           ${filters.map((filter) => `
             <button type="button" class="${historyFilter === filter.value ? "" : "secondary"} compact-button" data-action="filter-history" data-history-filter="${escapeHtml(filter.value)}">${escapeHtml(filter.label)}</button>
@@ -6470,6 +6530,101 @@ function renderHistoryDialog() {
   return renderHistoryRecordDialog(historySourceFromState());
 }
 
+function renderStoredGameViewTabs() {
+  return `
+    <div class="stored-game-view-tabs segmented" role="tablist" aria-label="牌局详情视图">
+      <button type="button" class="${statisticsGameLogView === "settlement" ? "" : "secondary"}" data-action="switch-stored-game-view" data-history-view="settlement">结算</button>
+      <button type="button" class="${statisticsGameLogView === "history" ? "" : "secondary"}" data-action="switch-stored-game-view" data-history-view="history">出牌记录</button>
+    </div>
+  `;
+}
+
+function renderStoredGameSettlement(game) {
+  const result = game.result_data || {};
+  const players = game.players || [];
+  const winnerTeam = result.winnerTeam || game.winner_team || "";
+  const winnerTeamName = result.winnerTeamName || (winnerTeam === "idle" ? "闲家" : "庄队");
+  const bankerPlayers = players.filter((player) => player.team === "banker");
+  const idlePlayers = players.filter((player) => player.team === "idle");
+  const banker = bankerPlayers.find((player) => player.role === "庄家") || bankerPlayers[0] || null;
+  const doglegs = bankerPlayers.filter((player) => player.role === "狗腿");
+  const bottomWinner = players.find((player) => player.roomPlayerId === game.bottom_winner_room_player_id);
+  const scoreModeName = result.bankerScoreModeName
+    || (game.setup_data?.bankerScoreMode === "banker-remainder" ? "庄家承余" : "庄队均摊（旧记录）");
+  const trump = historySuitDetail(game.trump_suit);
+  return `
+    <div class="modal-backdrop">
+      <section class="modal-card history-modal stored-game-settlement-modal" role="dialog" aria-modal="true" aria-label="牌局结算">
+        <div class="section-head">
+          <div>
+            <h2>牌局结算 · ${escapeHtml(fmtDateTime(game.finished_at))}</h2>
+            <div class="meta">房间 ${escapeHtml(game.room_code || "-")} · 主牌 ${escapeHtml(`${trump.symbol}${trump.name}`)} · 使用当局保存结果，不重新计算</div>
+          </div>
+          <button type="button" class="secondary compact-button" data-action="close-stored-game-history">关闭</button>
+        </div>
+        ${renderStoredGameViewTabs()}
+        <div class="tags stored-settlement-tags">
+          <span class="tag accent">牌局胜方：${escapeHtml(winnerTeamName)}</span>
+          <span class="tag good">闲家 ${escapeHtml(game.idle_score || 0)}/${escapeHtml(game.threshold || 0)} 分</span>
+          ${game.banker_bid_score ? `<span class="tag">叫分 ${escapeHtml(game.banker_bid_score)} / 总分 ${escapeHtml(game.total_game_points || 0)}</span>` : ""}
+          <span class="tag">庄腿积分：${escapeHtml(scoreModeName)}</span>
+        </div>
+        <div class="result-grid stored-result-grid">
+          <div><div class="meta">庄家队</div><strong>${escapeHtml(bankerPlayers.map((player) => player.name).join("、") || "无")}</strong></div>
+          <div><div class="meta">闲家队</div><strong>${escapeHtml(idlePlayers.map((player) => player.name).join("、") || "无")}</strong></div>
+          <div>
+            <div class="meta">保底</div>
+            <strong>${escapeHtml(bottomWinner?.name || "未知")}（${escapeHtml(result.bottomWinnerTeamName || (game.bottom_winner_team === "idle" ? "闲家" : "庄队"))}）</strong>
+            <span>${escapeHtml(game.bottom_points || 0)} 底分${result.bottomScoreAddedToIdle ? `，闲家加 ${escapeHtml(result.bottomScoreAddedToIdle)}` : ""}</span>
+          </div>
+          <div>
+            <div class="meta">身份积分</div>
+            <strong>闲家 ${statisticSigned(idlePlayers[0]?.baseGameScore ?? idlePlayers[0]?.gameScore ?? result.idleEachScore ?? 0)} / 庄家 ${statisticSigned(banker?.baseGameScore ?? banker?.gameScore ?? result.bankerScore ?? result.bankerEachScore ?? 0)}</strong>
+            ${doglegs.length ? `<span>狗腿每人 ${statisticSigned(doglegs[0]?.baseGameScore ?? doglegs[0]?.gameScore ?? result.doglegEachScore ?? result.bankerEachScore ?? 0)}</span>` : ""}
+          </div>
+        </div>
+        <div class="score-breakdown">
+          <span class="tag">胜负 ${statisticSigned(result.baseScore || 0)}</span>
+          <span class="tag">上下台阶 ${statisticSigned(result.scoreStep || 0)}</span>
+          <span class="tag">保底 ${statisticSigned(result.bottomDelta || 0)}</span>
+          <span class="tag">拖五 ${statisticSigned(result.draggedDelta || 0)}</span>
+          <span class="tag">甩牌 ${statisticSigned(result.throwFailureDelta || 0)}</span>
+        </div>
+        <div class="result-bottom">
+          <div class="section-head compact"><h3>底牌</h3><span class="tag">${game.bottom_cards?.length || 0} 张</span></div>
+          <div class="kitty-cards">
+            ${(game.bottom_cards || []).length ? sortCardsForPlay(game.bottom_cards, game.trump_suit).map(renderStaticCard).join("") : `<div class="empty">无底牌记录</div>`}
+          </div>
+        </div>
+        <div class="result-table stored-result-table">
+          ${players.map((player) => {
+            const gameScore = statisticNumber(player.gameScore);
+            const scoreStatus = resultScoreStatus(gameScore);
+            return `
+              <div class="result-row ${scoreStatus.className}">
+                <strong class="result-player-name">
+                  <span>${escapeHtml(player.name || "玩家")}</span>
+                  ${renderEvaluationTags(player.evaluation?.tags || [])}
+                  <span class="result-outcome">${scoreStatus.label}</span>
+                </strong>
+                <span>${escapeHtml(player.role || (player.team === "idle" ? "闲家" : "庄队"))} · ${player.team === winnerTeam ? "牌胜" : "牌负"}</span>
+                <span>牌分 ${escapeHtml(player.trickScore || 0)}</span>
+                <span>红五 ${escapeHtml(player.draggedRedFives || 0)}</span>
+                <span>方五 ${escapeHtml(player.draggedDiamondFives || 0)}</span>
+                <span>甩失 ${escapeHtml(player.throwFailures || 0)}</span>
+                <span class="result-final-score">
+                  <b>${statisticSigned(gameScore)}</b>
+                  ${Number(player.itemScoreDelta || 0) ? `<small>原始 ${statisticSigned(player.baseGameScore)} · 道具 ${statisticSigned(player.itemScoreDelta)}</small>` : ""}
+                </span>
+              </div>
+            `;
+          }).join("")}
+        </div>
+      </section>
+    </div>
+  `;
+}
+
 function renderStoredGameHistoryDialog() {
   if (statisticsGameLogLoadingId === statisticsGameLogId && !statisticsGameLogs.has(statisticsGameLogId)) {
     return `
@@ -6483,11 +6638,13 @@ function renderStoredGameHistoryDialog() {
   }
   const game = statisticsGameLogs.get(statisticsGameLogId);
   if (!game) return "";
+  if (statisticsGameLogView === "settlement") return renderStoredGameSettlement(game);
   const trump = historySuitDetail(game.trump_suit);
   return renderHistoryRecordDialog(historySourceFromStoredGame(game), {
     title: `牌局记录 · ${fmtDateTime(game.finished_at)}`,
     meta: `房间 ${game.room_code || "-"} · 主牌 ${trump.symbol}${trump.name} · 闲家 ${game.idle_score}/${game.threshold} 分`,
     closeAction: "close-stored-game-history",
+    toolbar: renderStoredGameViewTabs(),
     scrollKey: `stored-game-history-${game.game_id}`
   });
 }
@@ -7020,7 +7177,7 @@ function clearSelectionFromPageClick(event) {
 }
 
 const mutatingActions = new Set([
-  "room-leave", "confirm-room-action", "opening-bid-percent", "dogleg-mode", "dogleg-count",
+  "room-leave", "confirm-room-action", "opening-bid-percent", "banker-score-mode", "dogleg-mode", "dogleg-count",
   "add-robot", "random-seats", "start", "ready-on", "ready-off", "bid-selected",
   "bid-pass", "random-bid", "score-bid-start", "score-bid-10", "score-bid-20",
   "score-bid-30", "score-pass", "trump-suit-S", "trump-suit-H", "trump-suit-C",
@@ -7079,15 +7236,6 @@ document.addEventListener("change", (event) => {
     updateTauntAudienceSummary(tauntAccountTarget.closest(".taunt-admin-card"));
     return;
   }
-  const seasonActiveTarget = event.target.closest('[data-action="season-active"]');
-  if (seasonActiveTarget) {
-    if (seasonActiveTarget.checked) {
-      seasonActiveTarget.closest("form")?.querySelectorAll('[data-action="season-active"]').forEach((input) => {
-        if (input !== seasonActiveTarget) input.checked = false;
-      });
-    }
-    return;
-  }
   const gameDateTarget = event.target.closest('[data-action="filter-player-game-date"]');
   if (gameDateTarget) {
     statisticsGameDate = gameDateTarget.value || "";
@@ -7101,6 +7249,7 @@ document.addEventListener("change", (event) => {
   const nextSeasonId = target.value || "all";
   const valid = nextSeasonId === "all" || statisticsSeasons.some((season) => String(season.season_id) === nextSeasonId);
   if (!valid || nextSeasonId === statisticsSeasonId) return;
+  statisticsSeasonInitialized = true;
   statisticsSeasonId = nextSeasonId;
   statisticsSelectedAccountId = "";
   statisticsGameDate = "";
@@ -7243,10 +7392,17 @@ document.addEventListener("click", (event) => {
     render();
   }
   if (action === "open-stored-game-history") {
-    openStoredGameHistory(event.target.closest("[data-game-id]")?.dataset.gameId || "");
+    const target = event.target.closest("[data-game-id]");
+    openStoredGameHistory(target?.dataset.gameId || "", target?.dataset.historyView || "settlement");
+  }
+  if (action === "switch-stored-game-view") {
+    statisticsGameLogView = event.target.closest("[data-history-view]")?.dataset.historyView === "history" ? "history" : "settlement";
+    historyFilter = "all";
+    render();
   }
   if (action === "close-stored-game-history") {
     statisticsGameLogId = "";
+    statisticsGameLogView = "settlement";
     historyFilter = "all";
     render();
   }
@@ -7272,6 +7428,7 @@ document.addEventListener("click", (event) => {
   if (action === "opening-bid-percent") {
     setOpeningBidPercent(Number(event.target.closest("[data-percent]")?.dataset.percent || 0));
   }
+  if (action === "banker-score-mode") setBankerScoreMode(event.target.closest("[data-mode]")?.dataset.mode || "banker-remainder");
   if (action === "dogleg-mode") setDoglegMode(event.target.closest("[data-mode]")?.dataset.mode || "traditional");
   if (action === "dogleg-count") setDoglegCount(Number(event.target.closest("[data-count]")?.dataset.count || 0));
   if (action === "add-robot") addRobot();

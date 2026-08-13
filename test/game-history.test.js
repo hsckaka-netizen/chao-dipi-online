@@ -172,6 +172,7 @@ test("settled game is converted to an immutable history record", () => {
   assert.equal(record.trickHistory[0].plays[0].playerName, undefined);
   assert.equal(record.result.playerResults, undefined);
   assert.equal(record.result.bottomCards, undefined);
+  assert.equal(record.setup.bankerScoreMode, "banker-remainder");
   assert.equal(record.setup.doglegMode, "traditional");
   assert.equal(record.setup.dynamicDogleg, null);
   assert.deepEqual(record.setup.events, []);
@@ -398,10 +399,22 @@ test("season statistics filter existing settlements without adding per-game writ
   const source = await readFile(sourcePath, "utf8");
   assert.match(source, /export async function listSeasons/);
   assert.match(source, /export async function saveSeason/);
+  assert.match(source, /WHERE starts_at <= now\(\)/);
+  assert.match(source, /now\(\) < ends_at/);
+  assert.match(source, /ORDER BY starts_at DESC, season_id DESC/);
+  assert.doesNotMatch(source, /values\.isActive/);
   assert.match(source, /game\.finished_at >= \$1::timestamptz/);
   assert.match(source, /game\.finished_at < \$2::timestamptz/);
   const gameInsertColumns = source.match(/INSERT INTO cdp_games \(([\s\S]*?)\) VALUES/)?.[1] || "";
   assert.doesNotMatch(gameInsertColumns, /season_id/);
+});
+
+test("statistics page defaults to the time-derived current season", async () => {
+  const appPath = fileURLToPath(new URL("../public/app.js", import.meta.url));
+  const source = await readFile(appPath, "utf8");
+  assert.match(source, /const currentSeason = statisticsSeasons\.find\(\(season\) => season\.is_active\)/);
+  assert.match(source, /statisticsSeasonId = currentSeason \? String\(currentSeason\.season_id\) : "all"/);
+  assert.doesNotMatch(source, /data-action="season-active"/);
 });
 
 test("player cosmetics migration separates avatar frames from card skins", async () => {

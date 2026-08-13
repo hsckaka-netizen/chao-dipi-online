@@ -1,11 +1,23 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
 
 import {
   createHistoryTrickEntry,
   filterHistoryTimelineEntries,
   orderedTrickPlays
 } from "../public/history-records.js";
+
+const appPath = fileURLToPath(new URL("../public/app.js", import.meta.url));
+
+test("玩家牌局历史可在保存结算与出牌记录之间切换", async () => {
+  const source = await readFile(appPath, "utf8");
+  assert.match(source, /function renderStoredGameSettlement\(game\)/);
+  assert.match(source, /data-history-view="settlement"/);
+  assert.match(source, /data-history-view="history"/);
+  assert.match(source, /使用当局保存结果，不重新计算/);
+});
 
 function card(id, suit) {
   return { id, type: "normal", suit, rank: "A" };

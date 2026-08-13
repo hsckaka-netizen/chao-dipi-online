@@ -340,6 +340,19 @@ test("动态狗腿跳过庄家选牌，并以最终实时排名结算", async (t
   assert.equal(winnerCount, Math.max(...[...markByPlayerId.entries()]
     .filter(([playerId]) => playerId !== finished.setup.bankerId)
     .map(([, count]) => count)));
+  assert.equal(finished.result.bankerScoreMode, "banker-remainder");
+  const bankerResult = finished.result.playerResults.find((player) => player.role === "庄家");
+  const doglegResult = finished.result.playerResults.find((player) => player.role === "狗腿");
+  const idleResults = finished.result.playerResults.filter((player) => player.role === "闲家");
+  assert.equal(doglegResult.gameScore, -idleResults[0].gameScore);
+  assert.equal(
+    Math.round(finished.result.playerResults.reduce((sum, player) => sum + player.gameScore, 0) * 100) / 100,
+    0
+  );
+  assert.equal(
+    bankerResult.gameScore,
+    Math.round((-idleResults[0].gameScore * idleResults.length - doglegResult.gameScore) * 100) / 100
+  );
 });
 
 test("players leave a finished result independently and auto-ready for the next game", async (t) => {

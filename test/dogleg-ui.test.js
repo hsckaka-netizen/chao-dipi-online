@@ -15,6 +15,15 @@ test("房间提供传统与动态狗腿切换", async () => {
   assert.match(source, /\/dogleg-mode/);
 });
 
+test("新房间默认庄家承余并允许房主切回庄队均摊", async () => {
+  const source = await readFile(appPath, "utf8");
+  assert.match(source, /function renderBankerScoreModeControl\(\)/);
+  assert.match(source, /data-action="banker-score-mode"/);
+  assert.match(source, /庄家承余/);
+  assert.match(source, /庄队均摊/);
+  assert.match(source, /\/banker-score-mode/);
+});
+
 test("动态狗腿牌按具体牌 ID 标记", async () => {
   const source = await readFile(appPath, "utf8");
   assert.match(source, /setup\.doglegMarkedCardId && card\?\.id === setup\.doglegMarkedCardId/);

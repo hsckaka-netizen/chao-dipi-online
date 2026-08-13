@@ -1568,6 +1568,7 @@ export function buildGameRecord(room) {
     removedCards: (room.removedCards || []).map(compactCardId),
     setup: {
       ...jsonValue(room.setup, {}),
+      bankerScoreMode: room.bankerScoreMode || "banker-remainder",
       doglegMode: room.doglegMode || "traditional",
       dynamicDogleg: jsonValue(room.dynamicDogleg, null),
       events: jsonValue([...(room.events || [])].reverse(), [])
@@ -1979,7 +1980,6 @@ function seasonValues(body = {}, current = null) {
   const endsAtRaw = Object.hasOwn(body, "endsAt") ? body.endsAt : current?.ends_at;
   const startsAt = startsAtRaw ? new Date(startsAtRaw) : null;
   const endsAt = endsAtRaw ? new Date(endsAtRaw) : null;
-  const isActive = Object.hasOwn(body, "isActive") ? Boolean(body.isActive) : Boolean(current?.is_active);
   if (!name) throw seasonError("请输入赛季名称");
   if (name.length > 64) throw seasonError("赛季名称最多 64 个字");
   if (!startsAt || Number.isNaN(startsAt.getTime())) throw seasonError("请输入有效的赛季开始时间");
@@ -1988,15 +1988,26 @@ function seasonValues(body = {}, current = null) {
   return {
     name,
     startsAt: startsAt.toISOString(),
-    endsAt: endsAt ? endsAt.toISOString() : null,
-    isActive
+    endsAt: endsAt ? endsAt.toISOString() : null
   };
 }
 
 export async function listSeasons() {
   const result = await requirePool().query(`
-    SELECT season_id, name, starts_at, ends_at, is_active, created_at, updated_at
-    FROM cdp_seasons
+    WITH current_season AS (
+      SELECT season_id
+      FROM cdp_seasons
+      WHERE starts_at <= now()
+        AND (ends_at IS NULL OR now() < ends_at)
+      ORDER BY starts_at DESC, season_id DESC
+      LIMIT 1
+    )
+    SELECT
+      season.season_id, season.name, season.starts_at, season.ends_at,
+      (season.season_id = current_season.season_id) AS is_active,
+      season.created_at, season.updated_at
+    FROM cdp_seasons season
+    LEFT JOIN current_season ON true
     ORDER BY is_active DESC, starts_at DESC, season_id DESC
   `);
   return result.rows;
@@ -2018,26 +2029,20 @@ export async function saveSeason(seasonId, body, administratorId) {
       if (!current) throw seasonError("赛季不存在", 404);
     }
     const values = seasonValues(body, current);
-    if (values.isActive) {
-      await client.query(
-        "UPDATE cdp_seasons SET is_active = false, updated_at = now() WHERE is_active AND ($1::bigint IS NULL OR season_id <> $1::bigint)",
-        [normalizedId]
-      );
-    }
     const result = normalizedId
       ? await client.query(
         `UPDATE cdp_seasons
          SET name = $2, starts_at = $3::timestamptz, ends_at = $4::timestamptz,
-             is_active = $5, updated_at = now()
+             is_active = false, updated_at = now()
          WHERE season_id = $1::bigint
          RETURNING season_id, name, starts_at, ends_at, is_active, created_at, updated_at`,
-        [normalizedId, values.name, values.startsAt, values.endsAt, values.isActive]
+        [normalizedId, values.name, values.startsAt, values.endsAt]
       )
       : await client.query(
         `INSERT INTO cdp_seasons(name, starts_at, ends_at, is_active, created_by)
-         VALUES ($1, $2::timestamptz, $3::timestamptz, $4, $5::uuid)
+         VALUES ($1, $2::timestamptz, $3::timestamptz, false, $4::uuid)
          RETURNING season_id, name, starts_at, ends_at, is_active, created_at, updated_at`,
-        [values.name, values.startsAt, values.endsAt, values.isActive, administratorId]
+        [values.name, values.startsAt, values.endsAt, administratorId]
       );
     await client.query("COMMIT");
     return result.rows[0];
@@ -2491,7 +2496,11 @@ export async function getGameHistory(gameId) {
         'baseGameScore', player.base_game_score,
         'itemSelfDelta', player.item_self_delta,
         'itemOpponentDelta', player.item_opponent_delta,
-        'itemScoreDelta', player.item_score_delta
+        'itemScoreDelta', player.item_score_delta,
+        'draggedRedFives', player.dragged_red_fives,
+        'draggedDiamondFives', player.dragged_diamond_fives,
+        'throwFailures', player.throw_failures,
+        'evaluation', player.evaluation_data
       ) ORDER BY player.seat_index) FILTER (WHERE player.room_player_id IS NOT NULL), '[]'::jsonb) AS players
     FROM cdp_games game
     LEFT JOIN cdp_game_players player ON player.game_id = game.game_id

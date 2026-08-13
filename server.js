@@ -40,6 +40,14 @@ import {
   normalizeDoglegMode
 } from "./dogleg-mechanism.js";
 import {
+  allocateBankerTeamScores,
+  BANKER_SCORE_MODE_AVERAGE,
+  BANKER_SCORE_MODE_REMAINDER,
+  bankerScoreModeName,
+  DEFAULT_BANKER_SCORE_MODE,
+  normalizeBankerScoreMode
+} from "./banker-score-mode.js";
+import {
   applyDiamondRewardPersistence,
   attachDiamondRewards,
   isDiamondEligibleGame
@@ -412,6 +420,8 @@ function joinableRoomsList() {
       callMode: normalizedCallMode(room.callMode),
       callModeName: callModeName(room.callMode),
       openingBidPercent: normalizedOpeningBidPercent(room.openingBidPercent),
+      bankerScoreMode: normalizeBankerScoreMode(room.bankerScoreMode),
+      bankerScoreModeName: bankerScoreModeName(room.bankerScoreMode),
       doglegMode: normalizeDoglegMode(room.doglegMode),
       doglegModeName: doglegModeName(room.doglegMode),
       doglegNeeded: clampDoglegCount(room.doglegNeeded, room.players.length),
@@ -1021,6 +1031,7 @@ function deal(room, options = {}) {
   room.status = "dealt";
   room.callMode = CALL_MODE_SCORE;
   room.openingBidPercent = normalizedOpeningBidPercent(room.openingBidPercent);
+  room.bankerScoreMode = normalizeBankerScoreMode(room.bankerScoreMode);
   room.stage = RESTART_CARD_STAGE;
   room.phase = "重开卡使用阶段";
   room.startedAt = now();
@@ -1196,6 +1207,8 @@ function setupSnapshot(room, viewer = null) {
     callMode: normalizedCallMode(room.callMode),
     callModeName: callModeName(room.callMode),
     openingBidPercent: normalizedOpeningBidPercent(room.openingBidPercent),
+    bankerScoreMode: normalizeBankerScoreMode(room.bankerScoreMode),
+    bankerScoreModeName: bankerScoreModeName(room.bankerScoreMode),
     bankerId: room.bankerId,
     bankerName: room.bankerId ? playerName(room, room.bankerId) : "",
     trumpSuit: room.trumpSuit,
@@ -1371,6 +1384,8 @@ function roomSnapshot(room, viewer = null) {
     callMode: normalizedCallMode(room.callMode),
     callModeName: callModeName(room.callMode),
     openingBidPercent: normalizedOpeningBidPercent(room.openingBidPercent),
+    bankerScoreMode: normalizeBankerScoreMode(room.bankerScoreMode),
+    bankerScoreModeName: bankerScoreModeName(room.bankerScoreMode),
     doglegMode: normalizeDoglegMode(room.doglegMode),
     doglegModeName: doglegModeName(room.doglegMode),
     minPlayers: MIN_PLAYERS,
@@ -1864,7 +1879,14 @@ function finishGame(room, completedTrick) {
   const throwFailureDelta = bankerThrowFailures - idleThrowFailures;
 
   const idleEachScore = baseScore + scoreStep + bottomDelta + draggedDelta + throwFailureDelta;
-  const bankerEachScore = bankerIds.length ? -idleEachScore * idleIds.length / bankerIds.length : 0;
+  const bankerScores = allocateBankerTeamScores({
+    idleEachScore,
+    idleCount: idleIds.length,
+    doglegCount: Math.max(0, bankerIds.length - 1),
+    mode: room.bankerScoreMode
+  });
+  const bankerScore = bankerScores.bankerScore;
+  const doglegEachScore = bankerScores.doglegEachScore;
   const winnerTeam = idleScore >= threshold ? "idle" : "banker";
   const evaluationWinnerTeam = finalScoreWinnerTeam(idleEachScore);
   const bottomWinningPlay = completedTrick.plays.find((play) => play.playerId === bottomWinnerId);
@@ -1906,6 +1928,8 @@ function finishGame(room, completedTrick) {
     callMode: normalizedCallMode(room.callMode),
     callModeName: callModeName(room.callMode),
     bankerBidScore: room.setup?.scoreBid?.current?.score || null,
+    bankerScoreMode: bankerScores.mode,
+    bankerScoreModeName: bankerScoreModeName(bankerScores.mode),
     doglegMode: normalizeDoglegMode(room.doglegMode),
     doglegModeName: doglegModeName(room.doglegMode),
     doglegMarks: room.players.map((player) => ({
@@ -1946,24 +1970,35 @@ function finishGame(room, completedTrick) {
     throwFailureDelta,
     evaluations: evaluations.awards,
     idleEachScore: roundGameScore(idleEachScore),
-    bankerEachScore: roundGameScore(bankerEachScore),
+    bankerTeamTotal: bankerScores.bankerTeamTotal,
+    bankerScore: roundGameScore(bankerScore),
+    doglegEachScore: roundGameScore(doglegEachScore),
+    bankerEachScore: roundGameScore(bankerScore),
     idleEachScoreText: gameScoreText(idleEachScore),
-    bankerEachScoreText: gameScoreText(bankerEachScore),
+    bankerScoreText: gameScoreText(bankerScore),
+    doglegEachScoreText: gameScoreText(doglegEachScore),
+    bankerEachScoreText: gameScoreText(bankerScore),
     playerResults: room.players.map((player) => {
       const isBankerTeam = bankerIdSet.has(player.id);
+      const role = playerRole(room, player.id);
+      const roleScore = !isBankerTeam
+        ? idleEachScore
+        : player.id === room.bankerId
+          ? bankerScore
+          : doglegEachScore;
       const evaluation = evaluations.byPlayerId[player.id] || null;
       return {
         playerId: player.id,
         name: player.name,
-        role: playerRole(room, player.id),
+        role,
         team: isBankerTeam ? "banker" : "idle",
         teamName: isBankerTeam ? "庄队" : "闲家",
         trickScore: player.score || 0,
         draggedRedFives: player.draggedRedFives || 0,
         draggedDiamondFives: player.draggedDiamondFives || 0,
         throwFailures: player.throwFailures || 0,
-        gameScore: roundGameScore(isBankerTeam ? bankerEachScore : idleEachScore),
-        gameScoreText: gameScoreText(isBankerTeam ? bankerEachScore : idleEachScore),
+        gameScore: roundGameScore(roleScore),
+        gameScoreText: gameScoreText(roleScore),
         evaluation,
         evaluationTags: evaluation?.tags || []
       };
@@ -1993,7 +2028,10 @@ function finishGame(room, completedTrick) {
   }));
   attachDiamondRewards(room);
 
-  addEvent(room, `本局结束：${teamName(winnerTeam)}牌局获胜，闲家 ${idleScore}/${threshold} 分，闲家每人 ${room.result.idleEachScoreText} 分，庄队每人 ${room.result.bankerEachScoreText} 分`);
+  const bankerSettlementText = bankerIds.length > 1
+    ? `庄家 ${room.result.bankerScoreText} 分，狗腿每人 ${room.result.doglegEachScoreText} 分`
+    : `庄家 ${room.result.bankerScoreText} 分`;
+  addEvent(room, `本局结束：${teamName(winnerTeam)}牌局获胜，闲家 ${idleScore}/${threshold} 分，闲家每人 ${room.result.idleEachScoreText} 分，${bankerSettlementText}`);
 }
 
 function completeCurrentTrick(room) {
@@ -4922,6 +4960,7 @@ async function handleApi(req, res, pathParts, url) {
       gameRecordId: null,
       callMode: CALL_MODE_SCORE,
       openingBidPercent: DEFAULT_OPENING_BID_PERCENT,
+      bankerScoreMode: DEFAULT_BANKER_SCORE_MODE,
       hostId: host.id,
       players: [host],
       kitty: [],
@@ -5139,6 +5178,23 @@ async function handleApi(req, res, pathParts, url) {
       if (room.openingBidPercent !== nextPercent) {
         room.openingBidPercent = nextPercent;
         addEvent(room, `房主将起始叫分设置为总牌分的 ${nextPercent}%`);
+      }
+      broadcast(room);
+      return writeJson(res, 200, roomStateAck(room));
+    }
+
+    if (req.method === "POST" && pathParts[3] === "banker-score-mode") {
+      const body = await readJson(req);
+      const viewer = requirePlayer(res, room, body.playerId, body.token);
+      if (!viewer) return;
+      if (!viewer.host) return writeJson(res, 403, { error: "只有房主可以设置庄腿积分" });
+      if (room.status !== "lobby") return writeJson(res, 409, { error: "只有开局前可以切换庄腿积分" });
+      if (body.mode !== BANKER_SCORE_MODE_REMAINDER && body.mode !== BANKER_SCORE_MODE_AVERAGE) {
+        return writeJson(res, 400, { error: "庄腿积分只支持庄家承余或庄队均摊" });
+      }
+      if (room.bankerScoreMode !== body.mode) {
+        room.bankerScoreMode = body.mode;
+        addEvent(room, `房主将庄腿积分设为${bankerScoreModeName(body.mode)}`);
       }
       broadcast(room);
       return writeJson(res, 200, roomStateAck(room));

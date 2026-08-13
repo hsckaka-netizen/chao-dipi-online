@@ -109,7 +109,24 @@ test("host configures the opening bid from 10% to 40% before a score-bidding gam
 
   assert.equal(created.snapshot.callMode, "score");
   assert.equal(created.snapshot.openingBidPercent, 40);
+  assert.equal(created.snapshot.bankerScoreMode, "banker-remainder");
+  assert.equal(created.snapshot.bankerScoreModeName, "庄家承余");
   assert.equal(created.snapshot.doglegMode, "traditional");
+
+  await jsonRequest(`${roomUrl}/banker-score-mode`, {
+    method: "POST",
+    body: JSON.stringify({ ...credentials, mode: "team-average" })
+  });
+  const averageScoreLobby = await jsonRequest(`${roomUrl}/state?${stateParams.toString()}`);
+  assert.equal(averageScoreLobby.bankerScoreMode, "team-average");
+  assert.equal(averageScoreLobby.setup.bankerScoreModeName, "庄队均摊");
+
+  const invalidBankerScoreModeResponse = await fetch(`${roomUrl}/banker-score-mode`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ ...credentials, mode: "random" })
+  });
+  assert.equal(invalidBankerScoreModeResponse.status, 400);
 
   await jsonRequest(`${roomUrl}/dogleg-mode`, {
     method: "POST",
@@ -164,6 +181,7 @@ test("host configures the opening bid from 10% to 40% before a score-bidding gam
   const started = await jsonRequest(`${roomUrl}/state?${stateParams.toString()}`);
   assert.equal(started.stage, "score-bidding");
   assert.equal(started.setup.openingBidPercent, 20);
+  assert.equal(started.setup.bankerScoreMode, "team-average");
   assert.equal(started.setup.doglegMode, "dynamic");
   assert.equal(started.setup.scoreBid.minimum, 100);
   assert.equal(started.setup.scoreBid.currentScore, 100);

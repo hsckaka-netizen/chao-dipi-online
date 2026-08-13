@@ -1132,6 +1132,13 @@ section.game-room-overview {
   border-bottom: 0;
 }
 
+.statistics-game-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
 .statistics-game-time,
 .statistics-game-result {
   min-width: 0;
@@ -4769,6 +4776,24 @@ button.auto-play-toggle.active {
   overflow: hidden;
 }
 
+.stored-game-settlement-modal {
+  width: min(980px, 100%);
+  overflow: auto;
+}
+
+.stored-game-view-tabs {
+  width: fit-content;
+  max-width: 100%;
+}
+
+.stored-settlement-tags {
+  margin-top: 2px;
+}
+
+.stored-result-table .result-row {
+  grid-template-columns: minmax(124px, 1.4fr) 92px repeat(4, minmax(58px, 0.75fr)) minmax(92px, 0.9fr);
+}
+
 .history-filters {
   display: flex;
   gap: 7px;
@@ -5550,10 +5575,22 @@ button.auto-play-toggle.active {
     grid-template-columns: 1fr auto;
   }
 
+  .statistics-game-actions {
+    justify-content: stretch;
+  }
+
+  .statistics-game-actions button {
+    flex: 1 1 120px;
+  }
+
   .statistics-game-result,
   .statistics-game-players {
     grid-column: 1 / -1;
     grid-row: auto;
+  }
+
+  .stored-result-table .result-row {
+    grid-template-columns: 1fr 1fr;
   }
 
   .history-timeline-entry {
