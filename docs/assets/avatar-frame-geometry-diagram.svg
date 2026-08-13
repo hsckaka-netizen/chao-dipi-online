@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="720" viewBox="0 0 960 720">
+  <title>头像框标准虚拟框架几何定义</title>
+  <desc>512px 透明画布内的 372px R32 圆角正方形虚拟框架，以及框体向路径内外延伸的关系。</desc>
+  <defs>
+    <pattern id="checker" width="24" height="24" patternUnits="userSpaceOnUse">
+      <rect width="24" height="24" fill="#f7f9f8" />
+      <rect width="12" height="12" fill="#dfe6e2" />
+      <rect x="12" y="12" width="12" height="12" fill="#dfe6e2" />
+    </pattern>
+    <marker id="arrow" markerWidth="8" markerHeight="8" refX="4" refY="4" orient="auto">
+      <path d="M0 0L8 4L0 8Z" fill="#37483f" />
+    </marker>
+  </defs>
+  <rect width="960" height="720" fill="#eef3f0" />
+  <text x="480" y="42" text-anchor="middle" font-family="Arial, sans-serif" font-size="26" font-weight="700" fill="#1f3028">头像框标准虚拟框架</text>
+  <g transform="translate(84 82)">
+    <rect width="512" height="512" fill="url(#checker)" stroke="#2d3f36" stroke-width="2" />
+    <rect x="8" y="8" width="496" height="496" rx="12" fill="none" stroke="#d48828" stroke-width="2" stroke-dasharray="8 6" />
+    <rect x="70" y="70" width="372" height="372" rx="32" ry="32" fill="#4f9d79" fill-opacity="0.08" stroke="#16744c" stroke-width="4" />
+    <path d="M102 70H410A32 32 0 0 1 442 102V410A32 32 0 0 1 410 442H102A32 32 0 0 1 70 410V102A32 32 0 0 1 102 70Z" fill="none" stroke="#116a55" stroke-width="22" stroke-opacity="0.22" />
+    <path d="M256 0V512M0 256H512" stroke="#23382f" stroke-opacity="0.24" stroke-dasharray="4 6" />
+    <circle cx="256" cy="256" r="5" fill="#23382f" />
+    <text x="256" y="250" text-anchor="middle" font-family="Arial, sans-serif" font-size="18" font-weight="700" fill="#23382f">头像区域</text>
+    <text x="256" y="276" text-anchor="middle" font-family="Arial, sans-serif" font-size="14" fill="#4a5f55">外沿与绿色虚拟路径完全重合</text>
+    <text x="18" y="30" font-family="Arial, sans-serif" font-size="14" font-weight="700" fill="#9c5a12">8 px 透明边缘</text>
+  </g>
+  <g font-family="Arial, sans-serif" fill="#263a31">
+    <text x="638" y="116" font-size="19" font-weight="700">强制几何</text>
+    <text x="638" y="151" font-size="16">画布：512 × 512 px</text>
+    <text x="638" y="181" font-size="16">外接边界：x/y = 70..442</text>
+    <text x="638" y="211" font-size="16">虚拟框架：372 × 372 px</text>
+    <text x="638" y="241" font-size="16">圆角半径：32 px</text>
+    <text x="638" y="271" font-size="16">中心点：(256, 256)</text>
+    <text x="638" y="321" font-size="19" font-weight="700">设计关系</text>
+    <text x="638" y="356" font-size="16">绿色线只是设计骨架，不导出。</text>
+    <text x="638" y="386" font-size="16">框体主体围绕路径设计。</text>
+    <text x="638" y="416" font-size="16">可向路径内外同时延伸。</text>
+    <text x="638" y="446" font-size="16">装饰不能改变头像边界。</text>
+    <text x="638" y="496" font-size="19" font-weight="700">运行时</text>
+    <text x="638" y="531" font-size="16">头像在下，完整 PNG 在上。</text>
+    <text x="638" y="561" font-size="16">整张画布等比缩放并保持同心。</text>
+    <text x="638" y="591" font-size="16">禁止裁切、遮罩和单主题补偿。</text>
+  </g>
+  <line x1="526" y1="152" x2="630" y2="152" stroke="#37483f" stroke-width="2" marker-end="url(#arrow)" />
+  <text x="480" y="676" text-anchor="middle" font-family="Arial, sans-serif" font-size="15" fill="#53685e">框体的可见内沿不是头像边界；虚拟框架才是唯一头像外沿。</text>
+</svg>

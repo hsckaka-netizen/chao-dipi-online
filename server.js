@@ -4725,6 +4725,9 @@ async function handleApi(req, res, pathParts, url) {
     }
     if (pathParts[2] === "avatar-frames" && pathParts.length === 3 && req.method === "POST") {
       const body = await readJson(req, 1_700_000);
+      if (body.specConfirmed !== true) {
+        return writeJson(res, 400, { error: "请先确认头像框符合虚拟骨架规范并检查真实叠加效果" });
+      }
       if (await avatarFrameProductExists(body.assetKey)) {
         return writeJson(res, 409, { error: "这个主题编号已经存在，请换一个新的编号" });
       }

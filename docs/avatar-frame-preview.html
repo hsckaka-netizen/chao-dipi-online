@@ -30,7 +30,7 @@
     .sizes { display: flex; flex-wrap: wrap; align-items: end; gap: 26px 30px; padding: 18px 12px; }
     .sample { display: grid; justify-items: center; gap: 13px; }
     .sample small { opacity: .78; font-size: 11px; }
-    .frame-stage { --frame-size: 66.048px; width: var(--frame-size); height: var(--frame-size); display: grid; place-items: center; overflow: hidden; border: 1px solid rgba(83, 106, 96, .2); border-radius: 8px; background-color: #f7f9f8; background-image: linear-gradient(45deg, #dfe5e1 25%, transparent 25%), linear-gradient(-45deg, #dfe5e1 25%, transparent 25%), linear-gradient(45deg, transparent 75%, #dfe5e1 75%), linear-gradient(-45deg, transparent 75%, #dfe5e1 75%); background-position: 0 0, 0 6px, 6px -6px, -6px 0; background-size: 12px 12px; }
+    .frame-stage { --frame-size: 66.065px; width: var(--frame-size); height: var(--frame-size); display: grid; place-items: center; overflow: hidden; border: 1px solid rgba(83, 106, 96, .2); border-radius: 8px; background-color: #f7f9f8; background-image: linear-gradient(45deg, #dfe5e1 25%, transparent 25%), linear-gradient(-45deg, #dfe5e1 25%, transparent 25%), linear-gradient(45deg, transparent 75%, #dfe5e1 75%), linear-gradient(-45deg, transparent 75%, #dfe5e1 75%); background-position: 0 0, 0 6px, 6px -6px, -6px 0; background-size: 12px 12px; }
     .frame { width: 100%; height: 100%; display: block; object-fit: contain; pointer-events: none; filter: drop-shadow(0 3px 4px rgba(18, 38, 30, .28)); }
     .empty-note { border: 1px dashed #a9bbb2; border-radius: 12px; padding: 16px; color: #66776f; text-align: center; }
     code { border-radius: 5px; background: #edf2ef; padding: 2px 5px; }
@@ -54,7 +54,7 @@
     <section>
       <h2>人工验收提醒</h2>
       <p>重点看紧凑尺寸：主题是否仍能凭轮廓或主色辨认；浅色和深色背景是否都有边界；内部装饰是否出现矩形硬裁切。自动检查通过不代表视觉质量已经通过。</p>
-      <p>素材标准：画布 <code>512 × 512</code>，四边 8 px 透明；头像外沿对齐约 <code>372 × 372</code> 的虚拟框架。素材内部不设强制透明区，可见设计向框架内外的延伸必须完整保留。</p>
+      <p>素材标准：画布 <code>512 × 512</code>，四边 8 px 透明；头像外沿对齐 <code>x/y=70..442</code>、圆角半径 <code>32 px</code> 的 <code>372 × 372</code> 圆角正方形虚拟框架。素材内部不设强制透明区，可见设计向框架内外的延伸必须完整保留。</p>
     </section>
   </main>
   <script>
@@ -77,10 +77,10 @@
           <div class="sizes">
             ${sizes.map((size) => `
               <div class="sample">
-                <span class="frame-stage" style="--frame-size:${size * 1.376}px">
+                <span class="frame-stage" style="--frame-size:${size * (512 / 372)}px">
                   <img class="frame" src="${frameUrl}" alt="">
                 </span>
-                <small>${Math.round(size * 1.376)} px 展示区</small>
+                <small>${Math.round(size * (512 / 372))} px 展示区</small>
               </div>
             `).join("")}
           </div>

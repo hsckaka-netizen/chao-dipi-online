@@ -853,7 +853,7 @@ section.game-room-overview {
 
 .avatar.large {
   --avatar-portrait-size: 76px;
-  --avatar-frame-box-size: 104.576px;
+  --avatar-frame-box-size: 104.602px;
   font-size: 20px;
 }
 
@@ -2125,11 +2125,11 @@ button.joinable-room-player.spectate-player {
   /*
    * 所有头像无论是否佩戴头像框，都预留同一个完整素材展示区。
    * 头像始终居中，佩戴状态只决定是否显示上层框体。
-   * 512px 素材中的虚拟框架约为 372px，故完整展示区固定为头像外沿的 1.376 倍；
+   * 512px 素材中的虚拟框架固定为 372px，故完整展示区固定为头像外沿的 512 / 372 倍；
    * 可见框体的内沿、下沿和装饰延伸均不参与头像尺寸计算。
    */
   --avatar-portrait-size: 48px;
-  --avatar-frame-box-size: 66.048px;
+  --avatar-frame-box-size: 66.065px;
   position: relative;
   flex: 0 0 auto;
   display: inline-grid;
@@ -2151,13 +2151,13 @@ button.joinable-room-player.spectate-player {
 
 .avatar.small {
   --avatar-portrait-size: 38px;
-  --avatar-frame-box-size: 52.288px;
+  --avatar-frame-box-size: 52.301px;
   font-size: 14px;
 }
 
 .avatar.shop-feature {
   --avatar-portrait-size: 88px;
-  --avatar-frame-box-size: 121.088px;
+  --avatar-frame-box-size: 121.118px;
   font-size: 23px;
 }
 
@@ -2179,7 +2179,7 @@ button.joinable-room-player.spectate-player {
   width: var(--avatar-portrait-size);
   height: var(--avatar-portrait-size);
   overflow: hidden;
-  border-radius: 7px;
+  border-radius: 8.602%;
   background: #dfe7e2;
   box-shadow:
     inset 0 0 0 1px #aebbb4,
@@ -2328,13 +2328,12 @@ button.joinable-room-player.spectate-player {
 }
 
 .avatar.avatar-frame .avatar-core {
-  border-radius: 0;
   background: #dfe7e2;
   box-shadow: none;
 }
 
 .avatar.avatar-frame .avatar-core img {
-  border-radius: 0;
+  border-radius: inherit;
 }
 
 .role-mark {
@@ -3441,7 +3440,7 @@ button.joinable-room-player.spectate-player {
 
 .table-circle .trick-player .avatar.small {
   --avatar-portrait-size: 80px;
-  --avatar-frame-box-size: 110.08px;
+  --avatar-frame-box-size: 110.108px;
   font-size: 21px;
 }
 
@@ -3459,10 +3458,10 @@ button.joinable-room-player.spectate-player {
 }
 
 .table-player-avatar-stage {
-  --avatar-stage-inset: 15.04px;
+  --avatar-stage-inset: 15.054px;
   display: inline-grid;
-  width: 110.08px;
-  height: 110.08px;
+  width: 110.108px;
+  height: 110.108px;
 }
 
 .trick-player-main > .table-player-avatar-stage {
@@ -3534,7 +3533,7 @@ button.joinable-room-player.spectate-player {
   z-index: 2;
   min-width: 0;
   display: grid;
-  grid-template-columns: 110.08px minmax(0, 1fr);
+  grid-template-columns: 110.108px minmax(0, 1fr);
   grid-template-areas:
     "player-avatar player-summary"
     "player-avatar player-meta";
@@ -4005,14 +4004,14 @@ button.joinable-room-player.spectate-player {
 }
 
 .seat-hand-avatar-stage {
-  --avatar-stage-inset: 19.552px;
-  width: 143.104px;
-  height: 143.104px;
+  --avatar-stage-inset: 19.57px;
+  width: 143.14px;
+  height: 143.14px;
 }
 
 .avatar.seat-profile {
   --avatar-portrait-size: 104px;
-  --avatar-frame-box-size: 143.104px;
+  --avatar-frame-box-size: 143.14px;
   font-size: 24px;
 }
 
@@ -4974,20 +4973,28 @@ button.auto-play-toggle.active {
 
   .table-circle .trick-seat.seat-left,
   .table-circle .trick-seat.seat-right {
-    width: clamp(124px, 10.5vw, 140px);
-    min-height: 126px;
+    width: clamp(210px, 18vw, 224px);
+    min-height: 110.108px;
   }
 
-  .table-circle .seat-left .trick-player-main,
-  .table-circle .seat-right .trick-player-main {
-    grid-template-columns: 1fr;
+  .table-circle .seat-left .trick-player-main {
+    grid-template-columns: minmax(0, 1fr) 110.108px;
     grid-template-areas:
-      "player-meta"
-      "player-avatar"
-      "player-summary";
-    justify-items: center;
-    gap: 18px;
-    min-height: 126px;
+      "player-summary player-avatar"
+      "player-meta player-avatar";
+    column-gap: 12px;
+    row-gap: 6px;
+    min-height: 110.108px;
+  }
+
+  .table-circle .seat-right .trick-player-main {
+    grid-template-columns: 110.108px minmax(0, 1fr);
+    grid-template-areas:
+      "player-avatar player-summary"
+      "player-avatar player-meta";
+    column-gap: 12px;
+    row-gap: 6px;
+    min-height: 110.108px;
   }
 
   .table-circle .seat-left .table-player-avatar-stage,
@@ -4998,36 +5005,63 @@ button.auto-play-toggle.active {
   .table-circle .seat-left .trick-player-summary,
   .table-circle .seat-right .trick-player-summary {
     grid-area: player-summary;
-    justify-items: center;
     gap: 3px;
+  }
+
+  .table-circle .seat-left .trick-player-summary {
+    justify-items: end;
+    text-align: right;
+  }
+
+  .table-circle .seat-right .trick-player-summary {
+    justify-items: start;
+    text-align: left;
   }
 
   .table-circle .seat-left .trick-player-line,
   .table-circle .seat-right .trick-player-line {
-    justify-content: center;
-    flex-wrap: wrap;
-    gap: 3px 4px;
+    gap: 3px;
     width: 100%;
-    min-height: 31px;
-    text-align: center;
+    min-height: 16px;
   }
 
-  .table-circle .seat-left .trick-player-meta,
-  .table-circle .seat-right .trick-player-meta {
+  .table-circle .seat-left .trick-player-line {
+    justify-content: flex-end;
+  }
+
+  .table-circle .seat-right .trick-player-line {
+    justify-content: flex-start;
+  }
+
+  .table-circle .seat-left .trick-player-meta {
     grid-area: player-meta;
-    justify-content: center;
+    justify-content: flex-end;
     min-height: 18px;
   }
 
-  .table-circle .seat-left .trick-player-display-name,
-  .table-circle .seat-right .trick-player-display-name {
-    width: 100%;
-    text-align: center;
+  .table-circle .seat-right .trick-player-meta {
+    grid-area: player-meta;
+    justify-content: flex-start;
+    min-height: 18px;
   }
 
-  .table-circle .seat-left .trick-player-stats,
+  .table-circle .seat-left .trick-player-display-name {
+    width: 100%;
+    text-align: right;
+  }
+
+  .table-circle .seat-right .trick-player-display-name {
+    width: 100%;
+    text-align: left;
+  }
+
+  .table-circle .seat-left .trick-player-stats {
+    justify-content: flex-end;
+    max-width: 100%;
+  }
+
   .table-circle .seat-right .trick-player-stats {
-    justify-content: center;
+    justify-content: flex-start;
     max-width: 100%;
   }
 
@@ -5357,7 +5391,7 @@ button.auto-play-toggle.active {
   }
 
   .seat-hand-profile-card {
-    grid-template-columns: 99.072px minmax(0, 1fr);
+    grid-template-columns: 99.097px minmax(0, 1fr);
     align-items: center;
     justify-items: stretch;
     border-inline-end: 0;
@@ -5366,14 +5400,14 @@ button.auto-play-toggle.active {
   }
 
   .seat-hand-avatar-stage {
-    --avatar-stage-inset: 13.536px;
-    width: 99.072px;
-    height: 99.072px;
+    --avatar-stage-inset: 13.549px;
+    width: 99.097px;
+    height: 99.097px;
   }
 
   .avatar.seat-profile {
     --avatar-portrait-size: 72px;
-    --avatar-frame-box-size: 99.072px;
+    --avatar-frame-box-size: 99.097px;
   }
 
   .seat-hand-head {
@@ -5484,7 +5518,7 @@ button.auto-play-toggle.active {
 
   .statistics-user-cell .avatar.small {
     --avatar-portrait-size: 34px;
-    --avatar-frame-box-size: 46.784px;
+    --avatar-frame-box-size: 46.796px;
   }
 
   .statistics-player-button,
@@ -5757,7 +5791,7 @@ button.auto-play-toggle.active {
 }
 
 .avatar-frame-material-preview {
-  --avatar-frame-material-size: 66.048px;
+  --avatar-frame-material-size: 66.065px;
   width: var(--avatar-frame-material-size);
   height: var(--avatar-frame-material-size);
   flex: 0 0 auto;
@@ -5777,11 +5811,11 @@ button.auto-play-toggle.active {
 }
 
 .avatar-frame-material-preview.shop-feature {
-  --avatar-frame-material-size: 121.088px;
+  --avatar-frame-material-size: 121.118px;
 }
 
 .avatar-frame-material-preview.small {
-  --avatar-frame-material-size: 52.288px;
+  --avatar-frame-material-size: 52.301px;
 }
 
 .avatar-frame-material-preview.admin {
@@ -5789,11 +5823,11 @@ button.auto-play-toggle.active {
 }
 
 .avatar-frame-material-preview.upload-table {
-  --avatar-frame-material-size: 110.08px;
+  --avatar-frame-material-size: 110.108px;
 }
 
 .avatar-frame-material-preview.upload-large {
-  --avatar-frame-material-size: 143.104px;
+  --avatar-frame-material-size: 143.14px;
 }
 
 .avatar-frame-material-preview img {
@@ -6881,7 +6915,7 @@ button.auto-play-toggle.active {
   overflow: hidden;
 }
 
-.avatar-frame-upload-raw-preview span {
+.avatar-frame-upload-raw-preview > span:first-child {
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.9);
   padding: 3px 8px;
@@ -6890,10 +6924,55 @@ button.auto-play-toggle.active {
   font-weight: 800;
 }
 
-.avatar-frame-upload-raw-preview img {
+.avatar-frame-upload-raw-stage {
+  position: relative;
   width: 180px;
   height: 180px;
+  display: block;
+  background-color: #f7f9f8;
+  background-image:
+    linear-gradient(45deg, #dfe5e1 25%, transparent 25%),
+    linear-gradient(-45deg, #dfe5e1 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, #dfe5e1 75%),
+    linear-gradient(-45deg, transparent 75%, #dfe5e1 75%);
+  background-position: 0 0, 0 8px, 8px -8px, -8px 0;
+  background-size: 16px 16px;
+}
+
+.avatar-frame-upload-raw-stage img {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  width: 100%;
+  height: 100%;
   object-fit: contain;
+}
+
+.avatar-frame-upload-raw-stage i {
+  position: absolute;
+  inset: 13.671875%;
+  z-index: 2;
+  border: 1px dashed rgba(31, 112, 80, 0.82);
+  border-radius: 8.602%;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.72);
+  pointer-events: none;
+}
+
+.avatar-frame-upload-preview-groups {
+  min-width: 0;
+  display: grid;
+  gap: 16px;
+}
+
+.avatar-frame-upload-preview-groups section {
+  min-width: 0;
+  display: grid;
+  gap: 10px;
+}
+
+.avatar-frame-upload-preview-groups section > strong {
+  color: var(--text);
+  font-size: 12px;
 }
 
 .avatar-frame-upload-size-previews {
@@ -6914,6 +6993,35 @@ button.auto-play-toggle.active {
 .avatar-frame-upload-sample small {
   color: var(--muted);
   font-size: 10px;
+}
+
+.avatar.avatar-frame-upload-table {
+  --avatar-portrait-size: 80px;
+  --avatar-frame-box-size: 110.108px;
+  font-size: 21px;
+}
+
+.avatar.avatar-frame-upload-large {
+  --avatar-portrait-size: 104px;
+  --avatar-frame-box-size: 143.14px;
+  font-size: 24px;
+}
+
+.avatar-frame-upload-composite-previews {
+  align-items: center;
+}
+
+.avatar-frame-spec-confirmation {
+  display: flex !important;
+  grid-template-columns: none !important;
+  align-items: center;
+  justify-content: flex-start;
+  min-height: 42px;
+  border: 1px solid rgba(45, 123, 87, 0.22);
+  border-radius: 9px;
+  background: #f3faf6;
+  padding: 9px 11px;
+  color: #315d48 !important;
 }
 
 @media (max-width: 980px) {

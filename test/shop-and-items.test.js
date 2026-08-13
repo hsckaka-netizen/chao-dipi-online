@@ -86,9 +86,11 @@ test("uploaded avatar frames use a validated storage asset and normal product ca
   assert.match(serverSource, /pathParts\[2\] === "avatar-frames"[\s\S]*req\.method === "POST"/);
   assert.match(serverSource, /decodeAvatarFrameDataUrl/);
   assert.match(serverSource, /uploadSupabaseAvatarFrame/);
+  assert.match(serverSource, /body\.specConfirmed !== true/);
   assert.match(serverSource, /pathParts\[1\] === "avatar-frames"[\s\S]*req\.method === "GET"/);
   assert.match(appSource, /data-form="upload-avatar-frame"/);
   assert.match(appSource, /function prepareAvatarFrameDataUrl/);
+  assert.match(appSource, /specConfirmed: Boolean\(form\.get\("specConfirmed"\)\)/);
   assert.match(appSource, /function ensureAvatarFrameAssets/);
 });
 

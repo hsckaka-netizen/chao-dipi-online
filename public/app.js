@@ -1,6 +1,6 @@
 import { applyStatePatch } from "./state-patch.js?v=9330552c7e1e";
 import { detectNewDraggedFiveEffects, detectNewLargePlayEffects } from "./gameplay-effects.js?v=14791e626d30";
-import { ASSET_URLS } from "./asset-versions.js?v=7a6386c608c4";
+import { ASSET_URLS, versionedAssetUrl } from "./asset-versions.js?v=7a6386c608c4";
 import { createHistoryTrickEntry, filterHistoryTimelineEntries } from "./history-records.js?v=874ba3c97732";
 
 const app = document.querySelector("#app");
@@ -1013,6 +1013,7 @@ async function uploadAvatarFrame(event) {
         description: form.get("description"),
         price: Number(form.get("price")),
         isListed: Boolean(form.get("isListed")),
+        specConfirmed: Boolean(form.get("specConfirmed")),
         avatarFrameDataUrl
       })
     });
@@ -4359,6 +4360,16 @@ function renderAdminShopManager() {
       </div>
     `;
   };
+  const sampleAvatarUrl = versionedAssetUrl("/assets/avatars/kaxiang.png");
+  const uploadCompositePreview = (sizeClass, label) => `
+    <div class="avatar-frame-upload-sample">
+      <span class="avatar ${sizeClass} avatar-frame avatar-frame-purchased" aria-label="${escapeHtml(label)}">
+        <span class="avatar-core"><img src="${escapeHtml(sampleAvatarUrl)}" alt=""></span>
+        <img class="avatar-frame-art" data-avatar-frame-preview-image alt="待上传头像框叠加效果">
+      </span>
+      <small>${escapeHtml(label)}</small>
+    </div>
+  `;
   return `
     <section class="admin-module-section shop-admin-manager">
       <div class="admin-module-section-head">
@@ -4399,28 +4410,45 @@ function renderAdminShopManager() {
               <label class="avatar-frame-upload-wide">说明<textarea name="description" maxlength="240" required placeholder="在聊天中生成后导出的头像框。"></textarea></label>
               <label>PNG 素材<input name="avatarFrame" type="file" accept="image/png" required></label>
               <label class="check-label"><input name="isListed" type="checkbox">立即上架</label>
-              <button type="submit">校验并上传</button>
               <div class="avatar-frame-upload-status avatar-frame-upload-wide" data-avatar-frame-upload-status>选择 PNG 后显示预览。</div>
               <div class="avatar-frame-upload-preview avatar-frame-upload-wide" data-avatar-frame-upload-preview hidden>
                 <div class="avatar-frame-upload-raw-preview">
                   <span>透明素材原图</span>
-                  <img data-avatar-frame-preview-image alt="待上传头像框素材">
+                  <span class="avatar-frame-upload-raw-stage">
+                    <img data-avatar-frame-preview-image alt="待上传头像框素材">
+                    <i aria-hidden="true"></i>
+                  </span>
                 </div>
-                <div class="avatar-frame-upload-size-previews">
-                  ${[
-                    ["small", "52 px 紧凑展示区"],
-                    ["upload-table", "110 px 牌桌展示区"],
-                    ["upload-large", "143 px 大展示区"]
-                  ].map(([sizeClass, label]) => `
-                    <div class="avatar-frame-upload-sample">
-                      <span class="avatar-frame-material-preview ${sizeClass}">
-                        <img data-avatar-frame-preview-image alt="待上传头像框缩放素材">
-                      </span>
-                      <small>${label}</small>
+                <div class="avatar-frame-upload-preview-groups">
+                  <section>
+                    <strong>纯素材缩放</strong>
+                    <div class="avatar-frame-upload-size-previews">
+                      ${[
+                        ["small", "52 px 紧凑展示区"],
+                        ["upload-table", "110 px 牌桌展示区"],
+                        ["upload-large", "143 px 大展示区"]
+                      ].map(([sizeClass, label]) => `
+                        <div class="avatar-frame-upload-sample">
+                          <span class="avatar-frame-material-preview ${sizeClass}">
+                            <img data-avatar-frame-preview-image alt="待上传头像框缩放素材">
+                          </span>
+                          <small>${label}</small>
+                        </div>
+                      `).join("")}
                     </div>
-                  `).join("")}
+                  </section>
+                  <section>
+                    <strong>真实头像叠加</strong>
+                    <div class="avatar-frame-upload-size-previews avatar-frame-upload-composite-previews">
+                      ${uploadCompositePreview("small", "紧凑头像")}
+                      ${uploadCompositePreview("avatar-frame-upload-table", "牌桌头像")}
+                      ${uploadCompositePreview("avatar-frame-upload-large", "大头像")}
+                    </div>
+                  </section>
                 </div>
               </div>
+              <label class="check-label avatar-frame-upload-wide avatar-frame-spec-confirmation"><input name="specConfirmed" type="checkbox" required>我已确认素材沿 372 × 372、R32 的正方形虚拟骨架设计，并检查了真实叠加效果</label>
+              <button type="submit">校验并上传</button>
             </form>
           </div>
         </details>
@@ -6092,7 +6120,7 @@ function roleClass(role) {
 function avatarHtml(name, avatarUrl = "", size = "normal", avatarFrame = "") {
   const initial = String(name || "玩").trim().slice(0, 1) || "玩";
   const frameUrl = avatarFrameAssetUrl(avatarFrame);
-  const frameClass = frameUrl ? "avatar-frame" : "";
+  const frameClass = frameUrl ? "avatar-frame avatar-frame-purchased" : "avatar-frame-default";
   const content = avatarUrl
     ? `<img src="${escapeHtml(avatarUrl)}" alt="" decoding="async" draggable="false">`
     : escapeHtml(initial);

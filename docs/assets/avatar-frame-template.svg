@@ -5,12 +5,12 @@
   <g id="GUIDES_DO_NOT_EXPORT" font-family="Arial, sans-serif" font-size="13" fill="none">
     <rect width="512" height="512" fill="#f4f6f5" />
     <rect x="8" y="8" width="496" height="496" rx="12" stroke="#d48828" stroke-width="2" stroke-dasharray="8 6" />
-    <rect x="70" y="70" width="372" height="372" stroke="#16744c" stroke-width="3" />
-    <path d="M70 70H442V442H70Z" stroke="#116a55" stroke-width="10" stroke-opacity="0.18" />
+    <rect x="70" y="70" width="372" height="372" rx="32" ry="32" stroke="#16744c" stroke-width="3" />
+    <path d="M102 70H410A32 32 0 0 1 442 102V410A32 32 0 0 1 410 442H102A32 32 0 0 1 70 410V102A32 32 0 0 1 102 70Z" stroke="#116a55" stroke-width="10" stroke-opacity="0.18" />
     <g fill="#26342f" stroke="none">
       <text x="16" y="28">8 px 透明外边距</text>
-      <text x="256" y="56" text-anchor="middle">绿色实线：372 × 372 px 虚拟框架（不导出）</text>
-      <text x="256" y="88" text-anchor="middle">头像外沿与虚拟框架重合</text>
+      <text x="256" y="56" text-anchor="middle">绿色实线：372 × 372 px、R32 圆角虚拟框架（不导出）</text>
+      <text x="256" y="88" text-anchor="middle">头像外沿与虚拟框架的形状、尺寸和圆角完全重合</text>
       <text x="256" y="244" text-anchor="middle">素材内部不设强制透明区</text>
       <text x="256" y="264" text-anchor="middle">可见设计可向虚拟框架内外完整延伸</text>
       <text x="256" y="284" text-anchor="middle">禁止按矩形区域裁切内部设计</text>
