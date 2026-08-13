@@ -136,6 +136,19 @@ test("host configures the opening bid from 10% to 40% before a score-bidding gam
   assert.equal(dynamicDoglegLobby.doglegMode, "dynamic");
   assert.equal(dynamicDoglegLobby.setup.doglegModeName, "动态狗腿");
 
+  await jsonRequest(`${roomUrl}/dogleg-mode`, {
+    method: "POST",
+    body: JSON.stringify({ ...credentials, mode: "hidden" })
+  });
+  const hiddenDoglegLobby = await jsonRequest(`${roomUrl}/state?${stateParams.toString()}`);
+  assert.equal(hiddenDoglegLobby.doglegMode, "hidden");
+  assert.equal(hiddenDoglegLobby.setup.doglegModeName, "暗狗腿");
+
+  await jsonRequest(`${roomUrl}/dogleg-mode`, {
+    method: "POST",
+    body: JSON.stringify({ ...credentials, mode: "dynamic" })
+  });
+
   const invalidDoglegModeResponse = await fetch(`${roomUrl}/dogleg-mode`, {
     method: "POST",
     headers: { "content-type": "application/json" },

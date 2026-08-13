@@ -387,7 +387,7 @@ function captureGameplayEffects(previousState, nextState) {
 
     const previousDoglegs = new Set(previousState.setup?.doglegPlayerIds || []);
     const nextDoglegs = new Set(nextState.setup?.doglegPlayerIds || []);
-    if (nextState.setup?.doglegMode === "dynamic") {
+    if (nextState.setup?.doglegMode === "dynamic" || nextState.setup?.doglegMode === "hidden") {
       const previousSequence = Number(previousState.setup?.doglegHitSequence) || 0;
       (nextState.setup?.doglegHits || [])
         .filter((hit) => Number(hit.sequence) > previousSequence)
@@ -512,10 +512,11 @@ function transitionNotice(previousState, nextState) {
   }
   if ((previousState.stage === "frying" || previousState.stage === "fry-burying")
     && nextState.stage === "playing"
-    && nextState.setup?.doglegMode === "dynamic"
+    && (nextState.setup?.doglegMode === "dynamic" || nextState.setup?.doglegMode === "hidden")
     && Number(nextState.setup?.doglegNeeded) > 0) {
     const trump = nextState.setup?.currentTrumpSuitName || nextState.setup?.trumpSuitName || "主牌";
-    return `炒底结束：主牌确定为${trump}，动态狗腿已生效，开始出牌。`;
+    const modeName = nextState.setup?.doglegMode === "hidden" ? "暗狗腿" : "动态狗腿";
+    return `炒底结束：主牌确定为${trump}，${modeName}已生效，开始出牌。`;
   }
   if (previousState.stage === "dogleg" && nextState.stage === "playing") {
     const trump = nextState.setup?.currentTrumpSuitName || nextState.setup?.trumpSuitName || "主牌";
@@ -1844,7 +1845,8 @@ async function setDoglegMode(mode) {
       method: "POST",
       body: JSON.stringify({ playerId: session.playerId, token: session.token, mode })
     });
-    setMessage(`本局已切换为${state.doglegModeName || (mode === "dynamic" ? "动态狗腿" : "传统狗腿")}。`);
+    const modeNames = { traditional: "传统狗腿", dynamic: "动态狗腿", hidden: "暗狗腿" };
+    setMessage(`本局已切换为${state.doglegModeName || modeNames[mode] || "传统狗腿"}。`);
   } catch (error) {
     setMessage(error.message, true);
   }
@@ -3139,10 +3141,13 @@ function renderDoglegCountControl() {
 }
 
 function renderDoglegModeControl() {
-  const current = state.doglegMode === "dynamic" ? "dynamic" : "traditional";
+  const current = ["traditional", "dynamic", "hidden"].includes(state.doglegMode)
+    ? state.doglegMode
+    : "traditional";
   const options = [
     { id: "traditional", label: "传统狗腿", title: "由庄家选择统一狗腿牌" },
-    { id: "dynamic", label: "动态狗腿", title: "每名非庄家玩家独立随机狗腿牌，按标记数实时排名" }
+    { id: "dynamic", label: "动态狗腿", title: "每名非庄家玩家独立随机狗腿牌，按标记数实时排名" },
+    { id: "hidden", label: "暗狗腿", title: "随机确定固定狗腿，专属狗腿牌打出后公开身份" }
   ];
   return `
     <span class="dogleg-count-control dogleg-mode-control">
@@ -5702,6 +5707,15 @@ function renderDoglegTableTag() {
       </span>
     `;
   }
+  if (setup.doglegMode === "hidden") {
+    if (!needed || (state.stage !== "playing" && state.stage !== "finished")) return "";
+    const revealText = names.length ? `已公开：${names.join("、")}` : "暗狗腿身份尚未公开";
+    return `
+      <span class="tag table-dogleg-tag hidden" title="${escapeHtml(revealText)}">
+        暗狗腿 <i>${names.length}/${needed}</i>
+      </span>
+    `;
+  }
   const card = setup.doglegCard;
   if (!card) return "";
   const revealText = names.length ? `已出现：${names.join("、")}` : "尚未出现";
@@ -6876,7 +6890,7 @@ function renderCompactHandGroupLabel(group) {
 
 function isDoglegHandCard(card) {
   const setup = state?.setup || {};
-  if (setup.doglegMode === "dynamic") {
+  if (setup.doglegMode === "dynamic" || setup.doglegMode === "hidden") {
     return Boolean(state?.stage === "playing" && setup.doglegMarkedCardId && card?.id === setup.doglegMarkedCardId);
   }
   const doglegCard = setup.doglegCard;

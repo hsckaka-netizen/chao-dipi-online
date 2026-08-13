@@ -355,6 +355,90 @@ test("动态狗腿跳过庄家选牌，并以最终实时排名结算", async (t
   );
 });
 
+test("暗狗腿仅向本人暴露专属牌，打出后公开并按固定身份结算", async (t) => {
+  const server = await startServer({ AI_SETUP_DELAY_MS: "0", AI_PLAY_DELAY_MS: "0" });
+  t.after(() => server.child.kill());
+
+  const created = await jsonRequest(`${server.baseUrl}/api/rooms`, {
+    method: "POST",
+    body: JSON.stringify({ profileId: "player-benlei" })
+  });
+  const credentials = { playerId: created.playerId, token: created.token };
+  const stateParams = new URLSearchParams(credentials);
+  const stateUrl = `${server.baseUrl}/api/rooms/${created.roomId}/state?${stateParams.toString()}`;
+  const actionUrl = (action) => `${server.baseUrl}/api/rooms/${created.roomId}/${action}`;
+
+  await jsonRequest(actionUrl("test-players"), {
+    method: "POST",
+    body: JSON.stringify({ ...credentials, targetCount: 5 })
+  });
+  await jsonRequest(actionUrl("dogleg-mode"), {
+    method: "POST",
+    body: JSON.stringify({ ...credentials, mode: "hidden" })
+  });
+  await jsonRequest(actionUrl("doglegs"), {
+    method: "POST",
+    body: JSON.stringify({ ...credentials, count: 1 })
+  });
+  await jsonRequest(actionUrl("ready"), {
+    method: "POST",
+    body: JSON.stringify({ ...credentials, ready: true })
+  });
+  await jsonRequest(actionUrl("start"), {
+    method: "POST",
+    body: JSON.stringify(credentials)
+  });
+
+  const playing = await waitForHumanPlayingTurn(stateUrl, actionUrl, credentials);
+  assert.equal(playing.stage, "playing", "暗狗腿不应停在庄家选狗腿牌阶段");
+  assert.equal(playing.setup.doglegMode, "hidden");
+  const self = playing.players.find((player) => player.id === credentials.playerId);
+  const selfHasHiddenCard = Boolean(playing.setup.doglegMarkedCardId);
+  if (selfHasHiddenCard) {
+    assert.equal(self.role, "狗腿", "暗狗腿本人应从开局知道自己的身份");
+    assert.ok(playing.hand.some((card) => card.id === playing.setup.doglegMarkedCardId));
+    assert.equal(playing.setup.doglegPlayerIds.includes(credentials.playerId), false, "未打出专属牌前不应公开身份");
+  } else {
+    assert.notEqual(self.role, "狗腿", "非暗狗腿玩家不应看到隐藏身份");
+  }
+  assert.ok(playing.events.some((event) => event.text.includes("已随机确定 1 名暗狗腿")));
+
+  const spectator = await jsonRequest(actionUrl("spectate"), {
+    method: "POST",
+    body: JSON.stringify({ targetPlayerId: credentials.playerId })
+  });
+  const spectatorParams = new URLSearchParams({
+    spectatorId: spectator.spectatorId,
+    token: spectator.token
+  });
+  const spectatorState = await jsonRequest(`${server.baseUrl}/api/rooms/${created.roomId}/state?${spectatorParams.toString()}`);
+  assert.equal(spectatorState.setup.doglegMarkedCardId, null, "观战者不能看到目标玩家的暗狗腿牌标记");
+  if (selfHasHiddenCard) {
+    assert.equal(spectatorState.players.find((player) => player.id === credentials.playerId)?.role, "闲家");
+  }
+
+  await jsonRequest(actionUrl("auto-play"), {
+    method: "POST",
+    body: JSON.stringify({ ...credentials, enabled: true })
+  });
+  const finished = await waitForState(
+    stateUrl,
+    (snapshot) => snapshot.stage === "finished",
+    "暗狗腿托管牌局没有在预期时间内结束",
+    20_000
+  );
+
+  assert.equal(finished.setup.doglegPlayerIds.length, 1);
+  assert.notEqual(finished.setup.doglegPlayerIds[0], finished.setup.bankerId);
+  assert.deepEqual(finished.result.bankerTeamIds, [finished.setup.bankerId, finished.setup.doglegPlayerIds[0]]);
+  assert.equal(finished.result.playerResults.filter((player) => player.role === "狗腿").length, 1);
+  assert.ok(finished.events.some((event) => event.text.includes("公开狗腿身份")));
+  assert.equal(
+    Math.round(finished.result.playerResults.reduce((sum, player) => sum + player.gameScore, 0) * 100) / 100,
+    0
+  );
+});
+
 test("players leave a finished result independently and auto-ready for the next game", async (t) => {
   const server = await startServer({ AI_PLAY_DELAY_MS: "0" });
   t.after(() => server.child.kill());

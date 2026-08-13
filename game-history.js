@@ -1571,6 +1571,7 @@ export function buildGameRecord(room) {
       bankerScoreMode: room.bankerScoreMode || "banker-remainder",
       doglegMode: room.doglegMode || "traditional",
       dynamicDogleg: jsonValue(room.dynamicDogleg, null),
+      hiddenDogleg: jsonValue(room.hiddenDogleg, null),
       events: jsonValue([...(room.events || [])].reverse(), [])
     },
     result: compactResult(result),

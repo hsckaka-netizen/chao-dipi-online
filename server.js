@@ -31,12 +31,18 @@ import {
 } from "./dragged-five-attribution.js";
 import {
   applyDynamicDoglegPlay,
+  applyHiddenDoglegPlay,
   createDynamicDoglegState,
+  createHiddenDoglegState,
   DOGLEG_MODE_DYNAMIC,
+  DOGLEG_MODE_HIDDEN,
   DOGLEG_MODE_TRADITIONAL,
   doglegModeName,
   dynamicDoglegCardId,
   dynamicDoglegMarkCount,
+  hiddenDoglegCardId,
+  hiddenDoglegIsRevealed,
+  hiddenDoglegPlayerIds,
   normalizeDoglegMode
 } from "./dogleg-mechanism.js";
 import {
@@ -1041,6 +1047,7 @@ function deal(room, options = {}) {
   room.doglegCard = null;
   room.doglegPlayerIds = [];
   room.dynamicDogleg = null;
+  room.hiddenDogleg = null;
   room.doglegNeeded = clampDoglegCount(room.doglegNeeded, count);
   room.result = null;
   room.setup = emptySetup();
@@ -1100,6 +1107,7 @@ function resetRoomToLobby(room, options = {}) {
   room.doglegCard = null;
   room.doglegPlayerIds = [];
   room.dynamicDogleg = null;
+  room.hiddenDogleg = null;
   syncLobbyDoglegCount(room);
   room.result = null;
   room.setup = emptySetup();
@@ -1199,9 +1207,17 @@ function setupSnapshot(room, viewer = null) {
   const fry = room.setup?.fry || null;
   const currentSuit = currentTrumpSuit(room);
   const mode = normalizeDoglegMode(room.doglegMode);
-  const dynamicHits = mode === DOGLEG_MODE_DYNAMIC && Array.isArray(room.dynamicDogleg?.hits)
+  const doglegHits = mode === DOGLEG_MODE_DYNAMIC && Array.isArray(room.dynamicDogleg?.hits)
     ? room.dynamicDogleg.hits.slice(-20).map((hit) => ({ ...hit }))
-    : [];
+    : mode === DOGLEG_MODE_HIDDEN && Array.isArray(room.hiddenDogleg?.reveals)
+      ? room.hiddenDogleg.reveals.slice(-20).map((hit) => ({ ...hit }))
+      : [];
+  const markedCardId = mode === DOGLEG_MODE_DYNAMIC && viewer
+    ? dynamicDoglegCardId(room.dynamicDogleg, viewer.id)
+    : mode === DOGLEG_MODE_HIDDEN && viewer && room.stage === "playing"
+        && !hiddenDoglegIsRevealed(room.hiddenDogleg, viewer.id)
+      ? hiddenDoglegCardId(room.hiddenDogleg, viewer.id)
+      : null;
   return {
     stage: room.stage,
     callMode: normalizedCallMode(room.callMode),
@@ -1218,11 +1234,13 @@ function setupSnapshot(room, viewer = null) {
     doglegMode: mode,
     doglegModeName: doglegModeName(mode),
     doglegCard: room.doglegCard,
-    doglegMarkedCardId: mode === DOGLEG_MODE_DYNAMIC && viewer
-      ? dynamicDoglegCardId(room.dynamicDogleg, viewer.id)
-      : null,
-    doglegHitSequence: mode === DOGLEG_MODE_DYNAMIC ? Number(room.dynamicDogleg?.hitSequence) || 0 : 0,
-    doglegHits: dynamicHits,
+    doglegMarkedCardId: markedCardId,
+    doglegHitSequence: mode === DOGLEG_MODE_DYNAMIC
+      ? Number(room.dynamicDogleg?.hitSequence) || 0
+      : mode === DOGLEG_MODE_HIDDEN
+        ? Number(room.hiddenDogleg?.revealSequence) || 0
+        : 0,
+    doglegHits,
     doglegPlayerIds: [...(room.doglegPlayerIds || [])],
     doglegPlayerNames: (room.doglegPlayerIds || []).map((playerId) => playerName(room, playerId)),
     doglegNeeded: room.doglegNeeded || 0,
@@ -1282,14 +1300,17 @@ function gameItemsSnapshot(room, viewer = null) {
   };
 }
 
-function playerRole(room, playerId) {
+function playerRole(room, playerId, viewer = null) {
   if (room.bankerId === playerId) return "庄家";
   if ((room.doglegPlayerIds || []).includes(playerId)) return "狗腿";
+  if (normalizeDoglegMode(room.doglegMode) === DOGLEG_MODE_HIDDEN
+    && viewer?.id === playerId
+    && hiddenDoglegPlayerIds(room.hiddenDogleg).includes(playerId)) return "狗腿";
   if (room.bankerId) return "闲家";
   return "";
 }
 
-function trickSnapshot(room, trick) {
+function trickSnapshot(room, trick, viewer = null) {
   if (!trick) return null;
   const currentTurnPlayerId = trick === room.currentTrick ? expectedPlayerId(room) : null;
   const turnIndexByPlayerId = new Map(orderedPlayersFrom(room, trick.leaderId || room.hostId).map((player, index) => [player.id, index]));
@@ -1318,7 +1339,7 @@ function trickSnapshot(room, trick) {
         cardSkin: normalizeCardSkin(player.cardSkin),
         playEffect: normalizePlayEffect(player.playEffect),
         autoPlayEnabled: Boolean(player.autoPlayEnabled),
-        role: playerRole(room, player.id),
+        role: playerRole(room, player.id, viewer),
         doglegMarkCount: dynamicDoglegMarkCount(room.dynamicDogleg, player.id),
         played: Boolean(play),
         lead: trick.leaderId === player.id,
@@ -1367,10 +1388,11 @@ function playedProtectedFiveCounts(room) {
   return counts;
 }
 
-function roomSnapshot(room, viewer = null) {
+function roomSnapshot(room, viewer = null, options = {}) {
   autoAdvanceExpiredGameItemStage(room);
   autoAdvanceExpiredScoreBid(room);
   autoAdvanceExpiredFry(room);
+  const secretViewer = options.hideViewerSecrets ? null : viewer;
   const canViewKitty = Boolean(viewer && room.kitty.length && room.setup?.fry?.lastFryerId === viewer.id);
   const kittyViewerId = room.setup?.fry?.lastFryerId || null;
   const readyCount = readyPlayerCount(room);
@@ -1408,7 +1430,7 @@ function roomSnapshot(room, viewer = null) {
     taunts: activeTauntsSnapshot(room),
     gameItems: gameItemsSnapshot(room, viewer),
     hostId: room.hostId,
-    setup: setupSnapshot(room, viewer),
+    setup: setupSnapshot(room, secretViewer),
     viewer: viewer ? {
       id: viewer.id,
       accountId: viewer.accountId || null,
@@ -1430,7 +1452,7 @@ function roomSnapshot(room, viewer = null) {
       playEffect: normalizePlayEffect(player.playEffect),
       host: player.host,
       test: player.test,
-      role: playerRole(room, player.id),
+      role: playerRole(room, player.id, secretViewer),
       connected: player.connected,
       ready: Boolean(player.ready),
       nextRoundEntered: Boolean(player.nextRoundEntered),
@@ -1444,7 +1466,7 @@ function roomSnapshot(room, viewer = null) {
     })),
     spectators: publicRoomSpectators(room),
     hand: viewer ? viewerHandForSnapshot(room, viewer).map(publicCard) : [],
-    currentTrick: trickSnapshot(room, room.currentTrick),
+    currentTrick: trickSnapshot(room, room.currentTrick, secretViewer),
     trickHistory: [...(room.settledTrickHistory || [])],
     playedProtectedFives: playedProtectedFiveCounts(room),
     result: room.result,
@@ -1647,7 +1669,7 @@ function spectatorSnapshot(room, spectator) {
   const viewer = playerById(room, spectator?.targetPlayerId);
   if (!viewer) return null;
   return {
-    ...roomSnapshot(room, viewer),
+    ...roomSnapshot(room, viewer, { hideViewerSecrets: true }),
     spectator: {
       id: spectator.id,
       targetPlayerId: viewer.id,
@@ -1778,8 +1800,30 @@ function updateDraggedFiveStats(room, trick, winnerId) {
   });
 }
 
+function actualDoglegPlayerIds(room) {
+  if (normalizeDoglegMode(room.doglegMode) === DOGLEG_MODE_HIDDEN) {
+    return hiddenDoglegPlayerIds(room.hiddenDogleg);
+  }
+  return [...(room.doglegPlayerIds || [])];
+}
+
+function revealRemainingHiddenDoglegs(room) {
+  if (normalizeDoglegMode(room.doglegMode) !== DOGLEG_MODE_HIDDEN || !room.hiddenDogleg) return;
+  const actualIds = hiddenDoglegPlayerIds(room.hiddenDogleg);
+  const previouslyRevealed = new Set(room.doglegPlayerIds || []);
+  const newlyRevealed = actualIds.filter((playerId) => !previouslyRevealed.has(playerId));
+  actualIds.forEach((playerId) => {
+    const state = room.hiddenDogleg.players?.[playerId];
+    if (state) state.revealed = true;
+  });
+  room.doglegPlayerIds = actualIds;
+  if (newlyRevealed.length) {
+    addEvent(room, `本局结束，公开尚未亮明的暗狗腿：${newlyRevealed.map((playerId) => playerName(room, playerId)).join("、")}`);
+  }
+}
+
 function bankerTeamIds(room) {
-  return [room.bankerId, ...(room.doglegPlayerIds || [])].filter(Boolean);
+  return [room.bankerId, ...actualDoglegPlayerIds(room)].filter(Boolean);
 }
 
 function idleTeamIds(room) {
@@ -1826,6 +1870,7 @@ function finishGame(room, completedTrick) {
     player.autoPlayEnabled = false;
   });
 
+  revealRemainingHiddenDoglegs(room);
   const bankerIds = bankerTeamIds(room);
   const bankerIdSet = new Set(bankerIds);
   const idleIds = idleTeamIds(room);
@@ -2473,6 +2518,7 @@ function finishFrying(room) {
     room.doglegCard = null;
     room.doglegPlayerIds = [];
     room.dynamicDogleg = null;
+    room.hiddenDogleg = null;
     beginPlaying(room);
     addEvent(room, "本局不设置狗腿，直接开始打牌");
     return;
@@ -2481,11 +2527,22 @@ function finishFrying(room) {
     room.doglegCard = null;
     room.doglegPlayerIds = [];
     room.dynamicDogleg = createDynamicDoglegState(room.players, room.bankerId);
+    room.hiddenDogleg = null;
     beginPlaying(room);
     addEvent(room, "本局使用动态狗腿，已为每名非庄家玩家随机标记一张狗腿牌");
     return;
   }
+  if (normalizeDoglegMode(room.doglegMode) === DOGLEG_MODE_HIDDEN) {
+    room.doglegCard = null;
+    room.doglegPlayerIds = [];
+    room.dynamicDogleg = null;
+    room.hiddenDogleg = createHiddenDoglegState(room.players, room.bankerId, room.doglegNeeded);
+    beginPlaying(room);
+    addEvent(room, `本局使用暗狗腿，已随机确定 ${hiddenDoglegPlayerIds(room.hiddenDogleg).length} 名暗狗腿并分别标记专属狗腿牌`);
+    return;
+  }
   room.dynamicDogleg = null;
+  room.hiddenDogleg = null;
   room.stage = "dogleg";
   room.phase = `主牌为${suitName(room.trumpSuit)}，等待庄家选择狗腿牌`;
 }
@@ -2593,6 +2650,19 @@ function sameDoglegCard(card, doglegCard) {
 }
 
 function revealDoglegIfNeeded(room, player, selected) {
+  if (normalizeDoglegMode(room.doglegMode) === DOGLEG_MODE_HIDDEN) {
+    if (!room.hiddenDogleg) return;
+    const outcome = applyHiddenDoglegPlay(room.hiddenDogleg, {
+      playerId: player.id,
+      playedCards: selected
+    });
+    room.hiddenDogleg = outcome.state;
+    room.doglegPlayerIds = outcome.doglegPlayerIds;
+    if (!outcome.hit) return;
+    const hitCard = selected.find((card) => card.id === outcome.hit.cardId);
+    addEvent(room, `${player.name} 打出暗狗腿牌${hitCard?.label ? ` ${hitCard.label}` : ""}，公开狗腿身份`);
+    return;
+  }
   if (normalizeDoglegMode(room.doglegMode) === DOGLEG_MODE_DYNAMIC) {
     if (player.id === room.bankerId || !room.dynamicDogleg) return;
     const previousDoglegIds = new Set(room.doglegPlayerIds || []);
@@ -2645,6 +2715,7 @@ function selectDogleg(room, player, cardIds) {
   };
   room.doglegPlayerIds = [];
   room.dynamicDogleg = null;
+  room.hiddenDogleg = null;
   beginPlaying(room);
   addEvent(room, `${player.name} 选择 ${card.label} 为狗腿牌，开始打牌`);
   return { ok: true };
@@ -3904,24 +3975,34 @@ function isProtectedFive(card) {
 }
 
 function hiddenDoglegInHand(room, player) {
-  if (normalizeDoglegMode(room.doglegMode) === DOGLEG_MODE_DYNAMIC) {
+  const mode = normalizeDoglegMode(room.doglegMode);
+  if (mode === DOGLEG_MODE_DYNAMIC) {
     const markedCardId = dynamicDoglegCardId(room.dynamicDogleg, player.id);
     return Boolean(player.id !== room.bankerId && markedCardId && player.hand.some((card) => card.id === markedCardId));
+  }
+  if (mode === DOGLEG_MODE_HIDDEN) {
+    const markedCardId = hiddenDoglegCardId(room.hiddenDogleg, player.id);
+    return Boolean(markedCardId && !hiddenDoglegIsRevealed(room.hiddenDogleg, player.id)
+      && player.hand.some((card) => card.id === markedCardId));
   }
   return Boolean(room.doglegCard && player.id !== room.bankerId && !(room.doglegPlayerIds || []).includes(player.id)
     && player.hand.some((card) => sameDoglegCard(card, room.doglegCard)));
 }
 
 function cardIsHiddenDogleg(room, player, card) {
-  if (normalizeDoglegMode(room.doglegMode) === DOGLEG_MODE_DYNAMIC) {
+  const mode = normalizeDoglegMode(room.doglegMode);
+  if (mode === DOGLEG_MODE_DYNAMIC) {
     return Boolean(hiddenDoglegInHand(room, player) && card?.id === dynamicDoglegCardId(room.dynamicDogleg, player.id));
+  }
+  if (mode === DOGLEG_MODE_HIDDEN) {
+    return Boolean(hiddenDoglegInHand(room, player) && card?.id === hiddenDoglegCardId(room.hiddenDogleg, player.id));
   }
   return Boolean(hiddenDoglegInHand(room, player) && sameDoglegCard(card, room.doglegCard));
 }
 
 function aiOwnTeam(room, player) {
   if (player.id === room.bankerId) return "banker";
-  if ((room.doglegPlayerIds || []).includes(player.id)) return "banker";
+  if (actualDoglegPlayerIds(room).includes(player.id)) return "banker";
   return "idle";
 }
 
@@ -4112,8 +4193,13 @@ function protectedFivesInTrickByRelation(room, player, relation) {
 
 function canRevealDoglegWithCards(room, player, cards) {
   if (!hiddenDoglegInHand(room, player)) return false;
-  if (normalizeDoglegMode(room.doglegMode) === DOGLEG_MODE_DYNAMIC) {
+  const mode = normalizeDoglegMode(room.doglegMode);
+  if (mode === DOGLEG_MODE_DYNAMIC) {
     const markedCardId = dynamicDoglegCardId(room.dynamicDogleg, player.id);
+    return cards.some((card) => card.id === markedCardId);
+  }
+  if (mode === DOGLEG_MODE_HIDDEN) {
+    const markedCardId = hiddenDoglegCardId(room.hiddenDogleg, player.id);
     return cards.some((card) => card.id === markedCardId);
   }
   if ((room.doglegPlayerIds || []).length >= (room.doglegNeeded || 0)) return false;
@@ -4121,7 +4207,8 @@ function canRevealDoglegWithCards(room, player, cards) {
 }
 
 function doglegCopiesInHand(room, player) {
-  if (normalizeDoglegMode(room.doglegMode) === DOGLEG_MODE_DYNAMIC) {
+  const mode = normalizeDoglegMode(room.doglegMode);
+  if (mode === DOGLEG_MODE_DYNAMIC || mode === DOGLEG_MODE_HIDDEN) {
     return hiddenDoglegInHand(room, player) ? 1 : 0;
   }
   if (!room.doglegCard) return 0;
@@ -4131,9 +4218,12 @@ function doglegCopiesInHand(room, player) {
 function doglegRevealProbability(room, player) {
   if (!hiddenDoglegInHand(room, player)) return 0;
   const copies = doglegCopiesInHand(room, player);
-  const doglegCard = normalizeDoglegMode(room.doglegMode) === DOGLEG_MODE_DYNAMIC
+  const mode = normalizeDoglegMode(room.doglegMode);
+  const doglegCard = mode === DOGLEG_MODE_DYNAMIC
     ? player.hand.find((card) => card.id === dynamicDoglegCardId(room.dynamicDogleg, player.id))
-    : room.doglegCard;
+    : mode === DOGLEG_MODE_HIDDEN
+      ? player.hand.find((card) => card.id === hiddenDoglegCardId(room.hiddenDogleg, player.id))
+      : room.doglegCard;
   if (!doglegCard) return 0;
   const doglegSuit = playSuit(doglegCard, room.trumpSuit);
   const sameSuitCount = player.hand.filter((card) => playSuit(card, room.trumpSuit) === doglegSuit).length;
@@ -4975,6 +5065,7 @@ async function handleApi(req, res, pathParts, url) {
       doglegCard: null,
       doglegPlayerIds: [],
       dynamicDogleg: null,
+      hiddenDogleg: null,
       doglegNeeded: 0,
       doglegConfigured: false,
       result: null,
@@ -5223,8 +5314,10 @@ async function handleApi(req, res, pathParts, url) {
       if (!viewer) return;
       if (!viewer.host) return writeJson(res, 403, { error: "只有房主可以设置狗腿机制" });
       if (room.status !== "lobby") return writeJson(res, 409, { error: "只有开局前可以切换狗腿机制" });
-      if (body.mode !== DOGLEG_MODE_TRADITIONAL && body.mode !== DOGLEG_MODE_DYNAMIC) {
-        return writeJson(res, 400, { error: "狗腿机制只支持传统狗腿或动态狗腿" });
+      if (body.mode !== DOGLEG_MODE_TRADITIONAL
+        && body.mode !== DOGLEG_MODE_DYNAMIC
+        && body.mode !== DOGLEG_MODE_HIDDEN) {
+        return writeJson(res, 400, { error: "狗腿机制只支持传统狗腿、动态狗腿或暗狗腿" });
       }
       room.doglegMode = body.mode;
       addEvent(room, `房主将本局狗腿机制设为${doglegModeName(body.mode)}`);

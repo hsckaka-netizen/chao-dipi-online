@@ -3,11 +3,17 @@ import assert from "node:assert/strict";
 
 import {
   applyDynamicDoglegPlay,
+  applyHiddenDoglegPlay,
   createDynamicDoglegState,
+  createHiddenDoglegState,
   DOGLEG_MODE_DYNAMIC,
+  DOGLEG_MODE_HIDDEN,
   DOGLEG_MODE_TRADITIONAL,
   dynamicDoglegCardId,
   dynamicDoglegMarkCount,
+  hiddenDoglegCardId,
+  hiddenDoglegPlayerIds,
+  hiddenDoglegRevealedPlayerIds,
   normalizeDoglegMode,
   rankDynamicDoglegs
 } from "../dogleg-mechanism.js";
@@ -26,6 +32,7 @@ test("动态狗腿排除庄家，且可从任意手牌中随机标记", () => {
   assert.equal(dynamicDoglegCardId(state, "idle-a"), "joker-card");
   assert.equal(normalizeDoglegMode("unknown"), DOGLEG_MODE_TRADITIONAL);
   assert.equal(normalizeDoglegMode(DOGLEG_MODE_DYNAMIC), DOGLEG_MODE_DYNAMIC);
+  assert.equal(normalizeDoglegMode(DOGLEG_MODE_HIDDEN), DOGLEG_MODE_HIDDEN);
 });
 
 test("打出具体标记牌后增加一个标记，并从剩余手牌重新随机", () => {
@@ -79,4 +86,48 @@ test("动态狗腿先比标记数，同数时最近获得标记者优先", () =>
   assert.equal(dynamicDoglegCardId(state, "idle-a"), null);
   assert.equal(dynamicDoglegMarkCount(state, "idle-c"), 0);
   assert.equal(rankDynamicDoglegs(state, 3).includes("idle-c"), false, "0 标记玩家不补足狗腿名额");
+});
+
+test("暗狗腿随机选择固定非庄玩家，并为每人标记一张具体手牌", () => {
+  const values = [0.6, 0, 0.999, 0];
+  const state = createHiddenDoglegState([
+    { id: "banker", hand: [card("banker-card")] },
+    { id: "idle-a", hand: [card("a1"), card("a2")] },
+    { id: "idle-b", hand: [card("b1"), card("b2", "joker")] },
+    { id: "idle-c", hand: [card("c1")] }
+  ], "banker", 2, () => values.shift() ?? 0);
+
+  assert.deepEqual(hiddenDoglegPlayerIds(state), ["idle-b", "idle-a"]);
+  assert.equal(hiddenDoglegCardId(state, "banker"), null);
+  assert.equal(hiddenDoglegCardId(state, "idle-b"), "b2");
+  assert.equal(hiddenDoglegCardId(state, "idle-a"), "a1");
+  assert.deepEqual(hiddenDoglegRevealedPlayerIds(state), []);
+});
+
+test("暗狗腿仅在具体标记牌真正打出后公开，且不会重新生成", () => {
+  const state = createHiddenDoglegState([
+    { id: "idle-a", hand: [card("marked"), card("same-rank-copy"), card("other")] }
+  ], "banker", 1, () => 0);
+
+  const miss = applyHiddenDoglegPlay(state, {
+    playerId: "idle-a",
+    playedCards: [card("same-rank-copy")]
+  });
+  assert.equal(miss.hit, null);
+  assert.deepEqual(miss.doglegPlayerIds, []);
+
+  const hit = applyHiddenDoglegPlay(state, {
+    playerId: "idle-a",
+    playedCards: [card("marked")]
+  });
+  assert.equal(hit.hit.cardId, "marked");
+  assert.deepEqual(hit.doglegPlayerIds, ["idle-a"]);
+  assert.equal(hiddenDoglegCardId(state, "idle-a"), "marked");
+
+  const repeated = applyHiddenDoglegPlay(state, {
+    playerId: "idle-a",
+    playedCards: [card("marked")]
+  });
+  assert.equal(repeated.hit, null);
+  assert.equal(state.reveals.length, 1);
 });
