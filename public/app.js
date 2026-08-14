@@ -149,6 +149,11 @@ let shopStateLoading = false;
 let shopStateAccountId = "";
 let shopPurchaseInFlight = "";
 let avatarFrameEquipInFlight = "";
+let heroHomeState = null;
+let heroHomeLoading = false;
+let heroHomeAccountId = "";
+let heroActionInFlight = "";
+let heroGachaResults = [];
 let itemUseInFlight = "";
 let adminData = null;
 let adminDataLoading = false;
@@ -700,6 +705,14 @@ function resetShopState() {
   avatarFrameEquipInFlight = "";
 }
 
+function resetHeroHomeState() {
+  heroHomeState = null;
+  heroHomeLoading = false;
+  heroHomeAccountId = "";
+  heroActionInFlight = "";
+  heroGachaResults = [];
+}
+
 function requestId() {
   return globalThis.crypto?.randomUUID?.() || `request-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
@@ -756,6 +769,37 @@ function ensureDiamondWallet(force = false) {
       if (authState.account?.id !== account.id) return;
       diamondWalletLoading = false;
       diamondWallet = { unavailable: true };
+      render();
+    });
+}
+
+function ensureHeroHomeState(force = false) {
+  const account = authState.account;
+  if (!account || account.role !== "player") {
+    if (heroHomeAccountId) resetHeroHomeState();
+    return;
+  }
+  if (heroHomeAccountId !== account.id) {
+    resetHeroHomeState();
+    heroHomeAccountId = account.id;
+  }
+  if (heroHomeLoading || (!force && heroHomeState)) return;
+  heroHomeLoading = true;
+  api("/api/heroes/me")
+    .then((data) => {
+      if (authState.account?.id !== account.id) return;
+      heroHomeState = data;
+      heroHomeLoading = false;
+      if (diamondWallet) diamondWallet.balance = data.balance;
+      render();
+    })
+    .catch((error) => {
+      if (authState.account?.id !== account.id) return;
+      heroHomeLoading = false;
+      heroHomeState = { unavailable: true, regions: [], units: [], ownedUnits: [] };
+      if (["hero-home", "hero-catalog", "hero-gacha"].includes(homeView)) {
+        setMessage(error.message || "英雄家园暂不可用", true);
+      }
       render();
     });
 }
@@ -825,6 +869,7 @@ async function loginAccount(event) {
     authState.loaded = true;
     resetDiamondWallet();
     resetShopState();
+    resetHeroHomeState();
     homeView = data.account?.role === "admin" ? "admin" : "rooms";
     adminData = null;
     adminTaunts = null;
@@ -846,6 +891,7 @@ async function logoutAccount() {
   authState.account = null;
   resetDiamondWallet();
   resetShopState();
+  resetHeroHomeState();
   adminData = null;
   adminTaunts = null;
   adminTauntsLoading = false;
@@ -3226,11 +3272,15 @@ function renderHome() {
   if (homeView === "admin" || homeView === "players") return renderProfileManager();
   if (homeView === "shop") return renderShopPage();
   if (homeView === "inventory") return renderInventoryPage();
+  if (homeView === "hero-home") return renderHeroHomePage();
+  if (homeView === "hero-catalog") return renderHeroCatalogPage();
+  if (homeView === "hero-gacha") return renderHeroGachaPage();
   renderShell(`
     <section class="home-toolbar">
       <div class="segmented home-tabs" role="tablist" aria-label="首页模块">
         <button type="button" class="${homeView === "rooms" ? "active" : "secondary"}" data-action="show-rooms">房间</button>
         <button type="button" class="${homeView === "stats" ? "active" : "secondary"}" data-action="show-statistics">数据</button>
+        ${authState.account?.role === "player" ? `<button type="button" class="secondary" data-action="show-hero-home">英雄家园</button>` : ""}
         ${authState.account?.role === "player" ? `<button type="button" class="secondary" data-action="show-shop">钻石商城</button>` : ""}
         ${authState.account?.role === "player" ? `<button type="button" class="secondary" data-action="show-inventory">背包</button>` : ""}
       </div>
@@ -3981,6 +4031,310 @@ function renderAccountSettings() {
       </section>
     </div>
   `);
+}
+
+function heroUnitById(unitId) {
+  return (heroHomeState?.units || []).find((unit) => unit.id === unitId) || null;
+}
+
+function ownedHeroUnit(unitId) {
+  return (heroHomeState?.ownedUnits || []).find((unit) => unit.id === unitId) || null;
+}
+
+function heroStars(stars) {
+  const count = Math.max(0, Math.min(5, Number(stars) || 0));
+  return `<span class="hero-stars" aria-label="${count}星">${"★".repeat(count)}${"☆".repeat(5 - count)}</span>`;
+}
+
+function heroUnitBadge(unit, size = "normal") {
+  if (!unit) return `<span class="hero-unit-badge ${size} empty">空</span>`;
+  const color = unit.color || "#527b70";
+  return `<span class="hero-unit-badge ${size}" style="--hero-color:${escapeHtml(color)}" title="${escapeHtml(unit.name)}"><b>${escapeHtml(unit.shortName || unit.name?.slice(0, 1) || "英")}</b></span>`;
+}
+
+function renderBattleHeroMark(snapshot, compact = false) {
+  if (!snapshot) return "";
+  return `
+    <span class="battle-hero-mark ${compact ? "compact" : ""}" style="--hero-color:${escapeHtml(snapshot.color || "#527b70")}" title="${escapeHtml(`${snapshot.name} · ${snapshot.skillName} · ${snapshot.stars}星`)}">
+      <b>${escapeHtml(snapshot.shortName || snapshot.name?.slice(0, 1) || "英")}</b>
+      <span>${escapeHtml(snapshot.name)}</span>
+      <i>${"★".repeat(Math.max(1, Math.min(5, Number(snapshot.stars) || 1)))}</i>
+    </span>
+  `;
+}
+
+function renderHeroSectionNav(active) {
+  return `
+    <section class="home-toolbar hero-home-toolbar">
+      <div class="segmented home-tabs hero-tabs" role="tablist" aria-label="英雄系统模块">
+        <button type="button" class="${active === "hero-home" ? "active" : "secondary"}" data-action="show-hero-home">家园</button>
+        <button type="button" class="${active === "hero-catalog" ? "active" : "secondary"}" data-action="show-hero-catalog">图鉴</button>
+        <button type="button" class="${active === "hero-gacha" ? "active" : "secondary"}" data-action="show-hero-gacha">抽卡</button>
+      </div>
+      <button type="button" class="secondary" data-action="show-rooms">返回房间</button>
+    </section>
+  `;
+}
+
+function renderHeroLoadingPage(active) {
+  renderShell(`${renderHeroSectionNav(active)}<section class="panel"><div class="empty">${heroHomeLoading ? "正在读取英雄家园…" : "英雄家园暂不可用"}</div></section>`);
+}
+
+function renderHomeRegionCard(region) {
+  const placed = region.ownedUnit || null;
+  const assignedIds = new Set((heroHomeState?.regions || []).map((item) => item.unitId).filter(Boolean));
+  const candidates = (heroHomeState?.ownedUnits || []).filter((unit) => unit.regionId === region.id);
+  const progress = Math.max(0, Math.min(100, Number(region.productionHours || 0) / 6 * 100));
+  const battle = placed?.type === "hero" && heroHomeState?.battleUnitId === placed.id;
+  return `
+    <article class="home-region-card region-${escapeHtml(region.id)}">
+      <header>
+        <span class="home-region-icon" aria-hidden="true">${escapeHtml(region.icon || "◇")}</span>
+        <div><h3>${escapeHtml(region.name)}</h3><span>单槽 · 最多累计6小时</span></div>
+        ${battle ? `<span class="tag good">出战中</span>` : ""}
+      </header>
+      <div class="home-region-worker ${placed ? "occupied" : "empty"}">
+        ${heroUnitBadge(placed, "large")}
+        <div>
+          <strong>${escapeHtml(placed?.name || "尚未派驻")}</strong>
+          ${placed ? heroStars(placed.stars) : `<span class="meta">空槽不产出钻石</span>`}
+          ${placed ? `<span class="meta">每小时 ${escapeHtml(region.ratePerHour)} 钻石</span>` : ""}
+        </div>
+      </div>
+      <div class="home-production">
+        <div class="home-production-head"><span>已生产 ${Number(region.productionValue || 0).toFixed(2)} 💎</span><b>${Number(region.productionHours || 0).toFixed(1)} / 6小时</b></div>
+        <div class="home-production-track"><i style="width:${progress.toFixed(2)}%"></i></div>
+        <div class="home-region-actions">
+          <button type="button" data-action="collect-home" data-region-id="${escapeHtml(region.id)}" ${heroActionInFlight ? "disabled" : ""}>领取 ${region.collectableDiamonds || 0} 💎</button>
+          ${placed?.type === "hero" ? `<button type="button" class="secondary" data-action="select-battle-hero" data-unit-id="${escapeHtml(placed.id)}" ${battle || heroActionInFlight ? "disabled" : ""}>${battle ? "已出战" : "设为出战"}</button>` : ""}
+        </div>
+      </div>
+      <div class="home-assignment-list">
+        <span class="meta">选择本区角色</span>
+        <div>
+          ${candidates.map((unit) => {
+            const active = placed?.id === unit.id;
+            const unavailable = assignedIds.has(unit.id) && !active;
+            return `<button type="button" class="home-unit-choice ${active ? "active" : "secondary"}" data-action="assign-home-unit" data-region-id="${escapeHtml(region.id)}" data-unit-id="${escapeHtml(unit.id)}" ${active || unavailable || heroActionInFlight ? "disabled" : ""}>${heroUnitBadge(unit, "tiny")}<span>${escapeHtml(unit.name)}</span></button>`;
+          }).join("") || `<span class="meta">尚未获得本区角色，请先抽卡</span>`}
+          ${placed ? `<button type="button" class="secondary home-unit-choice" data-action="assign-home-unit" data-region-id="${escapeHtml(region.id)}" data-unit-id="" ${heroActionInFlight ? "disabled" : ""}><span class="hero-unit-badge tiny empty">空</span><span>移除</span></button>` : ""}
+        </div>
+      </div>
+    </article>
+  `;
+}
+
+function renderHeroHomePage() {
+  if (authState.account?.role !== "player") {
+    homeView = "login";
+    return renderLogin();
+  }
+  ensureHeroHomeState();
+  if (!heroHomeState || heroHomeState.unavailable) return renderHeroLoadingPage("hero-home");
+  renderShell(`
+    ${renderHeroSectionNav("hero-home")}
+    <section class="panel hero-home-hero">
+      <div>
+        <span class="eyebrow">HERO HOME</span>
+        <h2>英雄家园</h2>
+        <p>派驻角色持续生产钻石；只有已派驻英雄能被选为出战英雄。</p>
+      </div>
+      <div class="hero-home-summary">
+        <span><small>当前钻石</small><b>💎 ${escapeHtml(heroHomeState.balance || 0)}</b></span>
+        <span><small>出战英雄</small><b>${escapeHtml(heroHomeState.battleHero?.name || "未选择")}</b></span>
+        <button type="button" data-action="collect-home" data-region-id="all" ${heroActionInFlight ? "disabled" : ""}>一键领取</button>
+      </div>
+    </section>
+    <section class="home-region-grid">
+      ${(heroHomeState.regions || []).map(renderHomeRegionCard).join("")}
+    </section>
+    <section class="panel hero-home-note">
+      <strong>生产规则</strong>
+      <span>英雄每小时产出随星级为3/4/5/6/7，小兵为1/1.25/1.5/1.75/2。领取只发整数，小数继续留在对应区域；更换或移除会先自动领取旧产出。</span>
+    </section>
+  `);
+}
+
+function renderCatalogUnit(unit) {
+  const owned = ownedHeroUnit(unit.id);
+  const cost = owned?.upgradeCost;
+  const enough = owned && cost && (unit.type === "hero"
+    ? Number(owned.exclusiveFragments || 0) + Number(heroHomeState?.universalFragments || 0) >= cost
+    : Number(owned.exclusiveFragments || 0) >= cost);
+  return `
+    <article class="hero-catalog-card ${owned ? "owned" : "locked"}">
+      ${heroUnitBadge({ ...unit, stars: owned?.stars }, "catalog")}
+      <div class="hero-catalog-copy">
+        <div class="hero-catalog-title"><strong>${escapeHtml(unit.name)}</strong><span class="tag">${unit.type === "hero" ? "英雄" : "小兵"}</span><span class="tag">${escapeHtml(heroHomeState.regions.find((region) => region.id === unit.regionId)?.name || "")}</span></div>
+        ${owned ? heroStars(owned.stars) : `<span class="hero-locked-label">未获得</span>`}
+        ${unit.skillName ? `<p><b>${escapeHtml(unit.skillName)}</b> · ${escapeHtml(unit.skillDescription)}</p>` : `<p>无牌局技能，稳定生产少量钻石。</p>`}
+        <div class="hero-fragment-line">
+          <span>专属碎片 <b>${owned ? escapeHtml(owned.exclusiveFragments || 0) : "—"}</b></span>
+          ${unit.type === "hero" ? `<span>通用碎片 <b>${escapeHtml(heroHomeState.universalFragments || 0)}</b></span>` : ""}
+        </div>
+      </div>
+      <div class="hero-upgrade-action">
+        ${!owned ? `<span>抽到完整角色后解锁1星</span>` : owned.stars >= 5 ? `<b>已满5星</b>` : `<span>升${owned.stars + 1}星需要 ${cost} 碎片</span><button type="button" data-action="upgrade-hero-unit" data-unit-id="${escapeHtml(unit.id)}" ${!enough || heroActionInFlight ? "disabled" : ""}>${enough ? "确认升星" : "碎片不足"}</button>`}
+      </div>
+    </article>
+  `;
+}
+
+function renderHeroCatalogPage() {
+  if (authState.account?.role !== "player") {
+    homeView = "login";
+    return renderLogin();
+  }
+  ensureHeroHomeState();
+  if (!heroHomeState || heroHomeState.unavailable) return renderHeroLoadingPage("hero-catalog");
+  renderShell(`
+    ${renderHeroSectionNav("hero-catalog")}
+    <section class="panel hero-catalog-head">
+      <div><span class="eyebrow">COLLECTION</span><h2>英雄图鉴</h2><p>查看收藏、碎片和升星进度。通用碎片只能补足已拥有英雄的升星消耗。</p></div>
+      <div class="fragment-wallet"><small>通用碎片</small><b>◆ ${escapeHtml(heroHomeState.universalFragments || 0)}</b></div>
+    </section>
+    <section class="hero-catalog-grid">${(heroHomeState.units || []).map(renderCatalogUnit).join("")}</section>
+  `);
+}
+
+function renderGachaResult(result) {
+  return `
+    <article class="gacha-result-card ${result.unit.type} ${result.conversion.type === "new" ? "new" : ""}">
+      <span class="gacha-result-index">${escapeHtml(result.index)}</span>
+      ${heroUnitBadge(result.unit, "gacha")}
+      <strong>${escapeHtml(result.unit.name)}</strong>
+      <span>${result.unit.type === "hero" ? "英雄" : "小兵"}${result.guaranteed ? ` · ${result.guaranteed === "pity" ? "50抽保底" : "首次十连保证"}` : ""}</span>
+      <b>${escapeHtml(result.conversion.label)}</b>
+    </article>
+  `;
+}
+
+function renderHeroGachaPage() {
+  if (authState.account?.role !== "player") {
+    homeView = "login";
+    return renderLogin();
+  }
+  ensureHeroHomeState();
+  if (!heroHomeState || heroHomeState.unavailable) return renderHeroLoadingPage("hero-gacha");
+  renderShell(`
+    ${renderHeroSectionNav("hero-gacha")}
+    <section class="panel hero-gacha-hero">
+      <div class="gacha-copy"><span class="eyebrow">SUMMON</span><h2>英雄召集</h2><p>每抽英雄10%、小兵90%；六名英雄等概率，三名小兵等概率。</p></div>
+      <div class="gacha-status-grid">
+        <span><small>当前钻石</small><b>💎 ${escapeHtml(heroHomeState.balance || 0)}</b></span>
+        <span><small>50抽保底</small><b>还剩 ${escapeHtml(heroHomeState.pityRemaining)} 抽</b></span>
+        <span><small>首次十连</small><b>${heroHomeState.firstTenAvailable ? "保证至少1名英雄" : "已使用"}</b></span>
+      </div>
+      <div class="gacha-actions">
+        <button type="button" data-action="pull-hero-gacha" data-pull-count="1" ${heroActionInFlight || Number(heroHomeState.balance || 0) < 30 ? "disabled" : ""}>单抽 · 30💎</button>
+        <button type="button" class="accent" data-action="pull-hero-gacha" data-pull-count="10" ${heroActionInFlight || Number(heroHomeState.balance || 0) < 300 ? "disabled" : ""}>十连 · 300💎</button>
+      </div>
+      <div class="gacha-probability"><span>英雄 10%</span><span>小兵 90%</span><span>第50抽必出英雄</span><span>保底计数永久保留</span></div>
+    </section>
+    ${heroGachaResults.length ? `<section class="panel stack"><div class="section-head"><div><h2>本次结果</h2><div class="meta">抽卡结果已由服务端入账</div></div></div><div class="gacha-result-grid">${heroGachaResults.map(renderGachaResult).join("")}</div></section>` : `<section class="panel"><div class="empty">抽卡结果会显示在这里</div></section>`}
+  `);
+}
+
+function applyHeroMutationState(nextState) {
+  if (!nextState) return;
+  heroHomeState = nextState;
+  if (diamondWallet) diamondWallet.balance = nextState.balance;
+}
+
+async function collectHeroHome(regionId) {
+  if (heroActionInFlight) return;
+  heroActionInFlight = `collect:${regionId}`;
+  render();
+  try {
+    const data = await api("/api/heroes/home/collect", {
+      method: "POST",
+      body: JSON.stringify({ regionId, requestId: requestId() })
+    });
+    applyHeroMutationState(data.state);
+    setMessage(data.amount ? `已领取 ${data.amount} 钻石` : "当前整数钻石产出为0，小数进度已保留");
+  } catch (error) {
+    setMessage(error.message || "领取失败", true);
+  } finally {
+    heroActionInFlight = "";
+    render();
+  }
+}
+
+async function assignHeroHomeUnit(regionId, unitId) {
+  if (heroActionInFlight) return;
+  heroActionInFlight = `assign:${regionId}`;
+  render();
+  try {
+    const data = await api("/api/heroes/home/assign", {
+      method: "POST",
+      body: JSON.stringify({ regionId, unitId: unitId || null, requestId: requestId() })
+    });
+    applyHeroMutationState(data.state);
+    setMessage(data.autoCollectedAmount ? `已更换角色，并自动领取 ${data.autoCollectedAmount} 钻石` : unitId ? "角色已派驻" : "角色已移除");
+  } catch (error) {
+    setMessage(error.message || "派驻失败", true);
+  } finally {
+    heroActionInFlight = "";
+    render();
+  }
+}
+
+async function selectHeroForBattle(unitId) {
+  if (heroActionInFlight) return;
+  heroActionInFlight = `battle:${unitId}`;
+  render();
+  try {
+    applyHeroMutationState(await api("/api/heroes/battle", {
+      method: "PATCH",
+      body: JSON.stringify({ unitId: unitId || null })
+    }));
+    setMessage(unitId ? `${heroUnitById(unitId)?.name || "英雄"}已设为出战英雄，下次正式发牌时生效` : "已清空出战英雄");
+  } catch (error) {
+    setMessage(error.message || "出战设置失败", true);
+  } finally {
+    heroActionInFlight = "";
+    render();
+  }
+}
+
+async function pullHeroCards(pullCount) {
+  if (heroActionInFlight) return;
+  heroActionInFlight = `gacha:${pullCount}`;
+  heroGachaResults = [];
+  render();
+  try {
+    const data = await api("/api/heroes/gacha", {
+      method: "POST",
+      body: JSON.stringify({ pullCount, requestId: requestId() })
+    });
+    heroGachaResults = data.results || [];
+    applyHeroMutationState(data.state);
+    setMessage(`${pullCount === 10 ? "十连" : "单抽"}完成`);
+  } catch (error) {
+    setMessage(error.message || "抽卡失败", true);
+  } finally {
+    heroActionInFlight = "";
+    render();
+  }
+}
+
+async function upgradeHeroCard(unitId) {
+  if (heroActionInFlight) return;
+  heroActionInFlight = `upgrade:${unitId}`;
+  render();
+  try {
+    const data = await api("/api/heroes/upgrade", {
+      method: "POST",
+      body: JSON.stringify({ unitId, requestId: requestId() })
+    });
+    applyHeroMutationState(data.state);
+    setMessage(`${data.unit?.name || "角色"}已升至${data.stars}星`);
+  } catch (error) {
+    setMessage(error.message || "升星失败", true);
+  } finally {
+    heroActionInFlight = "";
+    render();
+  }
 }
 
 function ownedShopProduct(product) {
@@ -5389,6 +5743,10 @@ function diamondRewardTitle(reward) {
       : "";
     parts.push(`称号 +${reward.titleBonus}${titles ? `（${titles}${capped}）` : ""}`);
   }
+  if (reward.heroSkillReward) {
+    const skill = reward.heroSkillReward;
+    parts.push(`${skill.hero?.name || "英雄"}·${skill.skillName || "技能"} +${skill.amount || 0}（${skill.detail || "未触发"}）`);
+  }
   return parts.join("，");
 }
 
@@ -5432,6 +5790,7 @@ function renderViewerDiamondSummary(result) {
     <div class="diamond-reward-summary ${reward.status === "awarded" ? "awarded" : "pending"}">
       <strong>💎 本局 ${reward.status === "awarded" ? "获得" : "预计获得"} +${escapeHtml(amount)}</strong>
       <span>${escapeHtml(diamondRewardTitle(reward))} · ${stateText}</span>
+      ${reward.heroSkillReward ? `<span class="hero-skill-settlement"><b>${escapeHtml(reward.heroSkillReward.hero?.name || "英雄")} · ${escapeHtml(reward.heroSkillReward.skillName || "技能")}</b>：${escapeHtml(reward.heroSkillReward.detail || "未触发")}；技能额外 +${escapeHtml(reward.heroSkillReward.amount || 0)} 💎</span>` : ""}
     </div>
   `;
 }
@@ -5531,6 +5890,7 @@ function renderResultPanel() {
               <span>红五 ${player.draggedRedFives}</span>
               <span>方五 ${player.draggedDiamondFives}</span>
               <span>甩失 ${player.throwFailures || 0}</span>
+              ${player.heroSkillReward ? `<span class="result-hero-skill" title="${escapeHtml(player.heroSkillReward.detail || "")}">${escapeHtml(player.heroSkillReward.hero?.name || "英雄")} +${escapeHtml(player.diamondReward?.heroBonus || 0)}💎</span>` : ""}
               ${renderDiamondReward(player.diamondReward)}
               <span class="result-final-score">
                 <b>${signedScore(player.gameScoreText, player.gameScore)}</b>
@@ -5955,6 +6315,7 @@ function renderSeatHand(action, play, trick, index, options = {}) {
             ${renderPlayerHistoryMini(play.playerId, { overlay: true })}
           </div>
           <div class="seat-hand-profile-copy">
+            ${renderBattleHeroMark(play.battleHeroSnapshot || roomPlayer.battleHeroSnapshot, true)}
             <div class="seat-hand-player-line">
               <strong><span class="seat-hand-name">${escapeHtml(play.playerName)}</span>${roleMark(play.role, play.playerId)}${renderAutoPlayMark(roomPlayer)}</strong>
               <span class="seat-status ${escapeHtml(statusTone)}">${escapeHtml(statusText)}</span>
@@ -6233,6 +6594,7 @@ function tablePlayerIdentity(play) {
       </span>
       ${roleMark(play.role, play.playerId)}
       <span class="name-text">${escapeHtml(play.playerName)}</span>
+      ${renderBattleHeroMark(play.battleHeroSnapshot || player?.battleHeroSnapshot, true)}
     </span>
   `;
 }
@@ -6257,6 +6619,7 @@ function renderTablePlayerSummary(play, statusText, statusTone) {
       <span class="trick-player-summary">
         <span class="trick-player-line">
           <strong class="trick-player-display-name">${escapeHtml(play.playerName)}</strong>
+          ${renderBattleHeroMark(play.battleHeroSnapshot || player?.battleHeroSnapshot, true)}
           ${renderAutoPlayMark(player || play)}
         </span>
         ${renderCompactPlayerStats(play)}
@@ -6700,6 +7063,7 @@ function renderPlayer(player) {
     <div class="player ${roleClass(player.role)}" data-player-id="${escapeHtml(player.id)}">
       <div>
         <strong class="player-name-line">${playerIdentity(player.name, player.role, player.avatarUrl, isMe ? "（我）" : "", player.id, player.avatarFrame)}</strong>
+        ${renderBattleHeroMark(player.battleHeroSnapshot, true)}
         <div class="tags">
           ${player.host ? `<span class="tag accent">房主</span>` : ""}
           ${player.test ? `<span class="tag">机器人</span>` : ""}
@@ -7225,7 +7589,8 @@ const mutatingActions = new Set([
   "trump-suit-D", "bury-selected", "fry-selected",
   "fry-pass", "dogleg-selected", "play-selected", "confirm-throw", "play-again",
   "send-taunt", "delete-taunt", "kick-player", "buy-shop-product", "equip-avatar-frame", "use-game-item",
-  "complete-item-stage"
+  "complete-item-stage", "collect-home", "assign-home-unit", "select-battle-hero",
+  "pull-hero-gacha", "upgrade-hero-unit"
 ]);
 
 function isRapidMutatingAction(action) {
@@ -7356,6 +7721,21 @@ document.addEventListener("click", (event) => {
     homeJoinOpen = false;
     render();
   }
+  if (action === "show-hero-home") {
+    homeView = "hero-home";
+    homeJoinOpen = false;
+    render();
+  }
+  if (action === "show-hero-catalog") {
+    homeView = "hero-catalog";
+    homeJoinOpen = false;
+    render();
+  }
+  if (action === "show-hero-gacha") {
+    homeView = "hero-gacha";
+    homeJoinOpen = false;
+    render();
+  }
   if (action === "show-admin") {
     homeView = "admin";
     render();
@@ -7374,6 +7754,22 @@ document.addEventListener("click", (event) => {
   }
   if (action === "equip-avatar-frame") {
     equipAvatarFrame(event.target.closest("[data-avatar-frame]")?.dataset.avatarFrame || "");
+  }
+  if (action === "collect-home") {
+    collectHeroHome(event.target.closest("[data-region-id]")?.dataset.regionId || "all");
+  }
+  if (action === "assign-home-unit") {
+    const target = event.target.closest("[data-region-id]");
+    assignHeroHomeUnit(target?.dataset.regionId || "", target?.dataset.unitId || "");
+  }
+  if (action === "select-battle-hero") {
+    selectHeroForBattle(event.target.closest("[data-unit-id]")?.dataset.unitId || "");
+  }
+  if (action === "pull-hero-gacha") {
+    pullHeroCards(Number(event.target.closest("[data-pull-count]")?.dataset.pullCount || 1));
+  }
+  if (action === "upgrade-hero-unit") {
+    upgradeHeroCard(event.target.closest("[data-unit-id]")?.dataset.unitId || "");
   }
   if (action === "toggle-account") {
     const target = event.target.closest("[data-account-id]");

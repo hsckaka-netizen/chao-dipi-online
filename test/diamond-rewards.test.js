@@ -59,6 +59,21 @@ test("title rewards stack incrementally but respect the per-game cap", () => {
   assert.equal(reward.totalAmount, 15);
 });
 
+test("hero skill diamonds are added outside the existing title cap", () => {
+  const reward = calculateDiamondReward({
+    gameScore: 3,
+    tags: [
+      { code: "mvp", label: "MVP" },
+      { code: "support", label: "辅" }
+    ],
+    heroSkillReward: { amount: 4, skillName: "雪夜守关" }
+  });
+
+  assert.equal(reward.titleBonus, 5);
+  assert.equal(reward.heroBonus, 4);
+  assert.equal(reward.totalAmount, 19);
+});
+
 test("daily reward dates use the game finish time in Asia/Shanghai", () => {
   assert.equal(diamondRewardDate("2026-07-28T15:59:59.999Z"), "2026-07-28");
   assert.equal(diamondRewardDate("2026-07-28T16:00:00.000Z"), "2026-07-29");

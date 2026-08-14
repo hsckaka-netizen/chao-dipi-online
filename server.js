@@ -74,14 +74,19 @@ import {
 } from "./shop-and-items.js";
 import { versionedAssetUrl } from "./public/asset-versions.js";
 import { createStatePatch } from "./public/state-patch.js";
+import { calculateHeroSkillReward } from "./hero-home.js";
 import {
+  assignHomeUnit,
+  collectHomeProduction,
   gameHistoryStatus,
   avatarFrameProductExists,
   consumeGameItemUses,
   createUploadedAvatarFrameProduct,
   grantDiamondsByAdmin,
   getPlayerShopState,
+  getBattleHeroSnapshots,
   getDiamondWallet,
+  getHeroHomeState,
   getGameHistory,
   getPlayerStatistics,
   initializeGameHistory,
@@ -96,6 +101,7 @@ import {
   queueGameRecord,
   grantCosmeticEntitlement,
   purchaseShopProduct,
+  pullHeroGacha,
   recordStoredAccountLogin,
   refundOrphanedGameItemUses,
   refundGameItemUses,
@@ -107,9 +113,11 @@ import {
   saveEquippedCosmetics,
   saveStoredTauntPreset,
   saveStoredPlayerProfile,
+  selectBattleHero,
   updateShopProduct,
   updateShopProducts,
-  updateStoredAccount
+  updateStoredAccount,
+  upgradeHeroUnit
 } from "./game-history.js";
 import {
   availableTauntPresets,
@@ -1011,6 +1019,31 @@ function sortHand(hand) {
   return [...hand].sort((a, b) => a.sort - b.sort || a.deck - b.deck || a.id.localeCompare(b.id));
 }
 
+async function lockBattleHeroesForDeal(room) {
+  room.players.forEach((player) => {
+    player.battleHeroSnapshot = null;
+  });
+  const accountIds = room.players.filter((player) => !player.test && player.accountId).map((player) => player.accountId);
+  if (!accountIds.length) return;
+  let timeoutId = null;
+  try {
+    const snapshots = await Promise.race([
+      getBattleHeroSnapshots(accountIds),
+      new Promise((_, reject) => {
+        timeoutId = setTimeout(() => reject(new Error("读取上阵英雄超时")), 1500);
+        timeoutId.unref?.();
+      })
+    ]);
+    room.players.forEach((player) => {
+      player.battleHeroSnapshot = snapshots[player.accountId] || null;
+    });
+  } catch (error) {
+    console.error("[hero-home] battle hero snapshot unavailable; game continues", error.message);
+  } finally {
+    if (timeoutId) clearTimeout(timeoutId);
+  }
+}
+
 function deal(room, options = {}) {
   clearAiSetupTimer(room);
   clearAiPlayTimer(room);
@@ -1339,6 +1372,7 @@ function trickSnapshot(room, trick, viewer = null) {
         cardSkin: normalizeCardSkin(player.cardSkin),
         playEffect: normalizePlayEffect(player.playEffect),
         autoPlayEnabled: Boolean(player.autoPlayEnabled),
+        battleHeroSnapshot: player.battleHeroSnapshot || null,
         role: playerRole(room, player.id, viewer),
         doglegMarkCount: dynamicDoglegMarkCount(room.dynamicDogleg, player.id),
         played: Boolean(play),
@@ -1386,6 +1420,32 @@ function playedProtectedFiveCounts(room) {
     });
   });
   return counts;
+}
+
+function roomResultSnapshot(room, privatePlayerId = null) {
+  if (!room.result) return null;
+  return {
+    ...room.result,
+    playerResults: (room.result.playerResults || []).map((playerResult) => {
+      if (playerResult.playerId === privatePlayerId) return playerResult;
+      const heroSkillReward = playerResult.heroSkillReward
+        ? {
+            rulesVersion: playerResult.heroSkillReward.rulesVersion,
+            hero: playerResult.heroSkillReward.hero,
+            skillName: playerResult.heroSkillReward.skillName,
+            amount: playerResult.heroSkillReward.amount
+          }
+        : null;
+      const diamondReward = playerResult.diamondReward
+        ? {
+            ...playerResult.diamondReward,
+            balanceAfter: null,
+            heroSkillReward: null
+          }
+        : null;
+      return { ...playerResult, heroSkillReward, diamondReward };
+    })
+  };
 }
 
 function roomSnapshot(room, viewer = null, options = {}) {
@@ -1439,7 +1499,8 @@ function roomSnapshot(room, viewer = null, options = {}) {
       host: viewer.host,
       ready: Boolean(viewer.ready),
       nextRoundEntered: Boolean(viewer.nextRoundEntered),
-      autoPlayEnabled: Boolean(viewer.autoPlayEnabled)
+      autoPlayEnabled: Boolean(viewer.autoPlayEnabled),
+      battleHeroSnapshot: viewer.battleHeroSnapshot || null
     } : null,
     players: room.players.map((player) => ({
       id: player.id,
@@ -1457,6 +1518,7 @@ function roomSnapshot(room, viewer = null, options = {}) {
       ready: Boolean(player.ready),
       nextRoundEntered: Boolean(player.nextRoundEntered),
       autoPlayEnabled: Boolean(player.autoPlayEnabled),
+      battleHeroSnapshot: player.battleHeroSnapshot || null,
       score: player.score || 0,
       doglegMarkCount: dynamicDoglegMarkCount(room.dynamicDogleg, player.id),
       draggedRedFives: player.draggedRedFives || 0,
@@ -1469,7 +1531,10 @@ function roomSnapshot(room, viewer = null, options = {}) {
     currentTrick: trickSnapshot(room, room.currentTrick, secretViewer),
     trickHistory: [...(room.settledTrickHistory || [])],
     playedProtectedFives: playedProtectedFiveCounts(room),
-    result: room.result,
+    result: roomResultSnapshot(
+      room,
+      Object.hasOwn(options, "privatePlayerId") ? options.privatePlayerId : viewer?.id || null
+    ),
     events: [...room.events]
   };
 }
@@ -1669,7 +1734,7 @@ function spectatorSnapshot(room, spectator) {
   const viewer = playerById(room, spectator?.targetPlayerId);
   if (!viewer) return null;
   return {
-    ...roomSnapshot(room, viewer, { hideViewerSecrets: true }),
+    ...roomSnapshot(room, viewer, { hideViewerSecrets: true, privatePlayerId: null }),
     spectator: {
       id: spectator.id,
       targetPlayerId: viewer.id,
@@ -2071,6 +2136,15 @@ function finishGame(room, completedTrick) {
     freeUse: Boolean(use.freeUse),
     at: use.at
   }));
+  room.result.playerResults.forEach((playerResult) => {
+    const roomPlayer = room.players.find((player) => player.id === playerResult.playerId);
+    playerResult.heroSkillReward = calculateHeroSkillReward({
+      snapshot: roomPlayer?.battleHeroSnapshot,
+      playerId: playerResult.playerId,
+      playerResult,
+      trickHistory: room.trickHistory
+    });
+  });
   attachDiamondRewards(room);
 
   const bankerSettlementText = bankerIds.length > 1
@@ -4948,6 +5022,38 @@ async function handleApi(req, res, pathParts, url) {
     return writeJson(res, 404, { error: "历史记录接口不存在" });
   }
 
+  if (pathParts[1] === "heroes") {
+    const account = requireAccount(res, req);
+    if (!account) return;
+    if (account.role !== "player") return writeJson(res, 403, { error: "管理员账号没有英雄家园" });
+    if (req.method === "GET" && pathParts[2] === "me" && pathParts.length === 3) {
+      return writeJson(res, 200, await getHeroHomeState(account.id));
+    }
+    if (req.method === "POST" && pathParts[2] === "home" && pathParts[3] === "collect") {
+      const body = await readJson(req);
+      return writeJson(res, 200, await collectHomeProduction(account.id, body.regionId, body.requestId));
+    }
+    if (req.method === "POST" && pathParts[2] === "home" && pathParts[3] === "assign") {
+      const body = await readJson(req);
+      return writeJson(res, 200, await assignHomeUnit(account.id, body.regionId, body.unitId, body.requestId));
+    }
+    if (req.method === "PATCH" && pathParts[2] === "battle" && pathParts.length === 3) {
+      const body = await readJson(req);
+      return writeJson(res, 200, await selectBattleHero(account.id, body.unitId));
+    }
+    if (req.method === "POST" && pathParts[2] === "gacha" && pathParts.length === 3) {
+      const body = await readJson(req);
+      const result = await pullHeroGacha(account.id, body.pullCount, body.requestId);
+      return writeJson(res, 200, { ...result, state: await getHeroHomeState(account.id) });
+    }
+    if (req.method === "POST" && pathParts[2] === "upgrade" && pathParts.length === 3) {
+      const body = await readJson(req);
+      const result = await upgradeHeroUnit(account.id, body.unitId, body.requestId);
+      return writeJson(res, 200, { ...result, state: await getHeroHomeState(account.id) });
+    }
+    return writeJson(res, 404, { error: "英雄家园接口不存在" });
+  }
+
   if (pathParts[1] === "diamonds" && req.method === "GET" && pathParts[2] === "me") {
     const account = requireAccount(res, req);
     if (!account) return;
@@ -5414,6 +5520,7 @@ async function handleApi(req, res, pathParts, url) {
       }
 
       room.restartCardUsedPlayerIds = [];
+      await lockBattleHeroesForDeal(room);
       deal(room);
       room.gameRecordId = randomUUID();
       addEvent(room, `房主开始牌局：${room.players.length} 人，每人 ${HAND_SIZE} 张，底牌 ${room.kitty.length} 张`);

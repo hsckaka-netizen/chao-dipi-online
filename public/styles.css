@@ -14,6 +14,591 @@
   --shadow: 0 18px 50px rgba(27, 41, 34, 0.11);
 }
 
+/* Hero home, collection and gacha */
+.hero-home-toolbar {
+  margin-bottom: 14px;
+}
+
+.hero-tabs {
+  min-width: min(420px, 100%);
+}
+
+.hero-home-hero,
+.hero-catalog-head,
+.hero-gacha-hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 22px;
+  margin-bottom: 16px;
+  overflow: hidden;
+  color: #f8fbff;
+  border-color: rgba(103, 179, 221, 0.24);
+  background:
+    radial-gradient(circle at 76% 18%, rgba(255, 212, 98, 0.19), transparent 32%),
+    linear-gradient(135deg, #173049, #1e5c72 62%, #237866);
+}
+
+.hero-home-hero h2,
+.hero-catalog-head h2,
+.hero-gacha-hero h2 {
+  margin: 3px 0 5px;
+  font-size: clamp(27px, 4vw, 39px);
+}
+
+.hero-home-hero p,
+.hero-catalog-head p,
+.hero-gacha-hero p,
+.hero-home-hero .eyebrow,
+.hero-catalog-head .eyebrow,
+.hero-gacha-hero .eyebrow {
+  margin: 0;
+  color: rgba(240, 249, 255, 0.75);
+}
+
+.hero-home-hero .eyebrow,
+.hero-catalog-head .eyebrow,
+.hero-gacha-hero .eyebrow {
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0.2em;
+}
+
+.hero-home-summary {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(120px, 1fr));
+  gap: 9px;
+}
+
+.hero-home-summary > span,
+.fragment-wallet,
+.gacha-status-grid > span {
+  display: grid;
+  gap: 3px;
+  padding: 12px 14px;
+  border: 1px solid rgba(220, 244, 255, 0.2);
+  border-radius: 14px;
+  background: rgba(7, 27, 40, 0.27);
+}
+
+.hero-home-summary small,
+.fragment-wallet small,
+.gacha-status-grid small {
+  color: rgba(237, 247, 255, 0.67);
+  font-size: 11px;
+}
+
+.hero-home-summary button {
+  grid-column: 1 / -1;
+}
+
+.home-region-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+  margin-bottom: 16px;
+}
+
+.home-region-card {
+  min-width: 0;
+  display: grid;
+  gap: 14px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 19px;
+  background:
+    radial-gradient(circle at 90% 0, rgba(77, 139, 176, 0.12), transparent 34%),
+    linear-gradient(160deg, #fff, #f6faf8);
+  box-shadow: 0 10px 28px rgba(25, 55, 44, 0.07);
+}
+
+.home-region-card.region-brick {
+  background: radial-gradient(circle at 90% 0, rgba(187, 110, 66, 0.13), transparent 34%), linear-gradient(160deg, #fff, #fbf7f2);
+}
+
+.home-region-card.region-stage {
+  background: radial-gradient(circle at 90% 0, rgba(207, 91, 146, 0.13), transparent 34%), linear-gradient(160deg, #fff, #fcf5f9);
+}
+
+.home-region-card > header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.home-region-card > header > div {
+  min-width: 0;
+  flex: 1;
+  display: grid;
+  gap: 2px;
+}
+
+.home-region-card h3 {
+  margin: 0;
+  font-size: 19px;
+}
+
+.home-region-card header span:not(.tag) {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.home-region-icon {
+  width: 38px;
+  height: 38px;
+  display: grid;
+  place-items: center;
+  border-radius: 12px;
+  background: rgba(36, 91, 106, 0.09);
+  font-size: 21px !important;
+}
+
+.home-region-worker {
+  min-height: 98px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 13px;
+  border-radius: 15px;
+  background: rgba(255, 255, 255, 0.66);
+  border: 1px solid rgba(69, 98, 85, 0.1);
+}
+
+.home-region-worker > div {
+  min-width: 0;
+  display: grid;
+  gap: 5px;
+}
+
+.hero-unit-badge {
+  --hero-color: #527b70;
+  width: 42px;
+  height: 42px;
+  flex: 0 0 auto;
+  display: inline-grid;
+  place-items: center;
+  border-radius: 14px;
+  color: #fff;
+  background: linear-gradient(145deg, color-mix(in srgb, var(--hero-color), white 16%), var(--hero-color));
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,0.32), 0 7px 14px color-mix(in srgb, var(--hero-color), transparent 72%);
+}
+
+.hero-unit-badge b {
+  font-size: 20px;
+}
+
+.hero-unit-badge.large {
+  width: 68px;
+  height: 68px;
+  border-radius: 21px;
+}
+
+.hero-unit-badge.large b,
+.hero-unit-badge.catalog b,
+.hero-unit-badge.gacha b {
+  font-size: 29px;
+}
+
+.hero-unit-badge.tiny {
+  width: 25px;
+  height: 25px;
+  border-radius: 8px;
+}
+
+.hero-unit-badge.tiny b {
+  font-size: 12px;
+}
+
+.hero-unit-badge.catalog {
+  width: 74px;
+  height: 74px;
+  border-radius: 23px;
+}
+
+.hero-unit-badge.gacha {
+  width: 70px;
+  height: 70px;
+  border-radius: 21px;
+}
+
+.hero-unit-badge.empty {
+  color: var(--muted);
+  background: #edf2ef;
+  box-shadow: inset 0 0 0 1px rgba(65, 91, 78, 0.11);
+  font-size: 11px;
+}
+
+.hero-stars {
+  color: #d99c23;
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  white-space: nowrap;
+}
+
+.home-production {
+  display: grid;
+  gap: 8px;
+}
+
+.home-production-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  color: #426257;
+  font-size: 12px;
+}
+
+.home-production-track {
+  height: 8px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(46, 85, 70, 0.1);
+}
+
+.home-production-track i {
+  height: 100%;
+  display: block;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #2f8b75, #e4b241);
+}
+
+.home-region-actions,
+.home-assignment-list > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.home-region-actions button {
+  flex: 1 1 120px;
+}
+
+.home-assignment-list {
+  display: grid;
+  gap: 7px;
+  padding-top: 11px;
+  border-top: 1px solid var(--line);
+}
+
+.home-unit-choice {
+  min-height: 34px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  font-size: 12px;
+}
+
+.home-unit-choice.active {
+  background: #236c5b;
+}
+
+.hero-home-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.hero-home-note strong {
+  flex: 0 0 auto;
+  color: var(--ink);
+}
+
+.hero-catalog-head {
+  background: radial-gradient(circle at 78% 20%, rgba(228, 184, 67, 0.22), transparent 30%), linear-gradient(135deg, #372b54, #4e507f 58%, #426c76);
+}
+
+.fragment-wallet {
+  min-width: 145px;
+}
+
+.hero-catalog-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 13px;
+}
+
+.hero-catalog-card {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 13px;
+  padding: 15px;
+  border: 1px solid var(--line);
+  border-radius: 17px;
+  background: linear-gradient(155deg, #fff, #f6faf8);
+}
+
+.hero-catalog-card.locked {
+  filter: saturate(0.45);
+  opacity: 0.76;
+}
+
+.hero-catalog-copy {
+  min-width: 0;
+  display: grid;
+  align-content: start;
+  gap: 6px;
+}
+
+.hero-catalog-title {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.hero-catalog-title strong {
+  font-size: 18px;
+}
+
+.hero-catalog-copy p {
+  margin: 2px 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.hero-locked-label {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.hero-fragment-line {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  color: #4d6a60;
+  font-size: 12px;
+}
+
+.hero-upgrade-action {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding-top: 11px;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.hero-gacha-hero {
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 0.8fr);
+  background: radial-gradient(circle at 74% 16%, rgba(255, 212, 105, 0.25), transparent 28%), linear-gradient(135deg, #40204f, #713f75 52%, #316c78);
+}
+
+.gacha-copy,
+.gacha-status-grid,
+.gacha-actions,
+.gacha-probability {
+  min-width: 0;
+}
+
+.gacha-status-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 7px;
+}
+
+.gacha-status-grid > span {
+  padding: 9px 10px;
+}
+
+.gacha-status-grid b {
+  font-size: 13px;
+}
+
+.gacha-actions {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.gacha-actions button {
+  min-height: 48px;
+  font-size: 15px;
+}
+
+.gacha-actions .accent {
+  background: linear-gradient(135deg, #d59c2f, #cc6a3c);
+}
+
+.gacha-probability {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.gacha-probability span {
+  padding: 5px 9px;
+  border-radius: 999px;
+  background: rgba(255,255,255,0.12);
+  color: rgba(250, 247, 255, 0.83);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.gacha-result-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 10px;
+}
+
+.gacha-result-card {
+  position: relative;
+  min-height: 170px;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 5px;
+  padding: 13px;
+  overflow: hidden;
+  border: 1px solid rgba(62, 90, 77, 0.14);
+  border-radius: 16px;
+  background: linear-gradient(155deg, #fff, #f0f5f2);
+  text-align: center;
+}
+
+.gacha-result-card.hero {
+  border-color: rgba(209, 147, 45, 0.38);
+  background: radial-gradient(circle at 50% 20%, rgba(246, 200, 84, 0.24), transparent 40%), linear-gradient(155deg, #fffdf7, #f7efe1);
+}
+
+.gacha-result-card.new {
+  box-shadow: 0 0 0 3px rgba(211, 159, 48, 0.12);
+}
+
+.gacha-result-card > span:not(.hero-unit-badge):not(.gacha-result-index) {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.gacha-result-card > b {
+  color: #8a6524;
+  font-size: 11px;
+}
+
+.gacha-result-index {
+  position: absolute;
+  top: 8px;
+  left: 9px;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.battle-hero-mark {
+  --hero-color: #527b70;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  padding: 2px 6px 2px 3px;
+  border: 1px solid color-mix(in srgb, var(--hero-color), transparent 65%);
+  border-radius: 999px;
+  color: color-mix(in srgb, var(--hero-color), #13231d 28%);
+  background: color-mix(in srgb, var(--hero-color), white 88%);
+  font-size: 10px;
+  font-weight: 850;
+  line-height: 1;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+
+.battle-hero-mark > b {
+  width: 19px;
+  height: 19px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  color: #fff;
+  background: var(--hero-color);
+  font-size: 10px;
+}
+
+.battle-hero-mark > i {
+  color: #c88b1f;
+  font-size: 7px;
+  font-style: normal;
+  letter-spacing: -0.08em;
+}
+
+.trick-player-line .battle-hero-mark.compact {
+  max-width: 86px;
+}
+
+.hero-skill-settlement,
+.result-hero-skill {
+  color: #72541b;
+}
+
+.hero-skill-settlement b {
+  color: #574018;
+}
+
+@media (max-width: 980px) {
+  .hero-home-hero,
+  .hero-catalog-head,
+  .hero-gacha-hero {
+    grid-template-columns: 1fr;
+  }
+
+  .home-region-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .gacha-status-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 620px) {
+  .hero-home-summary,
+  .gacha-actions {
+    grid-template-columns: 1fr;
+  }
+
+  .hero-home-summary button,
+  .gacha-actions,
+  .gacha-probability {
+    grid-column: auto;
+  }
+
+  .hero-catalog-grid,
+  .hero-catalog-card {
+    grid-template-columns: 1fr;
+  }
+
+  .hero-catalog-card > .hero-unit-badge {
+    justify-self: center;
+  }
+
+  .hero-upgrade-action {
+    grid-column: auto;
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .hero-tabs {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .battle-hero-mark.compact > span {
+    display: none;
+  }
+
+  .battle-hero-mark.compact {
+    padding-right: 4px;
+  }
+}
+
 * {
   box-sizing: border-box;
 }
@@ -7079,4 +7664,36 @@ button.auto-play-toggle.active {
 .avatar {
   width: var(--avatar-frame-box-size);
   height: var(--avatar-frame-box-size);
+}
+
+/* Keep hero feature panels above the shared panel surface rules. */
+.panel.hero-home-hero,
+.panel.hero-catalog-head,
+.panel.hero-gacha-hero {
+  color: #f8fbff;
+  border-color: rgba(103, 179, 221, 0.24);
+}
+
+.panel.hero-home-hero {
+  background:
+    radial-gradient(circle at 76% 18%, rgba(255, 212, 98, 0.19), transparent 32%),
+    linear-gradient(135deg, #173049, #1e5c72 62%, #237866);
+}
+
+.panel.hero-catalog-head {
+  background:
+    radial-gradient(circle at 78% 20%, rgba(228, 184, 67, 0.22), transparent 30%),
+    linear-gradient(135deg, #372b54, #4e507f 58%, #426c76);
+}
+
+.panel.hero-gacha-hero {
+  background:
+    radial-gradient(circle at 74% 16%, rgba(255, 212, 105, 0.25), transparent 28%),
+    linear-gradient(135deg, #40204f, #713f75 52%, #316c78);
+}
+
+@media (max-width: 620px) {
+  .home-toolbar .hero-tabs {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
 }

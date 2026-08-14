@@ -1,5 +1,5 @@
 export const DIAMOND_REWARD_RULES = Object.freeze({
-  version: "2026-08-03-v1",
+  version: "2026-08-14-v2",
   baseAmount: 10,
   winBonus: 0,
   titleBonusCap: 5,
@@ -25,7 +25,7 @@ function uniqueTags(tags) {
   });
 }
 
-export function calculateDiamondReward({ gameScore = 0, tags = [] } = {}) {
+export function calculateDiamondReward({ gameScore = 0, tags = [], heroSkillReward = null } = {}) {
   const won = Number(gameScore) > 0;
   const titleRewards = uniqueTags(tags)
     .map((tag) => ({
@@ -37,6 +37,7 @@ export function calculateDiamondReward({ gameScore = 0, tags = [] } = {}) {
   const titleBonusBeforeCap = titleRewards.reduce((sum, item) => sum + item.amount, 0);
   const titleBonus = Math.min(titleBonusBeforeCap, DIAMOND_REWARD_RULES.titleBonusCap);
   const winBonus = won ? DIAMOND_REWARD_RULES.winBonus : 0;
+  const heroBonus = Math.max(0, Math.trunc(Number(heroSkillReward?.amount) || 0));
 
   return {
     rulesVersion: DIAMOND_REWARD_RULES.version,
@@ -46,7 +47,9 @@ export function calculateDiamondReward({ gameScore = 0, tags = [] } = {}) {
     titleBonusBeforeCap,
     titleBonusCap: DIAMOND_REWARD_RULES.titleBonusCap,
     titleRewards,
-    totalAmount: DIAMOND_REWARD_RULES.baseAmount + winBonus + titleBonus,
+    heroBonus,
+    heroSkillReward: heroSkillReward || null,
+    totalAmount: DIAMOND_REWARD_RULES.baseAmount + winBonus + titleBonus + heroBonus,
     won
   };
 }
@@ -99,7 +102,8 @@ export function attachDiamondRewards(room) {
     const playerEligible = isDiamondEligiblePlayer(room, roomPlayer);
     const calculated = calculateDiamondReward({
       gameScore: playerResult.baseGameScore ?? playerResult.gameScore,
-      tags: playerResult.evaluationTags
+      tags: playerResult.evaluationTags,
+      heroSkillReward: playerEligible ? playerResult.heroSkillReward : null
     });
     playerResult.diamondReward = playerEligible
       ? {
