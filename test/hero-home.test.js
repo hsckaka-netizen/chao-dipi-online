@@ -88,7 +88,7 @@ test("all hero skill descriptions expose concrete per-star diamond values", () =
     "jiang-zha": "6/7/8/10/12",
     "deng-huang": "5/6/7/8/10",
     xiaoxu: "3/4/5/6/7",
-    gelu: "4/5/6/7/8",
+    gelu: "100/90/80/70/60",
     "maeda-atsuko": "8/10/12/14/16",
     "watanabe-mayu": "4/5/6/7/8"
   };
@@ -158,7 +158,7 @@ test("xiaoxu caps distinct scoring-card sources even in a nine-player game", () 
   assert.equal(reward.amount, 7);
 });
 
-test("gelu rewards four diamonds per eighty personal won-trick points", () => {
+test("gelu uses the star score threshold and rewards two diamonds per trigger", () => {
   const reward = calculateHeroSkillReward({
     snapshot: createBattleHeroSnapshot("gelu", 3),
     playerId: "gelu-player",
@@ -170,20 +170,44 @@ test("gelu rewards four diamonds per eighty personal won-trick points", () => {
     ]
   });
   assert.equal(reward.matchedCount, 1);
-  assert.equal(reward.cap, 6);
-  assert.equal(reward.amount, 4);
+  assert.equal(reward.cap, 3);
+  assert.equal(reward.amount, 2);
 });
 
-test("gelu applies the star diamond cap after calculating score milestones", () => {
+test("gelu caps high scores at four triggers and eight diamonds at five stars", () => {
   const reward = calculateHeroSkillReward({
     snapshot: createBattleHeroSnapshot("gelu", 5),
     playerId: "gelu-player",
     playerResult: { playerId: "gelu-player", evaluationTags: [] },
     trickHistory: [{ winnerId: "gelu-player", points: 400, plays: [] }]
   });
-  assert.equal(reward.matchedCount, 5);
-  assert.equal(reward.cap, 8);
+  assert.equal(reward.matchedCount, 6);
+  assert.equal(reward.cap, 4);
   assert.equal(reward.amount, 8);
+});
+
+test("gelu improves the score threshold at every star and keeps integer trigger rewards", () => {
+  const thresholds = [100, 90, 80, 70, 60];
+  const triggerCaps = [2, 2, 3, 3, 4];
+  const maximumAmounts = [4, 4, 6, 6, 8];
+  thresholds.forEach((threshold, index) => {
+    const stars = index + 1;
+    const oneTrigger = calculateHeroSkillReward({
+      snapshot: createBattleHeroSnapshot("gelu", stars),
+      playerId: "gelu-player",
+      playerResult: { playerId: "gelu-player", evaluationTags: [] },
+      trickHistory: [{ winnerId: "gelu-player", points: threshold, plays: [] }]
+    });
+    const capped = calculateHeroSkillReward({
+      snapshot: createBattleHeroSnapshot("gelu", stars),
+      playerId: "gelu-player",
+      playerResult: { playerId: "gelu-player", evaluationTags: [] },
+      trickHistory: [{ winnerId: "gelu-player", points: threshold * (triggerCaps[index] + 2), plays: [] }]
+    });
+    assert.equal(oneTrigger.amount, 2);
+    assert.equal(capped.cap, triggerCaps[index]);
+    assert.equal(capped.amount, maximumAmounts[index]);
+  });
 });
 
 test("direct, last-trick, and positive-title hero skills follow snapshot stars", () => {

@@ -43,7 +43,7 @@ export const HOME_UNITS = Object.freeze([
   Object.freeze({
     id: "gelu", name: "格鲁", shortName: "格", type: "hero", regionId: "brick", color: "#7958a5",
     cardImage: "/assets/heroes/gelu-card.jpg",
-    skillName: "多劳多得", skillDescription: "个人赢墩牌分每满80分额外获得4钻石；1～5星整局最多获得4/5/6/7/8钻石，不计底牌与团队加分。"
+    skillName: "多劳多得", skillDescription: "1～5星时，个人赢墩牌分每满100/90/80/70/60分额外获得2钻石；整局最多触发2/2/3/3/4次，最多获得4/4/6/6/8钻石，不计底牌与团队加分。"
   }),
   Object.freeze({ id: "brick-worker", name: "搬砖工", shortName: "砖", type: "minion", regionId: "brick", color: "#a67445" }),
   Object.freeze({
@@ -72,11 +72,11 @@ const DIRECT_SKILL_REWARDS = Object.freeze({
 });
 const STACKED_SKILL_CAPS = Object.freeze({
   xiaoxu: Object.freeze([3, 4, 5, 6, 7]),
-  gelu: Object.freeze([4, 5, 6, 7, 8]),
   "watanabe-mayu": Object.freeze([4, 5, 6, 7, 8])
 });
-const GELU_POINTS_PER_TRIGGER = 80;
-const GELU_DIAMONDS_PER_TRIGGER = 4;
+const GELU_POINTS_PER_TRIGGER = Object.freeze([100, 90, 80, 70, 60]);
+const GELU_TRIGGER_CAPS = Object.freeze([2, 2, 3, 3, 4]);
+const GELU_DIAMONDS_PER_TRIGGER = 2;
 const WATANABE_DIAMONDS_PER_TITLE = 2;
 
 function normalizedStars(value) {
@@ -211,11 +211,12 @@ export function calculateHeroSkillReward({ snapshot, playerId, playerResult, tri
     const wonPoints = history
       .filter((trick) => trick?.winnerId === playerId)
       .reduce((sum, trick) => sum + (Number(trick.points) || 0), 0);
-    const matched = Math.floor(wonPoints / GELU_POINTS_PER_TRIGGER);
-    const cap = STACKED_SKILL_CAPS.gelu[stars - 1];
-    const rawAmount = matched * GELU_DIAMONDS_PER_TRIGGER;
-    const amount = Math.min(rawAmount, cap);
-    return baseSkillResult(snapshot, matched, cap, amount, `个人赢墩牌分${wonPoints}分，每满${GELU_POINTS_PER_TRIGGER}分奖励${GELU_DIAMONDS_PER_TRIGGER}钻，按${stars}星整局最多${cap}钻`);
+    const pointsPerTrigger = GELU_POINTS_PER_TRIGGER[stars - 1];
+    const matched = Math.floor(wonPoints / pointsPerTrigger);
+    const triggerCap = GELU_TRIGGER_CAPS[stars - 1];
+    const paidTriggers = Math.min(matched, triggerCap);
+    const amount = paidTriggers * GELU_DIAMONDS_PER_TRIGGER;
+    return baseSkillResult(snapshot, matched, triggerCap, amount, `个人赢墩牌分${wonPoints}分，每满${pointsPerTrigger}分奖励${GELU_DIAMONDS_PER_TRIGGER}钻，按${stars}星整局最多触发${triggerCap}次、奖励${triggerCap * GELU_DIAMONDS_PER_TRIGGER}钻`);
   }
 
   if (snapshot.heroId === "jiang-zha") {
