@@ -1,9 +1,10 @@
 export const HERO_HOME_RULES = Object.freeze({
-  version: "2026-08-14-v1",
-  skillVersion: "2026-08-14-skill-v1",
+  version: "2026-08-14-v3",
+  skillVersion: "2026-08-14-skill-v2",
   maxProductionHours: 6,
   singlePullPrice: 30,
   tenPullPrice: 300,
+  freePullIntervalHours: 24,
   heroChance: 0.1,
   pityPulls: 50,
   heroDuplicateFragments: 40,
@@ -24,29 +25,35 @@ export const HOME_REGIONS = Object.freeze([
 
 export const HOME_UNITS = Object.freeze([
   Object.freeze({
-    id: "zhao-yun", name: "赵云", shortName: "云", type: "hero", regionId: "boka", color: "#4779b8",
-    skillName: "孤胆赴阵", skillDescription: "最终身份为狗腿且原始最终积分为正时，按星级追加钻石。"
+    id: "jiang-zha", name: "蒋渣", shortName: "渣", type: "hero", regionId: "boka", color: "#285b93",
+    cardImage: "/assets/heroes/jiang-zha-card.jpg",
+    skillName: "渣代思维", skillDescription: "最终身份为狗腿且原始最终积分为正时，按星级追加钻石。"
   }),
   Object.freeze({
-    id: "lin-chong", name: "林冲", shortName: "冲", type: "hero", regionId: "boka", color: "#4c8b67",
-    skillName: "雪夜守关", skillDescription: "本人赢得最后一轮时，按星级追加钻石。"
+    id: "deng-huang", name: "灯皇", shortName: "灯", type: "hero", regionId: "boka", color: "#16858a",
+    cardImage: "/assets/heroes/deng-huang-card.jpg",
+    skillName: "倒买倒卖", skillDescription: "本人赢得最后一轮时，按星级追加钻石。"
   }),
   Object.freeze({ id: "boka-youth", name: "博卡青年", shortName: "博", type: "minion", regionId: "boka", color: "#d6a936" }),
   Object.freeze({
     id: "xiaoxu", name: "小旭", shortName: "旭", type: "hero", regionId: "brick", color: "#c45e51",
+    cardImage: "/assets/heroes/xiaoxu-card.jpg",
     skillName: "八方来财", skillDescription: "从不同其他玩家打出的计分牌中赢得牌分时，每个来源追加1钻。"
   }),
   Object.freeze({
     id: "gelu", name: "格鲁", shortName: "格", type: "hero", regionId: "brick", color: "#7958a5",
+    cardImage: "/assets/heroes/gelu-card.jpg",
     skillName: "多劳多得", skillDescription: "个人赢墩牌分每满50分追加1钻。"
   }),
   Object.freeze({ id: "brick-worker", name: "搬砖工", shortName: "砖", type: "minion", regionId: "brick", color: "#a67445" }),
   Object.freeze({
     id: "maeda-atsuko", name: "前田敦子", shortName: "敦", type: "hero", regionId: "stage", color: "#d25d86",
+    cardImage: "/assets/heroes/maeda-atsuko-card.jpg",
     skillName: "中心光芒", skillDescription: "本人是庄家且原始最终积分为正时，按星级追加钻石。"
   }),
   Object.freeze({
     id: "watanabe-mayu", name: "渡边麻友", shortName: "麻", type: "hero", regionId: "stage", color: "#d879b4",
+    cardImage: "/assets/heroes/watanabe-mayu-card.jpg",
     skillName: "荣誉舞台", skillDescription: "每个白名单正向称号追加1钻，按星级封顶。"
   }),
   Object.freeze({ id: "trainee", name: "练习生", shortName: "练", type: "minion", regionId: "stage", color: "#7197bd" })
@@ -59,8 +66,8 @@ export const HOME_UNIT_BY_ID = new Map(HOME_UNITS.map((unit) => [unit.id, unit])
 
 const POSITIVE_TITLE_CODES = new Set(["mvp", "support", "precision", "god", "heaven", "exhausted", "pillar"]);
 const DIRECT_SKILL_REWARDS = Object.freeze({
-  "zhao-yun": Object.freeze([2, 3, 4, 5, 6]),
-  "lin-chong": Object.freeze([1, 2, 3, 4, 5]),
+  "jiang-zha": Object.freeze([2, 3, 4, 5, 6]),
+  "deng-huang": Object.freeze([1, 2, 3, 4, 5]),
   "maeda-atsuko": Object.freeze([2, 3, 4, 5, 6])
 });
 
@@ -120,6 +127,29 @@ export function starUpgradeCost(unitId, currentStars) {
     : HERO_HOME_RULES.minionStarCosts[nextStars];
 }
 
+export function freeHeroPullState(lastUsedAt, at = new Date()) {
+  const usedAt = lastUsedAt ? new Date(lastUsedAt) : null;
+  const nowAt = new Date(at);
+  if (!usedAt || Number.isNaN(usedAt.getTime()) || Number.isNaN(nowAt.getTime())) {
+    return { available: true, nextFreePullAt: null };
+  }
+  const nextAt = new Date(usedAt.getTime() + HERO_HOME_RULES.freePullIntervalHours * 3600 * 1000);
+  if (nowAt.getTime() >= nextAt.getTime()) return { available: true, nextFreePullAt: null };
+  return { available: false, nextFreePullAt: nextAt.toISOString() };
+}
+
+export function heroGachaCharge(pullCount, freePullAvailable = false) {
+  if (Number(pullCount) === 1) {
+    return freePullAvailable
+      ? { price: 0, freePullUsed: true }
+      : { price: HERO_HOME_RULES.singlePullPrice, freePullUsed: false };
+  }
+  if (Number(pullCount) === 10) {
+    return { price: HERO_HOME_RULES.tenPullPrice, freePullUsed: false };
+  }
+  return null;
+}
+
 export function createBattleHeroSnapshot(unitId, stars = 1) {
   const unit = HOME_UNIT_BY_ID.get(String(unitId || ""));
   if (!unit || unit.type !== "hero") return null;
@@ -128,6 +158,7 @@ export function createBattleHeroSnapshot(unitId, stars = 1) {
     name: unit.name,
     shortName: unit.shortName,
     color: unit.color,
+    cardImage: unit.cardImage,
     skillName: unit.skillName,
     stars: normalizedStars(stars),
     skillVersion: HERO_HOME_RULES.skillVersion
@@ -176,13 +207,13 @@ export function calculateHeroSkillReward({ snapshot, playerId, playerResult, tri
     return baseSkillResult(snapshot, matched, stars, amount, `个人赢墩牌分${wonPoints}分，每满50分计1次，按${stars}星最多${stars}次`);
   }
 
-  if (snapshot.heroId === "zhao-yun") {
+  if (snapshot.heroId === "jiang-zha") {
     const matched = playerResult.role === "狗腿" && Number(playerResult.baseGameScore ?? playerResult.gameScore) > 0;
     const amount = matched ? DIRECT_SKILL_REWARDS[snapshot.heroId][stars - 1] : 0;
     return baseSkillResult(snapshot, matched ? 1 : 0, 1, amount, matched ? "最终身份为狗腿且原始最终积分为正" : "未同时满足狗腿身份与原始正积分");
   }
 
-  if (snapshot.heroId === "lin-chong") {
+  if (snapshot.heroId === "deng-huang") {
     const matched = history.at(-1)?.winnerId === playerId;
     const amount = matched ? DIRECT_SKILL_REWARDS[snapshot.heroId][stars - 1] : 0;
     return baseSkillResult(snapshot, matched ? 1 : 0, 1, amount, matched ? "本人赢得最后一轮" : "本人未赢得最后一轮");

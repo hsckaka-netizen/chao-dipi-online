@@ -7,6 +7,8 @@ import {
   calculateHeroSkillReward,
   createBattleHeroSnapshot,
   drawHomeUnit,
+  freeHeroPullState,
+  heroGachaCharge,
   previewHomeRegion,
   starUpgradeCost,
   unitProductionRate
@@ -15,14 +17,14 @@ import {
 test("home production uses star rates, keeps fractions, and stops at six hours", () => {
   const preview = previewHomeRegion({
     regionId: "boka",
-    unitId: "zhao-yun",
+    unitId: "jiang-zha",
     stars: 2,
     productionValue: 0.25,
     productionSeconds: 5 * 3600,
     settledAt: "2026-08-14T00:00:00.000Z"
   }, "2026-08-14T03:00:00.000Z");
 
-  assert.equal(unitProductionRate("zhao-yun", 2), 4);
+  assert.equal(unitProductionRate("jiang-zha", 2), 4);
   assert.equal(preview.productionHours, 6);
   assert.equal(preview.productionValue, 4.25);
   assert.equal(preview.collectableDiamonds, 4);
@@ -37,13 +39,47 @@ test("minions use their own production and upgrade curves", () => {
   assert.equal(starUpgradeCost("xiaoxu", 5), null);
 });
 
-test("first-ten guarantee selection can prefer an unowned hero", () => {
+test("first-pull guarantee selection can prefer an unowned hero", () => {
   const drawn = drawHomeUnit({
     forceHero: true,
     preferredUnownedHeroIds: ["watanabe-mayu"],
     randomFloat: () => 0
   });
   assert.equal(drawn.id, "watanabe-mayu");
+});
+
+test("free single pull starts available and refreshes 24 hours after use", () => {
+  assert.deepEqual(freeHeroPullState(null, "2026-08-14T00:00:00.000Z"), {
+    available: true,
+    nextFreePullAt: null
+  });
+  assert.deepEqual(
+    freeHeroPullState("2026-08-14T00:00:00.000Z", "2026-08-14T23:59:59.000Z"),
+    { available: false, nextFreePullAt: "2026-08-15T00:00:00.000Z" }
+  );
+  assert.deepEqual(
+    freeHeroPullState("2026-08-14T00:00:00.000Z", "2026-08-15T00:00:00.000Z"),
+    { available: true, nextFreePullAt: null }
+  );
+});
+
+test("free pull applies only to a single draw and never discounts ten draws", () => {
+  assert.deepEqual(heroGachaCharge(1, true), { price: 0, freePullUsed: true });
+  assert.deepEqual(heroGachaCharge(1, false), { price: 30, freePullUsed: false });
+  assert.deepEqual(heroGachaCharge(10, true), { price: 300, freePullUsed: false });
+});
+
+test("boka roster uses jiang zha and deng huang with the supplied card identities", () => {
+  const jiangZha = createBattleHeroSnapshot("jiang-zha", 3);
+  const dengHuang = createBattleHeroSnapshot("deng-huang", 2);
+  assert.equal(jiangZha.name, "蒋渣");
+  assert.equal(jiangZha.skillName, "渣代思维");
+  assert.equal(jiangZha.cardImage, "/assets/heroes/jiang-zha-card.jpg");
+  assert.equal(dengHuang.name, "灯皇");
+  assert.equal(dengHuang.skillName, "倒买倒卖");
+  assert.equal(dengHuang.cardImage, "/assets/heroes/deng-huang-card.jpg");
+  assert.equal(createBattleHeroSnapshot("zhao-yun", 1), null);
+  assert.equal(createBattleHeroSnapshot("lin-chong", 1), null);
 });
 
 test("xiaoxu counts distinct other scoring-card sources and excludes self", () => {
@@ -92,13 +128,13 @@ test("gelu uses personal won-trick points without bottom or team additions", () 
 test("direct, last-trick, and positive-title hero skills follow snapshot stars", () => {
   const history = [{ winnerId: "p", points: 0, plays: [] }];
   assert.equal(calculateHeroSkillReward({
-    snapshot: createBattleHeroSnapshot("zhao-yun", 5),
+    snapshot: createBattleHeroSnapshot("jiang-zha", 5),
     playerId: "p",
     playerResult: { role: "狗腿", baseGameScore: 1, evaluationTags: [] },
     trickHistory: history
   }).amount, 6);
   assert.equal(calculateHeroSkillReward({
-    snapshot: createBattleHeroSnapshot("lin-chong", 4),
+    snapshot: createBattleHeroSnapshot("deng-huang", 4),
     playerId: "p",
     playerResult: { role: "闲家", baseGameScore: -1, evaluationTags: [] },
     trickHistory: history
@@ -133,4 +169,21 @@ test("hero migration stores home, gacha, snapshots, and hero bonus", async () =>
   assert.match(migration, /CREATE TABLE IF NOT EXISTS cdp_hero_gacha_requests/);
   assert.match(migration, /battle_hero_snapshot jsonb/);
   assert.match(migration, /hero_bonus integer/);
+
+  const renameMigration = await readFile(
+    fileURLToPath(new URL("../db/migrations/020_rename_boka_heroes.sql", import.meta.url)),
+    "utf8"
+  );
+  assert.match(renameMigration, /WHEN 'zhao-yun' THEN 'jiang-zha'/);
+  assert.match(renameMigration, /WHEN 'lin-chong' THEN 'deng-huang'/);
+  assert.match(renameMigration, /UPDATE cdp_home_regions/);
+  assert.match(renameMigration, /UPDATE cdp_hero_profiles/);
+
+  const gachaMigration = await readFile(
+    fileURLToPath(new URL("../db/migrations/021_first_and_free_hero_pull.sql", import.meta.url)),
+    "utf8"
+  );
+  assert.match(gachaMigration, /first_pull_completed boolean/);
+  assert.match(gachaMigration, /free_pull_used_at timestamptz/);
+  assert.match(gachaMigration, /CHECK \(price >= 0\)/);
 });

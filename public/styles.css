@@ -177,10 +177,22 @@
   flex: 0 0 auto;
   display: inline-grid;
   place-items: center;
+  overflow: hidden;
   border-radius: 14px;
   color: #fff;
   background: linear-gradient(145deg, color-mix(in srgb, var(--hero-color), white 16%), var(--hero-color));
   box-shadow: inset 0 0 0 1px rgba(255,255,255,0.32), 0 7px 14px color-mix(in srgb, var(--hero-color), transparent 72%);
+}
+
+.hero-card-art {
+  display: block;
+}
+
+.hero-unit-badge-art {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: 50% 28%;
 }
 
 .hero-unit-badge b {
@@ -332,6 +344,22 @@
   background: linear-gradient(155deg, #fff, #f6faf8);
 }
 
+.hero-catalog-art {
+  width: 132px;
+  aspect-ratio: 707 / 1000;
+  align-self: start;
+  overflow: hidden;
+  border-radius: 14px;
+  background: #17202b;
+  box-shadow: 0 10px 24px rgba(26, 35, 46, 0.18);
+}
+
+.hero-catalog-card-art {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
 .hero-catalog-card.locked {
   filter: saturate(0.45);
   opacity: 0.76;
@@ -402,7 +430,7 @@
 
 .gacha-status-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 7px;
 }
 
@@ -448,7 +476,7 @@
 
 .gacha-result-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
   gap: 10px;
 }
 
@@ -470,6 +498,15 @@
 .gacha-result-card.hero {
   border-color: rgba(209, 147, 45, 0.38);
   background: radial-gradient(circle at 50% 20%, rgba(246, 200, 84, 0.24), transparent 40%), linear-gradient(155deg, #fffdf7, #f7efe1);
+}
+
+.gacha-card-art {
+  width: 100%;
+  max-width: 190px;
+  aspect-ratio: 707 / 1000;
+  object-fit: cover;
+  border-radius: 11px;
+  box-shadow: 0 9px 24px rgba(38, 29, 45, 0.2);
 }
 
 .gacha-result-card.new {
@@ -512,7 +549,8 @@
   vertical-align: middle;
 }
 
-.battle-hero-mark > b {
+.battle-hero-mark > b,
+.battle-hero-mark > .battle-hero-art {
   width: 19px;
   height: 19px;
   display: grid;
@@ -521,6 +559,11 @@
   color: #fff;
   background: var(--hero-color);
   font-size: 10px;
+}
+
+.battle-hero-mark > .battle-hero-art {
+  object-fit: cover;
+  object-position: 50% 28%;
 }
 
 .battle-hero-mark > i {
@@ -577,6 +620,11 @@
   }
 
   .hero-catalog-card > .hero-unit-badge {
+    justify-self: center;
+  }
+
+  .hero-catalog-art {
+    width: min(230px, 100%);
     justify-self: center;
   }
 

@@ -1,6 +1,6 @@
 import { applyStatePatch } from "./state-patch.js?v=9330552c7e1e";
 import { detectNewDraggedFiveEffects, detectNewLargePlayEffects } from "./gameplay-effects.js?v=14791e626d30";
-import { ASSET_URLS, versionedAssetUrl } from "./asset-versions.js?v=4b09ef6cdbe7";
+import { ASSET_URLS, versionedAssetUrl } from "./asset-versions.js?v=407c6308bb11";
 import { createHistoryTrickEntry, filterHistoryTimelineEntries } from "./history-records.js?v=874ba3c97732";
 
 const app = document.querySelector("#app");
@@ -4046,17 +4046,22 @@ function heroStars(stars) {
   return `<span class="hero-stars" aria-label="${count}星">${"★".repeat(count)}${"☆".repeat(5 - count)}</span>`;
 }
 
+function heroCardArtwork(unit, className = "") {
+  if (!unit?.cardImage) return "";
+  return `<img class="hero-card-art ${escapeHtml(className)}" src="${escapeHtml(versionedAssetUrl(unit.cardImage))}" alt="${escapeHtml(unit.name)}英雄卡面" loading="lazy" decoding="async">`;
+}
+
 function heroUnitBadge(unit, size = "normal") {
   if (!unit) return `<span class="hero-unit-badge ${size} empty">空</span>`;
   const color = unit.color || "#527b70";
-  return `<span class="hero-unit-badge ${size}" style="--hero-color:${escapeHtml(color)}" title="${escapeHtml(unit.name)}"><b>${escapeHtml(unit.shortName || unit.name?.slice(0, 1) || "英")}</b></span>`;
+  return `<span class="hero-unit-badge ${size}" style="--hero-color:${escapeHtml(color)}" title="${escapeHtml(unit.name)}">${heroCardArtwork(unit, "hero-unit-badge-art") || `<b>${escapeHtml(unit.shortName || unit.name?.slice(0, 1) || "英")}</b>`}</span>`;
 }
 
 function renderBattleHeroMark(snapshot, compact = false) {
   if (!snapshot) return "";
   return `
     <span class="battle-hero-mark ${compact ? "compact" : ""}" style="--hero-color:${escapeHtml(snapshot.color || "#527b70")}" title="${escapeHtml(`${snapshot.name} · ${snapshot.skillName} · ${snapshot.stars}星`)}">
-      <b>${escapeHtml(snapshot.shortName || snapshot.name?.slice(0, 1) || "英")}</b>
+      ${heroCardArtwork(snapshot, "battle-hero-art") || `<b>${escapeHtml(snapshot.shortName || snapshot.name?.slice(0, 1) || "英")}</b>`}
       <span>${escapeHtml(snapshot.name)}</span>
       <i>${"★".repeat(Math.max(1, Math.min(5, Number(snapshot.stars) || 1)))}</i>
     </span>
@@ -4163,7 +4168,7 @@ function renderCatalogUnit(unit) {
     : Number(owned.exclusiveFragments || 0) >= cost);
   return `
     <article class="hero-catalog-card ${owned ? "owned" : "locked"}">
-      ${heroUnitBadge({ ...unit, stars: owned?.stars }, "catalog")}
+      ${unit.cardImage ? `<div class="hero-catalog-art">${heroCardArtwork(unit, "hero-catalog-card-art")}</div>` : heroUnitBadge({ ...unit, stars: owned?.stars }, "catalog")}
       <div class="hero-catalog-copy">
         <div class="hero-catalog-title"><strong>${escapeHtml(unit.name)}</strong><span class="tag">${unit.type === "hero" ? "英雄" : "小兵"}</span><span class="tag">${escapeHtml(heroHomeState.regions.find((region) => region.id === unit.regionId)?.name || "")}</span></div>
         ${owned ? heroStars(owned.stars) : `<span class="hero-locked-label">未获得</span>`}
@@ -4201,9 +4206,9 @@ function renderGachaResult(result) {
   return `
     <article class="gacha-result-card ${result.unit.type} ${result.conversion.type === "new" ? "new" : ""}">
       <span class="gacha-result-index">${escapeHtml(result.index)}</span>
-      ${heroUnitBadge(result.unit, "gacha")}
+      ${result.unit.cardImage ? heroCardArtwork(result.unit, "gacha-card-art") : heroUnitBadge(result.unit, "gacha")}
       <strong>${escapeHtml(result.unit.name)}</strong>
-      <span>${result.unit.type === "hero" ? "英雄" : "小兵"}${result.guaranteed ? ` · ${result.guaranteed === "pity" ? "50抽保底" : "首次十连保证"}` : ""}</span>
+      <span>${result.unit.type === "hero" ? "英雄" : "小兵"}${result.guaranteed ? ` · ${result.guaranteed === "pity" ? "50抽保底" : "首次抽卡保证"}` : ""}</span>
       <b>${escapeHtml(result.conversion.label)}</b>
     </article>
   `;
@@ -4216,6 +4221,8 @@ function renderHeroGachaPage() {
   }
   ensureHeroHomeState();
   if (!heroHomeState || heroHomeState.unavailable) return renderHeroLoadingPage("hero-gacha");
+  const freePullAvailable = Boolean(heroHomeState.freePullAvailable);
+  const singlePullDisabled = heroActionInFlight || (!freePullAvailable && Number(heroHomeState.balance || 0) < 30);
   renderShell(`
     ${renderHeroSectionNav("hero-gacha")}
     <section class="panel hero-gacha-hero">
@@ -4223,13 +4230,14 @@ function renderHeroGachaPage() {
       <div class="gacha-status-grid">
         <span><small>当前钻石</small><b>💎 ${escapeHtml(heroHomeState.balance || 0)}</b></span>
         <span><small>50抽保底</small><b>还剩 ${escapeHtml(heroHomeState.pityRemaining)} 抽</b></span>
-        <span><small>首次十连</small><b>${heroHomeState.firstTenAvailable ? "保证至少1名英雄" : "已使用"}</b></span>
+        <span><small>首次抽卡</small><b>${heroHomeState.firstPullGuaranteed ? "必得英雄" : "已使用"}</b></span>
+        <span><small>免费单抽</small><b>${freePullAvailable ? "现在可用" : `${escapeHtml(fmtDateTime(heroHomeState.nextFreePullAt))} 恢复`}</b></span>
       </div>
       <div class="gacha-actions">
-        <button type="button" data-action="pull-hero-gacha" data-pull-count="1" ${heroActionInFlight || Number(heroHomeState.balance || 0) < 30 ? "disabled" : ""}>单抽 · 30💎</button>
+        <button type="button" data-action="pull-hero-gacha" data-pull-count="1" ${singlePullDisabled ? "disabled" : ""}>${freePullAvailable ? "免费单抽" : "单抽 · 30💎"}</button>
         <button type="button" class="accent" data-action="pull-hero-gacha" data-pull-count="10" ${heroActionInFlight || Number(heroHomeState.balance || 0) < 300 ? "disabled" : ""}>十连 · 300💎</button>
       </div>
-      <div class="gacha-probability"><span>英雄 10%</span><span>小兵 90%</span><span>第50抽必出英雄</span><span>保底计数永久保留</span></div>
+      <div class="gacha-probability"><span>英雄 10%</span><span>小兵 90%</span><span>首次抽卡必出英雄</span><span>第50抽必出英雄</span><span>免费单抽每24小时恢复</span></div>
     </section>
     ${heroGachaResults.length ? `<section class="panel stack"><div class="section-head"><div><h2>本次结果</h2><div class="meta">抽卡结果已由服务端入账</div></div></div><div class="gacha-result-grid">${heroGachaResults.map(renderGachaResult).join("")}</div></section>` : `<section class="panel"><div class="empty">抽卡结果会显示在这里</div></section>`}
   `);

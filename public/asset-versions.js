@@ -1,6 +1,12 @@
 export const ASSET_VERSIONS = Object.freeze({
   "/assets/joker-face-small.png": "f16ffbe9a2eb",
   "/assets/joker-face.png": "298272a943e8",
+  "/assets/heroes/deng-huang-card.jpg": "26bc47365e4a",
+  "/assets/heroes/gelu-card.jpg": "4a72b3b2c6ea",
+  "/assets/heroes/jiang-zha-card.jpg": "2d9bf2ff6935",
+  "/assets/heroes/maeda-atsuko-card.jpg": "a1414e49f9bb",
+  "/assets/heroes/watanabe-mayu-card.jpg": "9e5a829656fe",
+  "/assets/heroes/xiaoxu-card.jpg": "aaa85b2bd0c8",
   "/assets/cosmetics/avatar-frame-blood-elf.png": "85c485779c9b",
   "/assets/cosmetics/avatar-frame-cr7.png": "87a2d4b9d13f",
   "/assets/cosmetics/avatar-frame-death-knight.png": "dc144a4b9ee8",

@@ -15,6 +15,8 @@ import { CONSUMABLE_ITEMS, SHOP_RULES_VERSION, shopProductIdFromPath } from "./s
 import {
   createBattleHeroSnapshot,
   drawHomeUnit,
+  freeHeroPullState,
+  heroGachaCharge,
   HERO_HOME_RULES,
   HOME_REGIONS,
   HOME_REGION_BY_ID,
@@ -104,6 +106,14 @@ const MIGRATIONS = [
   {
     version: 19,
     path: fileURLToPath(new URL("./db/migrations/019_hero_home_system.sql", import.meta.url))
+  },
+  {
+    version: 20,
+    path: fileURLToPath(new URL("./db/migrations/020_rename_boka_heroes.sql", import.meta.url))
+  },
+  {
+    version: 21,
+    path: fileURLToPath(new URL("./db/migrations/021_first_and_free_hero_pull.sql", import.meta.url))
   }
 ];
 const HISTORY_ENABLED = String(process.env.GAME_HISTORY_ENABLED || "").toLowerCase() === "true";
@@ -1976,7 +1986,8 @@ function publicOwnedHeroUnit(row) {
 async function heroHomeStateFromClient(client, accountId) {
   const [profileResult, unitResult, regionResult, walletResult] = await Promise.all([
     client.query(
-      `SELECT universal_fragments, non_hero_pity_count, first_ten_completed, battle_unit_id, updated_at
+      `SELECT universal_fragments, non_hero_pity_count, first_pull_completed,
+              free_pull_used_at, battle_unit_id, updated_at
        FROM cdp_hero_profiles
        WHERE account_id = $1::uuid`,
       [accountId]
@@ -2020,6 +2031,7 @@ async function heroHomeStateFromClient(client, accountId) {
     };
   });
   const pityCount = Number(profile.non_hero_pity_count) || 0;
+  const freePull = freeHeroPullState(profile.free_pull_used_at, nowAt);
   return {
     ...publicHeroCatalog(),
     accountId,
@@ -2027,7 +2039,9 @@ async function heroHomeStateFromClient(client, accountId) {
     universalFragments: Number(profile.universal_fragments) || 0,
     pityCount,
     pityRemaining: HERO_HOME_RULES.pityPulls - pityCount,
-    firstTenAvailable: !profile.first_ten_completed,
+    firstPullGuaranteed: !profile.first_pull_completed,
+    freePullAvailable: freePull.available,
+    nextFreePullAt: freePull.nextFreePullAt,
     battleUnitId: profile.battle_unit_id || null,
     battleHero: profile.battle_unit_id
       ? createBattleHeroSnapshot(profile.battle_unit_id, ownedById.get(profile.battle_unit_id)?.stars)
@@ -2268,13 +2282,12 @@ export async function pullHeroGacha(accountId, pullCountValue, requestIdValue) {
   const pullCount = Number(pullCountValue);
   if (pullCount !== 1 && pullCount !== 10) throw commerceError("抽卡次数只能是1次或10次");
   const requestId = normalizedRequestId(requestIdValue);
-  const price = pullCount === 10 ? HERO_HOME_RULES.tenPullPrice : HERO_HOME_RULES.singlePullPrice;
   const client = await database.connect();
   try {
     await client.query("BEGIN");
     await ensureHeroAccount(client, accountId);
     const profileResult = await client.query(
-      `SELECT universal_fragments, non_hero_pity_count, first_ten_completed
+      `SELECT universal_fragments, non_hero_pity_count, first_pull_completed, free_pull_used_at
        FROM cdp_hero_profiles WHERE account_id = $1::uuid FOR UPDATE`,
       [accountId]
     );
@@ -2287,6 +2300,9 @@ export async function pullHeroGacha(accountId, pullCountValue, requestIdValue) {
       await client.query("COMMIT");
       return { ...repeated.rows[0].result_data, repeated: true };
     }
+    const freePullBefore = freeHeroPullState(profileResult.rows[0]?.free_pull_used_at);
+    const charge = heroGachaCharge(pullCount, freePullBefore.available);
+    const { price, freePullUsed } = charge;
     const ownedResult = await client.query(
       `SELECT unit_id, stars, exclusive_fragments
        FROM cdp_hero_units WHERE account_id = $1::uuid FOR UPDATE`,
@@ -2297,13 +2313,20 @@ export async function pullHeroGacha(accountId, pullCountValue, requestIdValue) {
        ON CONFLICT (account_id) DO NOTHING`,
       [accountId]
     );
-    const wallet = await client.query(
-      `UPDATE cdp_diamond_wallets
-       SET balance = balance - $2, updated_at = now()
-       WHERE account_id = $1::uuid AND balance >= $2
-       RETURNING balance`,
-      [accountId, price]
-    );
+    const wallet = price > 0
+      ? await client.query(
+          `UPDATE cdp_diamond_wallets
+           SET balance = balance - $2, updated_at = now()
+           WHERE account_id = $1::uuid AND balance >= $2
+           RETURNING balance`,
+          [accountId, price]
+        )
+      : await client.query(
+          `SELECT balance FROM cdp_diamond_wallets
+           WHERE account_id = $1::uuid
+           FOR UPDATE`,
+          [accountId]
+        );
     if (!wallet.rows[0]) throw commerceError("钻石余额不足", 409);
     const owned = new Map(ownedResult.rows.map((row) => [row.unit_id, {
       stars: Number(row.stars) || 1,
@@ -2312,17 +2335,16 @@ export async function pullHeroGacha(accountId, pullCountValue, requestIdValue) {
     const ownedHeroIds = new Set([...owned.keys()].filter((unitId) => HOME_UNIT_BY_ID.get(unitId)?.type === "hero"));
     let universalFragments = Number(profileResult.rows[0]?.universal_fragments) || 0;
     let pityCount = Number(profileResult.rows[0]?.non_hero_pity_count) || 0;
-    const firstTenAvailable = !profileResult.rows[0]?.first_ten_completed;
+    const firstPullGuaranteed = !profileResult.rows[0]?.first_pull_completed;
     const results = [];
     for (let index = 0; index < pullCount; index += 1) {
-      const naturalHeroAlreadyDrawn = results.some((result) => result.unit.type === "hero");
-      const firstTenGuarantee = pullCount === 10 && firstTenAvailable && index === 9 && !naturalHeroAlreadyDrawn;
+      const firstPullGuarantee = firstPullGuaranteed && index === 0;
       const pityGuarantee = pityCount >= HERO_HOME_RULES.pityPulls - 1;
-      const preferredUnownedHeroIds = firstTenGuarantee
+      const preferredUnownedHeroIds = firstPullGuarantee
         ? [...HOME_UNIT_BY_ID.values()].filter((unit) => unit.type === "hero" && !ownedHeroIds.has(unit.id)).map((unit) => unit.id)
         : [];
       const unit = drawHomeUnit({
-        forceHero: firstTenGuarantee || pityGuarantee,
+        forceHero: firstPullGuarantee || pityGuarantee,
         preferredUnownedHeroIds
       });
       const current = owned.get(unit.id);
@@ -2359,19 +2381,22 @@ export async function pullHeroGacha(accountId, pullCountValue, requestIdValue) {
         index: index + 1,
         unit: { ...unit },
         stars: owned.get(unit.id)?.stars || 1,
-        guaranteed: firstTenGuarantee ? "first-ten" : pityGuarantee ? "pity" : null,
+        guaranteed: firstPullGuarantee ? "first-pull" : pityGuarantee ? "pity" : null,
         conversion
       });
     }
-    await client.query(
+    const updatedProfile = await client.query(
       `UPDATE cdp_hero_profiles
        SET universal_fragments = $2, non_hero_pity_count = $3,
-           first_ten_completed = first_ten_completed OR $4,
+           first_pull_completed = true,
+           free_pull_used_at = CASE WHEN $4 THEN now() ELSE free_pull_used_at END,
            updated_at = now()
-       WHERE account_id = $1::uuid`,
-      [accountId, universalFragments, pityCount, pullCount === 10]
+       WHERE account_id = $1::uuid
+       RETURNING free_pull_used_at`,
+      [accountId, universalFragments, pityCount, freePullUsed]
     );
     const balanceAfter = Number(wallet.rows[0].balance) || 0;
+    const freePullAfter = freeHeroPullState(updatedProfile.rows[0]?.free_pull_used_at);
     const response = {
       rulesVersion: HERO_HOME_RULES.version,
       pullCount,
@@ -2379,7 +2404,9 @@ export async function pullHeroGacha(accountId, pullCountValue, requestIdValue) {
       balanceAfter,
       pityCount,
       pityRemaining: HERO_HOME_RULES.pityPulls - pityCount,
-      firstTenUsed: pullCount === 10 && firstTenAvailable,
+      firstPullGuaranteeUsed: firstPullGuaranteed,
+      freePullUsed,
+      nextFreePullAt: freePullAfter.nextFreePullAt,
       results
     };
     await client.query(
@@ -2388,12 +2415,14 @@ export async function pullHeroGacha(accountId, pullCountValue, requestIdValue) {
       ) VALUES ($1::uuid, $2, $3, $4, $5, $6::jsonb)`,
       [accountId, requestId, pullCount, price, balanceAfter, JSON.stringify(response)]
     );
-    await client.query(
-      `INSERT INTO cdp_diamond_ledger (
-        account_id, amount, balance_after, reason, rules_version, idempotency_key, detail
-      ) VALUES ($1::uuid, $2, $3, 'hero_gacha', $4, $5, $6::jsonb)`,
-      [accountId, -price, balanceAfter, HERO_HOME_RULES.version, `hero_gacha:${accountId}:${requestId}`, JSON.stringify({ pullCount, results })]
-    );
+    if (price > 0) {
+      await client.query(
+        `INSERT INTO cdp_diamond_ledger (
+          account_id, amount, balance_after, reason, rules_version, idempotency_key, detail
+        ) VALUES ($1::uuid, $2, $3, 'hero_gacha', $4, $5, $6::jsonb)`,
+        [accountId, -price, balanceAfter, HERO_HOME_RULES.version, `hero_gacha:${accountId}:${requestId}`, JSON.stringify({ pullCount, results })]
+      );
+    }
     await client.query("COMMIT");
     return response;
   } catch (error) {

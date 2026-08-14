@@ -66,7 +66,7 @@ test("hero skill diamonds are added outside the existing title cap", () => {
       { code: "mvp", label: "MVP" },
       { code: "support", label: "辅" }
     ],
-    heroSkillReward: { amount: 4, skillName: "雪夜守关" }
+    heroSkillReward: { amount: 4, skillName: "倒买倒卖" }
   });
 
   assert.equal(reward.titleBonus, 5);

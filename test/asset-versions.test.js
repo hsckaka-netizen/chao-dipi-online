@@ -10,7 +10,7 @@ const publicDir = fileURLToPath(new URL("../public/", import.meta.url));
 
 async function assetFiles(directory = `${publicDir}assets`, prefix = "/assets") {
   const entries = await readdir(directory, { withFileTypes: true });
-  const nested = await Promise.all(entries.map((entry) => {
+  const nested = await Promise.all(entries.filter((entry) => !entry.name.startsWith(".")).map((entry) => {
     const pathname = `${prefix}/${entry.name}`;
     return entry.isDirectory() ? assetFiles(`${directory}/${entry.name}`, pathname) : [pathname];
   }));
