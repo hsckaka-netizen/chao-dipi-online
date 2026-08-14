@@ -85,12 +85,12 @@ test("boka roster uses jiang zha and deng huang with the supplied card identitie
 
 test("all hero skill descriptions expose concrete per-star diamond values", () => {
   const expectedValues = {
-    "jiang-zha": "2/3/4/5/6",
-    "deng-huang": "1/2/3/4/5",
-    xiaoxu: "1/2/3/4/5",
-    gelu: "1/2/3/4/5",
-    "maeda-atsuko": "2/3/4/5/6",
-    "watanabe-mayu": "1/2/3/4/5"
+    "jiang-zha": "6/7/8/10/12",
+    "deng-huang": "5/6/7/8/10",
+    xiaoxu: "3/4/5/6/7",
+    gelu: "4/5/6/7/8",
+    "maeda-atsuko": "8/10/12/14/16",
+    "watanabe-mayu": "4/5/6/7/8"
   };
   Object.entries(expectedValues).forEach(([unitId, values]) => {
     const description = HOME_UNIT_BY_ID.get(unitId)?.skillDescription || "";
@@ -143,7 +143,22 @@ test("xiaoxu counts distinct other scoring-card sources and excludes self", () =
   assert.equal(reward.amount, 2);
 });
 
-test("gelu uses personal won-trick points without bottom or team additions", () => {
+test("xiaoxu caps distinct scoring-card sources even in a nine-player game", () => {
+  const reward = calculateHeroSkillReward({
+    snapshot: createBattleHeroSnapshot("xiaoxu", 5),
+    playerId: "self",
+    playerResult: { playerId: "self", evaluationTags: [] },
+    trickHistory: Array.from({ length: 8 }, (_, index) => ({
+      winnerId: "self",
+      plays: [{ playerId: `other-${index + 1}`, cards: [{ type: "normal", rank: "5" }] }]
+    }))
+  });
+  assert.equal(reward.matchedCount, 8);
+  assert.equal(reward.cap, 7);
+  assert.equal(reward.amount, 7);
+});
+
+test("gelu rewards four diamonds per eighty personal won-trick points", () => {
   const reward = calculateHeroSkillReward({
     snapshot: createBattleHeroSnapshot("gelu", 3),
     playerId: "gelu-player",
@@ -154,8 +169,21 @@ test("gelu uses personal won-trick points without bottom or team additions", () 
       { winnerId: "other", points: 100, plays: [] }
     ]
   });
-  assert.equal(reward.matchedCount, 2);
-  assert.equal(reward.amount, 2);
+  assert.equal(reward.matchedCount, 1);
+  assert.equal(reward.cap, 6);
+  assert.equal(reward.amount, 4);
+});
+
+test("gelu applies the star diamond cap after calculating score milestones", () => {
+  const reward = calculateHeroSkillReward({
+    snapshot: createBattleHeroSnapshot("gelu", 5),
+    playerId: "gelu-player",
+    playerResult: { playerId: "gelu-player", evaluationTags: [] },
+    trickHistory: [{ winnerId: "gelu-player", points: 400, plays: [] }]
+  });
+  assert.equal(reward.matchedCount, 5);
+  assert.equal(reward.cap, 8);
+  assert.equal(reward.amount, 8);
 });
 
 test("direct, last-trick, and positive-title hero skills follow snapshot stars", () => {
@@ -165,19 +193,19 @@ test("direct, last-trick, and positive-title hero skills follow snapshot stars",
     playerId: "p",
     playerResult: { role: "狗腿", baseGameScore: 1, evaluationTags: [] },
     trickHistory: history
-  }).amount, 6);
+  }).amount, 12);
   assert.equal(calculateHeroSkillReward({
     snapshot: createBattleHeroSnapshot("deng-huang", 4),
     playerId: "p",
     playerResult: { role: "闲家", baseGameScore: -1, evaluationTags: [] },
     trickHistory: history
-  }).amount, 4);
+  }).amount, 8);
   assert.equal(calculateHeroSkillReward({
     snapshot: createBattleHeroSnapshot("maeda-atsuko", 2),
     playerId: "p",
     playerResult: { role: "庄家", baseGameScore: 1, evaluationTags: [] },
     trickHistory: history
-  }).amount, 3);
+  }).amount, 10);
   assert.equal(calculateHeroSkillReward({
     snapshot: createBattleHeroSnapshot("watanabe-mayu", 3),
     playerId: "p",
@@ -189,7 +217,23 @@ test("direct, last-trick, and positive-title hero skills follow snapshot stars",
       ]
     },
     trickHistory: history
-  }).amount, 3);
+  }).amount, 6);
+});
+
+test("watanabe mayu caps stacked positive titles by total diamonds", () => {
+  const reward = calculateHeroSkillReward({
+    snapshot: createBattleHeroSnapshot("watanabe-mayu", 5),
+    playerId: "p",
+    playerResult: {
+      role: "闲家",
+      evaluationTags: ["mvp", "support", "precision", "god", "heaven", "exhausted", "pillar"]
+        .map((code) => ({ code }))
+    },
+    trickHistory: []
+  });
+  assert.equal(reward.matchedCount, 7);
+  assert.equal(reward.cap, 8);
+  assert.equal(reward.amount, 8);
 });
 
 test("hero migration stores home, gacha, snapshots, and hero bonus", async () => {

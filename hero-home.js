@@ -1,6 +1,6 @@
 export const HERO_HOME_RULES = Object.freeze({
   version: "2026-08-14-v3",
-  skillVersion: "2026-08-14-skill-v2",
+  skillVersion: "2026-08-14-skill-v3",
   maxProductionHours: 6,
   singlePullPrice: 30,
   tenPullPrice: 300,
@@ -27,34 +27,34 @@ export const HOME_UNITS = Object.freeze([
   Object.freeze({
     id: "jiang-zha", name: "蒋渣", shortName: "渣", type: "hero", regionId: "boka", color: "#285b93",
     cardImage: "/assets/heroes/jiang-zha-card.jpg",
-    skillName: "渣代思维", skillDescription: "最终身份为狗腿且原始最终积分为正时触发；1～5星分别额外获得2/3/4/5/6钻石。"
+    skillName: "渣代思维", skillDescription: "最终身份为狗腿且原始最终积分为正时触发；1～5星分别额外获得6/7/8/10/12钻石。"
   }),
   Object.freeze({
     id: "deng-huang", name: "灯皇", shortName: "灯", type: "hero", regionId: "boka", color: "#16858a",
     cardImage: "/assets/heroes/deng-huang-card.jpg",
-    skillName: "倒买倒卖", skillDescription: "本人赢得最后一轮时触发；1～5星分别额外获得1/2/3/4/5钻石。"
+    skillName: "倒买倒卖", skillDescription: "本人赢得最后一轮时触发；1～5星分别额外获得5/6/7/8/10钻石。"
   }),
   Object.freeze({ id: "boka-youth", name: "博卡青年", shortName: "博", type: "minion", regionId: "boka", color: "#d6a936" }),
   Object.freeze({
     id: "xiaoxu", name: "小旭", shortName: "旭", type: "hero", regionId: "brick", color: "#c45e51",
     cardImage: "/assets/heroes/xiaoxu-card.jpg",
-    skillName: "八方来财", skillDescription: "每从1名其他玩家打出的计分牌中赢得过牌分，额外获得1钻石；1～5星最多获得1/2/3/4/5钻石。"
+    skillName: "八方来财", skillDescription: "每从1名其他玩家打出的计分牌中赢得过牌分，额外获得1钻石；1～5星最多计算3/4/5/6/7名玩家，整局最多获得3/4/5/6/7钻石。"
   }),
   Object.freeze({
     id: "gelu", name: "格鲁", shortName: "格", type: "hero", regionId: "brick", color: "#7958a5",
     cardImage: "/assets/heroes/gelu-card.jpg",
-    skillName: "多劳多得", skillDescription: "个人赢墩牌分每满50分额外获得1钻石；1～5星最多获得1/2/3/4/5钻石，不计底牌与团队加分。"
+    skillName: "多劳多得", skillDescription: "个人赢墩牌分每满80分额外获得4钻石；1～5星整局最多获得4/5/6/7/8钻石，不计底牌与团队加分。"
   }),
   Object.freeze({ id: "brick-worker", name: "搬砖工", shortName: "砖", type: "minion", regionId: "brick", color: "#a67445" }),
   Object.freeze({
     id: "maeda-atsuko", name: "前田敦子", shortName: "敦", type: "hero", regionId: "stage", color: "#d25d86",
     cardImage: "/assets/heroes/maeda-atsuko-card.jpg",
-    skillName: "中心光芒", skillDescription: "本人是庄家且原始最终积分为正时触发；1～5星分别额外获得2/3/4/5/6钻石。"
+    skillName: "中心光芒", skillDescription: "本人是庄家且原始最终积分为正时触发；1～5星分别额外获得8/10/12/14/16钻石。"
   }),
   Object.freeze({
     id: "watanabe-mayu", name: "渡边麻友", shortName: "麻", type: "hero", regionId: "stage", color: "#d879b4",
     cardImage: "/assets/heroes/watanabe-mayu-card.jpg",
-    skillName: "荣誉舞台", skillDescription: "每获得1个正向称号（MVP、辅、精、神、天之上、尽、擎）额外获得1钻石；1～5星最多获得1/2/3/4/5钻石。"
+    skillName: "荣誉舞台", skillDescription: "每获得1个正向称号（MVP、辅、精、神、天之上、尽、擎）额外获得2钻石；1～5星整局最多获得4/5/6/7/8钻石。"
   }),
   Object.freeze({ id: "trainee", name: "练习生", shortName: "练", type: "minion", regionId: "stage", color: "#7197bd" })
 ]);
@@ -66,10 +66,18 @@ export const HOME_UNIT_BY_ID = new Map(HOME_UNITS.map((unit) => [unit.id, unit])
 
 const POSITIVE_TITLE_CODES = new Set(["mvp", "support", "precision", "god", "heaven", "exhausted", "pillar"]);
 const DIRECT_SKILL_REWARDS = Object.freeze({
-  "jiang-zha": Object.freeze([2, 3, 4, 5, 6]),
-  "deng-huang": Object.freeze([1, 2, 3, 4, 5]),
-  "maeda-atsuko": Object.freeze([2, 3, 4, 5, 6])
+  "jiang-zha": Object.freeze([6, 7, 8, 10, 12]),
+  "deng-huang": Object.freeze([5, 6, 7, 8, 10]),
+  "maeda-atsuko": Object.freeze([8, 10, 12, 14, 16])
 });
+const STACKED_SKILL_CAPS = Object.freeze({
+  xiaoxu: Object.freeze([3, 4, 5, 6, 7]),
+  gelu: Object.freeze([4, 5, 6, 7, 8]),
+  "watanabe-mayu": Object.freeze([4, 5, 6, 7, 8])
+});
+const GELU_POINTS_PER_TRIGGER = 80;
+const GELU_DIAMONDS_PER_TRIGGER = 4;
+const WATANABE_DIAMONDS_PER_TITLE = 2;
 
 function normalizedStars(value) {
   return Math.max(1, Math.min(5, Math.trunc(Number(value) || 1)));
@@ -194,17 +202,20 @@ export function calculateHeroSkillReward({ snapshot, playerId, playerResult, tri
         if (play?.playerId !== playerId && (play.cards || []).some(cardHasPoints)) sources.add(play.playerId);
       });
     });
-    const amount = Math.min(sources.size, stars);
-    return baseSkillResult(snapshot, sources.size, stars, amount, `从${sources.size}名其他玩家的计分牌中赢得过牌分，按${stars}星最多计${stars}人`);
+    const cap = STACKED_SKILL_CAPS.xiaoxu[stars - 1];
+    const amount = Math.min(sources.size, cap);
+    return baseSkillResult(snapshot, sources.size, cap, amount, `从${sources.size}名其他玩家的计分牌中赢得过牌分，按${stars}星最多计${cap}人`);
   }
 
   if (snapshot.heroId === "gelu") {
     const wonPoints = history
       .filter((trick) => trick?.winnerId === playerId)
       .reduce((sum, trick) => sum + (Number(trick.points) || 0), 0);
-    const matched = Math.floor(wonPoints / 50);
-    const amount = Math.min(matched, stars);
-    return baseSkillResult(snapshot, matched, stars, amount, `个人赢墩牌分${wonPoints}分，每满50分计1次，按${stars}星最多${stars}次`);
+    const matched = Math.floor(wonPoints / GELU_POINTS_PER_TRIGGER);
+    const cap = STACKED_SKILL_CAPS.gelu[stars - 1];
+    const rawAmount = matched * GELU_DIAMONDS_PER_TRIGGER;
+    const amount = Math.min(rawAmount, cap);
+    return baseSkillResult(snapshot, matched, cap, amount, `个人赢墩牌分${wonPoints}分，每满${GELU_POINTS_PER_TRIGGER}分奖励${GELU_DIAMONDS_PER_TRIGGER}钻，按${stars}星整局最多${cap}钻`);
   }
 
   if (snapshot.heroId === "jiang-zha") {
@@ -229,8 +240,10 @@ export function calculateHeroSkillReward({ snapshot, playerId, playerResult, tri
     const codes = new Set((playerResult.evaluationTags || [])
       .map((tag) => String(tag?.code || ""))
       .filter((code) => POSITIVE_TITLE_CODES.has(code)));
-    const amount = Math.min(codes.size, stars);
-    return baseSkillResult(snapshot, codes.size, stars, amount, `获得${codes.size}个白名单正向称号，按${stars}星最多计${stars}个`);
+    const cap = STACKED_SKILL_CAPS["watanabe-mayu"][stars - 1];
+    const rawAmount = codes.size * WATANABE_DIAMONDS_PER_TITLE;
+    const amount = Math.min(rawAmount, cap);
+    return baseSkillResult(snapshot, codes.size, cap, amount, `获得${codes.size}个白名单正向称号，每个奖励${WATANABE_DIAMONDS_PER_TITLE}钻，按${stars}星整局最多${cap}钻`);
   }
 
   return null;
