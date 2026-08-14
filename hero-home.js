@@ -27,34 +27,34 @@ export const HOME_UNITS = Object.freeze([
   Object.freeze({
     id: "jiang-zha", name: "蒋渣", shortName: "渣", type: "hero", regionId: "boka", color: "#285b93",
     cardImage: "/assets/heroes/jiang-zha-card.jpg",
-    skillName: "渣代思维", skillDescription: "最终身份为狗腿且原始最终积分为正时，按星级追加钻石。"
+    skillName: "渣代思维", skillDescription: "最终身份为狗腿且原始最终积分为正时触发；1～5星分别额外获得2/3/4/5/6钻石。"
   }),
   Object.freeze({
     id: "deng-huang", name: "灯皇", shortName: "灯", type: "hero", regionId: "boka", color: "#16858a",
     cardImage: "/assets/heroes/deng-huang-card.jpg",
-    skillName: "倒买倒卖", skillDescription: "本人赢得最后一轮时，按星级追加钻石。"
+    skillName: "倒买倒卖", skillDescription: "本人赢得最后一轮时触发；1～5星分别额外获得1/2/3/4/5钻石。"
   }),
   Object.freeze({ id: "boka-youth", name: "博卡青年", shortName: "博", type: "minion", regionId: "boka", color: "#d6a936" }),
   Object.freeze({
     id: "xiaoxu", name: "小旭", shortName: "旭", type: "hero", regionId: "brick", color: "#c45e51",
     cardImage: "/assets/heroes/xiaoxu-card.jpg",
-    skillName: "八方来财", skillDescription: "从不同其他玩家打出的计分牌中赢得牌分时，每个来源追加1钻。"
+    skillName: "八方来财", skillDescription: "每从1名其他玩家打出的计分牌中赢得过牌分，额外获得1钻石；1～5星最多获得1/2/3/4/5钻石。"
   }),
   Object.freeze({
     id: "gelu", name: "格鲁", shortName: "格", type: "hero", regionId: "brick", color: "#7958a5",
     cardImage: "/assets/heroes/gelu-card.jpg",
-    skillName: "多劳多得", skillDescription: "个人赢墩牌分每满50分追加1钻。"
+    skillName: "多劳多得", skillDescription: "个人赢墩牌分每满50分额外获得1钻石；1～5星最多获得1/2/3/4/5钻石，不计底牌与团队加分。"
   }),
   Object.freeze({ id: "brick-worker", name: "搬砖工", shortName: "砖", type: "minion", regionId: "brick", color: "#a67445" }),
   Object.freeze({
     id: "maeda-atsuko", name: "前田敦子", shortName: "敦", type: "hero", regionId: "stage", color: "#d25d86",
     cardImage: "/assets/heroes/maeda-atsuko-card.jpg",
-    skillName: "中心光芒", skillDescription: "本人是庄家且原始最终积分为正时，按星级追加钻石。"
+    skillName: "中心光芒", skillDescription: "本人是庄家且原始最终积分为正时触发；1～5星分别额外获得2/3/4/5/6钻石。"
   }),
   Object.freeze({
     id: "watanabe-mayu", name: "渡边麻友", shortName: "麻", type: "hero", regionId: "stage", color: "#d879b4",
     cardImage: "/assets/heroes/watanabe-mayu-card.jpg",
-    skillName: "荣誉舞台", skillDescription: "每个白名单正向称号追加1钻，按星级封顶。"
+    skillName: "荣誉舞台", skillDescription: "每获得1个正向称号（MVP、辅、精、神、天之上、尽、擎）额外获得1钻石；1～5星最多获得1/2/3/4/5钻石。"
   }),
   Object.freeze({ id: "trainee", name: "练习生", shortName: "练", type: "minion", regionId: "stage", color: "#7197bd" })
 ]);

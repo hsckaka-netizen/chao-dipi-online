@@ -9,6 +9,7 @@ import {
   drawHomeUnit,
   freeHeroPullState,
   heroGachaCharge,
+  HOME_UNIT_BY_ID,
   previewHomeRegion,
   starUpgradeCost,
   unitProductionRate
@@ -80,6 +81,38 @@ test("boka roster uses jiang zha and deng huang with the supplied card identitie
   assert.equal(dengHuang.cardImage, "/assets/heroes/deng-huang-card.jpg");
   assert.equal(createBattleHeroSnapshot("zhao-yun", 1), null);
   assert.equal(createBattleHeroSnapshot("lin-chong", 1), null);
+});
+
+test("all hero skill descriptions expose concrete per-star diamond values", () => {
+  const expectedValues = {
+    "jiang-zha": "2/3/4/5/6",
+    "deng-huang": "1/2/3/4/5",
+    xiaoxu: "1/2/3/4/5",
+    gelu: "1/2/3/4/5",
+    "maeda-atsuko": "2/3/4/5/6",
+    "watanabe-mayu": "1/2/3/4/5"
+  };
+  Object.entries(expectedValues).forEach(([unitId, values]) => {
+    const description = HOME_UNIT_BY_ID.get(unitId)?.skillDescription || "";
+    assert.match(description, new RegExp(values.replaceAll("/", "\\/")));
+    assert.match(description, /钻石/);
+  });
+});
+
+test("home UI renders full hero cards and a large skill preview", async () => {
+  const appSource = await readFile(
+    fileURLToPath(new URL("../public/app.js", import.meta.url)),
+    "utf8"
+  );
+  const styleSource = await readFile(
+    fileURLToPath(new URL("../public/styles.css", import.meta.url)),
+    "utf8"
+  );
+  assert.match(appSource, /data-action="open-hero-card-preview"/);
+  assert.match(appSource, /点击查看大图与技能/);
+  assert.match(appSource, /hero-card-preview-skill/);
+  assert.match(styleSource, /\.home-hero-card-art[\s\S]*aspect-ratio:\s*707\s*\/\s*1000/);
+  assert.match(styleSource, /\.hero-card-preview-modal/);
 });
 
 test("xiaoxu counts distinct other scoring-card sources and excludes self", () => {

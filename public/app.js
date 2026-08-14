@@ -153,6 +153,7 @@ let heroHomeState = null;
 let heroHomeLoading = false;
 let heroHomeAccountId = "";
 let heroActionInFlight = "";
+let heroCardPreviewUnitId = "";
 let heroGachaResults = [];
 let itemUseInFlight = "";
 let adminData = null;
@@ -4057,6 +4058,36 @@ function heroUnitBadge(unit, size = "normal") {
   return `<span class="hero-unit-badge ${size}" style="--hero-color:${escapeHtml(color)}" title="${escapeHtml(unit.name)}">${heroCardArtwork(unit, "hero-unit-badge-art") || `<b>${escapeHtml(unit.shortName || unit.name?.slice(0, 1) || "英")}</b>`}</span>`;
 }
 
+function renderHeroCardPreview(unit) {
+  if (!unit?.cardImage) return "";
+  const owned = ownedHeroUnit(unit.id);
+  return `
+    <div class="modal-backdrop hero-card-preview-backdrop">
+      <section class="modal-card hero-card-preview-modal" role="dialog" aria-modal="true" aria-label="${escapeHtml(`${unit.name}英雄卡详情`)}">
+        <div class="section-head">
+          <div>
+            <span class="eyebrow">HERO CARD</span>
+            <h2>${escapeHtml(unit.name)}</h2>
+          </div>
+          <button type="button" class="secondary compact-button" data-action="close-hero-card-preview">关闭</button>
+        </div>
+        <div class="hero-card-preview-layout">
+          ${heroCardArtwork(unit, "hero-card-preview-art")}
+          <div class="hero-card-preview-copy">
+            ${owned ? heroStars(owned.stars) : `<span class="hero-locked-label">未获得</span>`}
+            <div class="hero-card-preview-skill">
+              <span>英雄技能</span>
+              <h3>${escapeHtml(unit.skillName || "暂无技能")}</h3>
+              <p>${escapeHtml(unit.skillDescription || "暂无技能说明")}</p>
+            </div>
+            <p class="meta">英雄出战不影响家园钻石产出；正式发牌时锁定当局英雄、星级和技能版本。</p>
+          </div>
+        </div>
+      </section>
+    </div>
+  `;
+}
+
 function renderBattleHeroMark(snapshot, compact = false) {
   if (!snapshot) return "";
   return `
@@ -4098,13 +4129,29 @@ function renderHomeRegionCard(region) {
         <div><h3>${escapeHtml(region.name)}</h3><span>单槽 · 最多累计6小时</span></div>
         ${battle ? `<span class="tag good">出战中</span>` : ""}
       </header>
-      <div class="home-region-worker ${placed ? "occupied" : "empty"}">
-        ${heroUnitBadge(placed, "large")}
-        <div>
-          <strong>${escapeHtml(placed?.name || "尚未派驻")}</strong>
-          ${placed ? heroStars(placed.stars) : `<span class="meta">空槽不产出钻石</span>`}
-          ${placed ? `<span class="meta">每小时 ${escapeHtml(region.ratePerHour)} 钻石</span>` : ""}
-        </div>
+      <div class="home-region-worker ${placed ? "occupied" : "empty"} ${placed?.cardImage ? "hero-card-worker" : ""}">
+        ${placed?.cardImage ? `
+          <button type="button" class="home-hero-card-button" data-action="open-hero-card-preview" data-unit-id="${escapeHtml(placed.id)}" aria-label="查看${escapeHtml(placed.name)}卡牌大图与技能">
+            ${heroCardArtwork(placed, "home-hero-card-art")}
+            <span>点击查看大图与技能</span>
+          </button>
+          <div class="home-region-card-copy">
+            <strong>${escapeHtml(placed.name)}</strong>
+            ${heroStars(placed.stars)}
+            <span class="meta">每小时 ${escapeHtml(region.ratePerHour)} 钻石</span>
+            <div class="home-region-skill">
+              <b>${escapeHtml(placed.skillName)}</b>
+              <p>${escapeHtml(placed.skillDescription)}</p>
+            </div>
+          </div>
+        ` : `
+          ${heroUnitBadge(placed, "large")}
+          <div>
+            <strong>${escapeHtml(placed?.name || "尚未派驻")}</strong>
+            ${placed ? heroStars(placed.stars) : `<span class="meta">空槽不产出钻石</span>`}
+            ${placed ? `<span class="meta">每小时 ${escapeHtml(region.ratePerHour)} 钻石</span>` : ""}
+          </div>
+        `}
       </div>
       <div class="home-production">
         <div class="home-production-head"><span>已生产 ${Number(region.productionValue || 0).toFixed(2)} 💎</span><b>${Number(region.productionHours || 0).toFixed(1)} / 6小时</b></div>
@@ -4157,6 +4204,7 @@ function renderHeroHomePage() {
       <strong>生产规则</strong>
       <span>英雄每小时产出随星级为3/4/5/6/7，小兵为1/1.25/1.5/1.75/2。领取只发整数，小数继续留在对应区域；更换或移除会先自动领取旧产出。</span>
     </section>
+    ${renderHeroCardPreview(heroUnitById(heroCardPreviewUnitId))}
   `);
 }
 
@@ -7732,16 +7780,31 @@ document.addEventListener("click", (event) => {
   if (action === "show-hero-home") {
     homeView = "hero-home";
     homeJoinOpen = false;
+    heroCardPreviewUnitId = "";
     render();
   }
   if (action === "show-hero-catalog") {
     homeView = "hero-catalog";
     homeJoinOpen = false;
+    heroCardPreviewUnitId = "";
     render();
   }
   if (action === "show-hero-gacha") {
     homeView = "hero-gacha";
     homeJoinOpen = false;
+    heroCardPreviewUnitId = "";
+    render();
+  }
+  if (action === "open-hero-card-preview") {
+    const unitId = event.target.closest("[data-unit-id]")?.dataset.unitId || "";
+    const unit = heroUnitById(unitId);
+    if (unit?.cardImage) {
+      heroCardPreviewUnitId = unit.id;
+      render();
+    }
+  }
+  if (action === "close-hero-card-preview") {
+    heroCardPreviewUnitId = "";
     render();
   }
   if (action === "show-admin") {
