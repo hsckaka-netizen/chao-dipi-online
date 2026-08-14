@@ -1,6 +1,6 @@
 export const HERO_HOME_RULES = Object.freeze({
   version: "2026-08-14-v3",
-  skillVersion: "2026-08-14-skill-v3",
+  skillVersion: "2026-08-14-skill-v4",
   maxProductionHours: 6,
   singlePullPrice: 30,
   tenPullPrice: 300,
@@ -43,7 +43,7 @@ export const HOME_UNITS = Object.freeze([
   Object.freeze({
     id: "gelu", name: "格鲁", shortName: "格", type: "hero", regionId: "brick", color: "#7958a5",
     cardImage: "/assets/heroes/gelu-card.jpg",
-    skillName: "多劳多得", skillDescription: "1～5星时，个人赢墩牌分每满100/90/80/70/60分额外获得2钻石；整局最多触发2/2/3/3/4次，最多获得4/4/6/6/8钻石，不计底牌与团队加分。"
+    skillName: "多劳多得", skillDescription: "1～5星时，个人赢墩牌分每满100/90/80/70/60分额外获得2钻石，触发次数和单局奖励均无上限；不计底牌与团队加分。"
   }),
   Object.freeze({ id: "brick-worker", name: "搬砖工", shortName: "砖", type: "minion", regionId: "brick", color: "#a67445" }),
   Object.freeze({
@@ -75,7 +75,6 @@ const STACKED_SKILL_CAPS = Object.freeze({
   "watanabe-mayu": Object.freeze([4, 5, 6, 7, 8])
 });
 const GELU_POINTS_PER_TRIGGER = Object.freeze([100, 90, 80, 70, 60]);
-const GELU_TRIGGER_CAPS = Object.freeze([2, 2, 3, 3, 4]);
 const GELU_DIAMONDS_PER_TRIGGER = 2;
 const WATANABE_DIAMONDS_PER_TITLE = 2;
 
@@ -184,7 +183,7 @@ function baseSkillResult(snapshot, matched, cap, amount, detail) {
     skillName: snapshot.skillName,
     matched: Boolean(matched),
     matchedCount: Math.max(0, Number(matched) || 0),
-    cap: Math.max(0, Number(cap) || 0),
+    cap: cap == null ? null : Math.max(0, Number(cap) || 0),
     amount: Math.max(0, Number(amount) || 0),
     detail: String(detail || "")
   };
@@ -213,10 +212,8 @@ export function calculateHeroSkillReward({ snapshot, playerId, playerResult, tri
       .reduce((sum, trick) => sum + (Number(trick.points) || 0), 0);
     const pointsPerTrigger = GELU_POINTS_PER_TRIGGER[stars - 1];
     const matched = Math.floor(wonPoints / pointsPerTrigger);
-    const triggerCap = GELU_TRIGGER_CAPS[stars - 1];
-    const paidTriggers = Math.min(matched, triggerCap);
-    const amount = paidTriggers * GELU_DIAMONDS_PER_TRIGGER;
-    return baseSkillResult(snapshot, matched, triggerCap, amount, `个人赢墩牌分${wonPoints}分，每满${pointsPerTrigger}分奖励${GELU_DIAMONDS_PER_TRIGGER}钻，按${stars}星整局最多触发${triggerCap}次、奖励${triggerCap * GELU_DIAMONDS_PER_TRIGGER}钻`);
+    const amount = matched * GELU_DIAMONDS_PER_TRIGGER;
+    return baseSkillResult(snapshot, matched, null, amount, `个人赢墩牌分${wonPoints}分，每满${pointsPerTrigger}分奖励${GELU_DIAMONDS_PER_TRIGGER}钻，共触发${matched}次，无次数和奖励上限`);
   }
 
   if (snapshot.heroId === "jiang-zha") {

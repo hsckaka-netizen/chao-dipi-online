@@ -170,11 +170,12 @@ test("gelu uses the star score threshold and rewards two diamonds per trigger", 
     ]
   });
   assert.equal(reward.matchedCount, 1);
-  assert.equal(reward.cap, 3);
+  assert.equal(reward.cap, null);
   assert.equal(reward.amount, 2);
+  assert.equal(reward.rulesVersion, "2026-08-14-skill-v4");
 });
 
-test("gelu caps high scores at four triggers and eight diamonds at five stars", () => {
+test("gelu has no trigger or diamond cap at five stars", () => {
   const reward = calculateHeroSkillReward({
     snapshot: createBattleHeroSnapshot("gelu", 5),
     playerId: "gelu-player",
@@ -182,14 +183,13 @@ test("gelu caps high scores at four triggers and eight diamonds at five stars", 
     trickHistory: [{ winnerId: "gelu-player", points: 400, plays: [] }]
   });
   assert.equal(reward.matchedCount, 6);
-  assert.equal(reward.cap, 4);
-  assert.equal(reward.amount, 8);
+  assert.equal(reward.cap, null);
+  assert.equal(reward.amount, 12);
+  assert.match(reward.detail, /无次数和奖励上限/);
 });
 
 test("gelu improves the score threshold at every star and keeps integer trigger rewards", () => {
   const thresholds = [100, 90, 80, 70, 60];
-  const triggerCaps = [2, 2, 3, 3, 4];
-  const maximumAmounts = [4, 4, 6, 6, 8];
   thresholds.forEach((threshold, index) => {
     const stars = index + 1;
     const oneTrigger = calculateHeroSkillReward({
@@ -198,15 +198,16 @@ test("gelu improves the score threshold at every star and keeps integer trigger 
       playerResult: { playerId: "gelu-player", evaluationTags: [] },
       trickHistory: [{ winnerId: "gelu-player", points: threshold, plays: [] }]
     });
-    const capped = calculateHeroSkillReward({
+    const repeated = calculateHeroSkillReward({
       snapshot: createBattleHeroSnapshot("gelu", stars),
       playerId: "gelu-player",
       playerResult: { playerId: "gelu-player", evaluationTags: [] },
-      trickHistory: [{ winnerId: "gelu-player", points: threshold * (triggerCaps[index] + 2), plays: [] }]
+      trickHistory: [{ winnerId: "gelu-player", points: threshold * 7, plays: [] }]
     });
     assert.equal(oneTrigger.amount, 2);
-    assert.equal(capped.cap, triggerCaps[index]);
-    assert.equal(capped.amount, maximumAmounts[index]);
+    assert.equal(repeated.matchedCount, 7);
+    assert.equal(repeated.cap, null);
+    assert.equal(repeated.amount, 14);
   });
 });
 
