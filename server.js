@@ -25,6 +25,7 @@ import {
   validateUsername
 } from "./account-auth.js";
 import { buildGameEvaluations, finalScoreWinnerTeam } from "./game-evaluations.js";
+import { removeSpectatorsForAccount, roomPlayerForAccount } from "./room-identities.js";
 import {
   draggedFiveActorId,
   forcedProtectedFiveIds
@@ -1780,6 +1781,12 @@ function disconnectSpectatorClients(room, spectatorId) {
     client.res.end();
     room.clients.delete(client);
   }
+}
+
+function clearSpectatorIdentityForAccount(room, accountId) {
+  return removeSpectatorsForAccount(room, accountId, (spectator) => {
+    disconnectSpectatorClients(room, spectator.id);
+  });
 }
 
 function disconnectAllRoomClients(room, messageText) {
@@ -5237,7 +5244,11 @@ async function handleApi(req, res, pathParts, url) {
       if (accountAuthStatus().configured && !spectatorAccount) {
         return writeJson(res, 401, { error: "请先登录账号再观战" });
       }
+      if (spectatorAccount && roomPlayerForAccount(room, spectatorAccount.id)) {
+        return writeJson(res, 409, { error: "你已经是本房间玩家，请返回牌桌" });
+      }
       const spectatorProfile = spectatorAccount?.profileId ? profileForId(spectatorAccount.profileId) : null;
+      clearSpectatorIdentityForAccount(room, spectatorAccount?.id);
       const spectator = {
         id: id(9),
         token: id(18),
@@ -5281,6 +5292,8 @@ async function handleApi(req, res, pathParts, url) {
           return writeJson(res, 409, { error: "这个玩家已经在房间里" });
         }
         if (joiningAccount) existingPlayer.accountId = joiningAccount.id;
+        const removedSpectators = clearSpectatorIdentityForAccount(room, existingPlayer.accountId);
+        if (removedSpectators.length) broadcast(room);
         return writeJson(res, 200, {
           roomId: room.id,
           playerId: existingPlayer.id,
@@ -5298,6 +5311,7 @@ async function handleApi(req, res, pathParts, url) {
         player.ready = true;
       }
       room.players.push(player);
+      clearSpectatorIdentityForAccount(room, player.accountId);
       syncLobbyDoglegCount(room);
       addEvent(room, `${profile.name} 加入了房间`);
       finalizeNextRoundLobby(room);
