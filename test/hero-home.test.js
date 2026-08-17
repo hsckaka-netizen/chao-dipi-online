@@ -49,25 +49,29 @@ test("first-pull guarantee selection can prefer an unowned hero", () => {
   assert.equal(drawn.id, "watanabe-mayu");
 });
 
-test("free single pull starts available and refreshes 24 hours after use", () => {
+test("free single pull refreshes at 06:00 Beijing time every day", () => {
   assert.deepEqual(freeHeroPullState(null, "2026-08-14T00:00:00.000Z"), {
     available: true,
-    nextFreePullAt: null
+    nextFreePullAt: "2026-08-14T22:00:00.000Z"
   });
   assert.deepEqual(
-    freeHeroPullState("2026-08-14T00:00:00.000Z", "2026-08-14T23:59:59.000Z"),
-    { available: false, nextFreePullAt: "2026-08-15T00:00:00.000Z" }
+    freeHeroPullState("2026-08-14T10:00:00.000Z", "2026-08-14T21:59:59.000Z"),
+    { available: false, nextFreePullAt: "2026-08-14T22:00:00.000Z" }
   );
   assert.deepEqual(
-    freeHeroPullState("2026-08-14T00:00:00.000Z", "2026-08-15T00:00:00.000Z"),
-    { available: true, nextFreePullAt: null }
+    freeHeroPullState("2026-08-14T10:00:00.000Z", "2026-08-14T22:00:00.000Z"),
+    { available: true, nextFreePullAt: "2026-08-15T22:00:00.000Z" }
+  );
+  assert.deepEqual(
+    freeHeroPullState("2026-08-14T22:00:00.000Z", "2026-08-14T22:00:00.000Z"),
+    { available: false, nextFreePullAt: "2026-08-15T22:00:00.000Z" }
   );
 });
 
-test("free pull applies only to a single draw and never discounts ten draws", () => {
+test("free pull applies only to a single draw and ten draws cost 10 percent less", () => {
   assert.deepEqual(heroGachaCharge(1, true), { price: 0, freePullUsed: true });
   assert.deepEqual(heroGachaCharge(1, false), { price: 30, freePullUsed: false });
-  assert.deepEqual(heroGachaCharge(10, true), { price: 300, freePullUsed: false });
+  assert.deepEqual(heroGachaCharge(10, true), { price: 270, freePullUsed: false });
 });
 
 test("boka roster uses jiang zha and deng huang with the supplied card identities", () => {
@@ -75,6 +79,7 @@ test("boka roster uses jiang zha and deng huang with the supplied card identitie
   const dengHuang = createBattleHeroSnapshot("deng-huang", 2);
   assert.equal(jiangZha.name, "蒋渣");
   assert.equal(jiangZha.skillName, "渣代思维");
+  assert.match(jiangZha.skillDescription, /狗腿/);
   assert.equal(jiangZha.cardImage, "/assets/heroes/jiang-zha-card.jpg");
   assert.equal(dengHuang.name, "灯皇");
   assert.equal(dengHuang.skillName, "倒买倒卖");
@@ -113,6 +118,26 @@ test("home UI renders full hero cards and a large skill preview", async () => {
   assert.match(appSource, /hero-card-preview-skill/);
   assert.match(styleSource, /\.home-hero-card-art[\s\S]*aspect-ratio:\s*707\s*\/\s*1000/);
   assert.match(styleSource, /\.hero-card-preview-modal/);
+});
+
+test("gacha and table UI expose the daily refresh, discount, stable hero art, and skill dialog", async () => {
+  const appSource = await readFile(
+    fileURLToPath(new URL("../public/app.js", import.meta.url)),
+    "utf8"
+  );
+  const styleSource = await readFile(
+    fileURLToPath(new URL("../public/styles.css", import.meta.url)),
+    "utf8"
+  );
+  assert.match(appSource, /data-hero-free-pull-countdown/);
+  assert.match(appSource, /北京时间 06:00 更新/);
+  assert.match(appSource, /十连 · \$\{tenPullPrice\}💎 <small>9折<\/small>/);
+  assert.match(appSource, /data-action="open-battle-hero-preview"/);
+  assert.match(appSource, /data-persistent-hero-image/);
+  assert.match(appSource, /app\.replaceChildren\(nextShell\.content\)/);
+  assert.match(appSource, /snapshot\.skillDescription/);
+  assert.match(styleSource, /\.battle-hero-mark:hover/);
+  assert.match(styleSource, /\.gacha-free-pull-status time/);
 });
 
 test("xiaoxu counts distinct other scoring-card sources and excludes self", () => {

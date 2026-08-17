@@ -95,6 +95,7 @@ let scoreBidAutoPassTimer = null;
 let setupCountdownRenderTimer = null;
 let setupCountdownRenderKey = "";
 let setupCountdownExpiredSyncKey = "";
+let heroFreePullCountdownTimer = null;
 let throwRevealTimer = null;
 let gameplayEffectTimer = null;
 let doglegRevealEffects = [];
@@ -155,6 +156,7 @@ let heroHomeAccountId = "";
 let heroActionInFlight = "";
 let heroCardPreviewUnitId = "";
 let heroGachaResults = [];
+let battleHeroPreviewPlayerId = "";
 let itemUseInFlight = "";
 let adminData = null;
 let adminDataLoading = false;
@@ -3219,6 +3221,27 @@ function lobbyEmptyText(waitingNextRound) {
   return "房主开始后，这里会显示你的 53 张手牌。";
 }
 
+function capturePersistentHeroImages() {
+  const images = new Map();
+  app.querySelectorAll("img[data-persistent-hero-image]").forEach((image) => {
+    const key = image.dataset.persistentHeroImage;
+    if (!key) return;
+    const queue = images.get(key) || [];
+    queue.push(image);
+    images.set(key, queue);
+  });
+  return images;
+}
+
+function restorePersistentHeroImages(images, root = app) {
+  root.querySelectorAll("img[data-persistent-hero-image]").forEach((placeholder) => {
+    const queue = images.get(placeholder.dataset.persistentHeroImage) || [];
+    const existing = queue.shift();
+    if (!existing || existing.getAttribute("src") !== placeholder.getAttribute("src")) return;
+    placeholder.replaceWith(existing);
+  });
+}
+
 function renderShell(content) {
   const account = authState.account;
   const gameView = Boolean(state && state.stage !== "lobby");
@@ -3231,7 +3254,9 @@ function renderShell(content) {
       { top: element.scrollTop, left: element.scrollLeft }
     ])
   );
-  app.innerHTML = `
+  const persistentHeroImages = capturePersistentHeroImages();
+  const nextShell = document.createElement("template");
+  nextShell.innerHTML = `
     <div class="page ${gameView ? "game-page" : ""}">
       <header class="topbar ${gameView ? "game-topbar" : ""}">
         <div class="brand">
@@ -3256,12 +3281,15 @@ function renderShell(content) {
       ${content}
     </div>
   `;
+  restorePersistentHeroImages(persistentHeroImages, nextShell.content);
+  app.replaceChildren(nextShell.content);
   app.querySelectorAll("[data-preserve-scroll]").forEach((element) => {
     const position = preservedScroll.get(element.dataset.preserveScroll);
     if (!position) return;
     element.scrollTop = position.top;
     element.scrollLeft = position.left;
   });
+  updateHeroFreePullCountdown();
 }
 
 function renderHome() {
@@ -4047,9 +4075,12 @@ function heroStars(stars) {
   return `<span class="hero-stars" aria-label="${count}星">${"★".repeat(count)}${"☆".repeat(5 - count)}</span>`;
 }
 
-function heroCardArtwork(unit, className = "") {
+function heroCardArtwork(unit, className = "", persistentKey = "") {
   if (!unit?.cardImage) return "";
-  return `<img class="hero-card-art ${escapeHtml(className)}" src="${escapeHtml(versionedAssetUrl(unit.cardImage))}" alt="${escapeHtml(unit.name)}英雄卡面" loading="lazy" decoding="async">`;
+  const persistentAttribute = persistentKey
+    ? ` data-persistent-hero-image="${escapeHtml(persistentKey)}"`
+    : "";
+  return `<img class="hero-card-art ${escapeHtml(className)}" src="${escapeHtml(versionedAssetUrl(unit.cardImage))}" alt="${escapeHtml(unit.name)}英雄卡面" loading="lazy" decoding="async"${persistentAttribute}>`;
 }
 
 function heroUnitBadge(unit, size = "normal") {
@@ -4088,14 +4119,50 @@ function renderHeroCardPreview(unit) {
   `;
 }
 
-function renderBattleHeroMark(snapshot, compact = false) {
+function renderBattleHeroMark(snapshot, compact = false, playerId = "") {
   if (!snapshot) return "";
+  const imageKey = `battle:${playerId || "unknown"}:${snapshot.heroId || snapshot.name}:${compact ? "compact" : "full"}`;
   return `
-    <span class="battle-hero-mark ${compact ? "compact" : ""}" style="--hero-color:${escapeHtml(snapshot.color || "#527b70")}" title="${escapeHtml(`${snapshot.name} · ${snapshot.skillName} · ${snapshot.stars}星`)}">
-      ${heroCardArtwork(snapshot, "battle-hero-art") || `<b>${escapeHtml(snapshot.shortName || snapshot.name?.slice(0, 1) || "英")}</b>`}
+    <button type="button" class="battle-hero-mark ${compact ? "compact" : ""}" style="--hero-color:${escapeHtml(snapshot.color || "#527b70")}" title="${escapeHtml(`${snapshot.name} · ${snapshot.skillName} · ${snapshot.stars}星 · 点击查看详情`)}" aria-label="${escapeHtml(`查看${snapshot.name}英雄图片和技能`)}" data-action="open-battle-hero-preview" data-player-id="${escapeHtml(playerId)}">
+      ${heroCardArtwork(snapshot, "battle-hero-art", imageKey) || `<b>${escapeHtml(snapshot.shortName || snapshot.name?.slice(0, 1) || "英")}</b>`}
       <span>${escapeHtml(snapshot.name)}</span>
       <i>${"★".repeat(Math.max(1, Math.min(5, Number(snapshot.stars) || 1)))}</i>
-    </span>
+    </button>
+  `;
+}
+
+function battleHeroSnapshotForPlayer(playerId) {
+  return state?.players?.find((player) => player.id === playerId)?.battleHeroSnapshot || null;
+}
+
+function renderBattleHeroPreview() {
+  const snapshot = battleHeroSnapshotForPlayer(battleHeroPreviewPlayerId);
+  if (!snapshot) return "";
+  return `
+    <div class="modal-backdrop hero-card-preview-backdrop">
+      <section class="modal-card hero-card-preview-modal" role="dialog" aria-modal="true" aria-label="${escapeHtml(`${snapshot.name}英雄详情`)}">
+        <div class="section-head">
+          <div>
+            <span class="eyebrow">BATTLE HERO</span>
+            <h2>${escapeHtml(snapshot.name)}</h2>
+          </div>
+          <button type="button" class="secondary compact-button" data-action="close-dialog">关闭</button>
+        </div>
+        <div class="hero-card-preview-layout">
+          ${heroCardArtwork(snapshot, "hero-card-preview-art")}
+          <div class="hero-card-preview-copy">
+            ${heroStars(snapshot.stars)}
+            <span class="tag good">本局锁定 ${escapeHtml(snapshot.stars)} 星</span>
+            <div class="hero-card-preview-skill">
+              <span>英雄技能</span>
+              <h3>${escapeHtml(snapshot.skillName || "暂无技能")}</h3>
+              <p>${escapeHtml(snapshot.skillDescription || "本局快照未保存技能说明，请在英雄图鉴查看完整规则。")}</p>
+            </div>
+            <p class="meta">本局已锁定该英雄、星级和技能版本；局中调整只会影响下一局。</p>
+          </div>
+        </div>
+      </section>
+    </div>
   `;
 }
 
@@ -4262,6 +4329,35 @@ function renderGachaResult(result) {
   `;
 }
 
+function heroFreePullCountdownText(deadlineAt) {
+  const remainingSeconds = Math.max(0, Math.ceil((new Date(deadlineAt).getTime() - Date.now()) / 1000));
+  if (!Number.isFinite(remainingSeconds)) return "--:--:--";
+  const hours = Math.floor(remainingSeconds / 3600);
+  const minutes = Math.floor(remainingSeconds % 3600 / 60);
+  const seconds = remainingSeconds % 60;
+  return [hours, minutes, seconds].map((value) => String(value).padStart(2, "0")).join(":");
+}
+
+function updateHeroFreePullCountdown() {
+  if (heroFreePullCountdownTimer) window.clearTimeout(heroFreePullCountdownTimer);
+  heroFreePullCountdownTimer = null;
+  const countdown = document.querySelector("[data-hero-free-pull-countdown]");
+  if (!countdown) return;
+  const deadlineAt = countdown.dataset.deadlineAt || "";
+  const remainingMs = new Date(deadlineAt).getTime() - Date.now();
+  if (!Number.isFinite(remainingMs)) {
+    countdown.textContent = "--:--:--";
+    return;
+  }
+  if (remainingMs <= 0) {
+    countdown.textContent = "正在更新…";
+    ensureHeroHomeState(true);
+    return;
+  }
+  countdown.textContent = heroFreePullCountdownText(deadlineAt);
+  heroFreePullCountdownTimer = window.setTimeout(updateHeroFreePullCountdown, Math.min(1000, remainingMs));
+}
+
 function renderHeroGachaPage() {
   if (authState.account?.role !== "player") {
     homeView = "login";
@@ -4270,7 +4366,10 @@ function renderHeroGachaPage() {
   ensureHeroHomeState();
   if (!heroHomeState || heroHomeState.unavailable) return renderHeroLoadingPage("hero-gacha");
   const freePullAvailable = Boolean(heroHomeState.freePullAvailable);
-  const singlePullDisabled = heroActionInFlight || (!freePullAvailable && Number(heroHomeState.balance || 0) < 30);
+  const singlePullPrice = Number(heroHomeState.rules?.singlePullPrice) || 30;
+  const tenPullPrice = Number(heroHomeState.rules?.tenPullPrice) || 270;
+  const singlePullDisabled = heroActionInFlight || (!freePullAvailable && Number(heroHomeState.balance || 0) < singlePullPrice);
+  const nextFreePullAt = heroHomeState.nextFreePullAt || "";
   renderShell(`
     ${renderHeroSectionNav("hero-gacha")}
     <section class="panel hero-gacha-hero">
@@ -4279,13 +4378,13 @@ function renderHeroGachaPage() {
         <span><small>当前钻石</small><b>💎 ${escapeHtml(heroHomeState.balance || 0)}</b></span>
         <span><small>50抽保底</small><b>还剩 ${escapeHtml(heroHomeState.pityRemaining)} 抽</b></span>
         <span><small>首次抽卡</small><b>${heroHomeState.firstPullGuaranteed ? "必得英雄" : "已使用"}</b></span>
-        <span><small>免费单抽</small><b>${freePullAvailable ? "现在可用" : `${escapeHtml(fmtDateTime(heroHomeState.nextFreePullAt))} 恢复`}</b></span>
+        <span class="gacha-free-pull-status"><small>免费单抽</small><b>${freePullAvailable ? "现在可用" : "今日已使用"}</b><em>距北京时间 06:00 更新 <time data-hero-free-pull-countdown data-deadline-at="${escapeHtml(nextFreePullAt)}">${escapeHtml(heroFreePullCountdownText(nextFreePullAt))}</time></em></span>
       </div>
       <div class="gacha-actions">
-        <button type="button" data-action="pull-hero-gacha" data-pull-count="1" ${singlePullDisabled ? "disabled" : ""}>${freePullAvailable ? "免费单抽" : "单抽 · 30💎"}</button>
-        <button type="button" class="accent" data-action="pull-hero-gacha" data-pull-count="10" ${heroActionInFlight || Number(heroHomeState.balance || 0) < 300 ? "disabled" : ""}>十连 · 300💎</button>
+        <button type="button" data-action="pull-hero-gacha" data-pull-count="1" ${singlePullDisabled ? "disabled" : ""}>${freePullAvailable ? "免费单抽" : `单抽 · ${singlePullPrice}💎`}</button>
+        <button type="button" class="accent" data-action="pull-hero-gacha" data-pull-count="10" ${heroActionInFlight || Number(heroHomeState.balance || 0) < tenPullPrice ? "disabled" : ""}>十连 · ${tenPullPrice}💎 <small>9折</small></button>
       </div>
-      <div class="gacha-probability"><span>英雄 10%</span><span>小兵 90%</span><span>首次抽卡必出英雄</span><span>第50抽必出英雄</span><span>免费单抽每24小时恢复</span></div>
+      <div class="gacha-probability"><span>英雄 10%</span><span>小兵 90%</span><span>首次抽卡必出英雄</span><span>第50抽必出英雄</span><span>十连固定9折</span><span>免费单抽每天北京时间6点更新</span></div>
     </section>
     ${heroGachaResults.length ? `<section class="panel stack"><div class="section-head"><div><h2>本次结果</h2><div class="meta">抽卡结果已由服务端入账</div></div></div><div class="gacha-result-grid">${heroGachaResults.map(renderGachaResult).join("")}</div></section>` : `<section class="panel"><div class="empty">抽卡结果会显示在这里</div></section>`}
   `);
@@ -5560,6 +5659,12 @@ function temporarilyDismissActionDialog(delay = 900) {
 
 function renderActiveDialog() {
   if (activeDialog === "items" && (!state.gameItems?.canUse || isSpectating())) activeDialog = null;
+  if (activeDialog === "battle-hero") {
+    const preview = renderBattleHeroPreview();
+    if (preview) return preview;
+    activeDialog = null;
+    battleHeroPreviewPlayerId = "";
+  }
   if (activeDialog === "bid" && viewerCanBid()) return renderBidFryDialog("bid");
   if (activeDialog === "fry" && viewerCanFry()) return renderBidFryDialog("fry");
   if (activeDialog === "room-action-confirm" && pendingRoomAction) return renderRoomActionConfirmDialog();
@@ -6371,7 +6476,7 @@ function renderSeatHand(action, play, trick, index, options = {}) {
             ${renderPlayerHistoryMini(play.playerId, { overlay: true })}
           </div>
           <div class="seat-hand-profile-copy">
-            ${renderBattleHeroMark(play.battleHeroSnapshot || roomPlayer.battleHeroSnapshot, true)}
+            ${renderBattleHeroMark(play.battleHeroSnapshot || roomPlayer.battleHeroSnapshot, true, play.playerId)}
             <div class="seat-hand-player-line">
               <strong><span class="seat-hand-name">${escapeHtml(play.playerName)}</span>${roleMark(play.role, play.playerId)}${renderAutoPlayMark(roomPlayer)}</strong>
               <span class="seat-status ${escapeHtml(statusTone)}">${escapeHtml(statusText)}</span>
@@ -6650,7 +6755,7 @@ function tablePlayerIdentity(play) {
       </span>
       ${roleMark(play.role, play.playerId)}
       <span class="name-text">${escapeHtml(play.playerName)}</span>
-      ${renderBattleHeroMark(play.battleHeroSnapshot || player?.battleHeroSnapshot, true)}
+      ${renderBattleHeroMark(play.battleHeroSnapshot || player?.battleHeroSnapshot, true, play.playerId)}
     </span>
   `;
 }
@@ -6675,7 +6780,7 @@ function renderTablePlayerSummary(play, statusText, statusTone) {
       <span class="trick-player-summary">
         <span class="trick-player-line">
           <strong class="trick-player-display-name">${escapeHtml(play.playerName)}</strong>
-          ${renderBattleHeroMark(play.battleHeroSnapshot || player?.battleHeroSnapshot, true)}
+          ${renderBattleHeroMark(play.battleHeroSnapshot || player?.battleHeroSnapshot, true, play.playerId)}
           ${renderAutoPlayMark(player || play)}
         </span>
         ${renderCompactPlayerStats(play)}
@@ -7119,7 +7224,7 @@ function renderPlayer(player) {
     <div class="player ${roleClass(player.role)}" data-player-id="${escapeHtml(player.id)}">
       <div>
         <strong class="player-name-line">${playerIdentity(player.name, player.role, player.avatarUrl, isMe ? "（我）" : "", player.id, player.avatarFrame)}</strong>
-        ${renderBattleHeroMark(player.battleHeroSnapshot, true)}
+        ${renderBattleHeroMark(player.battleHeroSnapshot, true, player.id)}
         <div class="tags">
           ${player.host ? `<span class="tag accent">房主</span>` : ""}
           ${player.test ? `<span class="tag">机器人</span>` : ""}
@@ -7807,6 +7912,14 @@ document.addEventListener("click", (event) => {
     heroCardPreviewUnitId = "";
     render();
   }
+  if (action === "open-battle-hero-preview") {
+    const playerId = event.target.closest("[data-player-id]")?.dataset.playerId || "";
+    if (battleHeroSnapshotForPlayer(playerId)) {
+      battleHeroPreviewPlayerId = playerId;
+      activeDialog = "battle-hero";
+      render();
+    }
+  }
   if (action === "show-admin") {
     homeView = "admin";
     render();
@@ -8033,6 +8146,7 @@ document.addEventListener("click", (event) => {
     if (activeDialog === "bid" || activeDialog === "fry") dismissedActionDialogKey = actionDialogKey();
     if (activeDialog === "result" || (!activeDialog && state?.stage === "finished")) dismissedResultRoomId = state?.roomId || null;
     if (activeDialog === "room-action-confirm") pendingRoomAction = "";
+    if (activeDialog === "battle-hero") battleHeroPreviewPlayerId = "";
     activeDialog = null;
     render();
   }

@@ -1,10 +1,10 @@
 export const HERO_HOME_RULES = Object.freeze({
-  version: "2026-08-14-v3",
+  version: "2026-08-17-v1",
   skillVersion: "2026-08-14-skill-v4",
   maxProductionHours: 6,
   singlePullPrice: 30,
-  tenPullPrice: 300,
-  freePullIntervalHours: 24,
+  tenPullPrice: 270,
+  freePullRefreshHourBeijing: 6,
   heroChance: 0.1,
   pityPulls: 50,
   heroDuplicateFragments: 40,
@@ -77,6 +77,8 @@ const STACKED_SKILL_CAPS = Object.freeze({
 const GELU_POINTS_PER_TRIGGER = Object.freeze([100, 90, 80, 70, 60]);
 const GELU_DIAMONDS_PER_TRIGGER = 2;
 const WATANABE_DIAMONDS_PER_TITLE = 2;
+const DAY_MS = 24 * 3600 * 1000;
+const BEIJING_OFFSET_MS = 8 * 3600 * 1000;
 
 function normalizedStars(value) {
   return Math.max(1, Math.min(5, Math.trunc(Number(value) || 1)));
@@ -135,14 +137,21 @@ export function starUpgradeCost(unitId, currentStars) {
 }
 
 export function freeHeroPullState(lastUsedAt, at = new Date()) {
-  const usedAt = lastUsedAt ? new Date(lastUsedAt) : null;
   const nowAt = new Date(at);
-  if (!usedAt || Number.isNaN(usedAt.getTime()) || Number.isNaN(nowAt.getTime())) {
-    return { available: true, nextFreePullAt: null };
-  }
-  const nextAt = new Date(usedAt.getTime() + HERO_HOME_RULES.freePullIntervalHours * 3600 * 1000);
-  if (nowAt.getTime() >= nextAt.getTime()) return { available: true, nextFreePullAt: null };
-  return { available: false, nextFreePullAt: nextAt.toISOString() };
+  if (Number.isNaN(nowAt.getTime())) return { available: true, nextFreePullAt: null };
+
+  const beijingNow = new Date(nowAt.getTime() + BEIJING_OFFSET_MS);
+  const todayRefreshAt = Date.UTC(
+    beijingNow.getUTCFullYear(),
+    beijingNow.getUTCMonth(),
+    beijingNow.getUTCDate(),
+    HERO_HOME_RULES.freePullRefreshHourBeijing
+  ) - BEIJING_OFFSET_MS;
+  const currentRefreshAt = nowAt.getTime() >= todayRefreshAt ? todayRefreshAt : todayRefreshAt - DAY_MS;
+  const nextRefreshAt = currentRefreshAt + DAY_MS;
+  const usedAt = lastUsedAt ? new Date(lastUsedAt) : null;
+  const available = !usedAt || Number.isNaN(usedAt.getTime()) || usedAt.getTime() < currentRefreshAt;
+  return { available, nextFreePullAt: new Date(nextRefreshAt).toISOString() };
 }
 
 export function heroGachaCharge(pullCount, freePullAvailable = false) {
@@ -167,6 +176,7 @@ export function createBattleHeroSnapshot(unitId, stars = 1) {
     color: unit.color,
     cardImage: unit.cardImage,
     skillName: unit.skillName,
+    skillDescription: unit.skillDescription,
     stars: normalizedStars(stars),
     skillVersion: HERO_HOME_RULES.skillVersion
   };
