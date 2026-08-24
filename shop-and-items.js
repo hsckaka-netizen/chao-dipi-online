@@ -1,4 +1,4 @@
-export const SHOP_RULES_VERSION = "2026-08-03-v4";
+export const SHOP_RULES_VERSION = "2026-08-24-v5";
 
 export const RESTART_CARD_STAGE = "restart-card-using";
 export const OTHER_CARDS_STAGE = "other-cards-using";
@@ -8,28 +8,28 @@ export const CONSUMABLE_ITEMS = Object.freeze([
     id: "restart-card",
     name: "重开卡",
     description: "发牌后的重开卡阶段使用，作废当前牌局并立即重新洗牌发牌。",
-    defaultPrice: 80,
+    defaultPrice: 3000,
     sortOrder: 10
   },
   {
     id: "war-god-card",
     name: "战神卡",
     description: "其他卡牌阶段使用，原始积分翻倍，额外积分由最终对方阵营承担。",
-    defaultPrice: 50,
+    defaultPrice: 2000,
     sortOrder: 20
   },
   {
     id: "colorful-card",
     name: "缤纷卡",
     description: "其他卡牌阶段使用，随机改变本局炒底阶段四种花色 2 的压制顺序，最后一次使用结果生效。",
-    defaultPrice: 30,
+    defaultPrice: 1500,
     sortOrder: 30
   },
   {
     id: "luck-card",
     name: "牌运卡",
     description: "其他卡牌阶段使用，本局头像展示牌运之神的庇佑效果。",
-    defaultPrice: 10,
+    defaultPrice: 150,
     sortOrder: 40
   }
 ]);
@@ -82,23 +82,23 @@ export const AVATAR_FRAME_KEYS = Object.freeze([
 ]);
 
 const AVATAR_FRAME_DEFAULT_PRICES = Object.freeze({
-  stormwind: 450,
-  idol: 350,
-  hellfire: 400,
-  "blood-elf": 450,
-  "endless-winter": 400,
-  cr7: 400,
-  paladin: 450,
-  warrior: 500,
-  mage: 450,
-  warlock: 400,
-  rogue: 400,
-  druid: 400,
-  shaman: 500,
-  "death-knight": 450,
-  minions: 300,
-  usagi: 300,
-  "toy-story": 300
+  stormwind: 8000,
+  idol: 6000,
+  hellfire: 6000,
+  "blood-elf": 8000,
+  "endless-winter": 6000,
+  cr7: 6000,
+  paladin: 8000,
+  warrior: 10000,
+  mage: 8000,
+  warlock: 6000,
+  rogue: 6000,
+  druid: 6000,
+  shaman: 10000,
+  "death-knight": 8000,
+  minions: 6000,
+  usagi: 6000,
+  "toy-story": 6000
 });
 
 export const CARD_SKIN_KEYS = Object.freeze([
@@ -131,7 +131,7 @@ export const DEFAULT_SHOP_PRODUCTS = Object.freeze([
     assetKey,
     name: `${COSMETIC_THEME_LABELS[assetKey]}牌面边框`,
     description: "永久解锁，只改变牌面边框，不改变点数、花色或牌力。",
-    defaultPrice: assetKey === "vip-legend" ? 300 : 100,
+    defaultPrice: assetKey === "vip-legend" ? 4500 : 1500,
     sortOrder: 200 + index
   })),
   ...CONSUMABLE_ITEMS.map((item) => ({

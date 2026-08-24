@@ -35,11 +35,17 @@ test("hero cards and consumable items have an independent fixed shop catalog", (
   assert.ok(CARD_SKIN_KEYS.includes("champion"));
   const avatarFrameProducts = DEFAULT_SHOP_PRODUCTS.filter((product) => product.productType === "avatar_frame");
   assert.equal(avatarFrameProducts.length, AVATAR_FRAME_KEYS.length);
-  assert.ok(avatarFrameProducts.every((product) => product.defaultPrice >= 300 && product.defaultPrice <= 500));
+  assert.ok(avatarFrameProducts.every((product) => product.defaultPrice >= 6000 && product.defaultPrice <= 10000));
   assert.ok(!AVATAR_FRAME_KEYS.includes("vip-legend"));
   assert.ok(!avatarFrameProducts.some((product) => product.assetKey === "vip-legend"));
   assert.ok(CARD_SKIN_KEYS.includes("vip-legend"));
-  assert.equal(avatarFrameProducts.find((product) => product.assetKey === "minions")?.defaultPrice, 300);
+  assert.equal(avatarFrameProducts.find((product) => product.assetKey === "minions")?.defaultPrice, 6000);
+  assert.equal(DEFAULT_SHOP_PRODUCTS.find((product) => product.id === "consumable:restart-card")?.defaultPrice, 3000);
+  assert.equal(DEFAULT_SHOP_PRODUCTS.find((product) => product.id === "consumable:war-god-card")?.defaultPrice, 2000);
+  assert.equal(DEFAULT_SHOP_PRODUCTS.find((product) => product.id === "consumable:colorful-card")?.defaultPrice, 1500);
+  assert.equal(DEFAULT_SHOP_PRODUCTS.find((product) => product.id === "consumable:luck-card")?.defaultPrice, 150);
+  assert.equal(DEFAULT_SHOP_PRODUCTS.find((product) => product.id === "card-skin:emerald")?.defaultPrice, 1500);
+  assert.equal(DEFAULT_SHOP_PRODUCTS.find((product) => product.id === "card-skin:vip-legend")?.defaultPrice, 4500);
   assert.equal(isItemUseStage(RESTART_CARD_STAGE), true);
   assert.equal(isItemUseStage(OTHER_CARDS_STAGE), true);
   assert.equal(isItemUseStage("score-bidding"), false);
@@ -250,9 +256,9 @@ test("server and browser expose the shop, self-equipped cosmetics, and game-item
   assert.match(appSource, /data-action="complete-item-stage"/);
   assert.match(appSource, /function renderColorfulFryOrderBanner/);
   assert.match(appSource, /COLORFUL_FRY_ORDER_VISIBLE_STAGES = new Set\(\[\s*OTHER_CARDS_STAGE,[\s\S]*?"fry-burying"/);
-  assert.match(appSource, /花色 2：\$\{escapeHtml\(order\)\}/);
+  assert.match(appSource, /花色 \$\{escapeHtml\(currentBidRankName\(\)\)\}：\$\{escapeHtml\(order\)\}/);
   assert.match(styles, /\.colorful-fry-order-banner/);
-  assert.match(appSource, /花色 2 大小（大 → 小）/);
+  assert.match(appSource, /花色 \$\{escapeHtml\(currentBidRankName\(\)\)\} 大小（大 → 小）/);
   assert.match(appSource, /bidBeats\(current, bid, frySuitStrength \|\| undefined\)/);
 
   const adminProfileUpdate = serverSource.slice(

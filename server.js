@@ -75,14 +75,17 @@ import {
 } from "./shop-and-items.js";
 import { versionedAssetUrl } from "./public/asset-versions.js";
 import { createStatePatch } from "./public/state-patch.js";
-import { calculateHeroSkillReward } from "./hero-home.js";
+import { calculateHeroSkillReward, HERO_HOME_RULES } from "./hero-home.js";
 import {
   assignHomeUnit,
+  chargeBoardHeroSkill,
   collectHomeProduction,
   gameHistoryStatus,
   avatarFrameProductExists,
   consumeGameItemUses,
+  collectHeroTask,
   createUploadedAvatarFrameProduct,
+  dispatchHeroTask,
   grantDiamondsByAdmin,
   getPlayerShopState,
   getBattleHeroSnapshots,
@@ -118,6 +121,7 @@ import {
   updateShopProduct,
   updateShopProducts,
   updateStoredAccount,
+  upgradeHomeRegion,
   upgradeHeroUnit
 } from "./game-history.js";
 import {
@@ -141,6 +145,7 @@ const DEFAULT_OPENING_BID_PERCENT = 40;
 const SCORE_BID_SECONDS = 20;
 const FRY_SECONDS = 20;
 const GAME_ITEM_STAGE_SECONDS = Math.max(1, Number(process.env.GAME_ITEM_STAGE_SECONDS) || 20);
+const BOARD_HERO_SKILL_SECONDS = Math.max(1, Number(process.env.BOARD_HERO_SKILL_SECONDS) || 20);
 const GAME_ITEM_NOTICE_MS = Math.max(1000, Number(process.env.GAME_ITEM_NOTICE_MS) || 5000);
 const TAUNT_DURATION_MS = Math.max(100, Number(process.env.TAUNT_DURATION_MS) || 4500);
 const TAUNT_COOLDOWN_MS = Math.max(0, Number(process.env.TAUNT_COOLDOWN_MS) || 1500);
@@ -166,6 +171,8 @@ const suits = [
 
 const rankOrder = ["A", "K", "Q", "J", "10", "9", "8", "7", "6", "5", "4", "3", "2"];
 const rankSort = new Map(rankOrder.map((rank, index) => [rank, index]));
+const rulesRankSort = new Map([...rankSort, ["LOW_2", rankOrder.length]]);
+const OLD_MAN_REPLACEMENT_RANKS = Object.freeze(["A", "K", "Q", "J", "10", "9", "8", "7", "6", "4"]);
 const suitById = new Map(suits.map((suit) => [suit.id, suit]));
 const suitStrength = new Map([
   ["D", 0],
@@ -867,6 +874,45 @@ function emptyGameItems() {
   };
 }
 
+function emptyBoardHeroSkills() {
+  return {
+    shenBiesan: {
+      eligiblePlayerIds: [],
+      completedPlayerIds: [],
+      applicantPlayerIds: [],
+      deadlineAt: null,
+      resolving: false
+    },
+    yokoyama: {
+      queuePlayerIds: [],
+      currentPlayerId: null,
+      candidates: [],
+      paid: false,
+      deadlineAt: null
+    },
+    shenJiangwen: {
+      offeredPlayerIds: [],
+      directPlayerId: null
+    }
+  };
+}
+
+function emptyBoardHeroEffects() {
+  return {
+    uses: [],
+    replacementRank: null,
+    seatSwaps: []
+  };
+}
+
+function gameRank(card) {
+  return card?.rulesRank || card?.rank || "";
+}
+
+function cardRulesRankSort(card) {
+  return rulesRankSort.get(gameRank(card)) ?? 99;
+}
+
 function announceRoomNotice(room, text, bad = false) {
   const createdAt = now();
   room.notice = {
@@ -880,6 +926,7 @@ function announceRoomNotice(room, text, bad = false) {
 
 function beginScoreBidding(room) {
   clearGameItemStageTimer(room);
+  clearBoardHeroSkillTimer(room);
   room.stage = "score-bidding";
   room.phase = "叫分抢庄";
   room.gameItems.stage = null;
@@ -925,10 +972,139 @@ function advanceGameItemStage(room) {
     return true;
   }
   if (room.stage === OTHER_CARDS_STAGE) {
-    beginScoreBidding(room);
+    beginShenBiesanSkillStage(room);
     return true;
   }
   return false;
+}
+
+function playerHasBoardHero(room, player, heroId) {
+  return Boolean(
+    isDiamondEligibleGame(room)
+    && player
+    && !player.test
+    && player.accountId
+    && player.battleHeroSnapshot?.heroId === heroId
+  );
+}
+
+function hasPairedPrintedTwo(player) {
+  return suits.some((suit) => player.hand.filter((card) => card.type === "normal" && card.rank === "2" && card.suit === suit.id).length >= 2);
+}
+
+function shenBiesanEligiblePlayers(room) {
+  return room.players.filter((player) => playerHasBoardHero(room, player, "shen-biesan") && !hasPairedPrintedTwo(player));
+}
+
+function beginShenBiesanSkillStage(room) {
+  clearGameItemStageTimer(room);
+  clearBoardHeroSkillTimer(room);
+  const eligiblePlayerIds = shenBiesanEligiblePlayers(room).map((player) => player.id);
+  room.boardHeroSkills.shenBiesan = {
+    eligiblePlayerIds,
+    completedPlayerIds: [],
+    applicantPlayerIds: [],
+    deadlineAt: eligiblePlayerIds.length
+      ? new Date(Date.now() + BOARD_HERO_SKILL_SECONDS * 1000).toISOString()
+      : null,
+    resolving: false
+  };
+  if (!eligiblePlayerIds.length) {
+    beginScoreBidding(room);
+    return false;
+  }
+  room.stage = "shen-biesan-skill";
+  room.phase = "玉面雷神发动阶段";
+  addEvent(room, "进入玉面雷神发动阶段，符合条件的玩家可选择是否申请发动");
+  return true;
+}
+
+function replacementRankForShenBiesan(player) {
+  const pairedRanks = OLD_MAN_REPLACEMENT_RANKS.filter((rank) => suits.some((suit) => (
+    player.hand.filter((card) => card.type === "normal" && card.rank === rank && card.suit === suit.id).length >= 2
+  )));
+  const candidates = pairedRanks.length ? pairedRanks : OLD_MAN_REPLACEMENT_RANKS;
+  return shuffle(candidates)[0] || "A";
+}
+
+function applyShenBiesanReplacement(room, replacementRank) {
+  const annotate = (card) => {
+    if (card.type !== "normal") return card;
+    delete card.rulesRank;
+    delete card.rulesReplacementRank;
+    if (card.rank === replacementRank) {
+      card.rulesRank = "2";
+      card.rulesReplacementRank = replacementRank;
+    } else if (card.rank === "2") {
+      card.rulesRank = "LOW_2";
+      card.rulesReplacementRank = replacementRank;
+    }
+    return card;
+  };
+  room.players.forEach((player) => {
+    player.hand = sortHand(player.hand.map(annotate));
+  });
+  room.kitty = room.kitty.map(annotate);
+  room.removedCards = room.removedCards.map(annotate);
+  room.boardHeroEffects.replacementRank = replacementRank;
+}
+
+function recordBoardHeroSkillUse(room, player, heroId, payment, effect = {}) {
+  const use = {
+    playerId: player.id,
+    accountId: player.accountId,
+    heroId,
+    skillName: player.battleHeroSnapshot?.skillName || "",
+    stars: player.battleHeroSnapshot?.stars || 1,
+    cost: payment.cost,
+    heatBefore: payment.heatBefore,
+    heatAfter: payment.heatAfter,
+    effect,
+    at: now()
+  };
+  room.boardHeroEffects.uses.push(use);
+  return use;
+}
+
+async function resolveShenBiesanSkillStage(room) {
+  const state = room.boardHeroSkills.shenBiesan;
+  if (room.stage !== "shen-biesan-skill" || state.resolving) return false;
+  state.resolving = true;
+  state.deadlineAt = null;
+  clearBoardHeroSkillTimer(room);
+  const applicants = shuffle(state.applicantPlayerIds.map((playerId) => playerById(room, playerId)).filter(Boolean));
+  for (const player of applicants) {
+    try {
+      const replacementRank = replacementRankForShenBiesan(player);
+      const payment = await chargeBoardHeroSkill(
+        player.accountId,
+        room.gameRecordId,
+        "shen-biesan",
+        `shen-biesan:${room.gameRecordId}:${player.id}`,
+        { replacementRank }
+      );
+      applyShenBiesanReplacement(room, replacementRank);
+      recordBoardHeroSkillUse(room, player, "shen-biesan", payment, { replacementRank });
+      addEvent(room, `${player.name} 发动玉面雷神，本局以 ${replacementRank} 替代 2 参与叫主、炒底和牌力判定`);
+      break;
+    } catch (error) {
+      addEvent(room, `${player.name} 发动玉面雷神失败：${error.message}`);
+    }
+  }
+  beginScoreBidding(room);
+  return true;
+}
+
+async function submitShenBiesanSkillChoice(room, player, activate) {
+  if (room.stage !== "shen-biesan-skill") return { error: "当前不是玉面雷神发动阶段", status: 409 };
+  const state = room.boardHeroSkills.shenBiesan;
+  if (!state.eligiblePlayerIds.includes(player.id)) return { error: "你当前不满足玉面雷神发动条件", status: 403 };
+  if (state.completedPlayerIds.includes(player.id)) return { error: "你已经完成选择", status: 409 };
+  state.completedPlayerIds.push(player.id);
+  if (activate) state.applicantPlayerIds.push(player.id);
+  addEvent(room, `${player.name}${activate ? "申请发动玉面雷神" : "放弃发动玉面雷神"}`);
+  if (state.completedPlayerIds.length >= state.eligiblePlayerIds.length) await resolveShenBiesanSkillStage(room);
+  return { ok: true };
 }
 
 function autoAdvanceExpiredGameItemStage(room) {
@@ -1017,7 +1193,11 @@ function deckForPlayerCount(playerCount) {
 }
 
 function sortHand(hand) {
-  return [...hand].sort((a, b) => a.sort - b.sort || a.deck - b.deck || a.id.localeCompare(b.id));
+  return [...hand].sort((a, b) => {
+    const aSort = a.type === "normal" ? (suitById.get(a.suit)?.sort || 0) * 100 + cardRulesRankSort(a) : a.sort;
+    const bSort = b.type === "normal" ? (suitById.get(b.suit)?.sort || 0) * 100 + cardRulesRankSort(b) : b.sort;
+    return aSort - bSort || a.deck - b.deck || a.id.localeCompare(b.id);
+  });
 }
 
 async function lockBattleHeroesForDeal(room) {
@@ -1051,6 +1231,7 @@ function deal(room, options = {}) {
   clearScoreBidTimer(room);
   clearFryTimer(room);
   clearGameItemStageTimer(room);
+  clearBoardHeroSkillTimer(room);
   clearRoomTaunts(room);
   room.events = [];
   const count = room.players.length;
@@ -1092,12 +1273,14 @@ function deal(room, options = {}) {
   room.playPauseUntil = null;
   room.notice = null;
   room.gameItems = emptyGameItems();
+  room.boardHeroSkills = emptyBoardHeroSkills();
+  room.boardHeroEffects = emptyBoardHeroEffects();
   if (!options.preserveRestartUsage) room.restartCardUsedPlayerIds = [];
   if (room.removedCards.length) {
     addEvent(room, `本局开局移除 ${room.removedCards.map((card) => card.label).join("、")}，底牌保持 ${room.kittySize} 张`);
   }
   if (gameItemAccess(room).eligible) beginGameItemStage(room, RESTART_CARD_STAGE);
-  else beginScoreBidding(room);
+  else beginShenBiesanSkillStage(room);
 }
 
 function readyPlayerCount(room) {
@@ -1125,6 +1308,7 @@ function resetRoomToLobby(room, options = {}) {
   clearScoreBidTimer(room);
   clearFryTimer(room);
   clearGameItemStageTimer(room);
+  clearBoardHeroSkillTimer(room);
   clearRoomTaunts(room);
   const readyPlayerId = options.readyPlayerId || null;
   const previousReady = new Map(room.players.map((player) => [player.id, Boolean(player.ready)]));
@@ -1152,6 +1336,8 @@ function resetRoomToLobby(room, options = {}) {
   room.playPauseUntil = null;
   room.notice = null;
   room.gameItems = emptyGameItems();
+  room.boardHeroSkills = emptyBoardHeroSkills();
+  room.boardHeroEffects = emptyBoardHeroEffects();
   room.restartCardUsedPlayerIds = [];
   room.events = [];
   room.players.forEach((player) => {
@@ -1175,6 +1361,8 @@ function publicCard(card) {
     symbol: card.symbol || "",
     color: card.color,
     rank: card.rank,
+    rulesRank: card.rulesRank || null,
+    rulesReplacementRank: card.rulesReplacementRank || null,
     deck: card.deck,
     type: card.type,
     joker: card.joker || null
@@ -1235,6 +1423,10 @@ function currentTrumpSuit(room) {
   if (room.stage === "fry-burying" && fry?.pendingBid?.suit) return fry.pendingBid.suit;
   if (fry?.lastBid?.suit) return fry.lastBid.suit;
   return room.setup?.bid?.suit || null;
+}
+
+function currentBidRankName(room) {
+  return room.boardHeroEffects?.replacementRank || "2";
 }
 
 function setupSnapshot(room, viewer = null) {
@@ -1331,6 +1523,60 @@ function gameItemsSnapshot(room, viewer = null) {
       freeUse: Boolean(use.freeUse),
       at: use.at
     }))
+  };
+}
+
+function boardHeroSkillsSnapshot(room, viewer = null) {
+  const skills = room.boardHeroSkills || emptyBoardHeroSkills();
+  const shenBiesan = skills.shenBiesan;
+  const yokoyama = skills.yokoyama;
+  const viewerIsBiesanEligible = Boolean(viewer && shenBiesan.eligiblePlayerIds.includes(viewer.id));
+  const viewerCompletedBiesan = Boolean(viewer && shenBiesan.completedPlayerIds.includes(viewer.id));
+  const viewerIsCurrentYokoyama = Boolean(viewer && yokoyama.currentPlayerId === viewer.id);
+  return {
+    replacementRank: room.boardHeroEffects?.replacementRank || null,
+    shenBiesan: {
+      active: room.stage === "shen-biesan-skill",
+      deadlineAt: shenBiesan.deadlineAt,
+      eligiblePlayerIds: [...shenBiesan.eligiblePlayerIds],
+      viewerEligible: viewerIsBiesanEligible,
+      viewerCompleted: viewerCompletedBiesan,
+      canChoose: room.stage === "shen-biesan-skill" && viewerIsBiesanEligible && !viewerCompletedBiesan,
+      cost: viewer?.battleHeroSnapshot?.heroId === "shen-biesan" ? viewer.battleHeroSnapshot.paidSkill?.cost || 0 : 0,
+      heat: viewer?.battleHeroSnapshot?.heroId === "shen-biesan" ? viewer.battleHeroSnapshot.paidSkill?.heat ?? null : null
+    },
+    yokoyama: {
+      active: room.stage === "yokoyama-skill",
+      currentPlayerId: yokoyama.currentPlayerId,
+      currentPlayerName: yokoyama.currentPlayerId ? playerName(room, yokoyama.currentPlayerId) : "",
+      deadlineAt: yokoyama.deadlineAt,
+      paid: viewerIsCurrentYokoyama ? Boolean(yokoyama.paid) : false,
+      canActivate: room.stage === "yokoyama-skill" && viewerIsCurrentYokoyama && !yokoyama.paid,
+      canFinish: room.stage === "yokoyama-skill" && viewerIsCurrentYokoyama,
+      cost: HERO_HOME_RULES.yokoyamaSkillCost,
+      candidates: viewerIsCurrentYokoyama && yokoyama.paid
+        ? yokoyama.candidates.map((playerId) => ({
+            playerId,
+            playerName: playerName(room, playerId),
+            seat: room.players.findIndex((player) => player.id === playerId) + 1
+          }))
+        : []
+    },
+    shenJiangwen: {
+      canActivate: shenJiangwenCanActivate(room, viewer),
+      cost: viewer?.battleHeroSnapshot?.heroId === "shen-jiangwen" ? viewer.battleHeroSnapshot.paidSkill?.cost || 0 : 0,
+      heat: viewer?.battleHeroSnapshot?.heroId === "shen-jiangwen" ? viewer.battleHeroSnapshot.paidSkill?.heat ?? null : null
+    },
+    uses: (room.boardHeroEffects?.uses || []).map((use) => ({
+      playerId: use.playerId,
+      playerName: playerName(room, use.playerId),
+      heroId: use.heroId,
+      skillName: use.skillName,
+      cost: use.cost,
+      effect: use.effect,
+      at: use.at
+    })),
+    seatSwaps: [...(room.boardHeroEffects?.seatSwaps || [])]
   };
 }
 
@@ -1490,6 +1736,7 @@ function roomSnapshot(room, viewer = null, options = {}) {
     tauntPresets: availableTauntPresets(tauntPresets, viewer?.accountId || null),
     taunts: activeTauntsSnapshot(room),
     gameItems: gameItemsSnapshot(room, viewer),
+    boardHeroSkills: boardHeroSkillsSnapshot(room, viewer),
     hostId: room.hostId,
     setup: setupSnapshot(room, secretViewer),
     viewer: viewer ? {
@@ -2228,19 +2475,19 @@ function mainCardPower(card, trumpSuit) {
     if (card.suit === trumpSuit) return 4;
     if (cardColor(card) === cardColor({ suit: trumpSuit })) return 5;
   }
-  if (card.type === "normal" && card.rank === "2") {
+  if (card.type === "normal" && gameRank(card) === "2") {
     if (card.suit === trumpSuit) return 6;
     return 7;
   }
   if (card.type === "normal" && trumpSuit && card.suit === trumpSuit) {
-    return 8 + (rankSort.get(card.rank) ?? 99);
+    return 8 + cardRulesRankSort(card);
   }
   return 99;
 }
 
 function patternValue(card, trumpSuit) {
   if (isMainPlayCard(card, trumpSuit)) return mainCardPower(card, trumpSuit);
-  return rankSort.get(card.rank) ?? 99;
+  return cardRulesRankSort(card);
 }
 
 function patternKey(card, trumpSuit) {
@@ -2309,18 +2556,18 @@ function removeCardsFromHand(player, cardIds) {
 }
 
 function isTwoCard(card) {
-  return card.type === "normal" && card.rank === "2";
+  return card.type === "normal" && gameRank(card) === "2";
 }
 
 function bidFromCards(room, player, cardIds) {
   const selected = selectedCardsFromHand(player, cardIds);
   if (selected.error) return selected;
   if (!selected.cards.every(isTwoCard)) {
-    return { error: "叫主/炒底只能选择 2", status: 400 };
+    return { error: `叫主/炒底只能选择 ${currentBidRankName(room)}`, status: 400 };
   }
   const suitsInBid = uniqueFollowSuits(selected.cards);
   if (suitsInBid.length !== 1) {
-    return { error: "叫主/炒底需要选择同一花色的 2", status: 400 };
+    return { error: `叫主/炒底需要选择同一花色的 ${currentBidRankName(room)}`, status: 400 };
   }
   return {
     actionId: id(6),
@@ -2396,7 +2643,7 @@ function submitBid(room, player, cardIds) {
   const bid = bidFromCards(room, player, cardIds);
   if (bid.error) return bid;
   if (!bidBeats(room.setup.bid, bid)) {
-    return { error: "选择的 2 不能压过当前叫主", status: 400 };
+    return { error: `选择的 ${currentBidRankName(room)} 不能压过当前叫主`, status: 400 };
   }
 
   room.setup.bid = bid;
@@ -2404,8 +2651,8 @@ function submitBid(room, player, cardIds) {
   room.setup.bidHistory.push(bid);
   room.setup.passIds = [];
   room.setup.biddingTurnPlayerId = nextPlayerId(room, player.id);
-  room.phase = `${player.name} 亮 ${bid.count} 张${suitName(bid.suit)}2，等待抢主`;
-  addEvent(room, `${player.name} 亮 ${bid.count} 张${suitName(bid.suit)}2 叫/抢主`);
+  room.phase = `${player.name} 亮 ${bid.count} 张${suitName(bid.suit)}${currentBidRankName(room)}，等待抢主`;
+  addEvent(room, `${player.name} 亮 ${bid.count} 张${suitName(bid.suit)}${currentBidRankName(room)} 叫/抢主`);
   return { ok: true };
 }
 
@@ -2459,16 +2706,103 @@ function scoreBidOthersPassed(room) {
   return room.players.every((player) => player.id === currentId || passIds.has(player.id));
 }
 
+function enterTrumpSelecting(room) {
+  clearBoardHeroSkillTimer(room);
+  room.stage = "trump-selecting";
+  room.phase = `${playerName(room, room.bankerId)} 等待选择主花色`;
+}
+
+function beginYokoyamaSkillStage(room) {
+  clearBoardHeroSkillTimer(room);
+  const queuePlayerIds = room.players
+    .filter((player) => playerHasBoardHero(room, player, "yokoyama-yui"))
+    .map((player) => player.id);
+  room.boardHeroSkills.yokoyama = {
+    queuePlayerIds,
+    currentPlayerId: null,
+    candidates: [],
+    paid: false,
+    deadlineAt: null
+  };
+  return advanceYokoyamaSkillStage(room);
+}
+
+function advanceYokoyamaSkillStage(room) {
+  const state = room.boardHeroSkills.yokoyama;
+  state.currentPlayerId = state.queuePlayerIds.shift() || null;
+  state.candidates = [];
+  state.paid = false;
+  if (!state.currentPlayerId) {
+    state.deadlineAt = null;
+    enterTrumpSelecting(room);
+    return false;
+  }
+  state.deadlineAt = new Date(Date.now() + BOARD_HERO_SKILL_SECONDS * 1000).toISOString();
+  room.stage = "yokoyama-skill";
+  room.phase = `等待 ${playerName(room, state.currentPlayerId)} 决定是否发动全能偶像`;
+  return true;
+}
+
+async function activateYokoyamaSkill(room, player, requestId) {
+  if (room.stage !== "yokoyama-skill") return { error: "当前不是全能偶像发动阶段", status: 409 };
+  const state = room.boardHeroSkills.yokoyama;
+  if (state.currentPlayerId !== player.id) return { error: `现在轮到 ${playerName(room, state.currentPlayerId)} 选择`, status: 409 };
+  if (state.paid) return { error: "已经生成候选玩家", status: 409 };
+  const stars = Math.max(1, Math.min(5, Number(player.battleHeroSnapshot?.stars) || 1));
+  const candidates = shuffle(room.players.filter((item) => item.id !== player.id))
+    .slice(0, stars)
+    .map((item) => item.id);
+  const payment = await chargeBoardHeroSkill(
+    player.accountId,
+    room.gameRecordId,
+    "yokoyama-yui",
+    requestId || `yokoyama:${room.gameRecordId}:${player.id}`,
+    { candidatePlayerIds: candidates }
+  );
+  recordBoardHeroSkillUse(room, player, "yokoyama-yui", payment, { candidatePlayerIds: candidates });
+  state.paid = true;
+  state.candidates = candidates;
+  state.deadlineAt = new Date(Date.now() + BOARD_HERO_SKILL_SECONDS * 1000).toISOString();
+  room.phase = `${player.name} 已发动全能偶像，等待选择换位玩家`;
+  addEvent(room, `${player.name} 发动全能偶像，获得 ${candidates.length} 名随机换位候选人`);
+  return { ok: true };
+}
+
+function finishYokoyamaChoice(room, player, targetPlayerId = null) {
+  if (room.stage !== "yokoyama-skill") return { error: "当前不是全能偶像发动阶段", status: 409 };
+  const state = room.boardHeroSkills.yokoyama;
+  if (state.currentPlayerId !== player.id) return { error: `现在轮到 ${playerName(room, state.currentPlayerId)} 选择`, status: 409 };
+  if (targetPlayerId) {
+    if (!state.paid || !state.candidates.includes(targetPlayerId)) return { error: "该玩家不在本次随机候选中", status: 400 };
+    const selfIndex = room.players.findIndex((item) => item.id === player.id);
+    const targetIndex = room.players.findIndex((item) => item.id === targetPlayerId);
+    if (selfIndex < 0 || targetIndex < 0) return { error: "换位玩家已经离开房间", status: 409 };
+    const target = room.players[targetIndex];
+    [room.players[selfIndex], room.players[targetIndex]] = [room.players[targetIndex], room.players[selfIndex]];
+    room.boardHeroEffects.seatSwaps.push({
+      playerId: player.id,
+      targetPlayerId: target.id,
+      fromSeat: selfIndex + 1,
+      toSeat: targetIndex + 1,
+      at: now()
+    });
+    addEvent(room, `${player.name} 使用全能偶像，与 ${target.name} 交换座位；双方身份和手牌不变`);
+  } else {
+    addEvent(room, `${player.name}${state.paid ? "放弃本次换位" : "不发动全能偶像"}`);
+  }
+  advanceYokoyamaSkillStage(room);
+  return { ok: true };
+}
+
 function finishScoreBidding(room) {
   clearScoreBidTimer(room);
   const scoreBid = ensureScoreBidSetup(room);
   if (!scoreBid.current) return { error: "还没有玩家叫分抢庄", status: 409 };
   room.bankerId = scoreBid.current.playerId;
-  room.stage = "trump-selecting";
-  room.phase = `${playerName(room, room.bankerId)} 以 ${scoreBid.current.score} 分成为庄家，等待选择主花色`;
   scoreBid.passIds = [];
   scoreBid.deadlineAt = null;
-  addEvent(room, `${playerName(room, room.bankerId)} 以 ${scoreBid.current.score} 分成为庄家，等待选择主花色`);
+  addEvent(room, `${playerName(room, room.bankerId)} 以 ${scoreBid.current.score} 分成为庄家`);
+  beginYokoyamaSkillStage(room);
   return { ok: true };
 }
 
@@ -2565,8 +2899,59 @@ function startFrying(room) {
   addEvent(room, `开始炒底，当前底牌 ${room.kitty.length} 张`);
 }
 
+function shenJiangwenCanActivate(room, player) {
+  const state = room.boardHeroSkills.shenJiangwen;
+  return Boolean(
+    room.stage === "frying"
+    && room.setup.fry?.currentPlayerId === player?.id
+    && playerHasBoardHero(room, player, "shen-jiangwen")
+    && !state.offeredPlayerIds.includes(player.id)
+  );
+}
+
+function completeShenJiangwenOffer(room, player) {
+  if (!playerHasBoardHero(room, player, "shen-jiangwen")) return;
+  const offered = room.boardHeroSkills.shenJiangwen.offeredPlayerIds;
+  if (!offered.includes(player.id)) offered.push(player.id);
+}
+
+async function activateShenJiangwenSkill(room, player, requestId) {
+  if (!shenJiangwenCanActivate(room, player)) return { error: "排骨之王只能在首次轮到本人炒底时发动", status: 409 };
+  const payment = await chargeBoardHeroSkill(
+    player.accountId,
+    room.gameRecordId,
+    "shen-jiangwen",
+    requestId || `shen-jiangwen:${room.gameRecordId}:${player.id}`,
+    { directFry: true }
+  );
+  completeShenJiangwenOffer(room, player);
+  recordBoardHeroSkillUse(room, player, "shen-jiangwen", payment, { directFry: true });
+  player.hand = sortHand([...player.hand, ...room.kitty]);
+  room.kitty = [];
+  room.setup.fry.directSkillPendingPlayerId = player.id;
+  room.setup.fry.deadlineAt = null;
+  room.boardHeroSkills.shenJiangwen.directPlayerId = player.id;
+  room.stage = "fry-burying";
+  room.phase = `${player.name} 发动排骨之王，等待贴底`;
+  addEvent(room, `${player.name} 发动排骨之王，直接拿入底牌；本次不提高炒底门槛`);
+  return { ok: true };
+}
+
 function continueFryingAfterBury(room, player) {
   const fry = room.setup.fry;
+  if (fry.directSkillPendingPlayerId === player.id) {
+    fry.directSkillPendingPlayerId = null;
+    fry.lastFryerId = player.id;
+    fry.pendingBid = null;
+    fry.passesSinceLast = 0;
+    fry.passIds = [];
+    fry.currentPlayerId = nextPlayerId(room, player.id);
+    fry.deadlineAt = new Date(Date.now() + FRY_SECONDS * 1000).toISOString();
+    room.stage = "frying";
+    room.phase = `等待 ${playerName(room, fry.currentPlayerId)} 炒底或不炒`;
+    addEvent(room, `${player.name} 完成排骨之王贴底，炒底门槛保持不变`);
+    return;
+  }
   fry.lastBid = fry.pendingBid;
   fry.lastFryerId = player.id;
   fry.pendingBid = null;
@@ -2658,6 +3043,7 @@ function passFry(room, player, options = {}) {
   if (fry.currentPlayerId !== player.id) {
     return { error: `现在轮到 ${playerName(room, fry.currentPlayerId)} 炒底或不炒`, status: 409 };
   }
+  completeShenJiangwenOffer(room, player);
   fry.passesSinceLast += 1;
   if (!fry.passIds) fry.passIds = [];
   if (!fry.passIds.includes(player.id)) fry.passIds.push(player.id);
@@ -2684,9 +3070,10 @@ function submitFry(room, player, cardIds) {
     ? frySuitStrength(room.gameItems.frySuitOrder)
     : suitStrength;
   if (!bidBeats(fry.lastBid, bid, strength)) {
-    return { error: "选择的 2 不能压过当前炒底", status: 400 };
+    return { error: `选择的 ${currentBidRankName(room)} 不能压过当前炒底`, status: 400 };
   }
 
+  completeShenJiangwenOffer(room, player);
   player.hand = sortHand([...player.hand, ...room.kitty]);
   room.kitty = [];
   fry.pendingBid = bid;
@@ -2695,7 +3082,7 @@ function submitFry(room, player, cardIds) {
   fry.history.push(bid);
   room.stage = "fry-burying";
   room.phase = `${player.name} 炒底，等待贴底`;
-  addEvent(room, `${player.name} 用 ${bid.count} 张${suitName(bid.suit)}2 炒底并拿入底牌`);
+  addEvent(room, `${player.name} 用 ${bid.count} 张${suitName(bid.suit)}${currentBidRankName(room)} 炒底并拿入底牌`);
   return { ok: true };
 }
 
@@ -2719,7 +3106,7 @@ function cardColor(card) {
 
 function isCompareCard(card, trumpSuit) {
   if (card.type === "joker") return true;
-  if (card.rank === "2") return true;
+  if (gameRank(card) === "2") return true;
   if ((card.suit === "H" || card.suit === "D") && card.rank === "5") return true;
   if (card.rank === "3" && trumpSuit && cardColor(card) === cardColor({ suit: trumpSuit })) return true;
   return false;
@@ -2826,7 +3213,7 @@ function autoDoglegCardId(room, player) {
       const buried = kittyCounts.get(key) || 0;
       const outsideCopies = Math.max(0, totalDeckCopies - heldByBanker - buried);
       const pointPenalty = cardPoint(card) * 12;
-      const rankIndex = rankSort.get(card.rank) ?? 99;
+      const rankIndex = cardRulesRankSort(card);
       return {
         card,
         score: outsideCopies * 45 + rankIndex * 2 - heldByBanker * 10 - buried * 35 - pointPenalty
@@ -2955,7 +3342,7 @@ function protectedFiveCount(cards) {
 }
 
 function twoCountForSuit(player, suit) {
-  return player.hand.filter((card) => card.type === "normal" && card.rank === "2" && card.suit === suit).length;
+  return player.hand.filter((card) => card.type === "normal" && gameRank(card) === "2" && card.suit === suit).length;
 }
 
 function bidStrengthValue(bid, strength = suitStrength) {
@@ -3046,7 +3433,7 @@ function bidPowerScore(room, player, suit, count, { includeKitty = false } = {})
 
 function bidCardIdsForSuit(player, suit, count) {
   return player.hand
-    .filter((card) => card.type === "normal" && card.rank === "2" && card.suit === suit)
+    .filter((card) => card.type === "normal" && gameRank(card) === "2" && card.suit === suit)
     .slice(0, count)
     .map((card) => card.id);
 }
@@ -3057,7 +3444,7 @@ function bestAutoBid(room, player, currentBid, options = {}) {
     : suitStrength;
   const choices = [];
   for (const suit of suits.map((item) => item.id)) {
-    const count = player.hand.filter((card) => card.type === "normal" && card.rank === "2" && card.suit === suit).length;
+    const count = player.hand.filter((card) => card.type === "normal" && gameRank(card) === "2" && card.suit === suit).length;
     for (let bidCount = 1; bidCount <= count; bidCount += 1) {
       const bid = { count: bidCount, suit };
       if (!bidBeats(currentBid, bid, strength)) continue;
@@ -3522,6 +3909,64 @@ function clearGameItemStageTimer(room) {
   room.gameItemStageTimer = null;
 }
 
+function clearBoardHeroSkillTimer(room) {
+  if (!room?.boardHeroSkillTimer) return;
+  clearTimeout(room.boardHeroSkillTimer);
+  room.boardHeroSkillTimer = null;
+}
+
+async function autoAdvanceExpiredBoardHeroSkill(room) {
+  if (room.stage === "shen-biesan-skill") {
+    const state = room.boardHeroSkills.shenBiesan;
+    const deadline = new Date(state.deadlineAt || "").getTime();
+    if (!Number.isFinite(deadline) || deadline > Date.now()) return false;
+    state.eligiblePlayerIds.forEach((playerId) => {
+      if (!state.completedPlayerIds.includes(playerId)) state.completedPlayerIds.push(playerId);
+    });
+    addEvent(room, "玉面雷神倒计时结束，未操作玩家视为放弃");
+    await resolveShenBiesanSkillStage(room);
+    return true;
+  }
+  if (room.stage === "yokoyama-skill") {
+    const state = room.boardHeroSkills.yokoyama;
+    const deadline = new Date(state.deadlineAt || "").getTime();
+    if (!Number.isFinite(deadline) || deadline > Date.now()) return false;
+    const player = playerById(room, state.currentPlayerId);
+    if (!player) {
+      advanceYokoyamaSkillStage(room);
+      return true;
+    }
+    addEvent(room, `${player.name} 全能偶像选择超时`);
+    finishYokoyamaChoice(room, player);
+    return true;
+  }
+  return false;
+}
+
+function scheduleBoardHeroSkillTimer(room) {
+  clearBoardHeroSkillTimer(room);
+  const deadlineAt = room.stage === "shen-biesan-skill"
+    ? room.boardHeroSkills.shenBiesan.deadlineAt
+    : room.stage === "yokoyama-skill"
+      ? room.boardHeroSkills.yokoyama.deadlineAt
+      : null;
+  if (!deadlineAt) return false;
+  const deadline = new Date(deadlineAt).getTime();
+  if (!Number.isFinite(deadline)) return false;
+  room.boardHeroSkillTimer = setTimeout(async () => {
+    room.boardHeroSkillTimer = null;
+    if (rooms.get(room.id) !== room || room.status !== "dealt") return;
+    try {
+      if (await autoAdvanceExpiredBoardHeroSkill(room)) broadcastAndContinueAutomation(room);
+    } catch (error) {
+      console.error("[hero-home] board hero skill timeout failed", error.message);
+      broadcastAndContinueAutomation(room);
+    }
+  }, Math.max(0, deadline - Date.now()) + 50);
+  room.boardHeroSkillTimer.unref?.();
+  return true;
+}
+
 function scheduleGameItemStageTimer(room) {
   clearGameItemStageTimer(room);
   const deadlineAt = isItemUseStage(room?.stage) ? room.gameItems?.stage?.deadlineAt : null;
@@ -3586,6 +4031,7 @@ function broadcastAndContinueAutomation(room) {
   scheduleGameItemStageTimer(room);
   scheduleScoreBidTimer(room);
   scheduleFryTimer(room);
+  scheduleBoardHeroSkillTimer(room);
   if (room.stage === "playing") scheduleNextAiPlay(room);
   else scheduleNextAiSetupAction(room);
 }
@@ -3594,24 +4040,30 @@ function rankValue(card, trumpSuit) {
   return patternValue(card, trumpSuit);
 }
 
+function effectiveRankOrder(card) {
+  const replacementRank = card?.rulesReplacementRank || null;
+  if (!replacementRank) return rankOrder;
+  return rankOrder.map((rank) => rank === replacementRank ? "2" : rank === "2" ? "LOW_2" : rank);
+}
+
 function nonMainRankOrderValue(card, trumpSuit) {
   if (!card || card.type !== "normal") return 99;
-  const availableRanks = rankOrder.filter((rank) => {
-    const sample = { type: "normal", suit: card.suit, rank };
+  const availableRanks = effectiveRankOrder(card).filter((rank) => {
+    const sample = { type: "normal", suit: card.suit, rank, rulesRank: rank };
     return !isMainPlayCard(sample, trumpSuit);
   });
-  const index = availableRanks.indexOf(card.rank);
+  const index = availableRanks.indexOf(gameRank(card));
   return index >= 0 ? index : 99;
 }
 
 function mainTractorOrderValue(card, trumpSuit) {
   if (!card) return 99;
   if (card.type === "normal" && trumpSuit && card.suit === trumpSuit && !isCompareCard(card, trumpSuit)) {
-    const availableRanks = rankOrder.filter((rank) => {
-      const sample = { type: "normal", suit: trumpSuit, rank };
+    const availableRanks = effectiveRankOrder(card).filter((rank) => {
+      const sample = { type: "normal", suit: trumpSuit, rank, rulesRank: rank };
       return !isCompareCard(sample, trumpSuit);
     });
-    const index = availableRanks.indexOf(card.rank);
+    const index = availableRanks.indexOf(gameRank(card));
     return index >= 0 ? 8 + index : 99;
   }
   return patternValue(card, trumpSuit);
@@ -3634,7 +4086,7 @@ function consecutiveTractorGroups(previous, next, trumpSuit) {
 
 function rankKey(card, trumpSuit) {
   if (card.type === "joker") return `${playSuit(card, trumpSuit)}:JOKER:${card.joker}`;
-  return `${playSuit(card, trumpSuit)}:${card.suit}:${card.rank}`;
+  return `${playSuit(card, trumpSuit)}:${card.suit}:${gameRank(card)}`;
 }
 
 function cardsByRank(cards, trumpSuit) {
@@ -5042,7 +5494,11 @@ async function handleApi(req, res, pathParts, url) {
     }
     if (req.method === "POST" && pathParts[2] === "home" && pathParts[3] === "assign") {
       const body = await readJson(req);
-      return writeJson(res, 200, await assignHomeUnit(account.id, body.regionId, body.unitId, body.requestId));
+      return writeJson(res, 200, await assignHomeUnit(account.id, body.regionId, body.unitId, body.requestId, body.slot));
+    }
+    if (req.method === "POST" && pathParts[2] === "home" && pathParts[3] === "upgrade") {
+      const body = await readJson(req);
+      return writeJson(res, 200, await upgradeHomeRegion(account.id, body.regionId, body.requestId));
     }
     if (req.method === "PATCH" && pathParts[2] === "battle" && pathParts.length === 3) {
       const body = await readJson(req);
@@ -5057,6 +5513,14 @@ async function handleApi(req, res, pathParts, url) {
       const body = await readJson(req);
       const result = await upgradeHeroUnit(account.id, body.unitId, body.requestId);
       return writeJson(res, 200, { ...result, state: await getHeroHomeState(account.id) });
+    }
+    if (req.method === "POST" && pathParts[2] === "tasks" && pathParts[3] === "dispatch") {
+      const body = await readJson(req);
+      return writeJson(res, 200, await dispatchHeroTask(account.id, body.taskId, body.unitIds, body.requestId));
+    }
+    if (req.method === "POST" && pathParts[2] === "tasks" && pathParts[3] === "collect") {
+      const body = await readJson(req);
+      return writeJson(res, 200, await collectHeroTask(account.id, body.taskId, body.requestId));
     }
     return writeJson(res, 404, { error: "英雄家园接口不存在" });
   }
@@ -5193,6 +5657,7 @@ async function handleApi(req, res, pathParts, url) {
       scoreBidTimer: null,
       fryTimer: null,
       gameItemStageTimer: null,
+      boardHeroSkillTimer: null,
       notice: null,
       events: [],
       clients: new Set(),
@@ -5201,6 +5666,8 @@ async function handleApi(req, res, pathParts, url) {
       tauntTimers: new Map(),
       tauntLastSentAt: new Map(),
       gameItems: emptyGameItems(),
+      boardHeroSkills: emptyBoardHeroSkills(),
+      boardHeroEffects: emptyBoardHeroEffects(),
       restartCardUsedPlayerIds: [],
       itemUseInFlight: false,
       snapshotVersion: 0
@@ -5547,6 +6014,23 @@ async function handleApi(req, res, pathParts, url) {
       const viewer = requirePlayer(res, room, body.playerId, body.token);
       if (!viewer) return;
       const result = completeGameItemStageForPlayer(room, viewer);
+      if (result.error) return writeJson(res, result.status, { error: result.error });
+      broadcastAndContinueAutomation(room);
+      return writeJson(res, 200, roomStateAck(room));
+    }
+
+    if (req.method === "POST" && pathParts[3] === "board-hero-skill") {
+      const body = await readJson(req);
+      const viewer = requirePlayer(res, room, body.playerId, body.token);
+      if (!viewer) return;
+      let result = null;
+      if (body.action === "shen-biesan-activate") result = await submitShenBiesanSkillChoice(room, viewer, true);
+      else if (body.action === "shen-biesan-pass") result = await submitShenBiesanSkillChoice(room, viewer, false);
+      else if (body.action === "yokoyama-activate") result = await activateYokoyamaSkill(room, viewer, body.requestId);
+      else if (body.action === "yokoyama-swap") result = finishYokoyamaChoice(room, viewer, String(body.targetPlayerId || ""));
+      else if (body.action === "yokoyama-pass") result = finishYokoyamaChoice(room, viewer);
+      else if (body.action === "shen-jiangwen-activate") result = await activateShenJiangwenSkill(room, viewer, body.requestId);
+      else return writeJson(res, 400, { error: "未知的英雄技能操作" });
       if (result.error) return writeJson(res, result.status, { error: result.error });
       broadcastAndContinueAutomation(room);
       return writeJson(res, 200, roomStateAck(room));

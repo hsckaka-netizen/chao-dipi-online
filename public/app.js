@@ -1,6 +1,6 @@
 import { applyStatePatch } from "./state-patch.js?v=9330552c7e1e";
 import { detectNewDraggedFiveEffects, detectNewLargePlayEffects } from "./gameplay-effects.js?v=14791e626d30";
-import { ASSET_URLS, versionedAssetUrl } from "./asset-versions.js?v=407c6308bb11";
+import { ASSET_URLS, versionedAssetUrl } from "./asset-versions.js?v=da951dcc4613";
 import { createHistoryTrickEntry, filterHistoryTimelineEntries } from "./history-records.js?v=874ba3c97732";
 
 const app = document.querySelector("#app");
@@ -55,7 +55,7 @@ const CARD_SKIN_OPTIONS = [
 const CONSUMABLE_ITEM_FALLBACKS = Object.freeze([
   { assetKey: "restart-card", name: "重开卡", description: "重开卡阶段使用，作废当前牌局并立即重新洗牌发牌。" },
   { assetKey: "war-god-card", name: "战神卡", description: "其他卡牌阶段使用，本局原始积分翻倍，额外积分由最终对方阵营承担。" },
-  { assetKey: "colorful-card", name: "缤纷卡", description: "其他卡牌阶段使用，随机改变炒底阶段四种花色 2 的压制顺序，最后一次结果生效。" },
+  { assetKey: "colorful-card", name: "缤纷卡", description: "其他卡牌阶段使用，随机改变炒底点数的四种花色压制顺序，最后一次结果生效。" },
   { assetKey: "luck-card", name: "牌运卡", description: "其他卡牌阶段使用，本局头像展示牌运之神的庇佑效果。" }
 ]);
 const RESTART_CARD_STAGE = "restart-card-using";
@@ -500,13 +500,20 @@ function transitionNotice(previousState, nextState) {
   if (previousState.stage === RESTART_CARD_STAGE && nextState.stage === OTHER_CARDS_STAGE) {
     return "重开卡阶段结束，进入其他卡牌使用阶段。";
   }
-  if (previousState.stage === OTHER_CARDS_STAGE && nextState.stage === "score-bidding") {
+  if (previousState.stage === OTHER_CARDS_STAGE && nextState.stage === "shen-biesan-skill") {
+    return "卡牌使用阶段结束，进入神 · 瘪三的玉面雷神发动阶段。";
+  }
+  if ((previousState.stage === OTHER_CARDS_STAGE || previousState.stage === "shen-biesan-skill") && nextState.stage === "score-bidding") {
     return "卡牌使用阶段结束，开始叫庄。";
   }
   if (previousState.stage === "bidding" && nextState.stage === "burying") {
     return `叫主成功：${nextState.setup?.bankerName || "庄家"} 成为庄家，已拿底等待贴底。`;
   }
-  if (previousState.stage === "score-bidding" && nextState.stage === "trump-selecting") {
+  if (previousState.stage === "score-bidding" && nextState.stage === "yokoyama-skill") {
+    const score = nextState.setup?.scoreBid?.currentScore || "";
+    return `叫分结束：${nextState.setup?.bankerName || "庄家"} ${score ? `以 ${score} 分` : ""}成为庄家，进入全能偶像发动阶段。`;
+  }
+  if ((previousState.stage === "score-bidding" || previousState.stage === "yokoyama-skill") && nextState.stage === "trump-selecting") {
     const score = nextState.setup?.scoreBid?.currentScore || "";
     return `叫分结束：${nextState.setup?.bankerName || "庄家"} ${score ? `以 ${score} 分` : ""}成为庄家，等待选择主花色。`;
   }
@@ -1834,6 +1841,45 @@ async function completeGameItemStage() {
   }
 }
 
+async function submitBoardHeroSkill(action, targetPlayerId = "") {
+  if (!session || isSpectating()) return;
+  const costs = state?.boardHeroSkills || {};
+  const cost = action === "shen-biesan-activate"
+    ? Number(costs.shenBiesan?.cost) || 0
+    : action === "shen-jiangwen-activate"
+      ? Number(costs.shenJiangwen?.cost) || 0
+      : action === "yokoyama-activate"
+        ? Number(costs.yokoyama?.cost) || 100
+        : 0;
+  const skillName = action.startsWith("shen-biesan") ? "玉面雷神"
+    : action.startsWith("shen-jiangwen") ? "排骨之王"
+      : "全能偶像";
+  if (cost && !window.confirm(`发动${skillName}将消耗 ${cost} 钻石，确定继续吗？`)) return;
+  try {
+    await roomAction(`/api/rooms/${session.roomId}/board-hero-skill`, {
+      method: "POST",
+      body: JSON.stringify({
+        playerId: session.playerId,
+        token: session.token,
+        action,
+        targetPlayerId,
+        requestId: requestId()
+      })
+    });
+    if (cost) {
+      ensureShopState(true);
+      ensureHeroHomeState(true);
+    }
+    const message = action.endsWith("-pass") ? `已放弃${skillName}`
+      : action === "yokoyama-swap" ? "已完成座位交换，身份和手牌保持不变"
+        : action === "yokoyama-activate" ? "已生成随机换位候选人"
+          : `已提交${skillName}`;
+    setMessage(message);
+  } catch (error) {
+    setMessage(error.message, true);
+  }
+}
+
 async function startGame() {
   if (!session) return;
   try {
@@ -2443,6 +2489,8 @@ function currentSetupCountdownDeadline() {
   }
   if (state?.stage === "score-bidding") return state.setup?.scoreBid?.deadlineAt || null;
   if (state?.stage === "frying") return state.setup?.fry?.deadlineAt || null;
+  if (state?.stage === "shen-biesan-skill") return state.boardHeroSkills?.shenBiesan?.deadlineAt || null;
+  if (state?.stage === "yokoyama-skill") return state.boardHeroSkills?.yokoyama?.deadlineAt || null;
   return null;
 }
 
@@ -2620,7 +2668,15 @@ function validateThrowDraft() {
 }
 
 function isTwoCard(card) {
-  return card?.type === "normal" && card.rank === "2";
+  return card?.type === "normal" && gameCardRank(card) === "2";
+}
+
+function gameCardRank(card) {
+  return card?.rulesRank || card?.rank || "";
+}
+
+function currentBidRankName() {
+  return state?.boardHeroSkills?.replacementRank || "2";
 }
 
 function followSuit(card) {
@@ -2646,7 +2702,7 @@ function isMainPlayCard(card, trumpSuit = currentTrumpSuit()) {
 function isComparePlayCard(card, trumpSuit = currentTrumpSuit()) {
   if (!card) return false;
   if (card.type === "joker") return true;
-  if (card.rank === "2") return true;
+  if (gameCardRank(card) === "2") return true;
   if ((card.suit === "H" || card.suit === "D") && card.rank === "5") return true;
   if (card.rank === "3" && trumpSuit && suitColor(card.suit) === suitColor(trumpSuit)) return true;
   return false;
@@ -2670,19 +2726,19 @@ function mainCardPower(card, trumpSuit = currentTrumpSuit()) {
     if (card.suit === trumpSuit) return 4;
     if (suitColor(card.suit) === suitColor(trumpSuit)) return 5;
   }
-  if (card.type === "normal" && card.rank === "2") {
+  if (card.type === "normal" && gameCardRank(card) === "2") {
     if (card.suit === trumpSuit) return 6;
     return 7;
   }
   if (card.type === "normal" && trumpSuit && card.suit === trumpSuit) {
-    return 8 + (rankSort[card.rank] ?? 99);
+    return 8 + (rankSort[gameCardRank(card)] ?? 99);
   }
   return 99;
 }
 
 function patternValue(card, trumpSuit = currentTrumpSuit()) {
   if (isMainPlayCard(card, trumpSuit)) return mainCardPower(card, trumpSuit);
-  return rankSort[card.rank] ?? 99;
+  return rankSort[gameCardRank(card)] ?? 99;
 }
 
 function patternKey(card, trumpSuit = currentTrumpSuit()) {
@@ -2702,8 +2758,10 @@ function colorfulFryOrderText() {
 
 const COLORFUL_FRY_ORDER_VISIBLE_STAGES = new Set([
   OTHER_CARDS_STAGE,
+  "shen-biesan-skill",
   "bidding",
   "score-bidding",
+  "yokoyama-skill",
   "trump-selecting",
   "burying",
   "frying",
@@ -2716,7 +2774,7 @@ function renderColorfulFryOrderBanner() {
   return `
     <div class="colorful-fry-order-banner" role="note">
       <span>✦ 缤纷顺序已生效</span>
-      <strong>花色 2：${escapeHtml(order)}</strong>
+      <strong>花色 ${escapeHtml(currentBidRankName())}：${escapeHtml(order)}</strong>
       <em>由大到小</em>
     </div>
   `;
@@ -2737,17 +2795,17 @@ function validateBidLikeSelection(type) {
   if (type === "trump" && !viewerCanRevealTrump()) return { ok: false, reason: "还没轮到你选择主花色" };
 
   const cards = selectedCards();
-  if (!cards.length) return { ok: false, reason: "请选择同一花色的 2" };
-  if (!cards.every(isTwoCard)) return { ok: false, reason: "只能选择 2" };
+  if (!cards.length) return { ok: false, reason: `请选择同一花色的 ${currentBidRankName()}` };
+  if (!cards.every(isTwoCard)) return { ok: false, reason: `只能选择 ${currentBidRankName()}` };
   const suits = uniqueFollowSuits(cards);
-  if (suits.length !== 1) return { ok: false, reason: "必须选择同一花色的 2" };
+  if (suits.length !== 1) return { ok: false, reason: `必须选择同一花色的 ${currentBidRankName()}` };
 
   const bid = { count: cards.length, suit: suits[0] };
   const current = type === "bid" ? state.setup?.bid : type === "fry" ? state.setup?.fry?.lastBid : null;
   const frySuitStrength = type === "fry" ? currentFrySuitStrength() : null;
   if (!bidBeats(current, bid, frySuitStrength || undefined)) {
-    if (current?.direct) return { ok: false, reason: "定主后首轮炒底至少需要 2 张同花色 2" };
-    if (current?.count === 1) return { ok: false, reason: "当前是 1 张叫主，至少 2 张 2 才能抢" };
+    if (current?.direct) return { ok: false, reason: `定主后首轮炒底至少需要 2 张同花色 ${currentBidRankName()}` };
+    if (current?.count === 1) return { ok: false, reason: `当前是 1 张叫主，至少 2 张 ${currentBidRankName()} 才能抢` };
     return { ok: false, reason: `需要比 ${bidText(current)} 更大` };
   }
   return { ok: true, reason: "" };
@@ -2757,24 +2815,30 @@ function rankValue(card, trumpSuit = currentTrumpSuit()) {
   return patternValue(card, trumpSuit);
 }
 
+function effectiveRankOrder(card) {
+  const replacementRank = card?.rulesReplacementRank || null;
+  if (!replacementRank) return rankOrder;
+  return rankOrder.map((rank) => rank === replacementRank ? "2" : rank === "2" ? "LOW_2" : rank);
+}
+
 function nonMainRankOrderValue(card, trumpSuit = currentTrumpSuit()) {
   if (!card || card.type !== "normal") return 99;
-  const availableRanks = rankOrder.filter((rank) => {
-    const sample = { type: "normal", suit: card.suit, rank };
+  const availableRanks = effectiveRankOrder(card).filter((rank) => {
+    const sample = { type: "normal", suit: card.suit, rank, rulesRank: rank };
     return !isMainPlayCard(sample, trumpSuit);
   });
-  const index = availableRanks.indexOf(card.rank);
+  const index = availableRanks.indexOf(gameCardRank(card));
   return index >= 0 ? index : 99;
 }
 
 function mainTractorOrderValue(card, trumpSuit = currentTrumpSuit()) {
   if (!card) return 99;
   if (card.type === "normal" && trumpSuit && card.suit === trumpSuit && !isComparePlayCard(card, trumpSuit)) {
-    const availableRanks = rankOrder.filter((rank) => {
-      const sample = { type: "normal", suit: trumpSuit, rank };
+    const availableRanks = effectiveRankOrder(card).filter((rank) => {
+      const sample = { type: "normal", suit: trumpSuit, rank, rulesRank: rank };
       return !isComparePlayCard(sample, trumpSuit);
     });
-    const index = availableRanks.indexOf(card.rank);
+    const index = availableRanks.indexOf(gameCardRank(card));
     return index >= 0 ? 8 + index : 99;
   }
   return patternValue(card, trumpSuit);
@@ -2797,7 +2861,7 @@ function consecutiveTractorGroups(previous, next, trumpSuit = currentTrumpSuit()
 
 function rankKey(card, trumpSuit = currentTrumpSuit()) {
   if (card.type === "joker") return `${playSuit(card, trumpSuit)}:JOKER:${card.joker}`;
-  return `${playSuit(card, trumpSuit)}:${card.suit}:${card.rank}`;
+  return `${playSuit(card, trumpSuit)}:${card.suit}:${gameCardRank(card)}`;
 }
 
 function cardsByRank(cards, trumpSuit = currentTrumpSuit()) {
@@ -4075,6 +4139,11 @@ function heroStars(stars) {
   return `<span class="hero-stars" aria-label="${count}星">${"★".repeat(count)}${"☆".repeat(5 - count)}</span>`;
 }
 
+function heroDisplayName(unit) {
+  if (!unit?.namePrefix) return `<span class="hero-base-name">${escapeHtml(unit?.name || "")}</span>`;
+  return `<span class="hero-name-prefix">${escapeHtml(unit.namePrefix)}</span><span class="hero-base-name">${escapeHtml(unit.baseName || unit.name)}</span>`;
+}
+
 function heroCardArtwork(unit, className = "", persistentKey = "") {
   if (!unit?.cardImage) return "";
   const persistentAttribute = persistentKey
@@ -4090,7 +4159,7 @@ function heroUnitBadge(unit, size = "normal") {
 }
 
 function renderHeroCardPreview(unit) {
-  if (!unit?.cardImage) return "";
+  if (!unit) return "";
   const owned = ownedHeroUnit(unit.id);
   return `
     <div class="modal-backdrop hero-card-preview-backdrop">
@@ -4098,19 +4167,21 @@ function renderHeroCardPreview(unit) {
         <div class="section-head">
           <div>
             <span class="eyebrow">HERO CARD</span>
-            <h2>${escapeHtml(unit.name)}</h2>
+            <h2 class="hero-display-name">${heroDisplayName(unit)}</h2>
           </div>
           <button type="button" class="secondary compact-button" data-action="close-hero-card-preview">关闭</button>
         </div>
         <div class="hero-card-preview-layout">
-          ${heroCardArtwork(unit, "hero-card-preview-art")}
+          ${heroCardArtwork(unit, "hero-card-preview-art") || heroUnitBadge(unit, "catalog")}
           <div class="hero-card-preview-copy">
             ${owned ? heroStars(owned.stars) : `<span class="hero-locked-label">未获得</span>`}
+            <div><span class="tag ${unit.rarity === "ssr" ? "good" : ""}">${escapeHtml(String(unit.rarity || unit.type).toUpperCase())}</span>${unit.gender ? `<span class="tag">${unit.gender === "female" ? "女" : "男"}</span>` : ""}</div>
             <div class="hero-card-preview-skill">
               <span>英雄技能</span>
               <h3>${escapeHtml(unit.skillName || "暂无技能")}</h3>
               <p>${escapeHtml(unit.skillDescription || "暂无技能说明")}</p>
             </div>
+            ${unit.rarity === "ssr" && owned ? `<p class="meta">当前热度 ${Number(owned.skillHeat || 0).toFixed(1)} / 3</p>` : ""}
             <p class="meta">英雄出战不影响家园钻石产出；正式发牌时锁定当局英雄、星级和技能版本。</p>
           </div>
         </div>
@@ -4149,7 +4220,7 @@ function renderBattleHeroPreview() {
           <button type="button" class="secondary compact-button" data-action="close-dialog">关闭</button>
         </div>
         <div class="hero-card-preview-layout">
-          ${heroCardArtwork(snapshot, "hero-card-preview-art")}
+          ${heroCardArtwork(snapshot, "hero-card-preview-art") || heroUnitBadge(snapshot, "catalog")}
           <div class="hero-card-preview-copy">
             ${heroStars(snapshot.stars)}
             <span class="tag good">本局锁定 ${escapeHtml(snapshot.stars)} 星</span>
@@ -4185,15 +4256,18 @@ function renderHeroLoadingPage(active) {
 
 function renderHomeRegionCard(region) {
   const placed = region.ownedUnit || null;
-  const assignedIds = new Set((heroHomeState?.regions || []).map((item) => item.unitId).filter(Boolean));
+  const extraPlaced = region.extraOwnedUnit || null;
+  const assignedIds = new Set((heroHomeState?.regions || []).flatMap((item) => [item.unitId, item.extraUnitId]).filter(Boolean));
   const candidates = (heroHomeState?.ownedUnits || []).filter((unit) => unit.regionId === region.id);
-  const progress = Math.max(0, Math.min(100, Number(region.productionHours || 0) / 6 * 100));
+  const maxProductionHours = Number(region.maxProductionHours || 6);
+  const progress = Math.max(0, Math.min(100, Number(region.productionHours || 0) / maxProductionHours * 100));
   const battle = placed?.type === "hero" && heroHomeState?.battleUnitId === placed.id;
+  const extraBattle = extraPlaced?.type === "hero" && heroHomeState?.battleUnitId === extraPlaced.id;
   return `
     <article class="home-region-card region-${escapeHtml(region.id)}">
       <header>
         <span class="home-region-icon" aria-hidden="true">${escapeHtml(region.icon || "◇")}</span>
-        <div><h3>${escapeHtml(region.name)}</h3><span>单槽 · 最多累计6小时</span></div>
+        <div><h3>${escapeHtml(region.name)} · Lv.${escapeHtml(region.level || 0)}</h3><span>产出 +${escapeHtml(region.level || 0)}% · 最多累计${escapeHtml(maxProductionHours)}小时</span></div>
         ${battle ? `<span class="tag good">出战中</span>` : ""}
       </header>
       <div class="home-region-worker ${placed ? "occupied" : "empty"} ${placed?.cardImage ? "hero-card-worker" : ""}">
@@ -4221,11 +4295,12 @@ function renderHomeRegionCard(region) {
         `}
       </div>
       <div class="home-production">
-        <div class="home-production-head"><span>已生产 ${Number(region.productionValue || 0).toFixed(2)} 💎</span><b>${Number(region.productionHours || 0).toFixed(1)} / 6小时</b></div>
+        <div class="home-production-head"><span>已生产 ${Number(region.productionValue || 0).toFixed(2)} 💎</span><b>${Number(region.productionHours || 0).toFixed(1)} / ${escapeHtml(maxProductionHours)}小时</b></div>
         <div class="home-production-track"><i style="width:${progress.toFixed(2)}%"></i></div>
         <div class="home-region-actions">
           <button type="button" data-action="collect-home" data-region-id="${escapeHtml(region.id)}" ${heroActionInFlight ? "disabled" : ""}>领取 ${region.collectableDiamonds || 0} 💎</button>
           ${placed?.type === "hero" ? `<button type="button" class="secondary" data-action="select-battle-hero" data-unit-id="${escapeHtml(placed.id)}" ${battle || heroActionInFlight ? "disabled" : ""}>${battle ? "已出战" : "设为出战"}</button>` : ""}
+          <button type="button" class="secondary" data-action="upgrade-home-region" data-region-id="${escapeHtml(region.id)}" ${!region.upgradeCost || Number(heroHomeState?.buildingMaterials || 0) < Number(region.upgradeCost) || heroActionInFlight ? "disabled" : ""}>${region.upgradeCost ? `升级 · ${escapeHtml(region.upgradeCost)}建材` : "已满100级"}</button>
         </div>
       </div>
       <div class="home-assignment-list">
@@ -4234,12 +4309,54 @@ function renderHomeRegionCard(region) {
           ${candidates.map((unit) => {
             const active = placed?.id === unit.id;
             const unavailable = assignedIds.has(unit.id) && !active;
-            return `<button type="button" class="home-unit-choice ${active ? "active" : "secondary"}" data-action="assign-home-unit" data-region-id="${escapeHtml(region.id)}" data-unit-id="${escapeHtml(unit.id)}" ${active || unavailable || heroActionInFlight ? "disabled" : ""}>${heroUnitBadge(unit, "tiny")}<span>${escapeHtml(unit.name)}</span></button>`;
+            return `<button type="button" class="home-unit-choice ${active ? "active" : "secondary"}" data-action="assign-home-unit" data-slot="primary" data-region-id="${escapeHtml(region.id)}" data-unit-id="${escapeHtml(unit.id)}" ${active || unavailable || heroActionInFlight ? "disabled" : ""}>${heroUnitBadge(unit, "tiny")}<span>${escapeHtml(unit.name)}</span></button>`;
           }).join("") || `<span class="meta">尚未获得本区角色，请先抽卡</span>`}
-          ${placed ? `<button type="button" class="secondary home-unit-choice" data-action="assign-home-unit" data-region-id="${escapeHtml(region.id)}" data-unit-id="" ${heroActionInFlight ? "disabled" : ""}><span class="hero-unit-badge tiny empty">空</span><span>移除</span></button>` : ""}
+          ${placed ? `<button type="button" class="secondary home-unit-choice" data-action="assign-home-unit" data-slot="primary" data-region-id="${escapeHtml(region.id)}" data-unit-id="" ${heroActionInFlight ? "disabled" : ""}><span class="hero-unit-badge tiny empty">空</span><span>移除</span></button>` : ""}
         </div>
       </div>
+      ${region.extraSlotUnlocked ? `<div class="home-assignment-list"><span class="meta">100级附加英雄栏位（不产出）</span><div>${candidates.filter((unit) => unit.type === "hero").map((unit) => {
+        const active = extraPlaced?.id === unit.id;
+        const unavailable = assignedIds.has(unit.id) && !active;
+        return `<button type="button" class="home-unit-choice ${active ? "active" : "secondary"}" data-action="assign-home-unit" data-slot="extra" data-region-id="${escapeHtml(region.id)}" data-unit-id="${escapeHtml(unit.id)}" ${active || unavailable || heroActionInFlight ? "disabled" : ""}>${heroUnitBadge(unit, "tiny")}<span>${escapeHtml(unit.name)}</span></button>`;
+      }).join("")}${extraPlaced ? `<button type="button" class="secondary home-unit-choice" data-action="assign-home-unit" data-slot="extra" data-region-id="${escapeHtml(region.id)}" data-unit-id="" ${heroActionInFlight ? "disabled" : ""}><span class="hero-unit-badge tiny empty">空</span><span>移除</span></button>` : ""}</div>${extraPlaced ? `<div class="home-region-actions"><span>${escapeHtml(extraPlaced.name)} ${heroStars(extraPlaced.stars)}</span><button type="button" class="secondary" data-action="select-battle-hero" data-unit-id="${escapeHtml(extraPlaced.id)}" ${extraBattle || heroActionInFlight ? "disabled" : ""}>${extraBattle ? "已出战" : "设为出战"}</button></div>` : ""}</div>` : ""}
     </article>
+  `;
+}
+
+function heroTaskRequirementText(task) {
+  const regionNames = new Map((heroHomeState?.regions || []).map((region) => [region.id, region.name]));
+  const parts = [];
+  Object.entries(task.requirements?.regions || {}).forEach(([regionId, count]) => {
+    parts.push(`${regionNames.get(regionId) || regionId}${count}名`);
+  });
+  Object.entries(task.requirements?.genders || {}).forEach(([gender, count]) => {
+    parts.push(`${gender === "female" ? "女" : "男"}英雄${count}名`);
+  });
+  return parts.join("、") || `任意${task.heroCount}名英雄`;
+}
+
+function renderHeroTask(task, occupiedHeroIds) {
+  const assignedNames = (task.assignedUnitIds || []).map((unitId) => heroUnitById(unitId)?.name || unitId).join("、");
+  const heroes = (heroHomeState?.ownedUnits || []).filter((unit) => unit.type === "hero");
+  return `
+    <article class="hero-task-card task-${escapeHtml(task.color)}" data-hero-task-id="${escapeHtml(task.taskId)}">
+      <header><div><span class="tag">${escapeHtml(task.color.toUpperCase())}</span><strong>${escapeHtml(task.heroCount)}人任务 · ${escapeHtml(task.durationSeconds / 3600)}小时</strong></div><b>+${escapeHtml(task.rewardMaterials)} 建材</b></header>
+      <p>${escapeHtml(heroTaskRequirementText(task))}</p>
+      ${task.status === "available" ? `<div class="hero-task-choices">${heroes.map((hero) => `<label><input type="checkbox" data-task-hero value="${escapeHtml(hero.id)}" ${occupiedHeroIds.has(hero.id) ? "disabled" : ""}>${heroUnitBadge(hero, "tiny")}<span>${escapeHtml(hero.name)}</span></label>`).join("")}</div><button type="button" data-action="dispatch-hero-task" data-task-id="${escapeHtml(task.taskId)}" ${heroActionInFlight ? "disabled" : ""}>派遣英雄</button>` : ""}
+      ${task.status === "running" ? `<div class="meta">执行中：${escapeHtml(assignedNames)}<br>预计完成：${escapeHtml(new Date(task.completesAt).toLocaleString("zh-CN"))}</div>` : ""}
+      ${task.status === "completed" ? `<div class="meta">已完成：${escapeHtml(assignedNames)}</div><button type="button" data-action="collect-hero-task" data-task-id="${escapeHtml(task.taskId)}" ${heroActionInFlight ? "disabled" : ""}>领取 ${escapeHtml(task.rewardMaterials)} 建材</button>` : ""}
+    </article>
+  `;
+}
+
+function renderHeroTasks() {
+  const tasks = heroHomeState?.tasks || [];
+  const occupiedHeroIds = new Set(tasks.filter((task) => task.status === "running").flatMap((task) => task.assignedUnitIds || []));
+  return `
+    <section class="panel hero-task-section">
+      <div class="section-head"><div><span class="eyebrow">DAILY DISPATCH</span><h2>每日英雄任务</h2><p>每天北京时间06:00刷新3个未开始任务；执行中的任务不会被替换。</p></div><div class="fragment-wallet"><small>建材</small><b>▰ ${escapeHtml(heroHomeState?.buildingMaterials || 0)}</b></div></div>
+      <div class="hero-task-grid">${tasks.length ? tasks.map((task) => renderHeroTask(task, occupiedHeroIds)).join("") : `<div class="empty">获得至少一名英雄后生成可执行任务</div>`}</div>
+    </section>
   `;
 }
 
@@ -4260,6 +4377,7 @@ function renderHeroHomePage() {
       </div>
       <div class="hero-home-summary">
         <span><small>当前钻石</small><b>💎 ${escapeHtml(heroHomeState.balance || 0)}</b></span>
+        <span><small>建材</small><b>▰ ${escapeHtml(heroHomeState.buildingMaterials || 0)}</b></span>
         <span><small>出战英雄</small><b>${escapeHtml(heroHomeState.battleHero?.name || "未选择")}</b></span>
         <button type="button" data-action="collect-home" data-region-id="all" ${heroActionInFlight ? "disabled" : ""}>一键领取</button>
       </div>
@@ -4267,9 +4385,10 @@ function renderHeroHomePage() {
     <section class="home-region-grid">
       ${(heroHomeState.regions || []).map(renderHomeRegionCard).join("")}
     </section>
+    ${renderHeroTasks()}
     <section class="panel hero-home-note">
       <strong>生产规则</strong>
-      <span>英雄每小时产出随星级为3/4/5/6/7，小兵为1/1.25/1.5/1.75/2。领取只发整数，小数继续留在对应区域；更换或移除会先自动领取旧产出。</span>
+      <span>SR每小时24/32/40/48/56，SSR为36/48/60/72/84，小兵为8/10/12/14/16；区域每级再增加1%。领取只发整数，小数继续留在对应区域。</span>
     </section>
     ${renderHeroCardPreview(heroUnitById(heroCardPreviewUnitId))}
   `);
@@ -4278,23 +4397,27 @@ function renderHeroHomePage() {
 function renderCatalogUnit(unit) {
   const owned = ownedHeroUnit(unit.id);
   const cost = owned?.upgradeCost;
+  const effectiveUniversalFragments = unit.rarity === "ssr"
+    ? Math.floor(Number(heroHomeState?.universalFragments || 0) / 10)
+    : Number(heroHomeState?.universalFragments || 0);
   const enough = owned && cost && (unit.type === "hero"
-    ? Number(owned.exclusiveFragments || 0) + Number(heroHomeState?.universalFragments || 0) >= cost
+    ? Number(owned.exclusiveFragments || 0) + effectiveUniversalFragments >= cost
     : Number(owned.exclusiveFragments || 0) >= cost);
   return `
     <article class="hero-catalog-card ${owned ? "owned" : "locked"}">
       ${unit.cardImage ? `<div class="hero-catalog-art">${heroCardArtwork(unit, "hero-catalog-card-art")}</div>` : heroUnitBadge({ ...unit, stars: owned?.stars }, "catalog")}
       <div class="hero-catalog-copy">
-        <div class="hero-catalog-title"><strong>${escapeHtml(unit.name)}</strong><span class="tag">${unit.type === "hero" ? "英雄" : "小兵"}</span><span class="tag">${escapeHtml(heroHomeState.regions.find((region) => region.id === unit.regionId)?.name || "")}</span></div>
+        <div class="hero-catalog-title"><strong class="hero-display-name">${heroDisplayName(unit)}</strong><span class="tag ${unit.rarity === "ssr" ? "good" : ""}">${unit.type === "hero" ? escapeHtml(String(unit.rarity || "sr").toUpperCase()) : "小兵"}</span>${unit.gender ? `<span class="tag">${unit.gender === "female" ? "女" : "男"}</span>` : ""}<span class="tag">${escapeHtml(heroHomeState.regions.find((region) => region.id === unit.regionId)?.name || "")}</span></div>
         ${owned ? heroStars(owned.stars) : `<span class="hero-locked-label">未获得</span>`}
         ${unit.skillName ? `<p><b>${escapeHtml(unit.skillName)}</b> · ${escapeHtml(unit.skillDescription)}</p>` : `<p>无牌局技能，稳定生产少量钻石。</p>`}
         <div class="hero-fragment-line">
           <span>专属碎片 <b>${owned ? escapeHtml(owned.exclusiveFragments || 0) : "—"}</b></span>
           ${unit.type === "hero" ? `<span>通用碎片 <b>${escapeHtml(heroHomeState.universalFragments || 0)}</b></span>` : ""}
+          ${unit.rarity === "ssr" && owned ? `<span>热度 <b>${Number(owned.skillHeat || 0).toFixed(1)} / 3</b></span>` : ""}
         </div>
       </div>
       <div class="hero-upgrade-action">
-        ${!owned ? `<span>抽到完整角色后解锁1星</span>` : owned.stars >= 5 ? `<b>已满5星</b>` : `<span>升${owned.stars + 1}星需要 ${cost} 碎片</span><button type="button" data-action="upgrade-hero-unit" data-unit-id="${escapeHtml(unit.id)}" ${!enough || heroActionInFlight ? "disabled" : ""}>${enough ? "确认升星" : "碎片不足"}</button>`}
+        ${!owned ? `<span>抽到完整角色后解锁1星</span>` : owned.stars >= 5 ? `<b>已满5星</b>` : `<span>升${owned.stars + 1}星需要 ${cost} 专属碎片${unit.rarity === "ssr" ? "（不足部分10通用=1专属）" : ""}</span><button type="button" data-action="upgrade-hero-unit" data-unit-id="${escapeHtml(unit.id)}" ${!enough || heroActionInFlight ? "disabled" : ""}>${enough ? "确认升星" : "碎片不足"}</button>`}
       </div>
     </article>
   `;
@@ -4318,12 +4441,13 @@ function renderHeroCatalogPage() {
 }
 
 function renderGachaResult(result) {
+  const guaranteedLabels = { "first-sr": "首抽SR", "hero-pity": "50抽保底", "ssr-pity": "100抽SSR保底" };
   return `
     <article class="gacha-result-card ${result.unit.type} ${result.conversion.type === "new" ? "new" : ""}">
       <span class="gacha-result-index">${escapeHtml(result.index)}</span>
       ${result.unit.cardImage ? heroCardArtwork(result.unit, "gacha-card-art") : heroUnitBadge(result.unit, "gacha")}
-      <strong>${escapeHtml(result.unit.name)}</strong>
-      <span>${result.unit.type === "hero" ? "英雄" : "小兵"}${result.guaranteed ? ` · ${result.guaranteed === "pity" ? "50抽保底" : "首次抽卡保证"}` : ""}</span>
+      <strong class="hero-display-name">${heroDisplayName(result.unit)}</strong>
+      <span>${result.unit.type === "hero" ? escapeHtml(String(result.unit.rarity || "sr").toUpperCase()) : "小兵"}${result.guaranteed ? ` · ${escapeHtml(guaranteedLabels[result.guaranteed] || result.guaranteed)}` : ""}</span>
       <b>${escapeHtml(result.conversion.label)}</b>
     </article>
   `;
@@ -4366,25 +4490,27 @@ function renderHeroGachaPage() {
   ensureHeroHomeState();
   if (!heroHomeState || heroHomeState.unavailable) return renderHeroLoadingPage("hero-gacha");
   const freePullAvailable = Boolean(heroHomeState.freePullAvailable);
-  const singlePullPrice = Number(heroHomeState.rules?.singlePullPrice) || 30;
-  const tenPullPrice = Number(heroHomeState.rules?.tenPullPrice) || 270;
+  const singlePullPrice = Number(heroHomeState.rules?.singlePullPrice) || 300;
+  const tenPullPrice = Number(heroHomeState.rules?.tenPullPrice) || 2700;
   const singlePullDisabled = heroActionInFlight || (!freePullAvailable && Number(heroHomeState.balance || 0) < singlePullPrice);
   const nextFreePullAt = heroHomeState.nextFreePullAt || "";
   renderShell(`
     ${renderHeroSectionNav("hero-gacha")}
     <section class="panel hero-gacha-hero">
-      <div class="gacha-copy"><span class="eyebrow">SUMMON</span><h2>英雄召集</h2><p>每抽英雄10%、小兵90%；六名英雄等概率，三名小兵等概率。</p></div>
+      <div class="gacha-copy"><span class="eyebrow">SUMMON</span><h2>英雄召集</h2><p>每抽SSR 1%、SR 9%、小兵90%；每抽另得10建材。</p></div>
       <div class="gacha-status-grid">
         <span><small>当前钻石</small><b>💎 ${escapeHtml(heroHomeState.balance || 0)}</b></span>
         <span><small>50抽保底</small><b>还剩 ${escapeHtml(heroHomeState.pityRemaining)} 抽</b></span>
-        <span><small>首次抽卡</small><b>${heroHomeState.firstPullGuaranteed ? "必得英雄" : "已使用"}</b></span>
+        <span><small>100抽SSR保底</small><b>还剩 ${escapeHtml(heroHomeState.ssrPityRemaining)} 抽</b></span>
+        <span><small>首次抽卡</small><b>${heroHomeState.firstPullGuaranteed ? "必得未拥有SR" : "已使用"}</b></span>
+        <span><small>当前建材</small><b>▰ ${escapeHtml(heroHomeState.buildingMaterials || 0)}</b></span>
         <span class="gacha-free-pull-status"><small>免费单抽</small><b>${freePullAvailable ? "现在可用" : "今日已使用"}</b><em>距北京时间 06:00 更新 <time data-hero-free-pull-countdown data-deadline-at="${escapeHtml(nextFreePullAt)}">${escapeHtml(heroFreePullCountdownText(nextFreePullAt))}</time></em></span>
       </div>
       <div class="gacha-actions">
         <button type="button" data-action="pull-hero-gacha" data-pull-count="1" ${singlePullDisabled ? "disabled" : ""}>${freePullAvailable ? "免费单抽" : `单抽 · ${singlePullPrice}💎`}</button>
         <button type="button" class="accent" data-action="pull-hero-gacha" data-pull-count="10" ${heroActionInFlight || Number(heroHomeState.balance || 0) < tenPullPrice ? "disabled" : ""}>十连 · ${tenPullPrice}💎 <small>9折</small></button>
       </div>
-      <div class="gacha-probability"><span>英雄 10%</span><span>小兵 90%</span><span>首次抽卡必出英雄</span><span>第50抽必出英雄</span><span>十连固定9折</span><span>免费单抽每天北京时间6点更新</span></div>
+      <div class="gacha-probability"><span>SSR 1%</span><span>SR 9%</span><span>小兵 90%</span><span>首抽必出未拥有SR且不会是SSR</span><span>第50抽至少SR</span><span>第100抽必出SSR</span><span>十连固定9折</span><span>免费单抽每天北京时间6点更新</span></div>
     </section>
     ${heroGachaResults.length ? `<section class="panel stack"><div class="section-head"><div><h2>本次结果</h2><div class="meta">抽卡结果已由服务端入账</div></div></div><div class="gacha-result-grid">${heroGachaResults.map(renderGachaResult).join("")}</div></section>` : `<section class="panel"><div class="empty">抽卡结果会显示在这里</div></section>`}
   `);
@@ -4415,19 +4541,77 @@ async function collectHeroHome(regionId) {
   }
 }
 
-async function assignHeroHomeUnit(regionId, unitId) {
+async function assignHeroHomeUnit(regionId, unitId, slot = "primary") {
   if (heroActionInFlight) return;
-  heroActionInFlight = `assign:${regionId}`;
+  heroActionInFlight = `assign:${regionId}:${slot}`;
   render();
   try {
     const data = await api("/api/heroes/home/assign", {
       method: "POST",
-      body: JSON.stringify({ regionId, unitId: unitId || null, requestId: requestId() })
+      body: JSON.stringify({ regionId, unitId: unitId || null, slot, requestId: requestId() })
     });
     applyHeroMutationState(data.state);
     setMessage(data.autoCollectedAmount ? `已更换角色，并自动领取 ${data.autoCollectedAmount} 钻石` : unitId ? "角色已派驻" : "角色已移除");
   } catch (error) {
     setMessage(error.message || "派驻失败", true);
+  } finally {
+    heroActionInFlight = "";
+    render();
+  }
+}
+
+async function upgradeHeroHomeRegion(regionId) {
+  if (heroActionInFlight) return;
+  heroActionInFlight = `region-upgrade:${regionId}`;
+  render();
+  try {
+    const data = await api("/api/heroes/home/upgrade", {
+      method: "POST",
+      body: JSON.stringify({ regionId, requestId: requestId() })
+    });
+    applyHeroMutationState(data.state);
+    setMessage(`${heroHomeState?.regions?.find((region) => region.id === regionId)?.name || "区域"}已升至${data.level}级`);
+  } catch (error) {
+    setMessage(error.message || "区域升级失败", true);
+  } finally {
+    heroActionInFlight = "";
+    render();
+  }
+}
+
+async function dispatchDailyHeroTask(taskId, card) {
+  if (heroActionInFlight) return;
+  const unitIds = [...(card?.querySelectorAll("input[data-task-hero]:checked") || [])].map((input) => input.value);
+  heroActionInFlight = `task-dispatch:${taskId}`;
+  render();
+  try {
+    const data = await api("/api/heroes/tasks/dispatch", {
+      method: "POST",
+      body: JSON.stringify({ taskId, unitIds, requestId: requestId() })
+    });
+    applyHeroMutationState(data.state);
+    setMessage("英雄任务已经开始");
+  } catch (error) {
+    setMessage(error.message || "派遣失败", true);
+  } finally {
+    heroActionInFlight = "";
+    render();
+  }
+}
+
+async function collectDailyHeroTask(taskId) {
+  if (heroActionInFlight) return;
+  heroActionInFlight = `task-collect:${taskId}`;
+  render();
+  try {
+    const data = await api("/api/heroes/tasks/collect", {
+      method: "POST",
+      body: JSON.stringify({ taskId, requestId: requestId() })
+    });
+    applyHeroMutationState(data.state);
+    setMessage(`已领取 ${data.rewardMaterials} 建材`);
+  } catch (error) {
+    setMessage(error.message || "领取任务奖励失败", true);
   } finally {
     heroActionInFlight = "";
     render();
@@ -5344,7 +5528,7 @@ function renderRoom() {
 function bidText(bid) {
   if (!bid) return "暂无";
   if (bid.direct) return `${bid.playerName}：${bid.suitName}主`;
-  return `${bid.playerName}：${bid.count} 张${bid.suitName}2${bid.random ? "（随机）" : ""}`;
+  return `${bid.playerName}：${bid.count} 张${bid.suitName}${currentBidRankName()}${bid.random ? "（随机）" : ""}`;
 }
 
 function scoreBidText(scoreBid) {
@@ -5513,10 +5697,27 @@ function renderSetupCenter() {
     `;
   }
 
+  if (stage === "shen-biesan-skill") {
+    const skill = state.boardHeroSkills?.shenBiesan || {};
+    body = `
+      ${renderSetupLines([
+        { label: "当前阶段", value: "神 · 瘪三 · 玉面雷神" },
+        { label: "倒计时", value: setupCountdownTag(skill.deadlineAt, " 后自动放弃") },
+        { label: "发动费用", value: skill.viewerEligible ? `${escapeHtml(skill.cost || 0)} 钻石（热度 ${escapeHtml(skill.heat ?? 0)}/3）` : "" }
+      ])}
+      <div class="meta">符合条件的神 · 瘪三可申请发动；多人申请时随机一人成功，只有成功者扣费。</div>
+      <div class="row">
+        ${!isSpectating() && skill.canChoose ? `<button type="button" data-action="shen-biesan-activate">发动玉面雷神</button><button type="button" class="secondary" data-action="shen-biesan-pass">不发动</button>` : ""}
+        ${!isSpectating() && skill.viewerCompleted ? `<span class="tag good">你已完成选择</span>` : ""}
+        ${isSpectating() || (!skill.viewerEligible && !skill.viewerCompleted) ? `<span class="tag">等待符合条件的玩家选择</span>` : ""}
+      </div>
+    `;
+  }
+
   if (stage === "bidding") {
     const turnText = setup.bid
       ? `轮到 ${setup.biddingTurnPlayerName} 抢主或过`
-      : "任意玩家可先亮 2 叫主";
+      : `任意玩家可先亮 ${currentBidRankName()} 叫主`;
     body = `
       ${renderSetupLines([
         { label: "当前叫主", value: escapeHtml(bidText(setup.bid)) },
@@ -5524,7 +5725,7 @@ function renderSetupCenter() {
         currentTrumpItem
       ])}
       <div class="row">
-        ${viewerCanBid() ? `<button type="button" data-action="open-bid-dialog" ${actionPassInFlight ? "disabled" : ""}>${setup.bid ? "选择2抢主" : "选择2叫主"}</button>` : ""}
+        ${viewerCanBid() ? `<button type="button" data-action="open-bid-dialog" ${actionPassInFlight ? "disabled" : ""}>${setup.bid ? `选择${escapeHtml(currentBidRankName())}抢主` : `选择${escapeHtml(currentBidRankName())}叫主`}</button>` : ""}
         ${viewerCanPassBid() ? `<button type="button" class="secondary" data-action="bid-pass" ${actionPassInFlight ? "disabled" : ""}>${actionPassInFlight ? "提交中…" : "过"}</button>` : ""}
         ${!isSpectating() && state.viewer.host && !setup.bid ? `<button type="button" class="secondary" data-action="random-bid">无人叫主，随机指定</button>` : ""}
       </div>
@@ -5543,6 +5744,29 @@ function renderSetupCenter() {
         scoreBidState.deadlineAt ? { label: "倒计时", value: setupCountdownTag(scoreBidState.deadlineAt) } : null
       ])}
       <div class="row">${scoreBidActionButtons()}</div>
+    `;
+  }
+
+  if (stage === "yokoyama-skill") {
+    const skill = state.boardHeroSkills?.yokoyama || {};
+    const candidateButtons = (skill.candidates || []).map((candidate) => `
+      <button type="button" data-action="yokoyama-swap" data-target-player-id="${escapeHtml(candidate.playerId)}">
+        与 ${escapeHtml(candidate.playerName)}（${escapeHtml(candidate.seat)}号位）换位
+      </button>
+    `).join("");
+    body = `
+      ${renderSetupLines([
+        { label: "当前阶段", value: "横山由依 · 全能偶像" },
+        { label: "当前玩家", value: escapeHtml(skill.currentPlayerName || "") },
+        { label: "倒计时", value: setupCountdownTag(skill.deadlineAt, " 后自动放弃") },
+        { label: "发动费用", value: skill.canFinish ? `${escapeHtml(skill.cost || 100)} 钻石` : "" }
+      ])}
+      <div class="meta">发动后按星级随机展示候选玩家，可选择其中一人交换座位；身份与手牌保持不变。</div>
+      <div class="row">
+        ${!isSpectating() && skill.canActivate ? `<button type="button" data-action="yokoyama-activate">花费 ${escapeHtml(skill.cost || 100)} 钻石生成候选</button><button type="button" class="secondary" data-action="yokoyama-pass">不发动</button>` : ""}
+        ${!isSpectating() && skill.paid ? `${candidateButtons}<button type="button" class="secondary" data-action="yokoyama-pass">放弃换位</button>` : ""}
+        ${!skill.canFinish ? `<span class="tag">等待 ${escapeHtml(skill.currentPlayerName || "玩家")} 选择</span>` : ""}
+      </div>
     `;
   }
 
@@ -5579,7 +5803,8 @@ function renderSetupCenter() {
         currentTrumpItem
       ])}
       <div class="row">
-        ${viewerCanFry() ? `<button type="button" data-action="open-fry-dialog" ${actionPassInFlight ? "disabled" : ""}>选择2炒底</button>` : ""}
+        ${state.boardHeroSkills?.shenJiangwen?.canActivate ? `<button type="button" data-action="shen-jiangwen-activate">发动排骨之王（${escapeHtml(state.boardHeroSkills.shenJiangwen.cost || 0)}钻石）</button>` : ""}
+        ${viewerCanFry() ? `<button type="button" data-action="open-fry-dialog" ${actionPassInFlight ? "disabled" : ""}>选择${escapeHtml(currentBidRankName())}炒底</button>` : ""}
         ${viewerCanFry() ? `<button type="button" class="secondary" data-action="fry-pass" ${actionPassInFlight ? "disabled" : ""} ${passCountdownAttrs}>${escapeHtml(passLabel)}</button>` : ""}
       </div>
     `;
@@ -6088,13 +6313,13 @@ function renderBidFryDialog(type) {
           </div>
           <button type="button" class="secondary compact-button" data-action="close-dialog">关闭</button>
         </div>
-        ${colorfulOrder ? `<div class="colorful-order">花色 2 大小（大 → 小）：<strong>${escapeHtml(colorfulOrder)}</strong></div>` : ""}
+        ${colorfulOrder ? `<div class="colorful-order">花色 ${escapeHtml(currentBidRankName())} 大小（大 → 小）：<strong>${escapeHtml(colorfulOrder)}</strong></div>` : ""}
         <div class="choice-panel">
           <div class="choice-title">
-            <strong>我的 2</strong>
+            <strong>我的 ${escapeHtml(currentBidRankName())}</strong>
             <span class="tag">${twoCards.length} 张</span>
           </div>
-          ${twoCards.length ? renderTwoCardChoices(twoCards) : `<div class="empty">手里没有可用于${escapeHtml(title)}的 2。</div>`}
+          ${twoCards.length ? renderTwoCardChoices(twoCards) : `<div class="empty">手里没有可用于${escapeHtml(title)}的 ${escapeHtml(currentBidRankName())}。</div>`}
         </div>
         <div class="dialog-actions">
           ${renderGameItemControl()}
@@ -6315,8 +6540,10 @@ function renderSetupTable() {
   const titleByStage = {
     [RESTART_CARD_STAGE]: "重开卡阶段",
     [OTHER_CARDS_STAGE]: "其他卡牌阶段",
+    "shen-biesan-skill": "玉面雷神阶段",
     bidding: "叫主牌桌",
     "score-bidding": "叫分牌桌",
+    "yokoyama-skill": "全能偶像阶段",
     "trump-selecting": "定主牌桌",
     burying: "贴底牌桌",
     frying: "炒底牌桌",
@@ -6372,6 +6599,13 @@ function setupSeatStatus(player) {
       : (state.gameItems?.uses || []).filter((use) => use.playerId === player.id).length;
     return usedCount ? { text: `已用 ${usedCount} 张`, tone: "accent" } : { text: "选择卡牌", tone: "" };
   }
+  if (state.stage === "shen-biesan-skill") {
+    const skill = state.boardHeroSkills?.shenBiesan || {};
+    if ((skill.eligiblePlayerIds || []).includes(player.id)) {
+      return { text: skill.viewerCompleted && player.id === state.viewer?.id ? "已选择" : "发动/放弃", tone: "good" };
+    }
+    return { text: "等待技能", tone: "" };
+  }
   if (state.stage === "bidding") {
     if (!setup.bid) return { text: "等待叫主", tone: "" };
     if (setup.biddingTurnPlayerId === player.id) return { text: "抢主/过", tone: "good" };
@@ -6384,6 +6618,10 @@ function setupSeatStatus(player) {
     if (scoreBidState.currentPlayerId === player.id) return { text: `${scoreBidState.currentScore}分`, tone: "accent" };
     if ((scoreBidState.passIds || []).includes(player.id)) return { text: "已过", tone: "" };
     return { text: scoreBidState.currentPlayerId ? "可加分/过" : "可起叫", tone: scoreBidState.currentPlayerId ? "good" : "" };
+  }
+  if (state.stage === "yokoyama-skill") {
+    if (state.boardHeroSkills?.yokoyama?.currentPlayerId === player.id) return { text: "换位/放弃", tone: "good" };
+    return { text: "等待换位", tone: "" };
   }
   if (state.stage === "trump-selecting") {
     if (setup.bankerId === player.id) return { text: "选主花色", tone: "good" };
@@ -7217,7 +7455,10 @@ function renderStoredGameHistoryDialog() {
 function renderPlayer(player) {
   const isMe = state.viewer?.id === player.id;
   const isTurn = state.currentTrick?.currentTurnPlayerId === player.id;
-  const isSetupTurn = state.setup?.biddingTurnPlayerId === player.id || state.setup?.fry?.currentPlayerId === player.id;
+  const isSetupTurn = state.setup?.biddingTurnPlayerId === player.id
+    || state.setup?.fry?.currentPlayerId === player.id
+    || state.boardHeroSkills?.yokoyama?.currentPlayerId === player.id
+    || (state.stage === "shen-biesan-skill" && (state.boardHeroSkills?.shenBiesan?.eligiblePlayerIds || []).includes(player.id));
   const isBankerAction = (state.stage === "burying" || state.stage === "dogleg") && state.setup?.bankerId === player.id;
   const canKick = !isSpectating() && state.viewer?.host && !isMe && state.status === "lobby";
   return `
@@ -7271,7 +7512,7 @@ function isFixedRankCard(card) {
   const trumpSuit = currentTrumpSuit();
   const usesFinalTrumpOrder = handUsesFinalTrumpOrder();
   if (card.type === "joker") return true;
-  if (card.rank === "2") return true;
+  if (gameCardRank(card) === "2") return true;
   if (usesFinalTrumpOrder && isCounselor(card, trumpSuit)) return true;
   if (usesFinalTrumpOrder && trumpSuit && card.suit === trumpSuit) return true;
   return (card.suit === "H" && card.rank === "5") || (card.suit === "D" && card.rank === "5");
@@ -7292,7 +7533,8 @@ const rankSort = {
   "5": 9,
   "4": 10,
   "3": 11,
-  "2": 12
+  "2": 12,
+  LOW_2: 13
 };
 
 function fixedRankSort(card) {
@@ -7306,7 +7548,7 @@ function sortCardsForGroup(groupId, cards) {
     if (groupId === "rank") {
       return fixedRankSort(a) - fixedRankSort(b) || fixedRankTieSort(a, b) || a.deck - b.deck || a.id.localeCompare(b.id);
     }
-    return (rankSort[a.rank] ?? 99) - (rankSort[b.rank] ?? 99) || a.deck - b.deck || a.id.localeCompare(b.id);
+    return (rankSort[gameCardRank(a)] ?? 99) - (rankSort[gameCardRank(b)] ?? 99) || a.deck - b.deck || a.id.localeCompare(b.id);
   });
 }
 
@@ -7318,7 +7560,7 @@ function sortCardsForPlay(cards, trumpSuit = currentTrumpSuit()) {
     return (suitOrder[aSuit] ?? 9) - (suitOrder[bSuit] ?? 9)
       || patternValue(a, trumpSuit) - patternValue(b, trumpSuit)
       || fixedRankTieSort(a, b)
-      || (rankSort[a.rank] ?? 99) - (rankSort[b.rank] ?? 99)
+      || (rankSort[gameCardRank(a)] ?? 99) - (rankSort[gameCardRank(b)] ?? 99)
       || (suitSort[a.suit] ?? 99) - (suitSort[b.suit] ?? 99)
       || a.deck - b.deck
       || a.id.localeCompare(b.id);
@@ -7327,7 +7569,7 @@ function sortCardsForPlay(cards, trumpSuit = currentTrumpSuit()) {
 
 function fixedRankTieSort(a, b) {
   const trumpSuit = currentTrumpSuit();
-  if (a.rank === "2" && b.rank === "2") {
+  if (gameCardRank(a) === "2" && gameCardRank(b) === "2") {
     const aMain = a.suit === trumpSuit ? 0 : 1;
     const bMain = b.suit === trumpSuit ? 0 : 1;
     return aMain - bMain || (suitSort[a.suit] ?? 99) - (suitSort[b.suit] ?? 99);
@@ -7369,6 +7611,7 @@ function cardCorner(card) {
       <span class="card-rank">${escapeHtml(card.rank)}</span>
       ${renderCardSuit(card)}
     </span>
+    ${card.rulesRank === "2" ? `<span class="card-rules-rank">代2</span>` : card.rulesRank === "LOW_2" ? `<span class="card-rules-rank muted">原2</span>` : ""}
   `;
 }
 
@@ -7390,7 +7633,10 @@ function displayCardSymbol(card) {
 
 function displayCardLabel(card) {
   if (!card) return "";
-  if (card.type === "normal") return `${displayCardSymbol(card)}${card.rank || ""}`;
+  if (card.type === "normal") {
+    const mark = card.rulesRank === "2" ? "（代2）" : card.rulesRank === "LOW_2" ? "（普通2）" : "";
+    return `${displayCardSymbol(card)}${card.rank || ""}${mark}`;
+  }
   return card.label || `${card.symbol || ""}${card.rank || ""}`;
 }
 
@@ -7751,7 +7997,8 @@ const mutatingActions = new Set([
   "fry-pass", "dogleg-selected", "play-selected", "confirm-throw", "play-again",
   "send-taunt", "delete-taunt", "kick-player", "buy-shop-product", "equip-avatar-frame", "use-game-item",
   "complete-item-stage", "collect-home", "assign-home-unit", "select-battle-hero",
-  "pull-hero-gacha", "upgrade-hero-unit"
+  "pull-hero-gacha", "upgrade-hero-unit", "upgrade-home-region", "dispatch-hero-task", "collect-hero-task",
+  "shen-biesan-activate", "shen-biesan-pass", "yokoyama-activate", "yokoyama-swap", "yokoyama-pass", "shen-jiangwen-activate"
 ]);
 
 function isRapidMutatingAction(action) {
@@ -7903,7 +8150,7 @@ document.addEventListener("click", (event) => {
   if (action === "open-hero-card-preview") {
     const unitId = event.target.closest("[data-unit-id]")?.dataset.unitId || "";
     const unit = heroUnitById(unitId);
-    if (unit?.cardImage) {
+    if (unit) {
       heroCardPreviewUnitId = unit.id;
       render();
     }
@@ -7944,7 +8191,17 @@ document.addEventListener("click", (event) => {
   }
   if (action === "assign-home-unit") {
     const target = event.target.closest("[data-region-id]");
-    assignHeroHomeUnit(target?.dataset.regionId || "", target?.dataset.unitId || "");
+    assignHeroHomeUnit(target?.dataset.regionId || "", target?.dataset.unitId || "", target?.dataset.slot || "primary");
+  }
+  if (action === "upgrade-home-region") {
+    upgradeHeroHomeRegion(event.target.closest("[data-region-id]")?.dataset.regionId || "");
+  }
+  if (action === "dispatch-hero-task") {
+    const target = event.target.closest("[data-task-id]");
+    dispatchDailyHeroTask(target?.dataset.taskId || "", target?.closest("[data-hero-task-id]"));
+  }
+  if (action === "collect-hero-task") {
+    collectDailyHeroTask(event.target.closest("[data-task-id]")?.dataset.taskId || "");
   }
   if (action === "select-battle-hero") {
     selectHeroForBattle(event.target.closest("[data-unit-id]")?.dataset.unitId || "");
@@ -8091,6 +8348,12 @@ document.addEventListener("click", (event) => {
     useGameItem(event.target.closest("[data-item-id]")?.dataset.itemId || "");
   }
   if (action === "complete-item-stage") completeGameItemStage();
+  if (action === "shen-biesan-activate") submitBoardHeroSkill(action);
+  if (action === "shen-biesan-pass") submitBoardHeroSkill(action);
+  if (action === "yokoyama-activate") submitBoardHeroSkill(action);
+  if (action === "yokoyama-swap") submitBoardHeroSkill(action, event.target.closest("[data-target-player-id]")?.dataset.targetPlayerId || "");
+  if (action === "yokoyama-pass") submitBoardHeroSkill(action);
+  if (action === "shen-jiangwen-activate") submitBoardHeroSkill(action);
   if (action === "send-taunt") {
     sendTaunt(event.target.closest("[data-preset-id]")?.dataset.presetId || "");
   }

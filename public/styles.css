@@ -453,6 +453,28 @@
   font-size: 18px;
 }
 
+.hero-display-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.hero-name-prefix {
+  display: inline-grid;
+  min-width: 1.55em;
+  min-height: 1.55em;
+  place-items: center;
+  padding: 0 0.18em;
+  border: 1px solid rgba(200, 159, 72, 0.82);
+  border-radius: 5px;
+  background: linear-gradient(145deg, #3b2914, #a77827);
+  color: #fff1b6;
+  font-size: 0.68em;
+  line-height: 1;
+  letter-spacing: 0;
+  box-shadow: 0 1px 7px rgba(111, 73, 17, 0.34);
+}
+
 .hero-catalog-copy p {
   margin: 2px 0;
   color: var(--muted);
@@ -610,6 +632,66 @@
 .gacha-result-card > b {
   color: #8a6524;
   font-size: 11px;
+}
+
+.hero-task-section {
+  display: grid;
+  gap: 16px;
+}
+
+.hero-task-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.hero-task-card {
+  display: grid;
+  align-content: start;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.7);
+}
+
+.hero-task-card header,
+.hero-task-card header > div,
+.hero-task-choices label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.hero-task-card header {
+  justify-content: space-between;
+}
+
+.hero-task-card p {
+  margin: 0;
+}
+
+.hero-task-choices {
+  display: grid;
+  gap: 6px;
+}
+
+.hero-task-choices label {
+  min-width: 0;
+  padding: 6px 8px;
+  border-radius: 10px;
+  background: rgba(29, 63, 55, 0.06);
+}
+
+.hero-task-card.task-purple,
+.hero-task-card.task-orange {
+  border-color: rgba(148, 96, 40, 0.42);
+}
+
+@media (max-width: 800px) {
+  .hero-task-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 .gacha-result-index {
@@ -7914,4 +7996,21 @@ button.auto-play-toggle.active {
   .home-toolbar .hero-tabs {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
+}
+.card-rules-rank {
+  position: absolute;
+  right: 4px;
+  bottom: 4px;
+  z-index: 2;
+  border-radius: 999px;
+  background: #a52d2d;
+  color: #fff;
+  padding: 1px 4px;
+  font-size: 9px;
+  line-height: 1.2;
+  font-weight: 800;
+}
+
+.card-rules-rank.muted {
+  background: #6b7280;
 }

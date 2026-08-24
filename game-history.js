@@ -13,6 +13,8 @@ import { buildGameEvaluations } from "./game-evaluations.js";
 import { annotateForcedProtectedFives } from "./dragged-five-attribution.js";
 import { CONSUMABLE_ITEMS, SHOP_RULES_VERSION, shopProductIdFromPath } from "./shop-and-items.js";
 import {
+  beijingHeroRefreshKey,
+  createHeroTaskDefinition,
   createBattleHeroSnapshot,
   drawHomeUnit,
   freeHeroPullState,
@@ -21,8 +23,10 @@ import {
   HOME_REGIONS,
   HOME_REGION_BY_ID,
   HOME_UNIT_BY_ID,
+  paidBoardSkillState,
   previewHomeRegion,
   publicHeroCatalog,
+  regionUpgradeCost,
   starUpgradeCost
 } from "./hero-home.js";
 
@@ -114,6 +118,10 @@ const MIGRATIONS = [
   {
     version: 21,
     path: fileURLToPath(new URL("./db/migrations/021_first_and_free_hero_pull.sql", import.meta.url))
+  },
+  {
+    version: 22,
+    path: fileURLToPath(new URL("./db/migrations/022_ssr_economy_and_home_progression.sql", import.meta.url))
   }
 ];
 const HISTORY_ENABLED = String(process.env.GAME_HISTORY_ENABLED || "").toLowerCase() === "true";
@@ -1611,6 +1619,7 @@ export function buildGameRecord(room) {
     },
     result: compactResult(result),
     trickHistory: compactTrickHistory(room.settledTrickHistory?.length ? room.settledTrickHistory : room.trickHistory),
+    boardHeroEffects: jsonValue(room.boardHeroEffects, {}),
     itemUses: jsonValue(result.itemUses, []),
     itemAdjustments: jsonValue(result.itemAdjustments, []),
     players
@@ -1748,6 +1757,44 @@ async function saveDiamondRewards(client, record) {
   return outcomes;
 }
 
+async function settleBoardHeroHeat(client, record) {
+  const uses = Array.isArray(record.boardHeroEffects?.uses) ? record.boardHeroEffects.uses : [];
+  for (const player of record.players) {
+    const unitId = player.battleHeroSnapshot?.heroId;
+    if (!player.accountId || !["shen-biesan", "shen-jiangwen"].includes(unitId)) continue;
+    const existing = await client.query(
+      `SELECT game_id FROM cdp_hero_heat_settlements
+       WHERE game_id = $1::uuid AND account_id = $2::uuid AND unit_id = $3`,
+      [record.gameId, player.accountId, unitId]
+    );
+    if (existing.rows[0]) continue;
+    const owned = await client.query(
+      `SELECT stars, skill_heat FROM cdp_hero_units
+       WHERE account_id = $1::uuid AND unit_id = $2
+       FOR UPDATE`,
+      [player.accountId, unitId]
+    );
+    if (!owned.rows[0]) continue;
+    const heatBefore = Number(owned.rows[0].skill_heat) || 0;
+    const usedInGame = uses.some((use) => use?.accountId === player.accountId && use?.heroId === unitId);
+    const cooling = paidBoardSkillState(owned.rows[0].stars, heatBefore).coolingPerUnusedGame;
+    const heatAfter = usedInGame ? heatBefore : Math.max(0, Math.round((heatBefore - cooling) * 10) / 10);
+    if (heatAfter !== heatBefore) {
+      await client.query(
+        `UPDATE cdp_hero_units SET skill_heat = $3, updated_at = now()
+         WHERE account_id = $1::uuid AND unit_id = $2`,
+        [player.accountId, unitId, heatAfter]
+      );
+    }
+    await client.query(
+      `INSERT INTO cdp_hero_heat_settlements (
+        game_id, account_id, unit_id, heat_before, heat_after, used_in_game
+      ) VALUES ($1::uuid, $2::uuid, $3, $4, $5, $6)`,
+      [record.gameId, player.accountId, unitId, heatBefore, heatAfter, usedInGame]
+    );
+  }
+}
+
 async function saveGameRecord(record) {
   if (!pool) throw new Error("数据库尚未连接");
   const client = await pool.connect();
@@ -1760,14 +1807,14 @@ async function saveGameRecord(record) {
         banker_room_player_id, banker_profile_id, dogleg_card, dogleg_profile_ids,
         threshold, idle_score, score_diff, winner_team, bottom_winner_room_player_id,
         bottom_winner_profile_id, bottom_winner_team, bottom_points, bottom_cards,
-        removed_cards, setup_data, result_data, trick_history, record_format_version
+        removed_cards, setup_data, result_data, trick_history, board_hero_effects, record_format_version
       ) VALUES (
         $1, $2, $3, $4, $5, $6,
         $7, $8, $9, $10, $11,
         $12, $13, $14::jsonb, $15::jsonb,
         $16, $17, $18, $19, $20,
         $21, $22, $23, $24::jsonb,
-        $25::jsonb, $26::jsonb, $27::jsonb, $28::jsonb, $29
+        $25::jsonb, $26::jsonb, $27::jsonb, $28::jsonb, $29::jsonb, $30
       ) ON CONFLICT (game_id) DO NOTHING`,
       [
         record.gameId, record.roomCode, record.startedAt, record.finishedAt, record.rulesVersion, record.playerCount,
@@ -1776,7 +1823,7 @@ async function saveGameRecord(record) {
         record.threshold, record.idleScore, record.scoreDiff, record.winnerTeam, record.bottomWinnerRoomPlayerId,
         record.bottomWinnerProfileId, record.bottomWinnerTeam, record.bottomPoints, JSON.stringify(record.bottomCards),
         JSON.stringify(record.removedCards), JSON.stringify(record.setup), JSON.stringify(record.result), JSON.stringify(record.trickHistory),
-        record.recordFormatVersion
+        JSON.stringify(record.boardHeroEffects || {}), record.recordFormatVersion
       ]
     );
 
@@ -1877,6 +1924,7 @@ async function saveGameRecord(record) {
       );
     }
     const diamondRewards = await saveDiamondRewards(client, record);
+    await settleBoardHeroHeat(client, record);
     await client.query("COMMIT");
     status.connected = true;
     status.lastSavedAt = new Date().toISOString();
@@ -1978,30 +2026,98 @@ function publicOwnedHeroUnit(row) {
     ...unit,
     stars,
     exclusiveFragments: Number(row.exclusive_fragments) || 0,
+    skillHeat: Number(row.skill_heat) || 0,
     upgradeCost: starUpgradeCost(unit.id, stars),
     obtainedAt: row.obtained_at ? new Date(row.obtained_at).toISOString() : null
   };
 }
 
+async function heroTasksFromClient(client, accountId, ownedUnits, at = new Date()) {
+  const refreshKey = beijingHeroRefreshKey(at);
+  if (!refreshKey) return [];
+  await client.query(
+    `UPDATE cdp_hero_tasks
+     SET status = 'completed', updated_at = now()
+     WHERE account_id = $1::uuid AND status = 'running' AND completes_at <= $2`,
+    [accountId, at]
+  );
+  await client.query(
+    `DELETE FROM cdp_hero_tasks
+     WHERE account_id = $1::uuid AND status = 'available' AND refresh_key <> $2::date`,
+    [accountId, refreshKey]
+  );
+  const available = await client.query(
+    `SELECT slot_index FROM cdp_hero_tasks
+     WHERE account_id = $1::uuid AND status = 'available' AND refresh_key = $2::date`,
+    [accountId, refreshKey]
+  );
+  const occupiedSlots = new Set(available.rows.map((row) => Number(row.slot_index)));
+  const ownedHeroIds = ownedUnits.filter((unit) => unit.type === "hero").map((unit) => unit.id);
+  if (ownedHeroIds.length) {
+    for (let slotIndex = 1; slotIndex <= 3; slotIndex += 1) {
+      if (occupiedSlots.has(slotIndex)) continue;
+      const definition = createHeroTaskDefinition(ownedHeroIds);
+      if (!definition) break;
+      await client.query(
+        `INSERT INTO cdp_hero_tasks (
+          task_id, account_id, refresh_key, slot_index, color, hero_count,
+          duration_seconds, reward_materials, requirements
+        ) VALUES ($1::uuid, $2::uuid, $3::date, $4, $5, $6, $7, $8, $9::jsonb)`,
+        [
+          randomUUID(), accountId, refreshKey, slotIndex, definition.color,
+          definition.heroCount, definition.durationSeconds, definition.rewardMaterials,
+          JSON.stringify(definition.requirements)
+        ]
+      );
+    }
+  }
+  const result = await client.query(
+    `SELECT task_id, refresh_key, slot_index, color, status, hero_count,
+            duration_seconds, reward_materials, requirements, assigned_unit_ids,
+            started_at, completes_at, collected_at
+     FROM cdp_hero_tasks
+     WHERE account_id = $1::uuid AND status <> 'collected'
+     ORDER BY CASE status WHEN 'completed' THEN 1 WHEN 'running' THEN 2 ELSE 3 END,
+              refresh_key, slot_index, created_at`,
+    [accountId]
+  );
+  return result.rows.map((row) => ({
+    taskId: row.task_id,
+    refreshKey: row.refresh_key instanceof Date ? row.refresh_key.toISOString().slice(0, 10) : String(row.refresh_key),
+    slotIndex: Number(row.slot_index),
+    color: row.color,
+    status: row.status,
+    heroCount: Number(row.hero_count),
+    durationSeconds: Number(row.duration_seconds),
+    rewardMaterials: Number(row.reward_materials),
+    requirements: row.requirements || {},
+    assignedUnitIds: row.assigned_unit_ids || [],
+    startedAt: row.started_at ? new Date(row.started_at).toISOString() : null,
+    completesAt: row.completes_at ? new Date(row.completes_at).toISOString() : null,
+    collectedAt: row.collected_at ? new Date(row.collected_at).toISOString() : null
+  }));
+}
+
 async function heroHomeStateFromClient(client, accountId) {
   const [profileResult, unitResult, regionResult, walletResult] = await Promise.all([
     client.query(
-      `SELECT universal_fragments, non_hero_pity_count, first_pull_completed,
-              free_pull_used_at, battle_unit_id, updated_at
+      `SELECT universal_fragments, non_hero_pity_count, non_ssr_pity_count,
+              building_materials, first_pull_completed, free_pull_used_at,
+              battle_unit_id, updated_at
        FROM cdp_hero_profiles
        WHERE account_id = $1::uuid`,
       [accountId]
     ),
     client.query(
-      `SELECT unit_id, stars, exclusive_fragments, obtained_at, updated_at
+      `SELECT unit_id, stars, exclusive_fragments, skill_heat, obtained_at, updated_at
        FROM cdp_hero_units
        WHERE account_id = $1::uuid
        ORDER BY obtained_at, unit_id`,
       [accountId]
     ),
     client.query(
-      `SELECT region.region_id, region.unit_id, region.production_value,
-              region.production_seconds, region.settled_at, unit.stars
+      `SELECT region.region_id, region.unit_id, region.extra_unit_id, region.level,
+              region.production_value, region.production_seconds, region.settled_at, unit.stars
        FROM cdp_home_regions region
        LEFT JOIN cdp_hero_units unit
          ON unit.account_id = region.account_id AND unit.unit_id = region.unit_id
@@ -2020,6 +2136,7 @@ async function heroHomeStateFromClient(client, accountId) {
       regionId: row.region_id,
       unitId: row.unit_id,
       stars: row.stars,
+      level: row.level,
       productionValue: row.production_value,
       productionSeconds: row.production_seconds,
       settledAt: row.settled_at
@@ -2027,27 +2144,38 @@ async function heroHomeStateFromClient(client, accountId) {
     return {
       ...HOME_REGION_BY_ID.get(row.region_id),
       ...preview,
-      ownedUnit: row.unit_id ? ownedById.get(row.unit_id) || null : null
+      ownedUnit: row.unit_id ? ownedById.get(row.unit_id) || null : null,
+      extraUnitId: row.extra_unit_id || null,
+      extraOwnedUnit: row.extra_unit_id ? ownedById.get(row.extra_unit_id) || null : null
     };
   });
   const pityCount = Number(profile.non_hero_pity_count) || 0;
   const freePull = freeHeroPullState(profile.free_pull_used_at, nowAt);
+  const tasks = await heroTasksFromClient(client, accountId, ownedUnits, nowAt);
   return {
     ...publicHeroCatalog(),
     accountId,
     balance: Number(walletResult.rows[0]?.balance) || 0,
     universalFragments: Number(profile.universal_fragments) || 0,
+    buildingMaterials: Number(profile.building_materials) || 0,
     pityCount,
     pityRemaining: HERO_HOME_RULES.pityPulls - pityCount,
+    ssrPityCount: Number(profile.non_ssr_pity_count) || 0,
+    ssrPityRemaining: HERO_HOME_RULES.ssrPityPulls - (Number(profile.non_ssr_pity_count) || 0),
     firstPullGuaranteed: !profile.first_pull_completed,
     freePullAvailable: freePull.available,
     nextFreePullAt: freePull.nextFreePullAt,
     battleUnitId: profile.battle_unit_id || null,
     battleHero: profile.battle_unit_id
-      ? createBattleHeroSnapshot(profile.battle_unit_id, ownedById.get(profile.battle_unit_id)?.stars)
+      ? createBattleHeroSnapshot(
+          profile.battle_unit_id,
+          ownedById.get(profile.battle_unit_id)?.stars,
+          ownedById.get(profile.battle_unit_id)?.skillHeat
+        )
       : null,
     ownedUnits,
     regions,
+    tasks,
     updatedAt: profile.updated_at ? new Date(profile.updated_at).toISOString() : null
   };
 }
@@ -2072,7 +2200,7 @@ export async function getHeroHomeState(accountId) {
 
 async function settleHomeRegion(client, accountId, regionId) {
   const result = await client.query(
-    `SELECT region.region_id, region.unit_id, region.production_value,
+    `SELECT region.region_id, region.unit_id, region.level, region.production_value,
             region.production_seconds, region.settled_at, unit.stars
      FROM cdp_home_regions region
      LEFT JOIN cdp_hero_units unit
@@ -2087,6 +2215,7 @@ async function settleHomeRegion(client, accountId, regionId) {
     regionId: row.region_id,
     unitId: row.unit_id,
     stars: row.stars,
+    level: row.level,
     productionValue: row.production_value,
     productionSeconds: row.production_seconds,
     settledAt: row.settled_at
@@ -2168,16 +2297,18 @@ export async function collectHomeProduction(accountId, regionIdValue, requestIdV
   }
 }
 
-export async function assignHomeUnit(accountId, regionIdValue, unitIdValue, requestIdValue) {
+export async function assignHomeUnit(accountId, regionIdValue, unitIdValue, requestIdValue, slotValue = "primary") {
   const database = requirePool();
   const regionId = String(regionIdValue || "");
   const unitId = unitIdValue ? String(unitIdValue) : null;
+  const slot = slotValue === "extra" ? "extra" : "primary";
   const requestId = normalizedRequestId(requestIdValue);
   const region = HOME_REGION_BY_ID.get(regionId);
   const unit = unitId ? HOME_UNIT_BY_ID.get(unitId) : null;
   if (!region) throw commerceError("家园区域不存在", 404);
   if (unitId && !unit) throw commerceError("角色不存在", 404);
   if (unit && unit.regionId !== regionId) throw commerceError(`${unit.name}只能放入${HOME_REGION_BY_ID.get(unit.regionId).name}`, 409);
+  if (slot === "extra" && unit && unit.type !== "hero") throw commerceError("附加栏位只能安排英雄", 409);
   const client = await database.connect();
   try {
     await client.query("BEGIN");
@@ -2186,6 +2317,17 @@ export async function assignHomeUnit(accountId, regionIdValue, unitIdValue, requ
       `SELECT account_id FROM cdp_hero_profiles WHERE account_id = $1::uuid FOR UPDATE`,
       [accountId]
     );
+    const regionState = await client.query(
+      `SELECT level, unit_id, extra_unit_id
+       FROM cdp_home_regions
+       WHERE account_id = $1::uuid AND region_id = $2
+       FOR UPDATE`,
+      [accountId, regionId]
+    );
+    if (!regionState.rows[0]) throw commerceError("家园区域不存在", 404);
+    if (slot === "extra" && Number(regionState.rows[0].level) < HERO_HOME_RULES.extraSlotUnlockLevel) {
+      throw commerceError("区域达到100级后才解锁附加英雄栏位", 409);
+    }
     if (unit) {
       const owned = await client.query(
         `SELECT stars FROM cdp_hero_units WHERE account_id = $1::uuid AND unit_id = $2 FOR UPDATE`,
@@ -2193,39 +2335,385 @@ export async function assignHomeUnit(accountId, regionIdValue, unitIdValue, requ
       );
       if (!owned.rows[0]) throw commerceError("尚未拥有这个角色", 403);
       const assigned = await client.query(
-        `SELECT region_id FROM cdp_home_regions
-         WHERE account_id = $1::uuid AND unit_id = $2 AND region_id <> $3
+        `SELECT region_id, unit_id, extra_unit_id FROM cdp_home_regions
+         WHERE account_id = $1::uuid AND (unit_id = $2 OR extra_unit_id = $2)
          FOR UPDATE`,
-        [accountId, unit.id, regionId]
+        [accountId, unit.id]
       );
-      if (assigned.rows[0]) throw commerceError("这个角色已经在其他区域工作", 409);
+      const alreadyInTarget = assigned.rows[0]
+        && assigned.rows[0].region_id === regionId
+        && (slot === "primary" ? assigned.rows[0].unit_id === unit.id : assigned.rows[0].extra_unit_id === unit.id);
+      if (assigned.rows[0] && !alreadyInTarget) throw commerceError("这个角色已经安排在其他栏位", 409);
     }
-    const preview = await settleHomeRegion(client, accountId, regionId);
+    const previousUnitId = slot === "primary" ? regionState.rows[0].unit_id : regionState.rows[0].extra_unit_id;
+    const preview = slot === "primary" ? await settleHomeRegion(client, accountId, regionId) : null;
     const balanceAfter = await creditHomeProduction(
       client,
       accountId,
-      preview.collectableDiamonds,
+      preview?.collectableDiamonds || 0,
       requestId,
-      { reason: "reassign", regionId, previousUnitId: preview.unitId }
+      { reason: "reassign", regionId, slot, previousUnitId }
     );
-    await client.query(
-      `UPDATE cdp_home_regions
-       SET unit_id = $3, production_value = $4, production_seconds = 0,
-           settled_at = now(), updated_at = now()
-       WHERE account_id = $1::uuid AND region_id = $2`,
-      [accountId, regionId, unitId, preview.fractionalValue]
-    );
-    if (preview.unitId && preview.unitId !== unitId) {
+    if (slot === "primary") {
+      await client.query(
+        `UPDATE cdp_home_regions
+         SET unit_id = $3, production_value = $4, production_seconds = 0,
+             settled_at = now(), updated_at = now()
+         WHERE account_id = $1::uuid AND region_id = $2`,
+        [accountId, regionId, unitId, preview.fractionalValue]
+      );
+    } else {
+      await client.query(
+        `UPDATE cdp_home_regions
+         SET extra_unit_id = $3, updated_at = now()
+         WHERE account_id = $1::uuid AND region_id = $2`,
+        [accountId, regionId, unitId]
+      );
+    }
+    if (previousUnitId && previousUnitId !== unitId) {
       await client.query(
         `UPDATE cdp_hero_profiles
          SET battle_unit_id = NULL, updated_at = now()
          WHERE account_id = $1::uuid AND battle_unit_id = $2`,
-        [accountId, preview.unitId]
+        [accountId, previousUnitId]
       );
     }
     const state = await heroHomeStateFromClient(client, accountId);
     await client.query("COMMIT");
-    return { autoCollectedAmount: preview.collectableDiamonds, balanceAfter, state };
+    return { autoCollectedAmount: preview?.collectableDiamonds || 0, balanceAfter, state };
+  } catch (error) {
+    await client.query("ROLLBACK");
+    rememberError(error);
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+export async function upgradeHomeRegion(accountId, regionIdValue, requestIdValue) {
+  const database = requirePool();
+  const regionId = String(regionIdValue || "");
+  const requestId = normalizedRequestId(requestIdValue);
+  if (!HOME_REGION_BY_ID.has(regionId)) throw commerceError("家园区域不存在", 404);
+  const client = await database.connect();
+  try {
+    await client.query("BEGIN");
+    await ensureHeroAccount(client, accountId);
+    const repeated = await client.query(
+      `SELECT result_data FROM cdp_hero_region_upgrade_requests
+       WHERE account_id = $1::uuid AND request_id = $2`,
+      [accountId, requestId]
+    );
+    if (repeated.rows[0]) {
+      await client.query("COMMIT");
+      return { ...repeated.rows[0].result_data, repeated: true };
+    }
+    const profileResult = await client.query(
+      `SELECT building_materials FROM cdp_hero_profiles
+       WHERE account_id = $1::uuid FOR UPDATE`,
+      [accountId]
+    );
+    const regionResult = await client.query(
+      `SELECT level FROM cdp_home_regions
+       WHERE account_id = $1::uuid AND region_id = $2 FOR UPDATE`,
+      [accountId, regionId]
+    );
+    if (!regionResult.rows[0]) throw commerceError("家园区域不存在", 404);
+    const previousLevel = Number(regionResult.rows[0].level) || 0;
+    const cost = regionUpgradeCost(previousLevel);
+    if (!cost) throw commerceError("区域已经达到100级", 409);
+    const materialsBefore = Number(profileResult.rows[0]?.building_materials) || 0;
+    if (materialsBefore < cost) throw commerceError("建材不足", 409);
+    await settleHomeRegion(client, accountId, regionId);
+    const level = previousLevel + 1;
+    const buildingMaterials = materialsBefore - cost;
+    await client.query(
+      `UPDATE cdp_home_regions SET level = $3, updated_at = now()
+       WHERE account_id = $1::uuid AND region_id = $2`,
+      [accountId, regionId, level]
+    );
+    await client.query(
+      `UPDATE cdp_hero_profiles SET building_materials = $2, updated_at = now()
+       WHERE account_id = $1::uuid`,
+      [accountId, buildingMaterials]
+    );
+    const response = {
+      rulesVersion: HERO_HOME_RULES.version,
+      regionId,
+      previousLevel,
+      level,
+      cost,
+      buildingMaterials,
+      extraSlotUnlocked: level >= HERO_HOME_RULES.extraSlotUnlockLevel
+    };
+    await client.query(
+      `INSERT INTO cdp_hero_region_upgrade_requests (account_id, request_id, region_id, result_data)
+       VALUES ($1::uuid, $2, $3, $4::jsonb)`,
+      [accountId, requestId, regionId, JSON.stringify(response)]
+    );
+    const state = await heroHomeStateFromClient(client, accountId);
+    await client.query("COMMIT");
+    return { ...response, state };
+  } catch (error) {
+    await client.query("ROLLBACK");
+    rememberError(error);
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+function taskRequirementSatisfied(requirements, heroes) {
+  const regionCounts = {};
+  const genderCounts = {};
+  heroes.forEach((hero) => {
+    regionCounts[hero.regionId] = (regionCounts[hero.regionId] || 0) + 1;
+    genderCounts[hero.gender] = (genderCounts[hero.gender] || 0) + 1;
+  });
+  return Object.entries(requirements?.regions || {}).every(([key, count]) => regionCounts[key] >= Number(count))
+    && Object.entries(requirements?.genders || {}).every(([key, count]) => genderCounts[key] >= Number(count));
+}
+
+export async function dispatchHeroTask(accountId, taskIdValue, unitIdsValue, requestIdValue) {
+  const database = requirePool();
+  const taskId = String(taskIdValue || "");
+  const requestId = normalizedRequestId(requestIdValue);
+  const unitIds = [...new Set((Array.isArray(unitIdsValue) ? unitIdsValue : []).map(String).filter(Boolean))];
+  const client = await database.connect();
+  try {
+    await client.query("BEGIN");
+    await ensureHeroAccount(client, accountId);
+    const repeated = await client.query(
+      `SELECT result_data FROM cdp_hero_task_requests
+       WHERE account_id = $1::uuid AND request_id = $2`,
+      [accountId, requestId]
+    );
+    if (repeated.rows[0]) {
+      await client.query("COMMIT");
+      return { ...repeated.rows[0].result_data, repeated: true };
+    }
+    await heroTasksFromClient(client, accountId, [], new Date());
+    const taskResult = await client.query(
+      `SELECT task_id, status, hero_count, duration_seconds, reward_materials, requirements
+       FROM cdp_hero_tasks
+       WHERE task_id = $1::uuid AND account_id = $2::uuid
+       FOR UPDATE`,
+      [taskId, accountId]
+    );
+    const task = taskResult.rows[0];
+    if (!task) throw commerceError("任务不存在或已经刷新", 404);
+    if (task.status !== "available") throw commerceError("任务已经开始或结束", 409);
+    if (unitIds.length !== Number(task.hero_count)) throw commerceError(`需要派遣${task.hero_count}名英雄`, 409);
+    const runningCount = await client.query(
+      `SELECT count(*)::integer AS count FROM cdp_hero_tasks
+       WHERE account_id = $1::uuid AND status = 'running'`,
+      [accountId]
+    );
+    if (Number(runningCount.rows[0]?.count) >= 3) throw commerceError("同时最多执行3个英雄任务", 409);
+    const ownedResult = await client.query(
+      `SELECT unit_id FROM cdp_hero_units
+       WHERE account_id = $1::uuid AND unit_id = ANY($2::text[])
+       FOR UPDATE`,
+      [accountId, unitIds]
+    );
+    if (ownedResult.rows.length !== unitIds.length) throw commerceError("包含尚未拥有的英雄", 403);
+    const heroes = unitIds.map((unitId) => HOME_UNIT_BY_ID.get(unitId));
+    if (heroes.some((unit) => !unit || unit.type !== "hero")) throw commerceError("任务只能派遣英雄", 409);
+    if (!taskRequirementSatisfied(task.requirements, heroes)) throw commerceError("派遣英雄不满足区域或性别要求", 409);
+    const occupied = await client.query(
+      `SELECT task_id FROM cdp_hero_tasks
+       WHERE account_id = $1::uuid AND status = 'running' AND assigned_unit_ids && $2::text[]
+       FOR UPDATE`,
+      [accountId, unitIds]
+    );
+    if (occupied.rows[0]) throw commerceError("部分英雄正在执行其他任务", 409);
+    const updated = await client.query(
+      `UPDATE cdp_hero_tasks
+       SET status = 'running', assigned_unit_ids = $3::text[], started_at = now(),
+           completes_at = now() + duration_seconds * interval '1 second', updated_at = now()
+       WHERE task_id = $1::uuid AND account_id = $2::uuid
+       RETURNING completes_at`,
+      [taskId, accountId, unitIds]
+    );
+    const response = {
+      rulesVersion: HERO_HOME_RULES.version,
+      taskId,
+      status: "running",
+      assignedUnitIds: unitIds,
+      completesAt: new Date(updated.rows[0].completes_at).toISOString()
+    };
+    await client.query(
+      `INSERT INTO cdp_hero_task_requests (account_id, request_id, action, result_data)
+       VALUES ($1::uuid, $2, 'dispatch', $3::jsonb)`,
+      [accountId, requestId, JSON.stringify(response)]
+    );
+    const state = await heroHomeStateFromClient(client, accountId);
+    await client.query("COMMIT");
+    return { ...response, state };
+  } catch (error) {
+    await client.query("ROLLBACK");
+    rememberError(error);
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+export async function collectHeroTask(accountId, taskIdValue, requestIdValue) {
+  const database = requirePool();
+  const taskId = String(taskIdValue || "");
+  const requestId = normalizedRequestId(requestIdValue);
+  const client = await database.connect();
+  try {
+    await client.query("BEGIN");
+    await ensureHeroAccount(client, accountId);
+    const repeated = await client.query(
+      `SELECT result_data FROM cdp_hero_task_requests
+       WHERE account_id = $1::uuid AND request_id = $2`,
+      [accountId, requestId]
+    );
+    if (repeated.rows[0]) {
+      await client.query("COMMIT");
+      return { ...repeated.rows[0].result_data, repeated: true };
+    }
+    const taskResult = await client.query(
+      `SELECT status, reward_materials, completes_at
+       FROM cdp_hero_tasks
+       WHERE task_id = $1::uuid AND account_id = $2::uuid
+       FOR UPDATE`,
+      [taskId, accountId]
+    );
+    const task = taskResult.rows[0];
+    if (!task) throw commerceError("任务不存在", 404);
+    const complete = task.status === "completed"
+      || (task.status === "running" && task.completes_at && new Date(task.completes_at).getTime() <= Date.now());
+    if (!complete) throw commerceError("任务尚未完成", 409);
+    const rewardMaterials = Number(task.reward_materials) || 0;
+    const profile = await client.query(
+      `UPDATE cdp_hero_profiles
+       SET building_materials = building_materials + $2, updated_at = now()
+       WHERE account_id = $1::uuid
+       RETURNING building_materials`,
+      [accountId, rewardMaterials]
+    );
+    await client.query(
+      `UPDATE cdp_hero_tasks
+       SET status = 'collected', collected_at = now(), updated_at = now()
+       WHERE task_id = $1::uuid AND account_id = $2::uuid`,
+      [taskId, accountId]
+    );
+    const response = {
+      rulesVersion: HERO_HOME_RULES.version,
+      taskId,
+      status: "collected",
+      rewardMaterials,
+      buildingMaterials: Number(profile.rows[0]?.building_materials) || 0
+    };
+    await client.query(
+      `INSERT INTO cdp_hero_task_requests (account_id, request_id, action, result_data)
+       VALUES ($1::uuid, $2, 'collect', $3::jsonb)`,
+      [accountId, requestId, JSON.stringify(response)]
+    );
+    const state = await heroHomeStateFromClient(client, accountId);
+    await client.query("COMMIT");
+    return { ...response, state };
+  } catch (error) {
+    await client.query("ROLLBACK");
+    rememberError(error);
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+export async function chargeBoardHeroSkill(accountId, gameIdValue, unitIdValue, requestIdValue, effectData = {}) {
+  const database = requirePool();
+  const gameId = String(gameIdValue || "");
+  const unitId = String(unitIdValue || "");
+  const requestId = normalizedRequestId(requestIdValue);
+  const unit = HOME_UNIT_BY_ID.get(unitId);
+  if (!unit || unit.rarity !== "ssr") throw commerceError("SSR英雄技能不存在", 404);
+  const client = await database.connect();
+  try {
+    await client.query("BEGIN");
+    await ensureHeroAccount(client, accountId);
+    const repeated = await client.query(
+      `SELECT cost, balance_after, heat_before, heat_after, effect_data
+       FROM cdp_game_hero_skill_uses
+       WHERE account_id = $1::uuid AND request_id = $2`,
+      [accountId, requestId]
+    );
+    if (repeated.rows[0]) {
+      await client.query("COMMIT");
+      return {
+        rulesVersion: HERO_HOME_RULES.boardSkillVersion,
+        unitId,
+        cost: Number(repeated.rows[0].cost),
+        balanceAfter: Number(repeated.rows[0].balance_after),
+        heatBefore: repeated.rows[0].heat_before == null ? null : Number(repeated.rows[0].heat_before),
+        heatAfter: repeated.rows[0].heat_after == null ? null : Number(repeated.rows[0].heat_after),
+        effectData: repeated.rows[0].effect_data || {},
+        repeated: true
+      };
+    }
+    const owned = await client.query(
+      `SELECT stars, skill_heat FROM cdp_hero_units
+       WHERE account_id = $1::uuid AND unit_id = $2
+       FOR UPDATE`,
+      [accountId, unitId]
+    );
+    if (!owned.rows[0]) throw commerceError("尚未拥有这个SSR英雄", 403);
+    const stars = Number(owned.rows[0].stars) || 1;
+    const paidState = unitId === "yokoyama-yui"
+      ? { cost: HERO_HOME_RULES.yokoyamaSkillCost, heat: null }
+      : paidBoardSkillState(stars, owned.rows[0].skill_heat);
+    await client.query(
+      `INSERT INTO cdp_diamond_wallets (account_id) VALUES ($1::uuid)
+       ON CONFLICT (account_id) DO NOTHING`,
+      [accountId]
+    );
+    const wallet = await client.query(
+      `UPDATE cdp_diamond_wallets
+       SET balance = balance - $2, updated_at = now()
+       WHERE account_id = $1::uuid AND balance >= $2
+       RETURNING balance`,
+      [accountId, paidState.cost]
+    );
+    if (!wallet.rows[0]) throw commerceError("钻石余额不足", 409);
+    const heatBefore = paidState.heat;
+    const heatAfter = heatBefore == null ? null : Math.min(HERO_HOME_RULES.maxSkillHeat, heatBefore + 1);
+    if (heatAfter != null) {
+      await client.query(
+        `UPDATE cdp_hero_units SET skill_heat = $3, updated_at = now()
+         WHERE account_id = $1::uuid AND unit_id = $2`,
+        [accountId, unitId, heatAfter]
+      );
+    }
+    const balanceAfter = Number(wallet.rows[0].balance) || 0;
+    const useId = randomUUID();
+    await client.query(
+      `INSERT INTO cdp_game_hero_skill_uses (
+        use_id, game_id, account_id, unit_id, request_id, cost, balance_after,
+        heat_before, heat_after, effect_data
+      ) VALUES ($1::uuid, $2::uuid, $3::uuid, $4, $5, $6, $7, $8, $9, $10::jsonb)`,
+      [useId, gameId, accountId, unitId, requestId, paidState.cost, balanceAfter, heatBefore, heatAfter, JSON.stringify(effectData)]
+    );
+    await client.query(
+      `INSERT INTO cdp_diamond_ledger (
+        account_id, amount, balance_after, reason, rules_version, idempotency_key, detail
+      ) VALUES ($1::uuid, $2, $3, 'hero_skill', $4, $5, $6::jsonb)`,
+      [accountId, -paidState.cost, balanceAfter, HERO_HOME_RULES.boardSkillVersion, `hero_skill:${accountId}:${requestId}`, JSON.stringify({ gameId, unitId, effectData })]
+    );
+    await client.query("COMMIT");
+    return {
+      rulesVersion: HERO_HOME_RULES.boardSkillVersion,
+      unitId,
+      cost: paidState.cost,
+      balanceAfter,
+      heatBefore,
+      heatAfter,
+      effectData
+    };
   } catch (error) {
     await client.query("ROLLBACK");
     rememberError(error);
@@ -2252,8 +2740,11 @@ export async function selectBattleHero(accountId, unitIdValue) {
       const placed = await client.query(
         `SELECT unit.stars
          FROM cdp_home_regions region
-         JOIN cdp_hero_units unit ON unit.account_id = region.account_id AND unit.unit_id = region.unit_id
-         WHERE region.account_id = $1::uuid AND region.unit_id = $2
+         JOIN cdp_hero_units unit
+           ON unit.account_id = region.account_id
+          AND unit.unit_id = $2
+         WHERE region.account_id = $1::uuid
+           AND (region.unit_id = $2 OR region.extra_unit_id = $2)
          FOR UPDATE OF region, unit`,
         [accountId, unitId]
       );
@@ -2287,7 +2778,8 @@ export async function pullHeroGacha(accountId, pullCountValue, requestIdValue) {
     await client.query("BEGIN");
     await ensureHeroAccount(client, accountId);
     const profileResult = await client.query(
-      `SELECT universal_fragments, non_hero_pity_count, first_pull_completed, free_pull_used_at
+      `SELECT universal_fragments, non_hero_pity_count, non_ssr_pity_count,
+              building_materials, first_pull_completed, free_pull_used_at
        FROM cdp_hero_profiles WHERE account_id = $1::uuid FOR UPDATE`,
       [accountId]
     );
@@ -2335,18 +2827,22 @@ export async function pullHeroGacha(accountId, pullCountValue, requestIdValue) {
     const ownedHeroIds = new Set([...owned.keys()].filter((unitId) => HOME_UNIT_BY_ID.get(unitId)?.type === "hero"));
     let universalFragments = Number(profileResult.rows[0]?.universal_fragments) || 0;
     let pityCount = Number(profileResult.rows[0]?.non_hero_pity_count) || 0;
+    let ssrPityCount = Number(profileResult.rows[0]?.non_ssr_pity_count) || 0;
+    const buildingMaterialsBefore = Number(profileResult.rows[0]?.building_materials) || 0;
     const firstPullGuaranteed = !profileResult.rows[0]?.first_pull_completed;
     const results = [];
     for (let index = 0; index < pullCount; index += 1) {
       const firstPullGuarantee = firstPullGuaranteed && index === 0;
       const pityGuarantee = pityCount >= HERO_HOME_RULES.pityPulls - 1;
+      const ssrPityGuarantee = !firstPullGuarantee && ssrPityCount >= HERO_HOME_RULES.ssrPityPulls - 1;
       const preferredUnownedHeroIds = firstPullGuarantee
-        ? [...HOME_UNIT_BY_ID.values()].filter((unit) => unit.type === "hero" && !ownedHeroIds.has(unit.id)).map((unit) => unit.id)
+        ? [...HOME_UNIT_BY_ID.values()].filter((unit) => unit.rarity === "sr" && !ownedHeroIds.has(unit.id)).map((unit) => unit.id)
         : [];
-      const unit = drawHomeUnit({
-        forceHero: firstPullGuarantee || pityGuarantee,
-        preferredUnownedHeroIds
-      });
+      let forceRarity = null;
+      if (firstPullGuarantee) forceRarity = "sr";
+      else if (ssrPityGuarantee) forceRarity = "ssr";
+      else if (pityGuarantee) forceRarity = Math.random() < HERO_HOME_RULES.ssrChance ? "ssr" : "sr";
+      const unit = drawHomeUnit({ forceRarity, preferredUnownedHeroIds });
       const current = owned.get(unit.id);
       let conversion;
       if (!current) {
@@ -2358,8 +2854,10 @@ export async function pullHeroGacha(accountId, pullCountValue, requestIdValue) {
         if (unit.type === "hero") ownedHeroIds.add(unit.id);
         conversion = { type: "new", amount: 1, label: "首次获得，解锁1星" };
       } else if (current.stars < 5) {
-        const amount = unit.type === "hero"
-          ? HERO_HOME_RULES.heroDuplicateFragments
+        const amount = unit.rarity === "ssr"
+          ? HERO_HOME_RULES.ssrDuplicateFragments
+          : unit.type === "hero"
+            ? HERO_HOME_RULES.heroDuplicateFragments
           : HERO_HOME_RULES.minionDuplicateFragments;
         current.exclusiveFragments += amount;
         await client.query(
@@ -2370,30 +2868,41 @@ export async function pullHeroGacha(accountId, pullCountValue, requestIdValue) {
         );
         conversion = { type: "exclusive-fragments", amount, label: `转为${amount}专属碎片` };
       } else {
-        const amount = unit.type === "hero"
-          ? HERO_HOME_RULES.maxHeroDuplicateUniversalFragments
+        const amount = unit.rarity === "ssr"
+          ? HERO_HOME_RULES.maxSsrDuplicateUniversalFragments
+          : unit.type === "hero"
+            ? HERO_HOME_RULES.maxHeroDuplicateUniversalFragments
           : HERO_HOME_RULES.maxMinionDuplicateUniversalFragments;
         universalFragments += amount;
         conversion = { type: "universal-fragments", amount, label: `转为${amount}通用碎片` };
       }
       pityCount = unit.type === "hero" ? 0 : pityCount + 1;
+      ssrPityCount = unit.rarity === "ssr" ? 0 : ssrPityCount + 1;
       results.push({
         index: index + 1,
         unit: { ...unit },
         stars: owned.get(unit.id)?.stars || 1,
-        guaranteed: firstPullGuarantee ? "first-pull" : pityGuarantee ? "pity" : null,
+        guaranteed: firstPullGuarantee
+          ? "first-sr"
+          : ssrPityGuarantee
+            ? "ssr-pity"
+            : pityGuarantee
+              ? "hero-pity"
+              : null,
         conversion
       });
     }
+    const buildingMaterials = buildingMaterialsBefore + pullCount * HERO_HOME_RULES.buildingMaterialsPerPull;
     const updatedProfile = await client.query(
       `UPDATE cdp_hero_profiles
        SET universal_fragments = $2, non_hero_pity_count = $3,
+           non_ssr_pity_count = $4, building_materials = $5,
            first_pull_completed = true,
-           free_pull_used_at = CASE WHEN $4 THEN now() ELSE free_pull_used_at END,
+           free_pull_used_at = CASE WHEN $6 THEN now() ELSE free_pull_used_at END,
            updated_at = now()
        WHERE account_id = $1::uuid
        RETURNING free_pull_used_at`,
-      [accountId, universalFragments, pityCount, freePullUsed]
+      [accountId, universalFragments, pityCount, ssrPityCount, buildingMaterials, freePullUsed]
     );
     const balanceAfter = Number(wallet.rows[0].balance) || 0;
     const freePullAfter = freeHeroPullState(updatedProfile.rows[0]?.free_pull_used_at);
@@ -2404,6 +2913,10 @@ export async function pullHeroGacha(accountId, pullCountValue, requestIdValue) {
       balanceAfter,
       pityCount,
       pityRemaining: HERO_HOME_RULES.pityPulls - pityCount,
+      ssrPityCount,
+      ssrPityRemaining: HERO_HOME_RULES.ssrPityPulls - ssrPityCount,
+      buildingMaterialsAwarded: pullCount * HERO_HOME_RULES.buildingMaterialsPerPull,
+      buildingMaterials,
       firstPullGuaranteeUsed: firstPullGuaranteed,
       freePullUsed,
       nextFreePullAt: freePullAfter.nextFreePullAt,
@@ -2476,16 +2989,24 @@ export async function upgradeHeroUnit(accountId, unitIdValue, requestIdValue) {
     const exclusiveBefore = Number(unitResult.rows[0].exclusive_fragments) || 0;
     const universalBefore = Number(profileResult.rows[0]?.universal_fragments) || 0;
     const exclusiveUsed = Math.min(exclusiveBefore, cost);
-    const universalUsed = cost - exclusiveUsed;
+    const missingExclusive = cost - exclusiveUsed;
+    const universalUsed = unit.rarity === "ssr"
+      ? missingExclusive * HERO_HOME_RULES.ssrUniversalFragmentRatio
+      : missingExclusive;
     if (unit.type === "minion" && universalUsed > 0) throw commerceError("小兵升星只能使用专属碎片", 409);
     if (universalUsed > universalBefore) throw commerceError("碎片不足", 409);
     const nextStars = currentStars + 1;
     let exclusiveAfter = exclusiveBefore - exclusiveUsed;
     let convertedUniversal = 0;
     if (nextStars === 5 && exclusiveAfter > 0) {
-      const ratio = unit.type === "hero" ? 2 : 10;
-      convertedUniversal = Math.floor(exclusiveAfter / ratio);
-      exclusiveAfter %= ratio;
+      if (unit.rarity === "ssr") {
+        convertedUniversal = exclusiveAfter * HERO_HOME_RULES.ssrLeftoverUniversalPerFragment;
+        exclusiveAfter = 0;
+      } else {
+        const ratio = unit.type === "hero" ? 2 : 10;
+        convertedUniversal = Math.floor(exclusiveAfter / ratio);
+        exclusiveAfter %= ratio;
+      }
     }
     const universalAfter = universalBefore - universalUsed + convertedUniversal;
     await client.query(
@@ -2532,18 +3053,19 @@ export async function getBattleHeroSnapshots(accountIds = []) {
   const uniqueIds = [...new Set(accountIds.filter(Boolean).map(String))];
   if (!uniqueIds.length) return {};
   const result = await requirePool().query(
-    `SELECT profile.account_id, profile.battle_unit_id, unit.stars
+    `SELECT profile.account_id, profile.battle_unit_id, unit.stars, unit.skill_heat
      FROM cdp_hero_profiles profile
      JOIN cdp_hero_units unit
        ON unit.account_id = profile.account_id AND unit.unit_id = profile.battle_unit_id
      JOIN cdp_home_regions region
-       ON region.account_id = profile.account_id AND region.unit_id = profile.battle_unit_id
+       ON region.account_id = profile.account_id
+      AND (region.unit_id = profile.battle_unit_id OR region.extra_unit_id = profile.battle_unit_id)
      WHERE profile.account_id = ANY($1::uuid[])`,
     [uniqueIds]
   );
   return Object.fromEntries(result.rows.map((row) => [
     row.account_id,
-    createBattleHeroSnapshot(row.battle_unit_id, row.stars)
+    createBattleHeroSnapshot(row.battle_unit_id, row.stars, row.skill_heat)
   ]));
 }
 

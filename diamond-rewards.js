@@ -1,17 +1,17 @@
 export const DIAMOND_REWARD_RULES = Object.freeze({
-  version: "2026-08-14-v2",
-  baseAmount: 10,
+  version: "2026-08-24-v3",
+  baseAmount: 100,
   winBonus: 0,
-  titleBonusCap: 5,
+  titleBonusCap: 50,
   timezone: "Asia/Shanghai",
   titleBonuses: Object.freeze({
-    mvp: 3,
-    support: 2,
-    precision: 1,
-    god: 2,
-    heaven: 1,
-    exhausted: 1,
-    pillar: 1
+    mvp: 30,
+    support: 20,
+    precision: 10,
+    god: 20,
+    heaven: 10,
+    exhausted: 10,
+    pillar: 10
   })
 });
 

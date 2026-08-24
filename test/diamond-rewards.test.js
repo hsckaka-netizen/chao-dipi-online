@@ -20,10 +20,10 @@ test("diamond rewards combine the base amount and positive title bonuses", () =>
     tags: [{ code: "mvp", label: "MVP" }]
   });
 
-  assert.equal(loser.totalAmount, 10);
-  assert.equal(winner.totalAmount, 10);
-  assert.equal(mvpWinner.totalAmount, 13);
-  assert.equal(mvpWinner.titleBonus, 3);
+  assert.equal(loser.totalAmount, 100);
+  assert.equal(winner.totalAmount, 100);
+  assert.equal(mvpWinner.totalAmount, 130);
+  assert.equal(mvpWinner.titleBonus, 30);
   assert.equal(Object.hasOwn(DIAMOND_REWARD_RULES, "dailyRewardGameLimit"), false);
 });
 
@@ -38,8 +38,8 @@ test("negative titles do not earn diamonds and duplicate tags count once", () =>
     ]
   });
 
-  assert.deepEqual(reward.titleRewards, [{ code: "mvp", label: "MVP", amount: 3 }]);
-  assert.equal(reward.totalAmount, 13);
+  assert.deepEqual(reward.titleRewards, [{ code: "mvp", label: "MVP", amount: 30 }]);
+  assert.equal(reward.totalAmount, 130);
 });
 
 test("title rewards stack incrementally but respect the per-game cap", () => {
@@ -54,9 +54,9 @@ test("title rewards stack incrementally but respect the per-game cap", () => {
     ]
   });
 
-  assert.equal(reward.titleBonusBeforeCap, 9);
+  assert.equal(reward.titleBonusBeforeCap, 90);
   assert.equal(reward.titleBonus, DIAMOND_REWARD_RULES.titleBonusCap);
-  assert.equal(reward.totalAmount, 15);
+  assert.equal(reward.totalAmount, 150);
 });
 
 test("hero skill diamonds are added outside the existing title cap", () => {
@@ -66,12 +66,12 @@ test("hero skill diamonds are added outside the existing title cap", () => {
       { code: "mvp", label: "MVP" },
       { code: "support", label: "辅" }
     ],
-    heroSkillReward: { amount: 4, skillName: "倒买倒卖" }
+    heroSkillReward: { amount: 40, skillName: "倒买倒卖" }
   });
 
-  assert.equal(reward.titleBonus, 5);
-  assert.equal(reward.heroBonus, 4);
-  assert.equal(reward.totalAmount, 19);
+  assert.equal(reward.titleBonus, 50);
+  assert.equal(reward.heroBonus, 40);
+  assert.equal(reward.totalAmount, 190);
 });
 
 test("daily reward dates use the game finish time in Asia/Shanghai", () => {
@@ -96,7 +96,7 @@ test("only unique logged-in human accounts are diamond eligible", () => {
   assert.equal(isDiamondEligibleGame(room), true);
   attachDiamondRewards(room);
   assert.equal(room.result.playerResults[0].diamondReward.status, "pending");
-  assert.equal(room.result.playerResults[0].diamondReward.totalAmount, 10);
+  assert.equal(room.result.playerResults[0].diamondReward.totalAmount, 100);
 
   room.players[1].accountId = "account-a";
   assert.equal(isDiamondEligibleGame(room), false);

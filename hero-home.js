@@ -1,20 +1,41 @@
 export const HERO_HOME_RULES = Object.freeze({
-  version: "2026-08-17-v1",
-  skillVersion: "2026-08-14-skill-v4",
+  version: "2026-08-24-v2",
+  skillVersion: "2026-08-24-skill-v5",
+  boardSkillVersion: "2026-08-24-board-skill-v1",
   maxProductionHours: 6,
-  singlePullPrice: 30,
-  tenPullPrice: 270,
+  singlePullPrice: 300,
+  tenPullPrice: 2700,
   freePullRefreshHourBeijing: 6,
+  minionChance: 0.9,
+  srChance: 0.09,
+  ssrChance: 0.01,
   heroChance: 0.1,
   pityPulls: 50,
+  ssrPityPulls: 100,
+  buildingMaterialsPerPull: 10,
   heroDuplicateFragments: 40,
+  ssrDuplicateFragments: 40,
   minionDuplicateFragments: 10,
   maxHeroDuplicateUniversalFragments: 20,
+  maxSsrDuplicateUniversalFragments: 200,
   maxMinionDuplicateUniversalFragments: 1,
+  ssrUniversalFragmentRatio: 10,
+  ssrLeftoverUniversalPerFragment: 5,
   heroStarCosts: Object.freeze({ 2: 20, 3: 40, 4: 60, 5: 80 }),
   minionStarCosts: Object.freeze({ 2: 10, 3: 20, 4: 30, 5: 40 }),
-  heroProduction: Object.freeze([3, 4, 5, 6, 7]),
-  minionProduction: Object.freeze([1, 1.25, 1.5, 1.75, 2])
+  heroProduction: Object.freeze([24, 32, 40, 48, 56]),
+  srProduction: Object.freeze([24, 32, 40, 48, 56]),
+  ssrProduction: Object.freeze([36, 48, 60, 72, 84]),
+  minionProduction: Object.freeze([8, 10, 12, 14, 16]),
+  maxRegionLevel: 100,
+  productionBonusPerLevel: 0.01,
+  maxHoursPerTenLevels: 0.5,
+  extraSlotUnlockLevel: 100,
+  maxSkillHeat: 3,
+  paidSkillBaseCosts: Object.freeze([1000, 1000, 800, 800, 600]),
+  paidSkillHeatCosts: Object.freeze([1500, 1500, 1200, 1200, 1000]),
+  paidSkillCooling: Object.freeze([0.2, 0.3, 0.3, 0.4, 0.5]),
+  yokoyamaSkillCost: 100
 });
 
 export const HOME_REGIONS = Object.freeze([
@@ -25,58 +46,80 @@ export const HOME_REGIONS = Object.freeze([
 
 export const HOME_UNITS = Object.freeze([
   Object.freeze({
-    id: "jiang-zha", name: "蒋渣", shortName: "渣", type: "hero", regionId: "boka", color: "#285b93",
-    cardImage: "/assets/heroes/jiang-zha-card.jpg",
-    skillName: "渣代思维", skillDescription: "最终身份为狗腿且原始最终积分为正时触发；1～5星分别额外获得6/7/8/10/12钻石。"
+    id: "jiang-zha", name: "蒋渣", shortName: "渣", type: "hero", rarity: "sr", gender: "male", regionId: "boka", color: "#285b93",
+    cardImage: "/assets/heroes/jiang-zha-card-v2.png",
+    skillName: "渣代思维", skillDescription: "最终身份为狗腿且原始最终积分为正时触发；1～5星分别额外获得100/135/170/210/250钻石。"
   }),
   Object.freeze({
-    id: "deng-huang", name: "灯皇", shortName: "灯", type: "hero", regionId: "boka", color: "#16858a",
-    cardImage: "/assets/heroes/deng-huang-card.jpg",
-    skillName: "倒买倒卖", skillDescription: "本人赢得最后一轮时触发；1～5星分别额外获得5/6/7/8/10钻石。"
-  }),
-  Object.freeze({ id: "boka-youth", name: "博卡青年", shortName: "博", type: "minion", regionId: "boka", color: "#d6a936" }),
-  Object.freeze({
-    id: "xiaoxu", name: "小旭", shortName: "旭", type: "hero", regionId: "brick", color: "#c45e51",
-    cardImage: "/assets/heroes/xiaoxu-card.jpg",
-    skillName: "八方来财", skillDescription: "每从1名其他玩家打出的计分牌中赢得过牌分，额外获得1钻石；1～5星最多计算3/4/5/6/7名玩家，整局最多获得3/4/5/6/7钻石。"
+    id: "deng-huang", name: "灯皇", shortName: "灯", type: "hero", rarity: "sr", gender: "male", regionId: "boka", color: "#16858a",
+    cardImage: "/assets/heroes/deng-huang-card-v2.png",
+    skillName: "倒买倒卖", skillDescription: "本人赢得最后一轮时触发；1～5星分别额外获得140/190/240/300/360钻石。"
   }),
   Object.freeze({
-    id: "gelu", name: "格鲁", shortName: "格", type: "hero", regionId: "brick", color: "#7958a5",
-    cardImage: "/assets/heroes/gelu-card.jpg",
-    skillName: "多劳多得", skillDescription: "1～5星时，个人赢墩牌分每满100/90/80/70/60分额外获得2钻石，触发次数和单局奖励均无上限；不计底牌与团队加分。"
+    id: "shen-biesan", name: "神 · 瘪三", namePrefix: "神", baseName: "瘪三", shortName: "瘪", type: "hero", rarity: "ssr", gender: "male", regionId: "boka", color: "#9f742c",
+    cardImage: "/assets/heroes/shen-biesan-card-v2.png",
+    skillName: "玉面雷神", skillDescription: "叫庄前可将本局用于炒底和牌力的2替换为其他普通点数；按当前热度消耗钻石。"
   }),
-  Object.freeze({ id: "brick-worker", name: "搬砖工", shortName: "砖", type: "minion", regionId: "brick", color: "#a67445" }),
+  Object.freeze({ id: "boka-youth", name: "博卡青年", shortName: "博", type: "minion", rarity: "minion", gender: null, regionId: "boka", color: "#d6a936" }),
   Object.freeze({
-    id: "maeda-atsuko", name: "前田敦子", shortName: "敦", type: "hero", regionId: "stage", color: "#d25d86",
-    cardImage: "/assets/heroes/maeda-atsuko-card.jpg",
-    skillName: "中心光芒", skillDescription: "本人是庄家且原始最终积分为正时触发；1～5星分别额外获得8/10/12/14/16钻石。"
+    id: "xiaoxu", name: "小旭", shortName: "旭", type: "hero", rarity: "sr", gender: "male", regionId: "brick", color: "#c45e51",
+    cardImage: "/assets/heroes/xiaoxu-card-v2.png",
+    skillName: "八方来财", skillDescription: "每从1名不同其他玩家打出的计分牌中赢得过牌分，1～5星分别额外获得6/8/10/12/15钻石，不另设上限。"
   }),
   Object.freeze({
-    id: "watanabe-mayu", name: "渡边麻友", shortName: "麻", type: "hero", regionId: "stage", color: "#d879b4",
-    cardImage: "/assets/heroes/watanabe-mayu-card.jpg",
-    skillName: "荣誉舞台", skillDescription: "每获得1个正向称号（MVP、辅、精、神、天之上、尽、擎）额外获得2钻石；1～5星整局最多获得4/5/6/7/8钻石。"
+    id: "gelu", name: "格鲁", shortName: "格", type: "hero", rarity: "sr", gender: "male", regionId: "brick", color: "#7958a5",
+    cardImage: "/assets/heroes/gelu-card-v2.png",
+    skillName: "多劳多得", skillDescription: "1～5星时，个人赢墩牌分每满100/90/80/70/60分额外获得20钻石，触发次数和单局奖励均无上限；不计底牌与团队加分。"
   }),
-  Object.freeze({ id: "trainee", name: "练习生", shortName: "练", type: "minion", regionId: "stage", color: "#7197bd" })
+  Object.freeze({
+    id: "shen-jiangwen", name: "神 · 姜文", namePrefix: "神", baseName: "姜文", shortName: "姜", type: "hero", rarity: "ssr", gender: "male", regionId: "brick", color: "#4f5e52",
+    cardImage: "/assets/heroes/shen-jiangwen-card-v2.png",
+    skillName: "排骨之王", skillDescription: "首次轮到本人炒底时可以直接拿底并贴底，不提高炒底门槛；按当前热度消耗钻石。"
+  }),
+  Object.freeze({ id: "brick-worker", name: "搬砖工", shortName: "砖", type: "minion", rarity: "minion", gender: null, regionId: "brick", color: "#a67445" }),
+  Object.freeze({
+    id: "maeda-atsuko", name: "前田敦子", shortName: "敦", type: "hero", rarity: "sr", gender: "female", regionId: "stage", color: "#d25d86",
+    cardImage: "/assets/heroes/maeda-atsuko-card-v2.png",
+    skillName: "中心光芒", skillDescription: "本人是庄家且原始最终积分为正时触发；1～5星分别额外获得200/270/340/420/500钻石。"
+  }),
+  Object.freeze({
+    id: "watanabe-mayu", name: "渡边麻友", shortName: "麻", type: "hero", rarity: "sr", gender: "female", regionId: "stage", color: "#d879b4",
+    cardImage: "/assets/heroes/watanabe-mayu-card-v2.png",
+    skillName: "荣誉舞台", skillDescription: "每获得1个正向称号（MVP、辅、精、神、天之上、尽、擎），1～5星分别额外获得12/16/20/25/30钻石，不设总上限。"
+  }),
+  Object.freeze({
+    id: "yokoyama-yui", name: "横山由依", shortName: "横", type: "hero", rarity: "ssr", gender: "female", regionId: "stage", color: "#bd4d83",
+    cardImage: "/assets/heroes/yokoyama-yui-card-v2.png",
+    skillName: "全能偶像", skillDescription: "叫庄结束后随机展示最多1/2/3/4/5名其他玩家，可选择其中一人交换座位；每次消耗100钻石。"
+  }),
+  Object.freeze({ id: "trainee", name: "练习生", shortName: "练", type: "minion", rarity: "minion", gender: null, regionId: "stage", color: "#7197bd" })
 ]);
 
 export const HERO_UNITS = Object.freeze(HOME_UNITS.filter((unit) => unit.type === "hero"));
+export const SR_HERO_UNITS = Object.freeze(HERO_UNITS.filter((unit) => unit.rarity === "sr"));
+export const SSR_HERO_UNITS = Object.freeze(HERO_UNITS.filter((unit) => unit.rarity === "ssr"));
 export const MINION_UNITS = Object.freeze(HOME_UNITS.filter((unit) => unit.type === "minion"));
 export const HOME_REGION_BY_ID = new Map(HOME_REGIONS.map((region) => [region.id, region]));
 export const HOME_UNIT_BY_ID = new Map(HOME_UNITS.map((unit) => [unit.id, unit]));
 
+export const HERO_TASK_TIERS = Object.freeze([
+  Object.freeze({ color: "white", weight: 40, heroCount: 1, durationSeconds: 3600, rewardMaterials: 20 }),
+  Object.freeze({ color: "green", weight: 30, heroCount: 2, durationSeconds: 7200, rewardMaterials: 40 }),
+  Object.freeze({ color: "blue", weight: 18, heroCount: 3, durationSeconds: 14400, rewardMaterials: 80 }),
+  Object.freeze({ color: "purple", weight: 9, heroCount: 4, durationSeconds: 28800, rewardMaterials: 160 }),
+  Object.freeze({ color: "orange", weight: 3, heroCount: 5, durationSeconds: 43200, rewardMaterials: 320 })
+]);
+
 const POSITIVE_TITLE_CODES = new Set(["mvp", "support", "precision", "god", "heaven", "exhausted", "pillar"]);
 const DIRECT_SKILL_REWARDS = Object.freeze({
-  "jiang-zha": Object.freeze([6, 7, 8, 10, 12]),
-  "deng-huang": Object.freeze([5, 6, 7, 8, 10]),
-  "maeda-atsuko": Object.freeze([8, 10, 12, 14, 16])
+  "jiang-zha": Object.freeze([100, 135, 170, 210, 250]),
+  "deng-huang": Object.freeze([140, 190, 240, 300, 360]),
+  "maeda-atsuko": Object.freeze([200, 270, 340, 420, 500])
 });
-const STACKED_SKILL_CAPS = Object.freeze({
-  xiaoxu: Object.freeze([3, 4, 5, 6, 7]),
-  "watanabe-mayu": Object.freeze([4, 5, 6, 7, 8])
-});
+const XIAOXU_DIAMONDS_PER_SOURCE = Object.freeze([6, 8, 10, 12, 15]);
 const GELU_POINTS_PER_TRIGGER = Object.freeze([100, 90, 80, 70, 60]);
-const GELU_DIAMONDS_PER_TRIGGER = 2;
-const WATANABE_DIAMONDS_PER_TITLE = 2;
+const GELU_DIAMONDS_PER_TRIGGER = 20;
+const WATANABE_DIAMONDS_PER_TITLE = Object.freeze([12, 16, 20, 25, 30]);
 const DAY_MS = 24 * 3600 * 1000;
 const BEIJING_OFFSET_MS = 8 * 3600 * 1000;
 
@@ -92,8 +135,44 @@ export function publicHomeUnit(unitId) {
 export function unitProductionRate(unitId, stars = 1) {
   const unit = HOME_UNIT_BY_ID.get(String(unitId || ""));
   if (!unit) return 0;
-  const rates = unit.type === "hero" ? HERO_HOME_RULES.heroProduction : HERO_HOME_RULES.minionProduction;
+  const rates = unit.rarity === "ssr"
+    ? HERO_HOME_RULES.ssrProduction
+    : unit.type === "hero"
+      ? HERO_HOME_RULES.srProduction
+      : HERO_HOME_RULES.minionProduction;
   return rates[normalizedStars(stars) - 1];
+}
+
+export function normalizedRegionLevel(value) {
+  return Math.max(0, Math.min(HERO_HOME_RULES.maxRegionLevel, Math.trunc(Number(value) || 0)));
+}
+
+export function homeRegionMaxHours(level = 0) {
+  const normalizedLevel = normalizedRegionLevel(level);
+  return HERO_HOME_RULES.maxProductionHours
+    + Math.floor(normalizedLevel / 10) * HERO_HOME_RULES.maxHoursPerTenLevels;
+}
+
+export function regionUpgradeCost(currentLevel = 0) {
+  const normalizedLevel = normalizedRegionLevel(currentLevel);
+  if (normalizedLevel >= HERO_HOME_RULES.maxRegionLevel) return null;
+  return (Math.floor(normalizedLevel / 10) + 1) * 20;
+}
+
+export function paidBoardSkillState(stars = 1, heatValue = 0) {
+  const normalizedStarValue = normalizedStars(stars);
+  const heat = Math.max(0, Math.min(HERO_HOME_RULES.maxSkillHeat, Math.round((Number(heatValue) || 0) * 10) / 10));
+  const baseCost = HERO_HOME_RULES.paidSkillBaseCosts[normalizedStarValue - 1];
+  const heatCost = HERO_HOME_RULES.paidSkillHeatCosts[normalizedStarValue - 1];
+  return {
+    stars: normalizedStarValue,
+    heat,
+    maxHeat: HERO_HOME_RULES.maxSkillHeat,
+    baseCost,
+    heatCost,
+    cost: Math.round(baseCost + heat * heatCost),
+    coolingPerUnusedGame: HERO_HOME_RULES.paidSkillCooling[normalizedStarValue - 1]
+  };
 }
 
 export function previewHomeRegion(region = {}, at = new Date()) {
@@ -101,22 +180,33 @@ export function previewHomeRegion(region = {}, at = new Date()) {
   const stars = normalizedStars(region.stars);
   const storedValue = Math.max(0, Number(region.productionValue ?? region.production_value) || 0);
   const storedSeconds = Math.max(0, Number(region.productionSeconds ?? region.production_seconds) || 0);
+  const level = normalizedRegionLevel(region.level ?? region.region_level);
   const settledAt = new Date(region.settledAt || region.settled_at || at);
   const nowAt = new Date(at);
   const elapsedSeconds = unit && !Number.isNaN(settledAt.getTime()) && !Number.isNaN(nowAt.getTime())
     ? Math.max(0, Math.floor((nowAt.getTime() - settledAt.getTime()) / 1000))
     : 0;
-  const maxSeconds = HERO_HOME_RULES.maxProductionHours * 3600;
+  const maxHours = homeRegionMaxHours(level);
+  const maxSeconds = maxHours * 3600;
   const newlyProducedSeconds = unit ? Math.min(elapsedSeconds, Math.max(0, maxSeconds - storedSeconds)) : 0;
   const productionSeconds = Math.min(maxSeconds, storedSeconds + newlyProducedSeconds);
-  const productionValue = storedValue + newlyProducedSeconds / 3600 * unitProductionRate(unit?.id, stars);
+  const baseRatePerHour = unit ? unitProductionRate(unit.id, stars) : 0;
+  const productionMultiplier = 1 + level * HERO_HOME_RULES.productionBonusPerLevel;
+  const ratePerHour = baseRatePerHour * productionMultiplier;
+  const productionValue = storedValue + newlyProducedSeconds / 3600 * ratePerHour;
   const collectableDiamonds = Math.max(0, Math.floor(productionValue + 1e-9));
   return {
     regionId: String(region.regionId || region.region_id || ""),
     unitId: unit?.id || null,
     unit: unit ? publicHomeUnit(unit.id) : null,
     stars: unit ? stars : null,
-    ratePerHour: unit ? unitProductionRate(unit.id, stars) : 0,
+    level,
+    upgradeCost: regionUpgradeCost(level),
+    productionMultiplier,
+    baseRatePerHour,
+    ratePerHour,
+    maxProductionHours: maxHours,
+    extraSlotUnlocked: level >= HERO_HOME_RULES.extraSlotUnlockLevel,
     productionSeconds,
     productionHours: productionSeconds / 3600,
     productionValue,
@@ -154,6 +244,47 @@ export function freeHeroPullState(lastUsedAt, at = new Date()) {
   return { available, nextFreePullAt: new Date(nextRefreshAt).toISOString() };
 }
 
+export function beijingHeroRefreshKey(at = new Date()) {
+  const nowAt = new Date(at);
+  if (Number.isNaN(nowAt.getTime())) return null;
+  const shifted = new Date(nowAt.getTime() + BEIJING_OFFSET_MS - HERO_HOME_RULES.freePullRefreshHourBeijing * 3600 * 1000);
+  return `${shifted.getUTCFullYear()}-${String(shifted.getUTCMonth() + 1).padStart(2, "0")}-${String(shifted.getUTCDate()).padStart(2, "0")}`;
+}
+
+function shuffled(values, randomFloat) {
+  const result = [...values];
+  for (let index = result.length - 1; index > 0; index -= 1) {
+    const swapIndex = randomIndex(index + 1, randomFloat);
+    [result[index], result[swapIndex]] = [result[swapIndex], result[index]];
+  }
+  return result;
+}
+
+export function createHeroTaskDefinition(ownedHeroIds = [], randomFloat = Math.random) {
+  const heroes = [...new Set(ownedHeroIds)]
+    .map((unitId) => HOME_UNIT_BY_ID.get(String(unitId)))
+    .filter((unit) => unit?.type === "hero");
+  if (!heroes.length) return null;
+  const tiers = HERO_TASK_TIERS.filter((tier) => tier.heroCount <= heroes.length);
+  const totalWeight = tiers.reduce((sum, tier) => sum + tier.weight, 0);
+  let roll = randomFloat() * totalWeight;
+  const tier = tiers.find((candidate) => {
+    roll -= candidate.weight;
+    return roll < 0;
+  }) || tiers.at(-1);
+  const selected = shuffled(heroes, randomFloat).slice(0, tier.heroCount);
+  const regions = {};
+  const genders = {};
+  selected.forEach((hero) => {
+    regions[hero.regionId] = (regions[hero.regionId] || 0) + 1;
+    genders[hero.gender] = (genders[hero.gender] || 0) + 1;
+  });
+  return {
+    ...tier,
+    requirements: { regions, genders }
+  };
+}
+
 export function heroGachaCharge(pullCount, freePullAvailable = false) {
   if (Number(pullCount) === 1) {
     return freePullAvailable
@@ -166,20 +297,27 @@ export function heroGachaCharge(pullCount, freePullAvailable = false) {
   return null;
 }
 
-export function createBattleHeroSnapshot(unitId, stars = 1) {
+export function createBattleHeroSnapshot(unitId, stars = 1, heatValue = 0) {
   const unit = HOME_UNIT_BY_ID.get(String(unitId || ""));
   if (!unit || unit.type !== "hero") return null;
-  return {
+  const snapshot = {
     heroId: unit.id,
     name: unit.name,
+    namePrefix: unit.namePrefix || null,
+    baseName: unit.baseName || unit.name,
     shortName: unit.shortName,
+    rarity: unit.rarity,
+    gender: unit.gender,
     color: unit.color,
-    cardImage: unit.cardImage,
+    cardImage: unit.cardImage || null,
     skillName: unit.skillName,
     skillDescription: unit.skillDescription,
     stars: normalizedStars(stars),
-    skillVersion: HERO_HOME_RULES.skillVersion
+    skillVersion: unit.rarity === "ssr" ? HERO_HOME_RULES.boardSkillVersion : HERO_HOME_RULES.skillVersion
   };
+  if (unit.id === "shen-biesan" || unit.id === "shen-jiangwen") snapshot.paidSkill = paidBoardSkillState(stars, heatValue);
+  if (unit.id === "yokoyama-yui") snapshot.paidSkill = { cost: HERO_HOME_RULES.yokoyamaSkillCost, heat: null, maxHeat: null };
+  return snapshot;
 }
 
 function cardHasPoints(card) {
@@ -211,9 +349,9 @@ export function calculateHeroSkillReward({ snapshot, playerId, playerResult, tri
         if (play?.playerId !== playerId && (play.cards || []).some(cardHasPoints)) sources.add(play.playerId);
       });
     });
-    const cap = STACKED_SKILL_CAPS.xiaoxu[stars - 1];
-    const amount = Math.min(sources.size, cap);
-    return baseSkillResult(snapshot, sources.size, cap, amount, `从${sources.size}名其他玩家的计分牌中赢得过牌分，按${stars}星最多计${cap}人`);
+    const diamondsPerSource = XIAOXU_DIAMONDS_PER_SOURCE[stars - 1];
+    const amount = sources.size * diamondsPerSource;
+    return baseSkillResult(snapshot, sources.size, null, amount, `从${sources.size}名其他玩家的计分牌中赢得过牌分，每名奖励${diamondsPerSource}钻，不另设上限`);
   }
 
   if (snapshot.heroId === "gelu") {
@@ -248,10 +386,9 @@ export function calculateHeroSkillReward({ snapshot, playerId, playerResult, tri
     const codes = new Set((playerResult.evaluationTags || [])
       .map((tag) => String(tag?.code || ""))
       .filter((code) => POSITIVE_TITLE_CODES.has(code)));
-    const cap = STACKED_SKILL_CAPS["watanabe-mayu"][stars - 1];
-    const rawAmount = codes.size * WATANABE_DIAMONDS_PER_TITLE;
-    const amount = Math.min(rawAmount, cap);
-    return baseSkillResult(snapshot, codes.size, cap, amount, `获得${codes.size}个白名单正向称号，每个奖励${WATANABE_DIAMONDS_PER_TITLE}钻，按${stars}星整局最多${cap}钻`);
+    const diamondsPerTitle = WATANABE_DIAMONDS_PER_TITLE[stars - 1];
+    const amount = codes.size * diamondsPerTitle;
+    return baseSkillResult(snapshot, codes.size, null, amount, `获得${codes.size}个白名单正向称号，每个奖励${diamondsPerTitle}钻，不设总上限`);
   }
 
   return null;
@@ -261,11 +398,26 @@ function randomIndex(length, randomFloat) {
   return Math.max(0, Math.min(length - 1, Math.floor(randomFloat() * length)));
 }
 
-export function drawHomeUnit({ forceHero = false, preferredUnownedHeroIds = [], randomFloat = Math.random } = {}) {
-  const hero = forceHero || randomFloat() < HERO_HOME_RULES.heroChance;
-  if (hero) {
-    const preferred = HERO_UNITS.filter((unit) => preferredUnownedHeroIds.includes(unit.id));
-    const pool = preferred.length ? preferred : HERO_UNITS;
+export function drawHomeUnit({
+  forceHero = false,
+  forceRarity = null,
+  preferredUnownedHeroIds = [],
+  randomFloat = Math.random
+} = {}) {
+  let rarity = forceRarity;
+  if (!rarity && forceHero) rarity = "sr";
+  if (!rarity) {
+    const roll = randomFloat();
+    rarity = roll < HERO_HOME_RULES.ssrChance
+      ? "ssr"
+      : roll < HERO_HOME_RULES.ssrChance + HERO_HOME_RULES.srChance
+        ? "sr"
+        : "minion";
+  }
+  if (rarity === "ssr") return SSR_HERO_UNITS[randomIndex(SSR_HERO_UNITS.length, randomFloat)];
+  if (rarity === "sr") {
+    const preferred = SR_HERO_UNITS.filter((unit) => preferredUnownedHeroIds.includes(unit.id));
+    const pool = preferred.length ? preferred : SR_HERO_UNITS;
     return pool[randomIndex(pool.length, randomFloat)];
   }
   return MINION_UNITS[randomIndex(MINION_UNITS.length, randomFloat)];
