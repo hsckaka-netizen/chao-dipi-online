@@ -7,6 +7,7 @@ import {
   calculateHeroSkillReward,
   createBattleHeroSnapshot,
   createHeroTaskDefinition,
+  createHeroTaskRequirements,
   drawHomeUnit,
   freeHeroPullState,
   heroGachaCharge,
@@ -15,6 +16,7 @@ import {
   paidBoardSkillState,
   previewHomeRegion,
   regionUpgradeCost,
+  selectHeroTaskUnits,
   starUpgradeCost,
   unitProductionRate
 } from "../hero-home.js";
@@ -142,6 +144,20 @@ test("gacha and table UI expose the daily refresh, discount, stable hero art, an
   assert.match(appSource, /snapshot\.skillDescription/);
   assert.match(styleSource, /\.battle-hero-mark:hover/);
   assert.match(styleSource, /\.gacha-free-pull-status time/);
+});
+
+test("daily task UI exposes compact hero cards, relaxed conditions, and one-click dispatch", async () => {
+  const [appSource, styleSource] = await Promise.all([
+    readFile(fileURLToPath(new URL("../public/app.js", import.meta.url)), "utf8"),
+    readFile(fileURLToPath(new URL("../public/styles.css", import.meta.url)), "utf8")
+  ]);
+  assert.match(appSource, /满足条件后，其余名额可任意补足/);
+  assert.match(appSource, /data-auto-select="true"/);
+  assert.match(appSource, /hero-task-choice-card/);
+  assert.match(appSource, /一键派遣/);
+  assert.match(styleSource, /\.hero-task-grid\s*\{[\s\S]*align-items:\s*start/);
+  assert.match(styleSource, /\.hero-task-choice > input:checked \+ \.hero-task-choice-card/);
+  assert.match(styleSource, /@media \(max-width: 520px\)[\s\S]*\.hero-task-actions/);
 });
 
 test("xiaoxu counts distinct other scoring-card sources and excludes self", () => {
@@ -349,8 +365,36 @@ test("daily hero tasks use the five settled tiers and feasible owned-hero requir
   assert.equal(orange.heroCount, 5);
   assert.equal(orange.durationSeconds, 12 * 3600);
   assert.equal(orange.rewardMaterials, 320);
+  assert.equal(Object.keys(orange.requirements.regions).length, 1);
+  assert.equal(Object.values(orange.requirements.regions)[0], 1);
+  assert.equal(Object.keys(orange.requirements.genders).length, 1);
+  assert.equal(Object.values(orange.requirements.genders)[0], 2);
   assert.ok(Object.keys(orange.requirements.regions).every((regionId) => ["boka", "brick", "stage"].includes(regionId)));
   assert.ok(Object.keys(orange.requirements.genders).every((gender) => ["male", "female"].includes(gender)));
+});
+
+test("one-click hero dispatch skips occupied heroes and finds a valid relaxed lineup", () => {
+  const selected = selectHeroTaskUnits(
+    ["jiang-zha", "deng-huang", "shen-biesan", "xiaoxu", "gelu", "shen-jiangwen", "maeda-atsuko", "watanabe-mayu", "yokoyama-yui"],
+    ["jiang-zha"],
+    5,
+    { regions: { boka: 1 }, genders: { female: 2 } }
+  );
+  assert.equal(selected.length, 5);
+  assert.ok(!selected.includes("jiang-zha"));
+  assert.ok(selected.some((unitId) => HOME_UNIT_BY_ID.get(unitId)?.regionId === "boka"));
+  assert.ok(selected.filter((unitId) => HOME_UNIT_BY_ID.get(unitId)?.gender === "female").length >= 2);
+  assert.equal(selectHeroTaskUnits(["jiang-zha", "xiaoxu"], [], 2, { genders: { female: 1 } }), null);
+});
+
+test("existing five-person task requirements can be relaxed without changing the task tier", () => {
+  const requirements = createHeroTaskRequirements(
+    ["jiang-zha", "deng-huang", "xiaoxu", "maeda-atsuko", "watanabe-mayu"],
+    5,
+    () => 0.25
+  );
+  assert.equal(Object.values(requirements.regions).reduce((sum, count) => sum + count, 0), 1);
+  assert.equal(Object.values(requirements.genders).reduce((sum, count) => sum + count, 0), 2);
 });
 
 test("server and table UI expose all three SSR board skill stages", async () => {

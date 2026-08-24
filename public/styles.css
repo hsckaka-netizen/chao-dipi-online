@@ -642,54 +642,385 @@
 .hero-task-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
+  align-items: start;
   gap: 12px;
 }
 
 .hero-task-card {
+  --task-color: #718179;
+  --task-soft: #eef4f0;
+  position: relative;
+  min-width: 0;
   display: grid;
   align-content: start;
   gap: 12px;
-  padding: 14px;
-  border: 1px solid var(--line);
-  border-radius: 16px;
-  background: rgba(255, 255, 255, 0.7);
+  padding: 17px;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--task-color), transparent 68%);
+  border-radius: 20px;
+  background:
+    radial-gradient(circle at 100% 0, color-mix(in srgb, var(--task-color), transparent 84%), transparent 38%),
+    linear-gradient(165deg, #fff, color-mix(in srgb, var(--task-soft), white 46%));
+  box-shadow: 0 12px 30px rgba(33, 52, 43, 0.08);
 }
 
-.hero-task-card header,
-.hero-task-card header > div,
-.hero-task-choices label {
+.hero-task-card::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto;
+  height: 4px;
+  background: var(--task-color);
+}
+
+.hero-task-card.task-green {
+  --task-color: #1b8b63;
+  --task-soft: #eaf8f1;
+}
+
+.hero-task-card.task-blue {
+  --task-color: #377fab;
+  --task-soft: #edf6fb;
+}
+
+.hero-task-card.task-purple {
+  --task-color: #8b5fb1;
+  --task-soft: #f4effb;
+}
+
+.hero-task-card.task-orange {
+  --task-color: #c4772f;
+  --task-soft: #fff2e4;
+}
+
+.hero-task-card-head,
+.hero-task-card-head > div,
+.hero-task-summary,
+.hero-task-roster-head,
+.hero-task-status-title,
+.hero-task-assigned-unit {
   display: flex;
   align-items: center;
-  gap: 8px;
 }
 
-.hero-task-card header {
+.hero-task-card-head {
   justify-content: space-between;
+  gap: 12px;
 }
 
-.hero-task-card p {
+.hero-task-card-head > div {
+  min-width: 0;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.hero-task-rarity,
+.hero-task-state-tag {
+  display: inline-flex;
+  align-items: center;
+  min-height: 25px;
+  padding: 0 9px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 850;
+}
+
+.hero-task-rarity {
+  color: color-mix(in srgb, var(--task-color), #24362e 22%);
+  background: var(--task-soft);
+}
+
+.hero-task-state-tag {
+  color: var(--muted);
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid rgba(65, 91, 78, 0.1);
+}
+
+.hero-task-reward {
+  flex: 0 0 auto;
+  display: grid;
+  justify-items: end;
+  gap: 1px;
+}
+
+.hero-task-reward small,
+.hero-task-requirements > small {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 750;
+}
+
+.hero-task-reward b {
+  color: color-mix(in srgb, var(--task-color), #3d2b15 28%);
+  font-size: 14px;
+}
+
+.hero-task-summary {
+  gap: 9px;
+}
+
+.hero-task-summary strong {
+  font-size: 20px;
+}
+
+.hero-task-summary span {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 750;
+}
+
+.hero-task-summary span::before {
+  content: "◷";
+  margin-right: 4px;
+  color: var(--task-color);
+}
+
+.hero-task-requirements {
+  display: grid;
+  gap: 7px;
+  padding: 11px 12px;
+  border: 1px solid color-mix(in srgb, var(--task-color), transparent 82%);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.68);
+}
+
+.hero-task-requirements > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.hero-task-requirements > div span {
+  min-height: 27px;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 9px;
+  border-radius: 8px;
+  color: color-mix(in srgb, var(--task-color), #263a32 34%);
+  background: var(--task-soft);
+  font-size: 12px;
+  font-weight: 850;
+}
+
+.hero-task-requirements p {
   margin: 0;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.hero-task-roster-head {
+  justify-content: space-between;
+  gap: 10px;
+  padding-top: 2px;
+}
+
+.hero-task-roster-head b {
+  font-size: 13px;
+}
+
+.hero-task-roster-head span {
+  color: var(--muted);
+  font-size: 11px;
 }
 
 .hero-task-choices {
   display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px;
+}
+
+.hero-task-choice {
+  position: relative;
+  min-width: 0;
+}
+
+.hero-task-choice > input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+}
+
+.hero-task-choice-card {
+  min-width: 0;
+  min-height: 58px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 9px;
+  padding: 8px;
+  border: 1px solid rgba(65, 91, 78, 0.1);
+  border-radius: 13px;
+  background: rgba(247, 250, 248, 0.88);
+  cursor: pointer;
+  transition: border-color 140ms ease, background 140ms ease, transform 140ms ease;
+}
+
+.hero-task-choice-card .hero-unit-badge {
+  width: 38px;
+  height: 38px;
+  border-radius: 12px;
+}
+
+.hero-task-choice-card > span:not(.hero-unit-badge) {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.hero-task-choice-card b,
+.hero-task-choice-card small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hero-task-choice-card b {
+  font-size: 12px;
+}
+
+.hero-task-choice-card small {
+  color: var(--muted);
+  font-size: 9px;
+}
+
+.hero-task-choice-card i {
+  width: 21px;
+  height: 21px;
+  display: grid;
+  place-items: center;
+  border: 1px solid #cbd5cf;
+  border-radius: 7px;
+  color: transparent;
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 900;
+}
+
+.hero-task-choice > input:checked + .hero-task-choice-card {
+  border-color: var(--task-color);
+  background: var(--task-soft);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--task-color), transparent 84%);
+}
+
+.hero-task-choice > input:checked + .hero-task-choice-card i {
+  border-color: var(--task-color);
+  color: #fff;
+  background: var(--task-color);
+}
+
+.hero-task-choice > input:focus-visible + .hero-task-choice-card {
+  outline: 3px solid color-mix(in srgb, var(--task-color), transparent 66%);
+  outline-offset: 2px;
+}
+
+.hero-task-choice > input:disabled + .hero-task-choice-card {
+  cursor: not-allowed;
+  filter: saturate(0.45);
+  opacity: 0.52;
+}
+
+.hero-task-choice > input:disabled + .hero-task-choice-card i {
+  width: auto;
+  padding: 0 5px;
+  border: 0;
+  color: var(--muted);
+  background: #e3e8e5;
+}
+
+.hero-task-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.hero-task-actions button {
+  min-height: 45px;
+}
+
+.hero-task-status-box {
+  display: grid;
+  gap: 11px;
+  padding: 12px;
+  border-radius: 15px;
+  background: rgba(255, 255, 255, 0.66);
+  border: 1px solid rgba(65, 91, 78, 0.1);
+}
+
+.hero-task-status-title {
+  gap: 7px;
+  color: color-mix(in srgb, var(--task-color), #263a32 30%);
+}
+
+.hero-task-status-title > span {
+  width: 19px;
+  height: 19px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  color: #fff;
+  background: var(--task-color);
+  font-size: 10px;
+}
+
+.hero-task-status-box.running .hero-task-status-title > span {
+  box-shadow: 0 0 0 5px color-mix(in srgb, var(--task-color), transparent 84%);
+}
+
+.hero-task-assigned-list {
+  display: flex;
+  flex-wrap: wrap;
   gap: 6px;
 }
 
-.hero-task-choices label {
-  min-width: 0;
-  padding: 6px 8px;
+.hero-task-assigned-unit {
+  gap: 6px;
+  padding: 4px 7px 4px 4px;
   border-radius: 10px;
-  background: rgba(29, 63, 55, 0.06);
+  background: var(--task-soft);
+  font-size: 11px;
 }
 
-.hero-task-card.task-purple,
-.hero-task-card.task-orange {
-  border-color: rgba(148, 96, 40, 0.42);
+.hero-task-progress {
+  height: 7px;
+  overflow: hidden;
+  border-radius: 99px;
+  background: #e6ece8;
+}
+
+.hero-task-progress i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--task-color), color-mix(in srgb, var(--task-color), white 34%));
+}
+
+.hero-task-status-box time {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .hero-task-choice:not(.occupied):hover .hero-task-choice-card {
+    transform: translateY(-1px);
+    border-color: color-mix(in srgb, var(--task-color), transparent 44%);
+  }
+}
+
+@media (max-width: 1100px) {
+  .hero-task-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 @media (max-width: 800px) {
   .hero-task-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 520px) {
+  .hero-task-choices,
+  .hero-task-actions {
     grid-template-columns: 1fr;
   }
 }

@@ -15,6 +15,7 @@ import { CONSUMABLE_ITEMS, SHOP_RULES_VERSION, shopProductIdFromPath } from "./s
 import {
   beijingHeroRefreshKey,
   createHeroTaskDefinition,
+  createHeroTaskRequirements,
   createBattleHeroSnapshot,
   drawHomeUnit,
   freeHeroPullState,
@@ -27,6 +28,7 @@ import {
   previewHomeRegion,
   publicHeroCatalog,
   regionUpgradeCost,
+  selectHeroTaskUnits,
   starUpgradeCost
 } from "./hero-home.js";
 
@@ -2035,6 +2037,7 @@ function publicOwnedHeroUnit(row) {
 async function heroTasksFromClient(client, accountId, ownedUnits, at = new Date()) {
   const refreshKey = beijingHeroRefreshKey(at);
   if (!refreshKey) return [];
+  const ownedHeroIds = ownedUnits.filter((unit) => unit.type === "hero").map((unit) => unit.id);
   await client.query(
     `UPDATE cdp_hero_tasks
      SET status = 'completed', updated_at = now()
@@ -2047,12 +2050,26 @@ async function heroTasksFromClient(client, accountId, ownedUnits, at = new Date(
     [accountId, refreshKey]
   );
   const available = await client.query(
-    `SELECT slot_index FROM cdp_hero_tasks
+    `SELECT task_id, slot_index, hero_count, requirements FROM cdp_hero_tasks
      WHERE account_id = $1::uuid AND status = 'available' AND refresh_key = $2::date`,
     [accountId, refreshKey]
   );
+  if (ownedHeroIds.length) {
+    for (const row of available.rows) {
+      const requirements = row.requirements || {};
+      const regionTotal = Object.values(requirements.regions || {}).reduce((sum, count) => sum + Number(count), 0);
+      const genderTotal = Object.values(requirements.genders || {}).reduce((sum, count) => sum + Number(count), 0);
+      if (regionTotal < Number(row.hero_count) || genderTotal < Number(row.hero_count)) continue;
+      const relaxedRequirements = createHeroTaskRequirements(ownedHeroIds, row.hero_count);
+      if (!relaxedRequirements) continue;
+      await client.query(
+        `UPDATE cdp_hero_tasks SET requirements = $3::jsonb, updated_at = now()
+         WHERE task_id = $1::uuid AND account_id = $2::uuid AND status = 'available'`,
+        [row.task_id, accountId, JSON.stringify(relaxedRequirements)]
+      );
+    }
+  }
   const occupiedSlots = new Set(available.rows.map((row) => Number(row.slot_index)));
-  const ownedHeroIds = ownedUnits.filter((unit) => unit.type === "hero").map((unit) => unit.id);
   if (ownedHeroIds.length) {
     for (let slotIndex = 1; slotIndex <= 3; slotIndex += 1) {
       if (occupiedSlots.has(slotIndex)) continue;
@@ -2463,22 +2480,12 @@ export async function upgradeHomeRegion(accountId, regionIdValue, requestIdValue
   }
 }
 
-function taskRequirementSatisfied(requirements, heroes) {
-  const regionCounts = {};
-  const genderCounts = {};
-  heroes.forEach((hero) => {
-    regionCounts[hero.regionId] = (regionCounts[hero.regionId] || 0) + 1;
-    genderCounts[hero.gender] = (genderCounts[hero.gender] || 0) + 1;
-  });
-  return Object.entries(requirements?.regions || {}).every(([key, count]) => regionCounts[key] >= Number(count))
-    && Object.entries(requirements?.genders || {}).every(([key, count]) => genderCounts[key] >= Number(count));
-}
-
-export async function dispatchHeroTask(accountId, taskIdValue, unitIdsValue, requestIdValue) {
+export async function dispatchHeroTask(accountId, taskIdValue, unitIdsValue, requestIdValue, autoSelectValue = false) {
   const database = requirePool();
   const taskId = String(taskIdValue || "");
   const requestId = normalizedRequestId(requestIdValue);
-  const unitIds = [...new Set((Array.isArray(unitIdsValue) ? unitIdsValue : []).map(String).filter(Boolean))];
+  let unitIds = [...new Set((Array.isArray(unitIdsValue) ? unitIdsValue : []).map(String).filter(Boolean))];
+  const autoSelect = autoSelectValue === true;
   const client = await database.connect();
   try {
     await client.query("BEGIN");
@@ -2503,30 +2510,32 @@ export async function dispatchHeroTask(accountId, taskIdValue, unitIdsValue, req
     const task = taskResult.rows[0];
     if (!task) throw commerceError("任务不存在或已经刷新", 404);
     if (task.status !== "available") throw commerceError("任务已经开始或结束", 409);
-    if (unitIds.length !== Number(task.hero_count)) throw commerceError(`需要派遣${task.hero_count}名英雄`, 409);
-    const runningCount = await client.query(
-      `SELECT count(*)::integer AS count FROM cdp_hero_tasks
-       WHERE account_id = $1::uuid AND status = 'running'`,
+    const runningResult = await client.query(
+      `SELECT task_id, assigned_unit_ids FROM cdp_hero_tasks
+       WHERE account_id = $1::uuid AND status = 'running'
+       FOR UPDATE`,
       [accountId]
     );
-    if (Number(runningCount.rows[0]?.count) >= 3) throw commerceError("同时最多执行3个英雄任务", 409);
+    if (runningResult.rows.length >= 3) throw commerceError("同时最多执行3个英雄任务", 409);
     const ownedResult = await client.query(
       `SELECT unit_id FROM cdp_hero_units
-       WHERE account_id = $1::uuid AND unit_id = ANY($2::text[])
+       WHERE account_id = $1::uuid
+       ORDER BY unit_id
        FOR UPDATE`,
-      [accountId, unitIds]
+      [accountId]
     );
-    if (ownedResult.rows.length !== unitIds.length) throw commerceError("包含尚未拥有的英雄", 403);
+    const ownedUnitIds = ownedResult.rows.map((row) => row.unit_id);
+    const occupiedUnitIds = runningResult.rows.flatMap((row) => row.assigned_unit_ids || []);
+    if (autoSelect) {
+      unitIds = selectHeroTaskUnits(ownedUnitIds, occupiedUnitIds, task.hero_count, task.requirements);
+      if (!unitIds) throw commerceError("当前没有可满足条件的空闲英雄，请等待执行中的英雄返回", 409);
+    }
+    if (unitIds.length !== Number(task.hero_count)) throw commerceError(`需要派遣${task.hero_count}名英雄`, 409);
+    if (unitIds.some((unitId) => !ownedUnitIds.includes(unitId))) throw commerceError("包含尚未拥有的英雄", 403);
     const heroes = unitIds.map((unitId) => HOME_UNIT_BY_ID.get(unitId));
     if (heroes.some((unit) => !unit || unit.type !== "hero")) throw commerceError("任务只能派遣英雄", 409);
-    if (!taskRequirementSatisfied(task.requirements, heroes)) throw commerceError("派遣英雄不满足区域或性别要求", 409);
-    const occupied = await client.query(
-      `SELECT task_id FROM cdp_hero_tasks
-       WHERE account_id = $1::uuid AND status = 'running' AND assigned_unit_ids && $2::text[]
-       FOR UPDATE`,
-      [accountId, unitIds]
-    );
-    if (occupied.rows[0]) throw commerceError("部分英雄正在执行其他任务", 409);
+    if (!selectHeroTaskUnits(unitIds, [], task.hero_count, task.requirements)) throw commerceError("派遣英雄不满足区域或性别要求", 409);
+    if (unitIds.some((unitId) => occupiedUnitIds.includes(unitId))) throw commerceError("部分英雄正在执行其他任务", 409);
     const updated = await client.query(
       `UPDATE cdp_hero_tasks
        SET status = 'running', assigned_unit_ids = $3::text[], started_at = now(),

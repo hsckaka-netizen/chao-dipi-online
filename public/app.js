@@ -4323,7 +4323,15 @@ function renderHomeRegionCard(region) {
   `;
 }
 
-function heroTaskRequirementText(task) {
+const HERO_TASK_COLOR_META = Object.freeze({
+  white: Object.freeze({ name: "普通", label: "普通委托" }),
+  green: Object.freeze({ name: "精良", label: "精良委托" }),
+  blue: Object.freeze({ name: "稀有", label: "稀有委托" }),
+  purple: Object.freeze({ name: "史诗", label: "史诗委托" }),
+  orange: Object.freeze({ name: "传说", label: "传说委托" })
+});
+
+function heroTaskRequirementParts(task) {
   const regionNames = new Map((heroHomeState?.regions || []).map((region) => [region.id, region.name]));
   const parts = [];
   Object.entries(task.requirements?.regions || {}).forEach(([regionId, count]) => {
@@ -4332,19 +4340,75 @@ function heroTaskRequirementText(task) {
   Object.entries(task.requirements?.genders || {}).forEach(([gender, count]) => {
     parts.push(`${gender === "female" ? "女" : "男"}英雄${count}名`);
   });
-  return parts.join("、") || `任意${task.heroCount}名英雄`;
+  return parts.length ? parts : [`任意${task.heroCount}名英雄`];
+}
+
+function heroTaskUnitMeta(hero) {
+  const region = (heroHomeState?.regions || []).find((candidate) => candidate.id === hero.regionId);
+  return `${region?.name || hero.regionId} · ${hero.gender === "female" ? "女" : "男"}`;
+}
+
+function renderHeroTaskAssignedUnits(task) {
+  return (task.assignedUnitIds || []).map((unitId) => {
+    const hero = heroUnitById(unitId);
+    return `<span class="hero-task-assigned-unit">${heroUnitBadge(hero, "tiny")}<b>${escapeHtml(hero?.name || unitId)}</b></span>`;
+  }).join("");
 }
 
 function renderHeroTask(task, occupiedHeroIds) {
-  const assignedNames = (task.assignedUnitIds || []).map((unitId) => heroUnitById(unitId)?.name || unitId).join("、");
   const heroes = (heroHomeState?.ownedUnits || []).filter((unit) => unit.type === "hero");
+  const availableHeroCount = heroes.filter((hero) => !occupiedHeroIds.has(hero.id)).length;
+  const requirementParts = heroTaskRequirementParts(task);
+  const colorMeta = HERO_TASK_COLOR_META[task.color] || HERO_TASK_COLOR_META.white;
+  const taskInFlight = heroActionInFlight === `task-dispatch:${task.taskId}`;
+  const progress = task.status === "running" && task.startedAt && task.completesAt
+    ? Math.max(0, Math.min(100, (Date.now() - new Date(task.startedAt).getTime()) / (new Date(task.completesAt).getTime() - new Date(task.startedAt).getTime()) * 100))
+    : 0;
   return `
     <article class="hero-task-card task-${escapeHtml(task.color)}" data-hero-task-id="${escapeHtml(task.taskId)}">
-      <header><div><span class="tag">${escapeHtml(task.color.toUpperCase())}</span><strong>${escapeHtml(task.heroCount)}人任务 · ${escapeHtml(task.durationSeconds / 3600)}小时</strong></div><b>+${escapeHtml(task.rewardMaterials)} 建材</b></header>
-      <p>${escapeHtml(heroTaskRequirementText(task))}</p>
-      ${task.status === "available" ? `<div class="hero-task-choices">${heroes.map((hero) => `<label><input type="checkbox" data-task-hero value="${escapeHtml(hero.id)}" ${occupiedHeroIds.has(hero.id) ? "disabled" : ""}>${heroUnitBadge(hero, "tiny")}<span>${escapeHtml(hero.name)}</span></label>`).join("")}</div><button type="button" data-action="dispatch-hero-task" data-task-id="${escapeHtml(task.taskId)}" ${heroActionInFlight ? "disabled" : ""}>派遣英雄</button>` : ""}
-      ${task.status === "running" ? `<div class="meta">执行中：${escapeHtml(assignedNames)}<br>预计完成：${escapeHtml(new Date(task.completesAt).toLocaleString("zh-CN"))}</div>` : ""}
-      ${task.status === "completed" ? `<div class="meta">已完成：${escapeHtml(assignedNames)}</div><button type="button" data-action="collect-hero-task" data-task-id="${escapeHtml(task.taskId)}" ${heroActionInFlight ? "disabled" : ""}>领取 ${escapeHtml(task.rewardMaterials)} 建材</button>` : ""}
+      <header class="hero-task-card-head">
+        <div><span class="hero-task-rarity">${escapeHtml(colorMeta.label)}</span><span class="hero-task-state-tag">${task.status === "available" ? "待派遣" : task.status === "running" ? "进行中" : "可领取"}</span></div>
+        <span class="hero-task-reward"><small>任务奖励</small><b>+${escapeHtml(task.rewardMaterials)} 建材</b></span>
+      </header>
+      <div class="hero-task-summary"><strong>${escapeHtml(task.heroCount)} 名英雄</strong><span>${escapeHtml(task.durationSeconds / 3600)} 小时</span></div>
+      <div class="hero-task-requirements">
+        <small>派遣条件</small>
+        <div>${requirementParts.map((part) => `<span>${escapeHtml(part)}</span>`).join("")}</div>
+        <p>满足条件后，其余名额可任意补足</p>
+      </div>
+      ${task.status === "available" ? `
+        <div class="hero-task-roster-head"><b>选择英雄</b><span>${escapeHtml(availableHeroCount)} 名空闲 · 可手动搭配</span></div>
+        <div class="hero-task-choices">${heroes.map((hero) => {
+          const occupied = occupiedHeroIds.has(hero.id);
+          return `<label class="hero-task-choice ${occupied ? "occupied" : ""}">
+            <input type="checkbox" data-task-hero value="${escapeHtml(hero.id)}" ${occupied ? "disabled" : ""}>
+            <span class="hero-task-choice-card">
+              ${heroUnitBadge(hero)}
+              <span><b>${escapeHtml(hero.name)}</b><small>${escapeHtml(heroTaskUnitMeta(hero))}</small></span>
+              <i>${occupied ? "任务中" : "✓"}</i>
+            </span>
+          </label>`;
+        }).join("")}</div>
+        <div class="hero-task-actions">
+          <button type="button" data-action="dispatch-hero-task" data-auto-select="true" data-task-id="${escapeHtml(task.taskId)}" ${heroActionInFlight || availableHeroCount < Number(task.heroCount) ? "disabled" : ""}>${taskInFlight ? "正在派遣…" : "一键派遣"}</button>
+          <button type="button" class="secondary" data-action="dispatch-hero-task" data-task-id="${escapeHtml(task.taskId)}" ${heroActionInFlight || availableHeroCount < Number(task.heroCount) ? "disabled" : ""}>派遣已选英雄</button>
+        </div>
+      ` : ""}
+      ${task.status === "running" ? `
+        <div class="hero-task-status-box running">
+          <div class="hero-task-status-title"><span></span><b>英雄执行中</b></div>
+          <div class="hero-task-assigned-list">${renderHeroTaskAssignedUnits(task)}</div>
+          <div class="hero-task-progress"><i style="width:${progress.toFixed(2)}%"></i></div>
+          <time>预计 ${escapeHtml(new Date(task.completesAt).toLocaleString("zh-CN"))} 完成</time>
+        </div>
+      ` : ""}
+      ${task.status === "completed" ? `
+        <div class="hero-task-status-box completed">
+          <div class="hero-task-status-title"><span>✓</span><b>任务完成</b></div>
+          <div class="hero-task-assigned-list">${renderHeroTaskAssignedUnits(task)}</div>
+          <button type="button" data-action="collect-hero-task" data-task-id="${escapeHtml(task.taskId)}" ${heroActionInFlight ? "disabled" : ""}>领取 ${escapeHtml(task.rewardMaterials)} 建材</button>
+        </div>
+      ` : ""}
     </article>
   `;
 }
@@ -4579,7 +4643,7 @@ async function upgradeHeroHomeRegion(regionId) {
   }
 }
 
-async function dispatchDailyHeroTask(taskId, card) {
+async function dispatchDailyHeroTask(taskId, card, autoSelect = false) {
   if (heroActionInFlight) return;
   const unitIds = [...(card?.querySelectorAll("input[data-task-hero]:checked") || [])].map((input) => input.value);
   heroActionInFlight = `task-dispatch:${taskId}`;
@@ -4587,10 +4651,11 @@ async function dispatchDailyHeroTask(taskId, card) {
   try {
     const data = await api("/api/heroes/tasks/dispatch", {
       method: "POST",
-      body: JSON.stringify({ taskId, unitIds, requestId: requestId() })
+      body: JSON.stringify({ taskId, unitIds, autoSelect, requestId: requestId() })
     });
     applyHeroMutationState(data.state);
-    setMessage("英雄任务已经开始");
+    const assignedNames = (data.assignedUnitIds || []).map((unitId) => heroUnitById(unitId)?.name || unitId).join("、");
+    setMessage(autoSelect ? `已自动派遣：${assignedNames}` : "英雄任务已经开始");
   } catch (error) {
     setMessage(error.message || "派遣失败", true);
   } finally {
@@ -8198,7 +8263,7 @@ document.addEventListener("click", (event) => {
   }
   if (action === "dispatch-hero-task") {
     const target = event.target.closest("[data-task-id]");
-    dispatchDailyHeroTask(target?.dataset.taskId || "", target?.closest("[data-hero-task-id]"));
+    dispatchDailyHeroTask(target?.dataset.taskId || "", target?.closest("[data-hero-task-id]"), target?.dataset.autoSelect === "true");
   }
   if (action === "collect-hero-task") {
     collectDailyHeroTask(event.target.closest("[data-task-id]")?.dataset.taskId || "");

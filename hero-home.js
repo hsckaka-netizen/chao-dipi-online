@@ -1,5 +1,5 @@
 export const HERO_HOME_RULES = Object.freeze({
-  version: "2026-08-24-v2",
+  version: "2026-08-24-v3",
   skillVersion: "2026-08-24-skill-v5",
   boardSkillVersion: "2026-08-24-board-skill-v1",
   maxProductionHours: 6,
@@ -260,6 +260,26 @@ function shuffled(values, randomFloat) {
   return result;
 }
 
+export function createHeroTaskRequirements(ownedHeroIds = [], heroCountValue = 0, randomFloat = Math.random) {
+  const heroes = [...new Set(ownedHeroIds)]
+    .map((unitId) => HOME_UNIT_BY_ID.get(String(unitId)))
+    .filter((unit) => unit?.type === "hero");
+  const heroCount = Math.trunc(Number(heroCountValue) || 0);
+  if (heroCount < 1 || heroes.length < heroCount) return null;
+  const selected = shuffled(heroes, randomFloat).slice(0, heroCount);
+  const regionHero = selected[randomIndex(selected.length, randomFloat)];
+  const regions = { [regionHero.regionId]: 1 };
+  const genders = {};
+  if (heroCount >= 3) {
+    const genderCount = heroCount >= 5 ? 2 : 1;
+    const selectableGenders = [...new Set(selected.map((hero) => hero.gender))]
+      .filter((gender) => selected.filter((hero) => hero.gender === gender).length >= genderCount);
+    const gender = selectableGenders[randomIndex(selectableGenders.length, randomFloat)];
+    genders[gender] = genderCount;
+  }
+  return { regions, genders };
+}
+
 export function createHeroTaskDefinition(ownedHeroIds = [], randomFloat = Math.random) {
   const heroes = [...new Set(ownedHeroIds)]
     .map((unitId) => HOME_UNIT_BY_ID.get(String(unitId)))
@@ -272,17 +292,65 @@ export function createHeroTaskDefinition(ownedHeroIds = [], randomFloat = Math.r
     roll -= candidate.weight;
     return roll < 0;
   }) || tiers.at(-1);
-  const selected = shuffled(heroes, randomFloat).slice(0, tier.heroCount);
-  const regions = {};
-  const genders = {};
-  selected.forEach((hero) => {
-    regions[hero.regionId] = (regions[hero.regionId] || 0) + 1;
-    genders[hero.gender] = (genders[hero.gender] || 0) + 1;
-  });
   return {
     ...tier,
-    requirements: { regions, genders }
+    requirements: createHeroTaskRequirements(heroes.map((hero) => hero.id), tier.heroCount, randomFloat)
   };
+}
+
+function taskRequirementSatisfied(requirements, heroes) {
+  const regionCounts = {};
+  const genderCounts = {};
+  heroes.forEach((hero) => {
+    regionCounts[hero.regionId] = (regionCounts[hero.regionId] || 0) + 1;
+    genderCounts[hero.gender] = (genderCounts[hero.gender] || 0) + 1;
+  });
+  return Object.entries(requirements?.regions || {}).every(([key, count]) => regionCounts[key] >= Number(count))
+    && Object.entries(requirements?.genders || {}).every(([key, count]) => genderCounts[key] >= Number(count));
+}
+
+function taskRequirementExcess(requirements, heroes) {
+  const entries = [
+    ...Object.entries(requirements?.regions || {}).map(([key, count]) => ["regionId", key, Number(count)]),
+    ...Object.entries(requirements?.genders || {}).map(([key, count]) => ["gender", key, Number(count)])
+  ];
+  return entries.reduce((sum, [field, key, count]) => {
+    const actual = heroes.filter((hero) => hero[field] === key).length;
+    return sum + Math.max(0, actual - count);
+  }, 0);
+}
+
+export function selectHeroTaskUnits(ownedHeroIds = [], occupiedHeroIds = [], heroCountValue = 0, requirements = {}) {
+  const occupied = new Set((occupiedHeroIds || []).map(String));
+  const heroes = [...new Set((ownedHeroIds || []).map(String))]
+    .filter((unitId) => !occupied.has(unitId))
+    .map((unitId) => HOME_UNIT_BY_ID.get(unitId))
+    .filter((unit) => unit?.type === "hero");
+  const heroCount = Math.trunc(Number(heroCountValue) || 0);
+  if (heroCount < 1 || heroes.length < heroCount) return null;
+
+  let best = null;
+  let bestExcess = Infinity;
+  const selected = [];
+  function visit(startIndex) {
+    if (selected.length === heroCount) {
+      if (!taskRequirementSatisfied(requirements, selected)) return;
+      const excess = taskRequirementExcess(requirements, selected);
+      if (excess < bestExcess) {
+        best = selected.map((hero) => hero.id);
+        bestExcess = excess;
+      }
+      return;
+    }
+    const remaining = heroCount - selected.length;
+    for (let index = startIndex; index <= heroes.length - remaining; index += 1) {
+      selected.push(heroes[index]);
+      visit(index + 1);
+      selected.pop();
+    }
+  }
+  visit(0);
+  return best;
 }
 
 export function heroGachaCharge(pullCount, freePullAvailable = false) {

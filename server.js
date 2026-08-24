@@ -5516,7 +5516,7 @@ async function handleApi(req, res, pathParts, url) {
     }
     if (req.method === "POST" && pathParts[2] === "tasks" && pathParts[3] === "dispatch") {
       const body = await readJson(req);
-      return writeJson(res, 200, await dispatchHeroTask(account.id, body.taskId, body.unitIds, body.requestId));
+      return writeJson(res, 200, await dispatchHeroTask(account.id, body.taskId, body.unitIds, body.requestId, body.autoSelect));
     }
     if (req.method === "POST" && pathParts[2] === "tasks" && pathParts[3] === "collect") {
       const body = await readJson(req);
