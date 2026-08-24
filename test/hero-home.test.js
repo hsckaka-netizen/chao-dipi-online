@@ -31,10 +31,10 @@ test("home production uses star rates, keeps fractions, and stops at six hours",
     settledAt: "2026-08-14T00:00:00.000Z"
   }, "2026-08-14T03:00:00.000Z");
 
-  assert.equal(unitProductionRate("jiang-zha", 2), 32);
+  assert.equal(unitProductionRate("jiang-zha", 2), 28);
   assert.equal(preview.productionHours, 6);
-  assert.equal(preview.productionValue, 32.25);
-  assert.equal(preview.collectableDiamonds, 32);
+  assert.equal(preview.productionValue, 28.25);
+  assert.equal(preview.collectableDiamonds, 28);
   assert.equal(preview.fractionalValue, 0.25);
   assert.equal(preview.isFull, true);
 });
@@ -96,12 +96,12 @@ test("boka roster uses jiang zha and deng huang with the supplied card identitie
 
 test("all hero skill descriptions expose concrete per-star diamond values", () => {
   const expectedValues = {
-    "jiang-zha": "100/135/170/210/250",
-    "deng-huang": "140/190/240/300/360",
-    xiaoxu: "6/8/10/12/15",
+    "jiang-zha": "150/185/220/255/290",
+    "deng-huang": "120/150/180/210/240",
+    xiaoxu: "7/9/11/12/14",
     gelu: "100/90/80/70/60",
-    "maeda-atsuko": "200/270/340/420/500",
-    "watanabe-mayu": "12/16/20/25/30"
+    "maeda-atsuko": "185/230/280/325/370",
+    "watanabe-mayu": "55/70/85/100/115"
   };
   Object.entries(expectedValues).forEach(([unitId, values]) => {
     const description = HOME_UNIT_BY_ID.get(unitId)?.skillDescription || "";
@@ -185,7 +185,7 @@ test("xiaoxu counts distinct other scoring-card sources and excludes self", () =
   });
 
   assert.equal(reward.matchedCount, 2);
-  assert.equal(reward.amount, 16);
+  assert.equal(reward.amount, 18);
 });
 
 test("xiaoxu does not cap distinct scoring-card sources even in a nine-player game", () => {
@@ -200,10 +200,10 @@ test("xiaoxu does not cap distinct scoring-card sources even in a nine-player ga
   });
   assert.equal(reward.matchedCount, 8);
   assert.equal(reward.cap, null);
-  assert.equal(reward.amount, 120);
+  assert.equal(reward.amount, 112);
 });
 
-test("gelu uses the star score threshold and rewards twenty diamonds per trigger", () => {
+test("gelu uses the star score threshold and rewards thirty-two diamonds per trigger", () => {
   const reward = calculateHeroSkillReward({
     snapshot: createBattleHeroSnapshot("gelu", 3),
     playerId: "gelu-player",
@@ -216,8 +216,8 @@ test("gelu uses the star score threshold and rewards twenty diamonds per trigger
   });
   assert.equal(reward.matchedCount, 1);
   assert.equal(reward.cap, null);
-  assert.equal(reward.amount, 20);
-  assert.equal(reward.rulesVersion, "2026-08-24-skill-v5");
+  assert.equal(reward.amount, 32);
+  assert.equal(reward.rulesVersion, "2026-08-24-skill-v6");
 });
 
 test("gelu has no trigger or diamond cap at five stars", () => {
@@ -229,7 +229,7 @@ test("gelu has no trigger or diamond cap at five stars", () => {
   });
   assert.equal(reward.matchedCount, 6);
   assert.equal(reward.cap, null);
-  assert.equal(reward.amount, 120);
+  assert.equal(reward.amount, 192);
   assert.match(reward.detail, /无次数和奖励上限/);
 });
 
@@ -249,10 +249,10 @@ test("gelu improves the score threshold at every star and keeps integer trigger 
       playerResult: { playerId: "gelu-player", evaluationTags: [] },
       trickHistory: [{ winnerId: "gelu-player", points: threshold * 7, plays: [] }]
     });
-    assert.equal(oneTrigger.amount, 20);
+    assert.equal(oneTrigger.amount, 32);
     assert.equal(repeated.matchedCount, 7);
     assert.equal(repeated.cap, null);
-    assert.equal(repeated.amount, 140);
+    assert.equal(repeated.amount, 224);
   });
 });
 
@@ -263,19 +263,19 @@ test("direct, last-trick, and positive-title hero skills follow snapshot stars",
     playerId: "p",
     playerResult: { role: "狗腿", baseGameScore: 1, evaluationTags: [] },
     trickHistory: history
-  }).amount, 250);
+  }).amount, 290);
   assert.equal(calculateHeroSkillReward({
     snapshot: createBattleHeroSnapshot("deng-huang", 4),
     playerId: "p",
     playerResult: { role: "闲家", baseGameScore: -1, evaluationTags: [] },
     trickHistory: history
-  }).amount, 300);
+  }).amount, 210);
   assert.equal(calculateHeroSkillReward({
     snapshot: createBattleHeroSnapshot("maeda-atsuko", 2),
     playerId: "p",
     playerResult: { role: "庄家", baseGameScore: 1, evaluationTags: [] },
     trickHistory: history
-  }).amount, 270);
+  }).amount, 230);
   assert.equal(calculateHeroSkillReward({
     snapshot: createBattleHeroSnapshot("watanabe-mayu", 3),
     playerId: "p",
@@ -287,7 +287,7 @@ test("direct, last-trick, and positive-title hero skills follow snapshot stars",
       ]
     },
     trickHistory: history
-  }).amount, 60);
+  }).amount, 255);
 });
 
 test("watanabe mayu scales each positive title without a total cap", () => {
@@ -303,7 +303,7 @@ test("watanabe mayu scales each positive title without a total cap", () => {
   });
   assert.equal(reward.matchedCount, 7);
   assert.equal(reward.cap, null);
-  assert.equal(reward.amount, 210);
+  assert.equal(reward.amount, 805);
 });
 
 test("SSR roster, probabilities, production, and paid skill heat use the settled values", () => {
@@ -319,7 +319,7 @@ test("SSR roster, probabilities, production, and paid skill heat use the settled
   assert.equal(shenJiangwen.paidSkill.cost, 2500);
   assert.equal(yokoyama.skillName, "全能偶像");
   assert.equal(yokoyama.paidSkill.cost, 100);
-  assert.equal(unitProductionRate("shen-biesan", 5), 84);
+  assert.equal(unitProductionRate("shen-biesan", 5), 60);
   assert.equal(drawHomeUnit({ randomFloat: () => 0 }).rarity, "ssr");
   assert.equal(drawHomeUnit({ randomFloat: () => 0.05 }).rarity, "sr");
   assert.equal(drawHomeUnit({ randomFloat: () => 0.5 }).rarity, "minion");
@@ -350,8 +350,8 @@ test("region levels increase output every level and unlock capacity on milestone
     level: 20,
     settledAt: "2026-08-14T00:00:00.000Z"
   }, "2026-08-14T01:00:00.000Z");
-  assert.equal(preview.productionMultiplier, 1.2);
-  assert.ok(Math.abs(preview.ratePerHour - 43.2) < 1e-9);
+  assert.equal(preview.productionMultiplier, 1.1);
+  assert.ok(Math.abs(preview.ratePerHour - 39.6) < 1e-9);
   assert.equal(preview.maxProductionHours, 7);
   assert.equal(preview.extraSlotUnlocked, false);
 });
@@ -454,4 +454,13 @@ test("hero migration stores home, gacha, snapshots, and hero bonus", async () =>
   assert.match(expansionMigration, /CREATE TABLE IF NOT EXISTS cdp_game_hero_skill_uses/);
   assert.match(expansionMigration, /board_hero_effects/);
   assert.match(expansionMigration, /diamond_denomination:2026-08-24/);
+
+  const rebalanceMigration = await readFile(
+    fileURLToPath(new URL("../db/migrations/023_hero_economy_rebalance.sql", import.meta.url)),
+    "utf8"
+  );
+  assert.match(rebalanceMigration, /home_production_before_rebalance/);
+  assert.match(rebalanceMigration, /ARRAY\[36, 48, 60, 72, 84\]/);
+  assert.match(rebalanceMigration, /region\.level \* 0\.01/);
+  assert.match(rebalanceMigration, /settled_at = CURRENT_TIMESTAMP/);
 });

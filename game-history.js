@@ -124,6 +124,10 @@ const MIGRATIONS = [
   {
     version: 22,
     path: fileURLToPath(new URL("./db/migrations/022_ssr_economy_and_home_progression.sql", import.meta.url))
+  },
+  {
+    version: 23,
+    path: fileURLToPath(new URL("./db/migrations/023_hero_economy_rebalance.sql", import.meta.url))
   }
 ];
 const HISTORY_ENABLED = String(process.env.GAME_HISTORY_ENABLED || "").toLowerCase() === "true";

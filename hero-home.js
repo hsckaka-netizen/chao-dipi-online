@@ -1,6 +1,6 @@
 export const HERO_HOME_RULES = Object.freeze({
-  version: "2026-08-24-v3",
-  skillVersion: "2026-08-24-skill-v5",
+  version: "2026-08-24-v4",
+  skillVersion: "2026-08-24-skill-v6",
   boardSkillVersion: "2026-08-24-board-skill-v1",
   maxProductionHours: 6,
   singlePullPrice: 300,
@@ -23,12 +23,12 @@ export const HERO_HOME_RULES = Object.freeze({
   ssrLeftoverUniversalPerFragment: 5,
   heroStarCosts: Object.freeze({ 2: 20, 3: 40, 4: 60, 5: 80 }),
   minionStarCosts: Object.freeze({ 2: 10, 3: 20, 4: 30, 5: 40 }),
-  heroProduction: Object.freeze([24, 32, 40, 48, 56]),
-  srProduction: Object.freeze([24, 32, 40, 48, 56]),
-  ssrProduction: Object.freeze([36, 48, 60, 72, 84]),
+  heroProduction: Object.freeze([24, 28, 32, 36, 40]),
+  srProduction: Object.freeze([24, 28, 32, 36, 40]),
+  ssrProduction: Object.freeze([36, 42, 48, 54, 60]),
   minionProduction: Object.freeze([8, 10, 12, 14, 16]),
   maxRegionLevel: 100,
-  productionBonusPerLevel: 0.01,
+  productionBonusPerLevel: 0.005,
   maxHoursPerTenLevels: 0.5,
   extraSlotUnlockLevel: 100,
   maxSkillHeat: 3,
@@ -48,12 +48,12 @@ export const HOME_UNITS = Object.freeze([
   Object.freeze({
     id: "jiang-zha", name: "蒋渣", shortName: "渣", type: "hero", rarity: "sr", gender: "male", regionId: "boka", color: "#285b93",
     cardImage: "/assets/heroes/jiang-zha-card-v2.png",
-    skillName: "渣代思维", skillDescription: "最终身份为狗腿且原始最终积分为正时触发；1～5星分别额外获得100/135/170/210/250钻石。"
+    skillName: "渣代思维", skillDescription: "最终身份为狗腿且原始最终积分为正时触发；1～5星分别额外获得150/185/220/255/290钻石。"
   }),
   Object.freeze({
     id: "deng-huang", name: "灯皇", shortName: "灯", type: "hero", rarity: "sr", gender: "male", regionId: "boka", color: "#16858a",
     cardImage: "/assets/heroes/deng-huang-card-v2.png",
-    skillName: "倒买倒卖", skillDescription: "本人赢得最后一轮时触发；1～5星分别额外获得140/190/240/300/360钻石。"
+    skillName: "倒买倒卖", skillDescription: "本人赢得最后一轮时触发；1～5星分别额外获得120/150/180/210/240钻石。"
   }),
   Object.freeze({
     id: "shen-biesan", name: "神 · 瘪三", namePrefix: "神", baseName: "瘪三", shortName: "瘪", type: "hero", rarity: "ssr", gender: "male", regionId: "boka", color: "#9f742c",
@@ -64,12 +64,12 @@ export const HOME_UNITS = Object.freeze([
   Object.freeze({
     id: "xiaoxu", name: "小旭", shortName: "旭", type: "hero", rarity: "sr", gender: "male", regionId: "brick", color: "#c45e51",
     cardImage: "/assets/heroes/xiaoxu-card-v2.png",
-    skillName: "八方来财", skillDescription: "每从1名不同其他玩家打出的计分牌中赢得过牌分，1～5星分别额外获得6/8/10/12/15钻石，不另设上限。"
+    skillName: "八方来财", skillDescription: "每从1名不同其他玩家打出的计分牌中赢得过牌分，1～5星分别额外获得7/9/11/12/14钻石，不另设上限。"
   }),
   Object.freeze({
     id: "gelu", name: "格鲁", shortName: "格", type: "hero", rarity: "sr", gender: "male", regionId: "brick", color: "#7958a5",
     cardImage: "/assets/heroes/gelu-card-v2.png",
-    skillName: "多劳多得", skillDescription: "1～5星时，个人赢墩牌分每满100/90/80/70/60分额外获得20钻石，触发次数和单局奖励均无上限；不计底牌与团队加分。"
+    skillName: "多劳多得", skillDescription: "1～5星时，个人赢墩牌分每满100/90/80/70/60分额外获得32钻石，触发次数和单局奖励均无上限；不计底牌与团队加分。"
   }),
   Object.freeze({
     id: "shen-jiangwen", name: "神 · 姜文", namePrefix: "神", baseName: "姜文", shortName: "姜", type: "hero", rarity: "ssr", gender: "male", regionId: "brick", color: "#4f5e52",
@@ -80,12 +80,12 @@ export const HOME_UNITS = Object.freeze([
   Object.freeze({
     id: "maeda-atsuko", name: "前田敦子", shortName: "敦", type: "hero", rarity: "sr", gender: "female", regionId: "stage", color: "#d25d86",
     cardImage: "/assets/heroes/maeda-atsuko-card-v2.png",
-    skillName: "中心光芒", skillDescription: "本人是庄家且原始最终积分为正时触发；1～5星分别额外获得200/270/340/420/500钻石。"
+    skillName: "中心光芒", skillDescription: "本人是庄家且原始最终积分为正时触发；1～5星分别额外获得185/230/280/325/370钻石。"
   }),
   Object.freeze({
     id: "watanabe-mayu", name: "渡边麻友", shortName: "麻", type: "hero", rarity: "sr", gender: "female", regionId: "stage", color: "#d879b4",
     cardImage: "/assets/heroes/watanabe-mayu-card-v2.png",
-    skillName: "荣誉舞台", skillDescription: "每获得1个正向称号（MVP、辅、精、神、天之上、尽、擎），1～5星分别额外获得12/16/20/25/30钻石，不设总上限。"
+    skillName: "荣誉舞台", skillDescription: "每获得1个正向称号（MVP、辅、精、神、天之上、尽、擎），1～5星分别额外获得55/70/85/100/115钻石，不设总上限。"
   }),
   Object.freeze({
     id: "yokoyama-yui", name: "横山由依", shortName: "横", type: "hero", rarity: "ssr", gender: "female", regionId: "stage", color: "#bd4d83",
@@ -112,14 +112,14 @@ export const HERO_TASK_TIERS = Object.freeze([
 
 const POSITIVE_TITLE_CODES = new Set(["mvp", "support", "precision", "god", "heaven", "exhausted", "pillar"]);
 const DIRECT_SKILL_REWARDS = Object.freeze({
-  "jiang-zha": Object.freeze([100, 135, 170, 210, 250]),
-  "deng-huang": Object.freeze([140, 190, 240, 300, 360]),
-  "maeda-atsuko": Object.freeze([200, 270, 340, 420, 500])
+  "jiang-zha": Object.freeze([150, 185, 220, 255, 290]),
+  "deng-huang": Object.freeze([120, 150, 180, 210, 240]),
+  "maeda-atsuko": Object.freeze([185, 230, 280, 325, 370])
 });
-const XIAOXU_DIAMONDS_PER_SOURCE = Object.freeze([6, 8, 10, 12, 15]);
+const XIAOXU_DIAMONDS_PER_SOURCE = Object.freeze([7, 9, 11, 12, 14]);
 const GELU_POINTS_PER_TRIGGER = Object.freeze([100, 90, 80, 70, 60]);
-const GELU_DIAMONDS_PER_TRIGGER = 20;
-const WATANABE_DIAMONDS_PER_TITLE = Object.freeze([12, 16, 20, 25, 30]);
+const GELU_DIAMONDS_PER_TRIGGER = 32;
+const WATANABE_DIAMONDS_PER_TITLE = Object.freeze([55, 70, 85, 100, 115]);
 const DAY_MS = 24 * 3600 * 1000;
 const BEIJING_OFFSET_MS = 8 * 3600 * 1000;
 
