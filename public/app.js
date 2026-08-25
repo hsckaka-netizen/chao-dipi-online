@@ -4506,6 +4506,17 @@ function renderHeroCatalogPage() {
 
 function renderGachaResult(result) {
   const guaranteedLabels = { "first-sr": "首抽SR", "hero-pity": "50抽保底", "ssr-pity": "100抽SSR保底" };
+  if (result.type === "materials") {
+    return `
+      <article class="gacha-result-card materials">
+        <span class="gacha-result-index">${escapeHtml(result.index)}</span>
+        <span class="gacha-material-icon" aria-hidden="true">▰</span>
+        <strong>建材</strong>
+        <span>区域升级资源</span>
+        <b>+${escapeHtml(result.amount || 0)} 建材</b>
+      </article>
+    `;
+  }
   return `
     <article class="gacha-result-card ${result.unit.type} ${result.conversion.type === "new" ? "new" : ""}">
       <span class="gacha-result-index">${escapeHtml(result.index)}</span>
@@ -4561,7 +4572,7 @@ function renderHeroGachaPage() {
   renderShell(`
     ${renderHeroSectionNav("hero-gacha")}
     <section class="panel hero-gacha-hero">
-      <div class="gacha-copy"><span class="eyebrow">SUMMON</span><h2>英雄召集</h2><p>每抽SSR 1%、SR 9%、小兵90%；每抽另得10建材。</p></div>
+      <div class="gacha-copy"><span class="eyebrow">SUMMON</span><h2>英雄召集</h2><p>每抽只获得一种结果：建材、英雄或小兵。</p></div>
       <div class="gacha-status-grid">
         <span><small>当前钻石</small><b>💎 ${escapeHtml(heroHomeState.balance || 0)}</b></span>
         <span><small>50抽保底</small><b>还剩 ${escapeHtml(heroHomeState.pityRemaining)} 抽</b></span>
@@ -4574,7 +4585,7 @@ function renderHeroGachaPage() {
         <button type="button" data-action="pull-hero-gacha" data-pull-count="1" ${singlePullDisabled ? "disabled" : ""}>${freePullAvailable ? "免费单抽" : `单抽 · ${singlePullPrice}💎`}</button>
         <button type="button" class="accent" data-action="pull-hero-gacha" data-pull-count="10" ${heroActionInFlight || Number(heroHomeState.balance || 0) < tenPullPrice ? "disabled" : ""}>十连 · ${tenPullPrice}💎 <small>9折</small></button>
       </div>
-      <div class="gacha-probability"><span>SSR 1%</span><span>SR 9%</span><span>小兵 90%</span><span>首抽必出未拥有SR且不会是SSR</span><span>第50抽至少SR</span><span>第100抽必出SSR</span><span>十连固定9折</span><span>免费单抽每天北京时间6点更新</span></div>
+      <div class="gacha-probability"><span>建材 40%（50个）</span><span>小兵 50%</span><span>SR 9%</span><span>SSR 1%</span><span>首抽必出未拥有SR且不会是SSR</span><span>第50抽至少SR</span><span>第100抽必出SSR</span><span>十连固定9折</span><span>免费单抽每天北京时间6点更新</span></div>
     </section>
     ${heroGachaResults.length ? `<section class="panel stack"><div class="section-head"><div><h2>本次结果</h2><div class="meta">抽卡结果已由服务端入账</div></div></div><div class="gacha-result-grid">${heroGachaResults.map(renderGachaResult).join("")}</div></section>` : `<section class="panel"><div class="empty">抽卡结果会显示在这里</div></section>`}
   `);

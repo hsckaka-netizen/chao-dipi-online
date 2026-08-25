@@ -17,7 +17,7 @@ import {
   createHeroTaskDefinition,
   createHeroTaskRequirements,
   createBattleHeroSnapshot,
-  drawHomeUnit,
+  drawHeroGachaResult,
   freeHeroPullState,
   heroGachaCharge,
   HERO_HOME_RULES,
@@ -2860,6 +2860,7 @@ export async function pullHeroGacha(accountId, pullCountValue, requestIdValue) {
     let pityCount = Number(profileResult.rows[0]?.non_hero_pity_count) || 0;
     let ssrPityCount = Number(profileResult.rows[0]?.non_ssr_pity_count) || 0;
     const buildingMaterialsBefore = Number(profileResult.rows[0]?.building_materials) || 0;
+    let buildingMaterialsAwarded = 0;
     const firstPullGuaranteed = !profileResult.rows[0]?.first_pull_completed;
     const results = [];
     for (let index = 0; index < pullCount; index += 1) {
@@ -2873,7 +2874,20 @@ export async function pullHeroGacha(accountId, pullCountValue, requestIdValue) {
       if (firstPullGuarantee) forceRarity = "sr";
       else if (ssrPityGuarantee) forceRarity = "ssr";
       else if (pityGuarantee) forceRarity = Math.random() < HERO_HOME_RULES.ssrChance ? "ssr" : "sr";
-      const unit = drawHomeUnit({ forceRarity, preferredUnownedHeroIds });
+      const draw = drawHeroGachaResult({ forceRarity, preferredUnownedHeroIds });
+      if (draw.type === "materials") {
+        buildingMaterialsAwarded += draw.amount;
+        pityCount += 1;
+        ssrPityCount += 1;
+        results.push({
+          index: index + 1,
+          type: "materials",
+          amount: draw.amount,
+          guaranteed: null
+        });
+        continue;
+      }
+      const unit = draw.unit;
       const current = owned.get(unit.id);
       let conversion;
       if (!current) {
@@ -2911,6 +2925,7 @@ export async function pullHeroGacha(accountId, pullCountValue, requestIdValue) {
       ssrPityCount = unit.rarity === "ssr" ? 0 : ssrPityCount + 1;
       results.push({
         index: index + 1,
+        type: "unit",
         unit: { ...unit },
         stars: owned.get(unit.id)?.stars || 1,
         guaranteed: firstPullGuarantee
@@ -2923,7 +2938,7 @@ export async function pullHeroGacha(accountId, pullCountValue, requestIdValue) {
         conversion
       });
     }
-    const buildingMaterials = buildingMaterialsBefore + pullCount * HERO_HOME_RULES.buildingMaterialsPerPull;
+    const buildingMaterials = buildingMaterialsBefore + buildingMaterialsAwarded;
     const updatedProfile = await client.query(
       `UPDATE cdp_hero_profiles
        SET universal_fragments = $2, non_hero_pity_count = $3,
@@ -2946,7 +2961,7 @@ export async function pullHeroGacha(accountId, pullCountValue, requestIdValue) {
       pityRemaining: HERO_HOME_RULES.pityPulls - pityCount,
       ssrPityCount,
       ssrPityRemaining: HERO_HOME_RULES.ssrPityPulls - ssrPityCount,
-      buildingMaterialsAwarded: pullCount * HERO_HOME_RULES.buildingMaterialsPerPull,
+      buildingMaterialsAwarded,
       buildingMaterials,
       firstPullGuaranteeUsed: firstPullGuaranteed,
       freePullUsed,

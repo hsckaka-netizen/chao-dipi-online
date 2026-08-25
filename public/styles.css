@@ -611,6 +611,23 @@
   background: radial-gradient(circle at 50% 20%, rgba(246, 200, 84, 0.24), transparent 40%), linear-gradient(155deg, #fffdf7, #f7efe1);
 }
 
+.gacha-result-card.materials {
+  border-color: rgba(184, 126, 43, 0.32);
+  background: radial-gradient(circle at 50% 30%, rgba(232, 183, 82, 0.25), transparent 42%), linear-gradient(155deg, #fffdf7, #f4ead7);
+}
+
+.gacha-material-icon {
+  display: grid;
+  place-items: center;
+  width: 68px;
+  height: 68px;
+  border-radius: 22px;
+  background: linear-gradient(145deg, #dca841, #9f6925);
+  color: #fff8d9 !important;
+  font-size: 36px !important;
+  box-shadow: 0 10px 22px rgba(124, 78, 24, 0.24);
+}
+
 .gacha-card-art {
   width: 100%;
   max-width: 190px;

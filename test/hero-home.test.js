@@ -8,9 +8,11 @@ import {
   createBattleHeroSnapshot,
   createHeroTaskDefinition,
   createHeroTaskRequirements,
+  drawHeroGachaResult,
   drawHomeUnit,
   freeHeroPullState,
   heroGachaCharge,
+  HERO_HOME_RULES,
   homeRegionMaxHours,
   HOME_UNIT_BY_ID,
   missingDailyHeroTaskSlots,
@@ -81,6 +83,35 @@ test("free pull applies only to a single draw and ten draws cost 10 percent less
   assert.deepEqual(heroGachaCharge(10, true), { price: 2700, freePullUsed: false });
 });
 
+test("gacha draws building materials as an independent pool result", () => {
+  const ssr = drawHeroGachaResult({ randomFloat: () => 0 });
+  const sr = drawHeroGachaResult({ randomFloat: () => 0.05 });
+  const materials = drawHeroGachaResult({ randomFloat: () => 0.2 });
+  const minion = drawHeroGachaResult({ randomFloat: () => 0.5 });
+  assert.equal(ssr.type, "unit");
+  assert.equal(ssr.unit.rarity, "ssr");
+  assert.equal(sr.type, "unit");
+  assert.equal(sr.unit.rarity, "sr");
+  assert.deepEqual(materials, { type: "materials", amount: 50 });
+  assert.equal(minion.type, "unit");
+  assert.equal(minion.unit.rarity, "minion");
+  assert.equal(
+    HERO_HOME_RULES.materialChance + HERO_HOME_RULES.minionChance
+      + HERO_HOME_RULES.srChance + HERO_HOME_RULES.ssrChance,
+    1
+  );
+});
+
+test("gacha persistence credits materials only when the material result is drawn", async () => {
+  const historySource = await readFile(
+    fileURLToPath(new URL("../game-history.js", import.meta.url)),
+    "utf8"
+  );
+  assert.match(historySource, /if \(draw\.type === "materials"\)/);
+  assert.match(historySource, /buildingMaterialsAwarded \+= draw\.amount/);
+  assert.doesNotMatch(historySource, /pullCount \* HERO_HOME_RULES\.buildingMaterialsPerPull/);
+});
+
 test("boka roster uses jiang zha and deng huang with the supplied card identities", () => {
   const jiangZha = createBattleHeroSnapshot("jiang-zha", 3);
   const dengHuang = createBattleHeroSnapshot("deng-huang", 2);
@@ -143,8 +174,10 @@ test("gacha and table UI expose the daily refresh, discount, stable hero art, an
   assert.match(appSource, /data-persistent-hero-image/);
   assert.match(appSource, /app\.replaceChildren\(nextShell\.content\)/);
   assert.match(appSource, /snapshot\.skillDescription/);
+  assert.match(appSource, /result\.type === "materials"/);
   assert.match(styleSource, /\.battle-hero-mark:hover/);
   assert.match(styleSource, /\.gacha-free-pull-status time/);
+  assert.match(styleSource, /\.gacha-result-card\.materials/);
 });
 
 test("daily task UI exposes compact hero cards, relaxed conditions, and one-click dispatch", async () => {
@@ -336,12 +369,15 @@ test("SSR roster, probabilities, production, and paid skill heat use the settled
 });
 
 test("region levels increase output every level and unlock capacity on milestones", () => {
-  assert.equal(regionUpgradeCost(0), 80);
-  assert.equal(regionUpgradeCost(9), 80);
-  assert.equal(regionUpgradeCost(10), 85);
-  assert.equal(regionUpgradeCost(99), 165);
+  assert.equal(regionUpgradeCost(0), 120);
+  assert.equal(regionUpgradeCost(9), 120);
+  assert.equal(regionUpgradeCost(10), 130);
+  assert.equal(regionUpgradeCost(99), 210);
   assert.equal(regionUpgradeCost(100), null);
-  assert.equal(Array.from({ length: 100 }, (_, level) => regionUpgradeCost(level)).reduce((sum, cost) => sum + cost, 0), 11_100);
+  const totalCost = Array.from({ length: 100 }, (_, level) => regionUpgradeCost(level)).reduce((sum, cost) => sum + cost, 0);
+  const expectedDailyMaterials = 3 * 58.4 + 5 * 0.4 * 50;
+  assert.equal(totalCost, 16_500);
+  assert.ok(Math.abs(totalCost / expectedDailyMaterials - 60) < 0.1);
   assert.equal(homeRegionMaxHours(0), 6);
   assert.equal(homeRegionMaxHours(10), 6.5);
   assert.equal(homeRegionMaxHours(100), 11);
@@ -427,6 +463,7 @@ test("server and table UI expose all three SSR board skill stages", async () => 
   assert.match(appSource, /!isBid && shenJiangwenSkill\.canActivate/);
   assert.match(appSource, /英雄技能 · 发动排骨之王/);
   assert.match(appSource, /每天北京时间06:00生成最多3个新任务；当天完成或领取后不补位/);
+  assert.match(appSource, /建材 40%（50个）/);
   assert.match(appSource, /function gameCardRank/);
 });
 

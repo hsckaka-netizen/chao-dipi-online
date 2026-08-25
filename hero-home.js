@@ -6,13 +6,14 @@ export const HERO_HOME_RULES = Object.freeze({
   singlePullPrice: 300,
   tenPullPrice: 2700,
   freePullRefreshHourBeijing: 6,
-  minionChance: 0.9,
+  minionChance: 0.5,
   srChance: 0.09,
   ssrChance: 0.01,
+  materialChance: 0.4,
   heroChance: 0.1,
   pityPulls: 50,
   ssrPityPulls: 100,
-  buildingMaterialsPerPull: 10,
+  buildingMaterialDrop: 50,
   heroDuplicateFragments: 40,
   ssrDuplicateFragments: 40,
   minionDuplicateFragments: 10,
@@ -38,7 +39,7 @@ export const HERO_HOME_RULES = Object.freeze({
   yokoyamaSkillCost: 100
 });
 
-const REGION_UPGRADE_COSTS = Object.freeze([80, 85, 90, 95, 100, 105, 115, 130, 145, 165]);
+const REGION_UPGRADE_COSTS = Object.freeze([120, 130, 140, 150, 160, 170, 180, 190, 200, 210]);
 
 export const HOME_REGIONS = Object.freeze([
   Object.freeze({ id: "boka", name: "博卡区", icon: "🏇" }),
@@ -496,6 +497,31 @@ export function drawHomeUnit({
     return pool[randomIndex(pool.length, randomFloat)];
   }
   return MINION_UNITS[randomIndex(MINION_UNITS.length, randomFloat)];
+}
+
+export function drawHeroGachaResult({
+  forceHero = false,
+  forceRarity = null,
+  preferredUnownedHeroIds = [],
+  randomFloat = Math.random
+} = {}) {
+  if (forceHero || forceRarity) {
+    return {
+      type: "unit",
+      unit: drawHomeUnit({ forceHero, forceRarity, preferredUnownedHeroIds, randomFloat })
+    };
+  }
+  const roll = randomFloat();
+  if (roll < HERO_HOME_RULES.ssrChance) {
+    return { type: "unit", unit: drawHomeUnit({ forceRarity: "ssr", randomFloat }) };
+  }
+  if (roll < HERO_HOME_RULES.ssrChance + HERO_HOME_RULES.srChance) {
+    return { type: "unit", unit: drawHomeUnit({ forceRarity: "sr", preferredUnownedHeroIds, randomFloat }) };
+  }
+  if (roll < HERO_HOME_RULES.ssrChance + HERO_HOME_RULES.srChance + HERO_HOME_RULES.materialChance) {
+    return { type: "materials", amount: HERO_HOME_RULES.buildingMaterialDrop };
+  }
+  return { type: "unit", unit: drawHomeUnit({ forceRarity: "minion", randomFloat }) };
 }
 
 export function publicHeroCatalog() {
