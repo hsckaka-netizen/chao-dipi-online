@@ -34,10 +34,10 @@ test("home production uses star rates, keeps fractions, and stops at six hours",
     settledAt: "2026-08-14T00:00:00.000Z"
   }, "2026-08-14T03:00:00.000Z");
 
-  assert.equal(unitProductionRate("jiang-zha", 2), 28);
+  assert.equal(unitProductionRate("jiang-zha", 2), 22);
   assert.equal(preview.productionHours, 6);
-  assert.equal(preview.productionValue, 28.25);
-  assert.equal(preview.collectableDiamonds, 28);
+  assert.equal(preview.productionValue, 22.25);
+  assert.equal(preview.collectableDiamonds, 22);
   assert.equal(preview.fractionalValue, 0.25);
   assert.equal(preview.isFull, true);
 });
@@ -154,6 +154,13 @@ test("home UI renders full hero cards and a large skill preview", async () => {
   assert.match(appSource, /data-action="open-hero-card-preview"/);
   assert.match(appSource, /点击查看大图与技能/);
   assert.match(appSource, /hero-card-preview-skill/);
+  assert.match(appSource, /rules\.srProduction/);
+  assert.match(appSource, /rules\.ssrProduction/);
+  assert.match(appSource, /rules\.minionProduction/);
+  assert.match(appSource, /region\.productionMultiplier/);
+  assert.match(appSource, /formatHeroProductionNumber\(region\.ratePerHour\)/);
+  assert.doesNotMatch(appSource, /SR每小时24\/32\/40\/48\/56/);
+  assert.doesNotMatch(appSource, /区域每级再增加1%/);
   assert.match(styleSource, /\.home-hero-card-art[\s\S]*aspect-ratio:\s*707\s*\/\s*1000/);
   assert.match(styleSource, /\.hero-card-preview-modal/);
 });
@@ -411,6 +418,9 @@ test("SSR roster, probabilities, production, and paid skill heat use the settled
   assert.equal(shenJiangwen.paidSkill.cost, 2500);
   assert.equal(yokoyama.skillName, "全能偶像");
   assert.equal(yokoyama.paidSkill.cost, 100);
+  assert.equal(HERO_HOME_RULES.ssrPityPulls, 200);
+  assert.deepEqual(HERO_HOME_RULES.srProduction, [16, 22, 28, 34, 40]);
+  assert.deepEqual(HERO_HOME_RULES.ssrProduction, [24, 33, 42, 51, 60]);
   assert.equal(unitProductionRate("shen-biesan", 5), 60);
   assert.equal(drawHomeUnit({ randomFloat: () => 0 }).rarity, "ssr");
   assert.equal(drawHomeUnit({ randomFloat: () => 0.05 }).rarity, "sr");
@@ -447,7 +457,7 @@ test("region levels increase output every level and unlock capacity on milestone
     settledAt: "2026-08-14T00:00:00.000Z"
   }, "2026-08-14T01:00:00.000Z");
   assert.equal(preview.productionMultiplier, 1.1);
-  assert.ok(Math.abs(preview.ratePerHour - 39.6) < 1e-9);
+  assert.ok(Math.abs(preview.ratePerHour - 26.4) < 1e-9);
   assert.equal(preview.maxProductionHours, 7);
   assert.equal(preview.extraSlotUnlocked, false);
 });
@@ -573,4 +583,20 @@ test("hero migration stores home, gacha, snapshots, and hero bonus", async () =>
   assert.match(rebalanceMigration, /ARRAY\[36, 48, 60, 72, 84\]/);
   assert.match(rebalanceMigration, /region\.level \* 0\.01/);
   assert.match(rebalanceMigration, /settled_at = CURRENT_TIMESTAMP/);
+
+  const starCurveMigration = await readFile(
+    fileURLToPath(new URL("../db/migrations/024_hero_production_star_curve.sql", import.meta.url)),
+    "utf8"
+  );
+  assert.match(starCurveMigration, /home_production_before_star_curve/);
+  assert.match(starCurveMigration, /ARRAY\[24, 28, 32, 36, 40\]/);
+  assert.match(starCurveMigration, /ARRAY\[36, 42, 48, 54, 60\]/);
+  assert.match(starCurveMigration, /region\.level \* 0\.005/);
+  assert.match(starCurveMigration, /settled_at = CURRENT_TIMESTAMP/);
+
+  const ssrPityMigration = await readFile(
+    fileURLToPath(new URL("../db/migrations/025_ssr_pity_200.sql", import.meta.url)),
+    "utf8"
+  );
+  assert.match(ssrPityMigration, /non_ssr_pity_count BETWEEN 0 AND 199/);
 });

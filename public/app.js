@@ -4167,6 +4167,19 @@ function heroStars(stars) {
   return `<span class="hero-stars" aria-label="${count}星">${"★".repeat(count)}${"☆".repeat(5 - count)}</span>`;
 }
 
+function formatHeroProductionNumber(value, maximumFractionDigits = 2) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return "0";
+  return String(Number(number.toFixed(maximumFractionDigits)));
+}
+
+function heroProductionRuleDescription() {
+  const rules = heroHomeState?.rules || {};
+  const rates = (value) => (Array.isArray(value) ? value : []).map((item) => formatHeroProductionNumber(item)).join("/");
+  const bonusPerLevel = formatHeroProductionNumber(Number(rules.productionBonusPerLevel || 0) * 100, 1);
+  return `1～5星基础时薪：SR ${rates(rules.srProduction)}，SSR ${rates(rules.ssrProduction)}，小兵 ${rates(rules.minionProduction)}；区域每级增加${bonusPerLevel}%。领取只发整数，小数继续留在对应区域。`;
+}
+
 function heroDisplayName(unit) {
   if (!unit?.namePrefix) return `<span class="hero-base-name">${escapeHtml(unit?.name || "")}</span>`;
   return `<span class="hero-name-prefix">${escapeHtml(unit.namePrefix)}</span><span class="hero-base-name">${escapeHtml(unit.baseName || unit.name)}</span>`;
@@ -4296,6 +4309,11 @@ function renderHomeRegionCard(region) {
   const assignedIds = new Set((heroHomeState?.regions || []).flatMap((item) => [item.unitId, item.extraUnitId]).filter(Boolean));
   const candidates = (heroHomeState?.ownedUnits || []).filter((unit) => unit.regionId === region.id);
   const maxProductionHours = Number(region.maxProductionHours || 6);
+  const productionMultiplier = Number(region.productionMultiplier);
+  const productionBonusPercent = Number.isFinite(productionMultiplier)
+    ? Math.max(0, productionMultiplier - 1) * 100
+    : Math.max(0, Number(region.level) || 0) * Number(heroHomeState?.rules?.productionBonusPerLevel || 0) * 100;
+  const ratePerHour = formatHeroProductionNumber(region.ratePerHour);
   const progress = Math.max(0, Math.min(100, Number(region.productionHours || 0) / maxProductionHours * 100));
   const battle = placed?.type === "hero" && heroHomeState?.battleUnitId === placed.id;
   const extraBattle = extraPlaced?.type === "hero" && heroHomeState?.battleUnitId === extraPlaced.id;
@@ -4303,7 +4321,7 @@ function renderHomeRegionCard(region) {
     <article class="home-region-card region-${escapeHtml(region.id)}">
       <header>
         <span class="home-region-icon" aria-hidden="true">${escapeHtml(region.icon || "◇")}</span>
-        <div><h3>${escapeHtml(region.name)} · Lv.${escapeHtml(region.level || 0)}</h3><span>产出 +${escapeHtml(region.level || 0)}% · 最多累计${escapeHtml(maxProductionHours)}小时</span></div>
+        <div><h3>${escapeHtml(region.name)} · Lv.${escapeHtml(region.level || 0)}</h3><span>产出 +${escapeHtml(formatHeroProductionNumber(productionBonusPercent, 1))}% · 最多累计${escapeHtml(maxProductionHours)}小时</span></div>
         ${battle ? `<span class="tag good">出战中</span>` : ""}
       </header>
       <div class="home-region-worker ${placed ? "occupied" : "empty"} ${placed?.cardImage ? "hero-card-worker" : ""}">
@@ -4315,7 +4333,7 @@ function renderHomeRegionCard(region) {
           <div class="home-region-card-copy">
             <strong>${escapeHtml(placed.name)}</strong>
             ${heroStars(placed.stars)}
-            <span class="meta">每小时 ${escapeHtml(region.ratePerHour)} 钻石</span>
+            <span class="meta">每小时 ${escapeHtml(ratePerHour)} 钻石</span>
             <div class="home-region-skill">
               <b>${escapeHtml(placed.skillName)}</b>
               <p>${escapeHtml(placed.skillDescription)}</p>
@@ -4326,7 +4344,7 @@ function renderHomeRegionCard(region) {
           <div>
             <strong>${escapeHtml(placed?.name || "尚未派驻")}</strong>
             ${placed ? heroStars(placed.stars) : `<span class="meta">空槽不产出钻石</span>`}
-            ${placed ? `<span class="meta">每小时 ${escapeHtml(region.ratePerHour)} 钻石</span>` : ""}
+            ${placed ? `<span class="meta">每小时 ${escapeHtml(ratePerHour)} 钻石</span>` : ""}
           </div>
         `}
       </div>
@@ -4488,7 +4506,7 @@ function renderHeroHomePage() {
     ${renderHeroTasks()}
     <section class="panel hero-home-note">
       <strong>生产规则</strong>
-      <span>SR每小时24/32/40/48/56，SSR为36/48/60/72/84，小兵为8/10/12/14/16；区域每级再增加1%。领取只发整数，小数继续留在对应区域。</span>
+      <span>${escapeHtml(heroProductionRuleDescription())}</span>
     </section>
     ${renderHeroCardPreview(heroUnitById(heroCardPreviewUnitId))}
   `);
@@ -4541,7 +4559,9 @@ function renderHeroCatalogPage() {
 }
 
 function renderGachaResult(result) {
-  const guaranteedLabels = { "first-sr": "首抽SR", "hero-pity": "50抽保底", "ssr-pity": "100抽SSR保底" };
+  const heroPityPulls = Number(heroHomeState?.rules?.pityPulls) || 50;
+  const ssrPityPulls = Number(heroHomeState?.rules?.ssrPityPulls) || 200;
+  const guaranteedLabels = { "first-sr": "首抽SR", "hero-pity": `${heroPityPulls}抽保底`, "ssr-pity": `${ssrPityPulls}抽SSR保底` };
   if (result.type === "materials") {
     return `
       <article class="gacha-result-card materials">
@@ -4603,6 +4623,8 @@ function renderHeroGachaPage() {
   const freePullAvailable = Boolean(heroHomeState.freePullAvailable);
   const singlePullPrice = Number(heroHomeState.rules?.singlePullPrice) || 300;
   const tenPullPrice = Number(heroHomeState.rules?.tenPullPrice) || 2700;
+  const heroPityPulls = Number(heroHomeState.rules?.pityPulls) || 50;
+  const ssrPityPulls = Number(heroHomeState.rules?.ssrPityPulls) || 200;
   const singlePullDisabled = heroActionInFlight || (!freePullAvailable && Number(heroHomeState.balance || 0) < singlePullPrice);
   const nextFreePullAt = heroHomeState.nextFreePullAt || "";
   renderShell(`
@@ -4611,8 +4633,8 @@ function renderHeroGachaPage() {
       <div class="gacha-copy"><span class="eyebrow">SUMMON</span><h2>英雄召集</h2><p>每抽只获得一种结果：建材、英雄或小兵。</p></div>
       <div class="gacha-status-grid">
         <span><small>当前钻石</small><b>💎 ${escapeHtml(heroHomeState.balance || 0)}</b></span>
-        <span><small>50抽保底</small><b>还剩 ${escapeHtml(heroHomeState.pityRemaining)} 抽</b></span>
-        <span><small>100抽SSR保底</small><b>还剩 ${escapeHtml(heroHomeState.ssrPityRemaining)} 抽</b></span>
+        <span><small>${escapeHtml(heroPityPulls)}抽保底</small><b>还剩 ${escapeHtml(heroHomeState.pityRemaining)} 抽</b></span>
+        <span><small>${escapeHtml(ssrPityPulls)}抽SSR保底</small><b>还剩 ${escapeHtml(heroHomeState.ssrPityRemaining)} 抽</b></span>
         <span><small>首次抽卡</small><b>${heroHomeState.firstPullGuaranteed ? "必得未拥有SR" : "已使用"}</b></span>
         <span><small>当前建材</small><b>▰ ${escapeHtml(heroHomeState.buildingMaterials || 0)}</b></span>
         <span class="gacha-free-pull-status"><small>免费单抽</small><b>${freePullAvailable ? "现在可用" : "今日已使用"}</b><em>距北京时间 06:00 更新 <time data-hero-free-pull-countdown data-deadline-at="${escapeHtml(nextFreePullAt)}">${escapeHtml(heroFreePullCountdownText(nextFreePullAt))}</time></em></span>
@@ -4621,7 +4643,7 @@ function renderHeroGachaPage() {
         <button type="button" data-action="pull-hero-gacha" data-pull-count="1" ${singlePullDisabled ? "disabled" : ""}>${freePullAvailable ? "免费单抽" : `单抽 · ${singlePullPrice}💎`}</button>
         <button type="button" class="accent" data-action="pull-hero-gacha" data-pull-count="10" ${heroActionInFlight || Number(heroHomeState.balance || 0) < tenPullPrice ? "disabled" : ""}>十连 · ${tenPullPrice}💎 <small>9折</small></button>
       </div>
-      <div class="gacha-probability"><span>建材 40%（50个）</span><span>小兵 50%</span><span>SR 9%</span><span>SSR 1%</span><span>首抽必出未拥有SR且不会是SSR</span><span>第50抽至少SR</span><span>第100抽必出SSR</span><span>十连固定9折</span><span>免费单抽每天北京时间6点更新</span></div>
+      <div class="gacha-probability"><span>建材 40%（50个）</span><span>小兵 50%</span><span>SR 9%</span><span>SSR 1%</span><span>首抽必出未拥有SR且不会是SSR</span><span>第${escapeHtml(heroPityPulls)}抽至少SR</span><span>第${escapeHtml(ssrPityPulls)}抽必出SSR</span><span>十连固定9折</span><span>免费单抽每天北京时间6点更新</span></div>
     </section>
     ${heroGachaResults.length ? `<section class="panel stack"><div class="section-head"><div><h2>本次结果</h2><div class="meta">抽卡结果已由服务端入账</div></div></div><div class="gacha-result-grid">${heroGachaResults.map(renderGachaResult).join("")}</div></section>` : `<section class="panel"><div class="empty">抽卡结果会显示在这里</div></section>`}
   `);
