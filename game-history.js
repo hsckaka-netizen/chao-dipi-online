@@ -24,6 +24,7 @@ import {
   HOME_REGIONS,
   HOME_REGION_BY_ID,
   HOME_UNIT_BY_ID,
+  missingDailyHeroTaskSlots,
   paidBoardSkillState,
   previewHomeRegion,
   publicHeroCatalog,
@@ -2043,6 +2044,11 @@ async function heroTasksFromClient(client, accountId, ownedUnits, at = new Date(
   if (!refreshKey) return [];
   const ownedHeroIds = ownedUnits.filter((unit) => unit.type === "hero").map((unit) => unit.id);
   await client.query(
+    `SELECT account_id FROM cdp_hero_profiles
+     WHERE account_id = $1::uuid FOR UPDATE`,
+    [accountId]
+  );
+  await client.query(
     `UPDATE cdp_hero_tasks
      SET status = 'completed', updated_at = now()
      WHERE account_id = $1::uuid AND status = 'running' AND completes_at <= $2`,
@@ -2053,13 +2059,27 @@ async function heroTasksFromClient(client, accountId, ownedUnits, at = new Date(
      WHERE account_id = $1::uuid AND status = 'available' AND refresh_key <> $2::date`,
     [accountId, refreshKey]
   );
-  const available = await client.query(
-    `SELECT task_id, slot_index, hero_count, requirements FROM cdp_hero_tasks
-     WHERE account_id = $1::uuid AND status = 'available' AND refresh_key = $2::date`,
+  await client.query(
+    `DELETE FROM cdp_hero_tasks
+     WHERE task_id IN (
+       SELECT task_id
+       FROM (
+         SELECT task_id, status,
+                ROW_NUMBER() OVER (ORDER BY created_at, task_id) AS issued_index
+         FROM cdp_hero_tasks
+         WHERE account_id = $1::uuid AND refresh_key = $2::date
+       ) issued
+       WHERE issued_index > 3 AND status = 'available'
+     )`,
+    [accountId, refreshKey]
+  );
+  const currentDailyTasks = await client.query(
+    `SELECT task_id, slot_index, status, hero_count, requirements FROM cdp_hero_tasks
+     WHERE account_id = $1::uuid AND refresh_key = $2::date`,
     [accountId, refreshKey]
   );
   if (ownedHeroIds.length) {
-    for (const row of available.rows) {
+    for (const row of currentDailyTasks.rows.filter((task) => task.status === "available")) {
       const requirements = row.requirements || {};
       const regionTotal = Object.values(requirements.regions || {}).reduce((sum, count) => sum + Number(count), 0);
       const genderTotal = Object.values(requirements.genders || {}).reduce((sum, count) => sum + Number(count), 0);
@@ -2073,10 +2093,8 @@ async function heroTasksFromClient(client, accountId, ownedUnits, at = new Date(
       );
     }
   }
-  const occupiedSlots = new Set(available.rows.map((row) => Number(row.slot_index)));
   if (ownedHeroIds.length) {
-    for (let slotIndex = 1; slotIndex <= 3; slotIndex += 1) {
-      if (occupiedSlots.has(slotIndex)) continue;
+    for (const slotIndex of missingDailyHeroTaskSlots(currentDailyTasks.rows)) {
       const definition = createHeroTaskDefinition(ownedHeroIds);
       if (!definition) break;
       await client.query(

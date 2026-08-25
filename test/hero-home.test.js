@@ -13,6 +13,7 @@ import {
   heroGachaCharge,
   homeRegionMaxHours,
   HOME_UNIT_BY_ID,
+  missingDailyHeroTaskSlots,
   paidBoardSkillState,
   previewHomeRegion,
   regionUpgradeCost,
@@ -335,11 +336,12 @@ test("SSR roster, probabilities, production, and paid skill heat use the settled
 });
 
 test("region levels increase output every level and unlock capacity on milestones", () => {
-  assert.equal(regionUpgradeCost(0), 20);
-  assert.equal(regionUpgradeCost(9), 20);
-  assert.equal(regionUpgradeCost(10), 40);
-  assert.equal(regionUpgradeCost(99), 200);
+  assert.equal(regionUpgradeCost(0), 80);
+  assert.equal(regionUpgradeCost(9), 80);
+  assert.equal(regionUpgradeCost(10), 85);
+  assert.equal(regionUpgradeCost(99), 165);
   assert.equal(regionUpgradeCost(100), null);
+  assert.equal(Array.from({ length: 100 }, (_, level) => regionUpgradeCost(level)).reduce((sum, cost) => sum + cost, 0), 11_100);
   assert.equal(homeRegionMaxHours(0), 6);
   assert.equal(homeRegionMaxHours(10), 6.5);
   assert.equal(homeRegionMaxHours(100), 11);
@@ -354,6 +356,16 @@ test("region levels increase output every level and unlock capacity on milestone
   assert.ok(Math.abs(preview.ratePerHour - 39.6) < 1e-9);
   assert.equal(preview.maxProductionHours, 7);
   assert.equal(preview.extraSlotUnlocked, false);
+});
+
+test("daily hero task slots never refill after a task starts or is collected", () => {
+  assert.deepEqual(missingDailyHeroTaskSlots([]), [1, 2, 3]);
+  assert.deepEqual(missingDailyHeroTaskSlots([
+    { slot_index: 1, status: "available" },
+    { slot_index: 2, status: "running" },
+    { slot_index: 3, status: "collected" }
+  ]), []);
+  assert.deepEqual(missingDailyHeroTaskSlots([{ slotIndex: 2, status: "completed" }]), [1, 3]);
 });
 
 test("daily hero tasks use the five settled tiers and feasible owned-hero requirements", () => {
@@ -412,6 +424,9 @@ test("server and table UI expose all three SSR board skill stages", async () => 
   assert.match(appSource, /data-action="shen-biesan-activate"/);
   assert.match(appSource, /data-action="yokoyama-swap"/);
   assert.match(appSource, /data-action="shen-jiangwen-activate"/);
+  assert.match(appSource, /!isBid && shenJiangwenSkill\.canActivate/);
+  assert.match(appSource, /英雄技能 · 发动排骨之王/);
+  assert.match(appSource, /每天北京时间06:00生成最多3个新任务；当天完成或领取后不补位/);
   assert.match(appSource, /function gameCardRank/);
 });
 

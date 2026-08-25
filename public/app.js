@@ -4418,7 +4418,7 @@ function renderHeroTasks() {
   const occupiedHeroIds = new Set(tasks.filter((task) => task.status === "running").flatMap((task) => task.assignedUnitIds || []));
   return `
     <section class="panel hero-task-section">
-      <div class="section-head"><div><span class="eyebrow">DAILY DISPATCH</span><h2>每日英雄任务</h2><p>每天北京时间06:00刷新3个未开始任务；执行中的任务不会被替换。</p></div><div class="fragment-wallet"><small>建材</small><b>▰ ${escapeHtml(heroHomeState?.buildingMaterials || 0)}</b></div></div>
+      <div class="section-head"><div><span class="eyebrow">DAILY DISPATCH</span><h2>每日英雄任务</h2><p>每天北京时间06:00生成最多3个新任务；当天完成或领取后不补位。</p></div><div class="fragment-wallet"><small>建材</small><b>▰ ${escapeHtml(heroHomeState?.buildingMaterials || 0)}</b></div></div>
       <div class="hero-task-grid">${tasks.length ? tasks.map((task) => renderHeroTask(task, occupiedHeroIds)).join("") : `<div class="empty">获得至少一名英雄后生成可执行任务</div>`}</div>
     </section>
   `;
@@ -5868,7 +5868,6 @@ function renderSetupCenter() {
         currentTrumpItem
       ])}
       <div class="row">
-        ${state.boardHeroSkills?.shenJiangwen?.canActivate ? `<button type="button" data-action="shen-jiangwen-activate">发动排骨之王（${escapeHtml(state.boardHeroSkills.shenJiangwen.cost || 0)}钻石）</button>` : ""}
         ${viewerCanFry() ? `<button type="button" data-action="open-fry-dialog" ${actionPassInFlight ? "disabled" : ""}>选择${escapeHtml(currentBidRankName())}炒底</button>` : ""}
         ${viewerCanFry() ? `<button type="button" class="secondary" data-action="fry-pass" ${actionPassInFlight ? "disabled" : ""} ${passCountdownAttrs}>${escapeHtml(passLabel)}</button>` : ""}
       </div>
@@ -6358,6 +6357,7 @@ function renderResultPanel() {
 
 function renderBidFryDialog(type) {
   const isBid = type === "bid";
+  const shenJiangwenSkill = state.boardHeroSkills?.shenJiangwen || {};
   const title = isBid ? (state.setup?.bid ? "抢主" : "叫主") : "炒底";
   const colorfulOrder = isBid ? "" : colorfulFryOrderText();
   const validation = validateBidLikeSelection(type);
@@ -6388,6 +6388,7 @@ function renderBidFryDialog(type) {
         </div>
         <div class="dialog-actions">
           ${renderGameItemControl()}
+          ${!isBid && shenJiangwenSkill.canActivate ? `<button type="button" data-action="shen-jiangwen-activate">英雄技能 · 发动排骨之王（${escapeHtml(shenJiangwenSkill.cost || 0)}钻石）</button>` : ""}
           ${canPass ? `<button type="button" class="secondary" data-action="${passAction}" ${passCountdownAttrs}>${escapeHtml(passLabel)}</button>` : `<button type="button" class="secondary" data-action="close-dialog">过</button>`}
           <button type="button" data-action="${isBid ? "bid-selected" : "fry-selected"}" ${validation.ok ? "" : "disabled"}>${escapeHtml(title)}</button>
           ${!validation.ok && validation.reason ? `<span class="action-reason">${escapeHtml(validation.reason)}</span>` : ""}

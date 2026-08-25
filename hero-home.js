@@ -1,5 +1,5 @@
 export const HERO_HOME_RULES = Object.freeze({
-  version: "2026-08-24-v4",
+  version: "2026-08-25-v5",
   skillVersion: "2026-08-24-skill-v6",
   boardSkillVersion: "2026-08-24-board-skill-v1",
   maxProductionHours: 6,
@@ -37,6 +37,8 @@ export const HERO_HOME_RULES = Object.freeze({
   paidSkillCooling: Object.freeze([0.2, 0.3, 0.3, 0.4, 0.5]),
   yokoyamaSkillCost: 100
 });
+
+const REGION_UPGRADE_COSTS = Object.freeze([80, 85, 90, 95, 100, 105, 115, 130, 145, 165]);
 
 export const HOME_REGIONS = Object.freeze([
   Object.freeze({ id: "boka", name: "博卡区", icon: "🏇" }),
@@ -156,7 +158,12 @@ export function homeRegionMaxHours(level = 0) {
 export function regionUpgradeCost(currentLevel = 0) {
   const normalizedLevel = normalizedRegionLevel(currentLevel);
   if (normalizedLevel >= HERO_HOME_RULES.maxRegionLevel) return null;
-  return (Math.floor(normalizedLevel / 10) + 1) * 20;
+  return REGION_UPGRADE_COSTS[Math.floor(normalizedLevel / 10)];
+}
+
+export function missingDailyHeroTaskSlots(existingTasks = []) {
+  const occupiedSlots = new Set((existingTasks || []).map((task) => Number(task.slot_index ?? task.slotIndex)));
+  return [1, 2, 3].filter((slotIndex) => !occupiedSlots.has(slotIndex));
 }
 
 export function paidBoardSkillState(stars = 1, heatValue = 0) {
