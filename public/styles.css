@@ -1052,6 +1052,7 @@
 
 .battle-hero-mark {
   --hero-color: #527b70;
+  position: relative;
   display: inline-flex;
   align-items: center;
   gap: 4px;
@@ -1104,6 +1105,27 @@
 
 .trick-player-line .battle-hero-mark.compact {
   max-width: 86px;
+}
+
+@media (pointer: coarse) {
+  .battle-hero-mark {
+    min-width: 40px;
+    min-height: 36px;
+    padding: 4px 7px 4px 4px;
+    touch-action: manipulation;
+  }
+
+  .battle-hero-mark::after {
+    content: "";
+    position: absolute;
+    inset: -4px -5px;
+  }
+
+  .battle-hero-mark > b,
+  .battle-hero-mark > .battle-hero-art {
+    width: 28px;
+    height: 28px;
+  }
 }
 
 .hero-skill-settlement,
@@ -4992,6 +5014,7 @@ button.joinable-room-player.spectate-player {
 .table-player-avatar-stage:hover .player-history-mini.overlay,
 .table-player-avatar-stage:focus-visible .player-history-mini.overlay,
 .table-player-avatar-stage:focus-within .player-history-mini.overlay,
+.table-player-avatar-stage.history-open .player-history-mini.overlay,
 .seat-hand-avatar-stage:hover .player-history-mini.overlay,
 .seat-hand-avatar-stage:focus-visible .player-history-mini.overlay,
 .seat-hand-avatar-stage:focus-within .player-history-mini.overlay {
@@ -6558,6 +6581,74 @@ button.auto-play-toggle.active {
     transform: none;
   }
 
+  .trick:not(.setup-table) .trick-grid.table-circle .trick-seat .seat-play {
+    min-height: 100px;
+  }
+
+  .trick:not(.setup-table) .trick-grid.table-circle .trick-seat:not(.viewer-seat) {
+    grid-template-columns: 88px minmax(0, 1fr);
+    grid-template-areas: "player play";
+    align-items: start;
+    column-gap: 8px;
+  }
+
+  .trick:not(.setup-table) .trick-grid.table-circle .trick-seat:not(.viewer-seat) .trick-player {
+    grid-area: player;
+    width: 88px;
+    min-width: 0;
+    min-height: 100px;
+  }
+
+  .trick:not(.setup-table) .trick-grid.table-circle .trick-seat:not(.viewer-seat) .seat-play {
+    grid-area: play;
+    min-width: 0;
+  }
+
+  .trick:not(.setup-table) .trick-grid.table-circle .trick-seat:not(.viewer-seat) .trick-player-main {
+    grid-template-columns: 82px;
+    grid-template-areas:
+      "player-avatar"
+      "player-summary"
+      "player-meta";
+    justify-items: center;
+    gap: 3px;
+    text-align: center;
+  }
+
+  .trick:not(.setup-table) .trick-grid.table-circle .trick-seat:not(.viewer-seat) .table-player-avatar-stage {
+    --avatar-stage-inset: 11px;
+    width: 82px;
+    height: 82px;
+  }
+
+  .trick:not(.setup-table) .trick-grid.table-circle .trick-seat:not(.viewer-seat) .avatar.small {
+    --avatar-portrait-size: 60px;
+    --avatar-frame-box-size: 82px;
+    font-size: 17px;
+  }
+
+  .trick:not(.setup-table) .trick-grid.table-circle .trick-seat:not(.viewer-seat) .trick-player-summary {
+    width: 88px;
+    justify-items: center;
+  }
+
+  .trick:not(.setup-table) .trick-grid.table-circle .trick-seat:not(.viewer-seat) .trick-player-line {
+    width: 88px;
+    justify-content: center;
+    flex-wrap: wrap;
+  }
+
+  .trick:not(.setup-table) .trick-grid.table-circle .trick-seat:not(.viewer-seat) .trick-player-display-name {
+    width: 100%;
+    text-align: center;
+  }
+
+  .trick:not(.setup-table) .trick-grid.table-circle .trick-seat:not(.viewer-seat) .trick-player-meta,
+  .trick:not(.setup-table) .trick-grid.table-circle .trick-seat:not(.viewer-seat) .trick-player-stats {
+    justify-content: center;
+    flex-wrap: wrap;
+  }
+
   .trick-grid.table-circle .trick-seat .seat-play {
     width: 100%;
     max-width: none;
@@ -6566,8 +6657,10 @@ button.auto-play-toggle.active {
   .trick-grid.table-circle .trick-seat .seat-play .mini-cards {
     width: 100%;
     max-width: 100%;
+    min-height: 100px;
     max-height: none;
     flex-wrap: wrap;
+    align-content: flex-start;
     row-gap: 4px;
     padding-left: 0;
     padding-bottom: 30px;

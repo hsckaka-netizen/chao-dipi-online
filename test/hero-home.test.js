@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 
 import {
@@ -178,6 +178,64 @@ test("gacha and table UI expose the daily refresh, discount, stable hero art, an
   assert.match(styleSource, /\.battle-hero-mark:hover/);
   assert.match(styleSource, /\.gacha-free-pull-status time/);
   assert.match(styleSource, /\.gacha-result-card\.materials/);
+});
+
+test("hero artwork uses compact WebP variants and mobile preview remains a read-only action", async () => {
+  const [appSource, styleSource] = await Promise.all([
+    readFile(fileURLToPath(new URL("../public/app.js", import.meta.url)), "utf8"),
+    readFile(fileURLToPath(new URL("../public/styles.css", import.meta.url)), "utf8")
+  ]);
+  const heroDirectory = fileURLToPath(new URL("../public/assets/heroes/", import.meta.url));
+  const cardImages = [...HOME_UNIT_BY_ID.values()].map((unit) => unit.cardImage).filter(Boolean);
+  let thumbBytes = 0;
+  let mediumBytes = 0;
+  let fullBytes = 0;
+  for (const cardImage of cardImages) {
+    const stem = cardImage.split("/").at(-1).replace(/\.png$/, "");
+    const [thumb, medium, full] = await Promise.all([
+      stat(`${heroDirectory}${stem}-thumb.webp`),
+      stat(`${heroDirectory}${stem}-medium.webp`),
+      stat(`${heroDirectory}${stem}.webp`)
+    ]);
+    thumbBytes += thumb.size;
+    mediumBytes += medium.size;
+    fullBytes += full.size;
+    assert.ok(thumb.size < 20_000, `${stem} 缩略图应小于 20 KB`);
+    assert.ok(medium.size < 250_000, `${stem} 中等图应小于 250 KB`);
+    assert.ok(full.size < 700_000, `${stem} 完整图应小于 700 KB`);
+  }
+  assert.ok(thumbBytes < 100_000);
+  assert.ok(mediumBytes < 2_000_000);
+  assert.ok(fullBytes < 6_000_000);
+  assert.match(appSource, /size === "thumb" \? "-thumb\.webp"/);
+  assert.match(appSource, /heroCardArtwork\(snapshot, "battle-hero-art", imageKey, "thumb"\)/);
+  assert.match(appSource, /heroCardArtwork\(unit, "hero-catalog-card-art", "", "medium"\)/);
+  const spectatorGuard = appSource.slice(appSource.indexOf("if (isSpectating() && !new Set(["), appSource.indexOf("if (isRapidMutatingAction(action))"));
+  assert.match(spectatorGuard, /"open-battle-hero-preview"/);
+  assert.match(styleSource, /@media \(pointer: coarse\)[\s\S]*\.battle-hero-mark[\s\S]*min-height:\s*36px/);
+});
+
+test("mobile table reserves two played-card rows without horizontal scrolling", async () => {
+  const [appSource, styleSource] = await Promise.all([
+    readFile(fileURLToPath(new URL("../public/app.js", import.meta.url)), "utf8"),
+    readFile(fileURLToPath(new URL("../public/styles.css", import.meta.url)), "utf8")
+  ]);
+  assert.match(appSource, /class="seat-play \$\{playContent \? "has-play" : "empty-play"\}/);
+  assert.match(styleSource, /\.trick:not\(\.setup-table\) \.trick-grid\.table-circle \.trick-seat \.seat-play\s*\{\s*min-height:\s*100px/);
+  assert.match(styleSource, /\.trick:not\(\.setup-table\) \.trick-grid\.table-circle \.trick-seat:not\(\.viewer-seat\)\s*\{[\s\S]*grid-template-columns:\s*88px minmax\(0, 1fr\)/);
+  assert.match(styleSource, /grid-template-areas:[\s\S]*"player-avatar"[\s\S]*"player-summary"[\s\S]*"player-meta"/);
+  assert.match(styleSource, /\.trick-grid\.table-circle \.trick-seat \.seat-play \.mini-cards\s*\{[\s\S]*min-height:\s*100px[\s\S]*flex-wrap:\s*wrap/);
+});
+
+test("room entry defers auxiliary statistics and rate-limits full state recovery", async () => {
+  const appSource = await readFile(fileURLToPath(new URL("../public/app.js", import.meta.url)), "utf8");
+  const renderRoomSource = appSource.slice(appSource.indexOf("function renderRoom()"), appSource.indexOf("function bidText("));
+  assert.doesNotMatch(renderRoomSource, /ensurePlayerStatistics\(\)/);
+  assert.match(renderRoomSource, /state\.gameItems\?\.canUse\) ensureShopState\(\)/);
+  assert.match(appSource, /api\("\/api\/history\/statistics\?seasonId=all"\)/);
+  assert.match(appSource, /function waitForStateVersion\(version, timeoutMs = 4000\)/);
+  assert.match(appSource, /eventAge > 18_000/);
+  assert.match(appSource, /stateSyncAge > 15_000/);
 });
 
 test("daily task UI exposes compact hero cards, relaxed conditions, and one-click dispatch", async () => {

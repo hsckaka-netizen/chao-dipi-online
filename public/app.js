@@ -1,6 +1,6 @@
 import { applyStatePatch } from "./state-patch.js?v=9330552c7e1e";
 import { detectNewDraggedFiveEffects, detectNewLargePlayEffects } from "./gameplay-effects.js?v=14791e626d30";
-import { ASSET_URLS, versionedAssetUrl } from "./asset-versions.js?v=da951dcc4613";
+import { ASSET_URLS, versionedAssetUrl } from "./asset-versions.js?v=509d418f590d";
 import { createHistoryTrickEntry, filterHistoryTimelineEntries } from "./history-records.js?v=874ba3c97732";
 
 const app = document.querySelector("#app");
@@ -72,6 +72,7 @@ let stateSyncTimer = null;
 let stateWatchdogTimer = null;
 let stateSyncInFlight = false;
 let lastEventReceivedAt = 0;
+let lastStateSyncStartedAt = 0;
 let state = null;
 let message = "";
 let messageBad = false;
@@ -110,6 +111,9 @@ let playerStatistics = new Map();
 let playerStatisticsRows = [];
 let playerStatisticsLoaded = false;
 let playerStatisticsLoading = false;
+let tablePlayerStatisticsLoaded = false;
+let tablePlayerStatisticsLoading = false;
+let tableHistoryPlayerId = "";
 let historyStatus = null;
 let statisticsSortKey = "total_score";
 let statisticsSortDirection = "desc";
@@ -353,7 +357,7 @@ function resolveStateVersionWaiters() {
   }
 }
 
-function waitForStateVersion(version, timeoutMs = 1500) {
+function waitForStateVersion(version, timeoutMs = 4000) {
   const targetVersion = Number(version || 0);
   if (!targetVersion || Number(state?.snapshotVersion || 0) >= targetVersion) return Promise.resolve(true);
   return new Promise((resolve) => {
@@ -1371,6 +1375,26 @@ function ensurePlayerStatistics(force = false) {
     });
 }
 
+function ensureTablePlayerStatistics() {
+  if (playerStatisticsLoaded || tablePlayerStatisticsLoaded || tablePlayerStatisticsLoading) return;
+  tablePlayerStatisticsLoading = true;
+  api("/api/history/statistics?seasonId=all")
+    .then((data) => {
+      playerStatistics = new Map((data.players || []).map((row) => [row.profile_id, {
+        games: Number(row.games_played) || 0,
+        score: Number(row.total_score) || 0
+      }]));
+      tablePlayerStatisticsLoaded = true;
+      tablePlayerStatisticsLoading = false;
+      render();
+    })
+    .catch(() => {
+      tablePlayerStatisticsLoaded = true;
+      tablePlayerStatisticsLoading = false;
+      render();
+    });
+}
+
 function ensureJoinableRooms(force = false) {
   if (!force && (joinableRoomsLoaded || joinableRoomsLoading)) return;
   joinableRoomsLoading = true;
@@ -1400,6 +1424,7 @@ function connectEvents() {
   if (session.spectator) params.set("spectatorId", session.spectatorId);
   else params.set("playerId", session.playerId);
   if (state?.roomId === session.roomId) params.set("snapshotVersion", String(state.snapshotVersion || 0));
+  lastEventReceivedAt = Date.now();
   source = new EventSource(`/events?${params.toString()}`);
   source.addEventListener("open", () => {
     lastEventReceivedAt = Date.now();
@@ -1463,6 +1488,7 @@ async function syncRoomState({ showError = false } = {}) {
   if (!session || stateSyncInFlight) return;
   const activeSession = { ...session };
   stateSyncInFlight = true;
+  lastStateSyncStartedAt = Date.now();
   try {
     const nextState = await api(stateUrl(activeSession));
     if (!sameSessionIdentity(session, activeSession)) return;
@@ -1488,9 +1514,11 @@ function startStateWatchdog() {
   if (stateWatchdogTimer) return;
   stateWatchdogTimer = window.setInterval(() => {
     if (!session || document.hidden) return;
-    const eventAge = Date.now() - lastEventReceivedAt;
-    if (!lastEventReceivedAt || eventAge > 7_000) scheduleStateSync(0);
-  }, 2_000);
+    const checkedAt = Date.now();
+    const eventAge = checkedAt - lastEventReceivedAt;
+    const stateSyncAge = checkedAt - lastStateSyncStartedAt;
+    if ((!lastEventReceivedAt || eventAge > 18_000) && stateSyncAge > 15_000) scheduleStateSync(0);
+  }, 5_000);
 }
 
 async function createRoom(event) {
@@ -4144,18 +4172,26 @@ function heroDisplayName(unit) {
   return `<span class="hero-name-prefix">${escapeHtml(unit.namePrefix)}</span><span class="hero-base-name">${escapeHtml(unit.baseName || unit.name)}</span>`;
 }
 
-function heroCardArtwork(unit, className = "", persistentKey = "") {
+function heroCardVariantPath(value, size = "full") {
+  const path = String(value || "");
+  if (!path.endsWith("-card-v2.png")) return path;
+  const suffix = size === "thumb" ? "-thumb.webp" : size === "medium" ? "-medium.webp" : ".webp";
+  return `${path.slice(0, -4)}${suffix}`;
+}
+
+function heroCardArtwork(unit, className = "", persistentKey = "", size = "full") {
   if (!unit?.cardImage) return "";
   const persistentAttribute = persistentKey
     ? ` data-persistent-hero-image="${escapeHtml(persistentKey)}"`
     : "";
-  return `<img class="hero-card-art ${escapeHtml(className)}" src="${escapeHtml(versionedAssetUrl(unit.cardImage))}" alt="${escapeHtml(unit.name)}英雄卡面" loading="lazy" decoding="async"${persistentAttribute}>`;
+  const source = heroCardVariantPath(unit.cardImage, size);
+  return `<img class="hero-card-art ${escapeHtml(className)}" src="${escapeHtml(versionedAssetUrl(source))}" alt="${escapeHtml(unit.name)}英雄卡面" loading="lazy" decoding="async"${persistentAttribute}>`;
 }
 
 function heroUnitBadge(unit, size = "normal") {
   if (!unit) return `<span class="hero-unit-badge ${size} empty">空</span>`;
   const color = unit.color || "#527b70";
-  return `<span class="hero-unit-badge ${size}" style="--hero-color:${escapeHtml(color)}" title="${escapeHtml(unit.name)}">${heroCardArtwork(unit, "hero-unit-badge-art") || `<b>${escapeHtml(unit.shortName || unit.name?.slice(0, 1) || "英")}</b>`}</span>`;
+  return `<span class="hero-unit-badge ${size}" style="--hero-color:${escapeHtml(color)}" title="${escapeHtml(unit.name)}">${heroCardArtwork(unit, "hero-unit-badge-art", "", "thumb") || `<b>${escapeHtml(unit.shortName || unit.name?.slice(0, 1) || "英")}</b>`}</span>`;
 }
 
 function renderHeroCardPreview(unit) {
@@ -4195,7 +4231,7 @@ function renderBattleHeroMark(snapshot, compact = false, playerId = "") {
   const imageKey = `battle:${playerId || "unknown"}:${snapshot.heroId || snapshot.name}:${compact ? "compact" : "full"}`;
   return `
     <button type="button" class="battle-hero-mark ${compact ? "compact" : ""}" style="--hero-color:${escapeHtml(snapshot.color || "#527b70")}" title="${escapeHtml(`${snapshot.name} · ${snapshot.skillName} · ${snapshot.stars}星 · 点击查看详情`)}" aria-label="${escapeHtml(`查看${snapshot.name}英雄图片和技能`)}" data-action="open-battle-hero-preview" data-player-id="${escapeHtml(playerId)}">
-      ${heroCardArtwork(snapshot, "battle-hero-art", imageKey) || `<b>${escapeHtml(snapshot.shortName || snapshot.name?.slice(0, 1) || "英")}</b>`}
+      ${heroCardArtwork(snapshot, "battle-hero-art", imageKey, "thumb") || `<b>${escapeHtml(snapshot.shortName || snapshot.name?.slice(0, 1) || "英")}</b>`}
       <span>${escapeHtml(snapshot.name)}</span>
       <i>${"★".repeat(Math.max(1, Math.min(5, Number(snapshot.stars) || 1)))}</i>
     </button>
@@ -4273,7 +4309,7 @@ function renderHomeRegionCard(region) {
       <div class="home-region-worker ${placed ? "occupied" : "empty"} ${placed?.cardImage ? "hero-card-worker" : ""}">
         ${placed?.cardImage ? `
           <button type="button" class="home-hero-card-button" data-action="open-hero-card-preview" data-unit-id="${escapeHtml(placed.id)}" aria-label="查看${escapeHtml(placed.name)}卡牌大图与技能">
-            ${heroCardArtwork(placed, "home-hero-card-art")}
+            ${heroCardArtwork(placed, "home-hero-card-art", "", "medium")}
             <span>点击查看大图与技能</span>
           </button>
           <div class="home-region-card-copy">
@@ -4469,7 +4505,7 @@ function renderCatalogUnit(unit) {
     : Number(owned.exclusiveFragments || 0) >= cost);
   return `
     <article class="hero-catalog-card ${owned ? "owned" : "locked"}">
-      ${unit.cardImage ? `<div class="hero-catalog-art">${heroCardArtwork(unit, "hero-catalog-card-art")}</div>` : heroUnitBadge({ ...unit, stars: owned?.stars }, "catalog")}
+      ${unit.cardImage ? `<div class="hero-catalog-art">${heroCardArtwork(unit, "hero-catalog-card-art", "", "medium")}</div>` : heroUnitBadge({ ...unit, stars: owned?.stars }, "catalog")}
       <div class="hero-catalog-copy">
         <div class="hero-catalog-title"><strong class="hero-display-name">${heroDisplayName(unit)}</strong><span class="tag ${unit.rarity === "ssr" ? "good" : ""}">${unit.type === "hero" ? escapeHtml(String(unit.rarity || "sr").toUpperCase()) : "小兵"}</span>${unit.gender ? `<span class="tag">${unit.gender === "female" ? "女" : "男"}</span>` : ""}<span class="tag">${escapeHtml(heroHomeState.regions.find((region) => region.id === unit.regionId)?.name || "")}</span></div>
         ${owned ? heroStars(owned.stars) : `<span class="hero-locked-label">未获得</span>`}
@@ -4520,7 +4556,7 @@ function renderGachaResult(result) {
   return `
     <article class="gacha-result-card ${result.unit.type} ${result.conversion.type === "new" ? "new" : ""}">
       <span class="gacha-result-index">${escapeHtml(result.index)}</span>
-      ${result.unit.cardImage ? heroCardArtwork(result.unit, "gacha-card-art") : heroUnitBadge(result.unit, "gacha")}
+      ${result.unit.cardImage ? heroCardArtwork(result.unit, "gacha-card-art", "", "medium") : heroUnitBadge(result.unit, "gacha")}
       <strong class="hero-display-name">${heroDisplayName(result.unit)}</strong>
       <span>${result.unit.type === "hero" ? escapeHtml(String(result.unit.rarity || "sr").toUpperCase()) : "小兵"}${result.guaranteed ? ` · ${escapeHtml(guaranteedLabels[result.guaranteed] || result.guaranteed)}` : ""}</span>
       <b>${escapeHtml(result.conversion.label)}</b>
@@ -5529,8 +5565,7 @@ function renderProfileRow(profile) {
 }
 
 function renderRoom() {
-  ensurePlayerStatistics();
-  ensureShopState();
+  if (!isSpectating() && state.gameItems?.canUse) ensureShopState();
   const viewer = viewerPlayer();
   const spectating = isSpectating();
   const waitingNextRound = viewerEnteredNextRound();
@@ -6875,7 +6910,7 @@ function renderTrick(trick, current, options = {}) {
           return `
             <div class="trick-seat ${seatZone(index, displayPlays.length)} ${isViewerSeat ? "viewer-seat" : ""} ${hasActiveTaunt ? "taunt-active" : ""}" style="${seatStyle(index, displayPlays.length)}">
               ${showViewerHand ? "" : playerCard}
-              ${playContent ? `<div class="seat-play ${playEffect ? "large-play-effect-active" : ""}">${playContent}${playEffect}</div>` : ""}
+              <div class="seat-play ${playContent ? "has-play" : "empty-play"} ${playEffect ? "large-play-effect-active" : ""}">${playContent}${playEffect}</div>
               ${seatHand}
             </div>
           `;
@@ -7060,7 +7095,7 @@ function tablePlayerIdentity(play) {
   const avatarFrame = play.avatarFrame || player?.avatarFrame || "";
   return `
     <span class="player-identity table-player-identity">
-      <span class="table-player-avatar-stage" tabindex="0" aria-label="查看${escapeHtml(play.playerName)}的历史数据">
+      <span class="table-player-avatar-stage ${tableHistoryPlayerId === play.playerId ? "history-open" : ""}" tabindex="0" role="button" aria-label="查看${escapeHtml(play.playerName)}的历史数据" data-action="load-player-history" data-player-id="${escapeHtml(play.playerId)}">
         ${avatarHtml(play.playerName, play.avatarUrl, "small", avatarFrame)}
         ${renderDoglegMarks(play.playerId)}
         ${renderLuckyMark(play.playerId)}
@@ -7084,7 +7119,7 @@ function renderTablePlayerSummary(play, statusText, statusTone) {
         ${roleMark(play.role, play.playerId)}
         <span class="seat-status ${escapeHtml(statusTone)}">${escapeHtml(statusText)}</span>
       </span>
-      <span class="table-player-avatar-stage" tabindex="0" aria-label="查看${escapeHtml(play.playerName)}的历史数据">
+      <span class="table-player-avatar-stage ${tableHistoryPlayerId === play.playerId ? "history-open" : ""}" tabindex="0" role="button" aria-label="查看${escapeHtml(play.playerName)}的历史数据" data-action="load-player-history" data-player-id="${escapeHtml(play.playerId)}">
         ${avatarHtml(play.playerName, play.avatarUrl, "small", avatarFrame)}
         ${renderDoglegMarks(play.playerId)}
         ${renderLuckyMark(play.playerId)}
@@ -7108,7 +7143,8 @@ function renderPlayerHistoryMini(roomPlayerId, { overlay = false } = {}) {
   const player = state?.players?.find((item) => item.id === roomPlayerId);
   const className = `player-history-mini${overlay ? " overlay" : ""}`;
   if (!player || player.test) return `<div class="${className} unavailable">AI 不计历史</div>`;
-  if (playerStatisticsLoading) return `<div class="${className} unavailable">历史读取中</div>`;
+  if (playerStatisticsLoading || tablePlayerStatisticsLoading) return `<div class="${className} unavailable">历史读取中</div>`;
+  if (!playerStatisticsLoaded && !tablePlayerStatisticsLoaded) return `<div class="${className} pending">点击加载历史</div>`;
   const statistics = player.profileId ? playerStatistics.get(player.profileId) : null;
   if (!statistics) return `<div class="${className} unavailable">暂无历史</div>`;
   return `
@@ -8163,7 +8199,11 @@ document.addEventListener("toggle", (event) => {
 document.addEventListener("click", (event) => {
   const action = event.target.closest("[data-action]")?.dataset.action;
   if (!action) {
-    clearSelectionFromPageClick(event);
+    const selectionCleared = clearSelectionFromPageClick(event);
+    if (tableHistoryPlayerId) {
+      tableHistoryPlayerId = "";
+      if (!selectionCleared) render();
+    }
     return;
   }
   if (isSpectating() && !new Set([
@@ -8175,6 +8215,8 @@ document.addEventListener("click", (event) => {
     "open-events",
     "open-spectators",
     "open-result",
+    "open-battle-hero-preview",
+    "load-player-history",
     "close-dialog",
     "clear-selection"
   ]).has(action)) return;
@@ -8243,6 +8285,11 @@ document.addEventListener("click", (event) => {
       activeDialog = "battle-hero";
       render();
     }
+  }
+  if (action === "load-player-history") {
+    tableHistoryPlayerId = event.target.closest("[data-player-id]")?.dataset.playerId || "";
+    ensureTablePlayerStatistics();
+    render();
   }
   if (action === "show-admin") {
     homeView = "admin";
@@ -8500,6 +8547,14 @@ document.addEventListener("click", (event) => {
     selectedCardIds = new Set();
     render();
   }
+});
+
+document.addEventListener("pointerover", (event) => {
+  if (event.target.closest?.('[data-action="load-player-history"]')) ensureTablePlayerStatistics();
+});
+
+document.addEventListener("focusin", (event) => {
+  if (event.target.closest?.('[data-action="load-player-history"]')) ensureTablePlayerStatistics();
 });
 
 document.addEventListener("pointerdown", (event) => {
