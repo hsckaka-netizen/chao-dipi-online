@@ -437,13 +437,21 @@ test("SSR roster, probabilities, production, and paid skill heat use the settled
 });
 
 test("region levels increase output every level and unlock capacity on milestones", () => {
-  assert.equal(regionUpgradeCost(0), 120);
-  assert.equal(regionUpgradeCost(9), 120);
-  assert.equal(regionUpgradeCost(10), 130);
-  assert.equal(regionUpgradeCost(99), 210);
+  assert.equal(regionUpgradeCost(0), 60);
+  assert.equal(regionUpgradeCost(9), 60);
+  assert.equal(regionUpgradeCost(10), 70);
+  assert.equal(regionUpgradeCost(59), 160);
+  assert.equal(regionUpgradeCost(60), 190);
+  assert.equal(regionUpgradeCost(89), 280);
+  assert.equal(regionUpgradeCost(90), 350);
+  assert.equal(regionUpgradeCost(99), 350);
   assert.equal(regionUpgradeCost(100), null);
-  const totalCost = Array.from({ length: 100 }, (_, level) => regionUpgradeCost(level)).reduce((sum, cost) => sum + cost, 0);
+  const costs = Array.from({ length: 100 }, (_, level) => regionUpgradeCost(level));
+  const totalCost = costs.reduce((sum, cost) => sum + cost, 0);
   const expectedDailyMaterials = 3 * 58.4 + 5 * 0.4 * 50;
+  assert.equal(costs.slice(0, 20).reduce((sum, cost) => sum + cost, 0), 1_300);
+  assert.equal(costs.slice(0, 60).reduce((sum, cost) => sum + cost, 0), 6_000);
+  assert.equal(costs.slice(0, 80).reduce((sum, cost) => sum + cost, 0), 10_200);
   assert.equal(totalCost, 16_500);
   assert.ok(Math.abs(totalCost / expectedDailyMaterials - 60) < 0.1);
   assert.equal(homeRegionMaxHours(0), 6);

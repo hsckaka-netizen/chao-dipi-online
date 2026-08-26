@@ -1,5 +1,5 @@
 export const HERO_HOME_RULES = Object.freeze({
-  version: "2026-08-25-v7",
+  version: "2026-08-26-v8",
   skillVersion: "2026-08-24-skill-v6",
   boardSkillVersion: "2026-08-24-board-skill-v1",
   maxProductionHours: 6,
@@ -39,7 +39,7 @@ export const HERO_HOME_RULES = Object.freeze({
   yokoyamaSkillCost: 100
 });
 
-const REGION_UPGRADE_COSTS = Object.freeze([120, 130, 140, 150, 160, 170, 180, 190, 200, 210]);
+const REGION_UPGRADE_COSTS = Object.freeze([60, 70, 80, 100, 130, 160, 190, 230, 280, 350]);
 
 export const HOME_REGIONS = Object.freeze([
   Object.freeze({ id: "boka", name: "博卡区", icon: "🏇" }),
