@@ -9,6 +9,11 @@ import {
   DIAMOND_REWARD_RULES,
   isDiamondEligibleGame
 } from "./diamond-rewards.js";
+import {
+  buildDailyTaskState,
+  DAILY_TASK_BY_ID,
+  DAILY_TASK_RULES
+} from "./daily-tasks.js";
 import { buildGameEvaluations } from "./game-evaluations.js";
 import { annotateForcedProtectedFives } from "./dragged-five-attribution.js";
 import { CONSUMABLE_ITEMS, SHOP_RULES_VERSION, shopProductIdFromPath } from "./shop-and-items.js";
@@ -145,6 +150,10 @@ const MIGRATIONS = [
   {
     version: 27,
     path: fileURLToPath(new URL("./db/migrations/027_refundable_board_hero_skills.sql", import.meta.url))
+  },
+  {
+    version: 28,
+    path: fileURLToPath(new URL("./db/migrations/028_daily_game_tasks.sql", import.meta.url))
   }
 ];
 const HISTORY_ENABLED = String(process.env.GAME_HISTORY_ENABLED || "").toLowerCase() === "true";
@@ -2041,6 +2050,41 @@ async function ensureHeroAccount(client, accountId) {
   );
 }
 
+async function dailyTaskStateFromClient(client, accountId, at = new Date()) {
+  const emptyState = buildDailyTaskState({}, [], at);
+  if (!emptyState) throw commerceError("每日任务刷新时间无效", 500);
+  const [summaryResult, claimsResult] = await Promise.all([
+    client.query(
+      `SELECT
+         count(*)::bigint AS games_completed,
+         count(*) FILTER (WHERE player.won)::bigint AS games_won,
+         count(*) FILTER (WHERE game.banker_room_player_id = player.room_player_id)::bigint AS banker_games,
+         count(*) FILTER (WHERE game.bottom_winner_room_player_id = player.room_player_id)::bigint AS bottom_wins,
+         coalesce(sum(player.trick_score), 0)::bigint AS trick_score
+       FROM cdp_game_players player
+       JOIN cdp_games game ON game.game_id = player.game_id
+       WHERE player.account_id = $1::uuid
+         AND game.finished_at >= $2::timestamptz
+         AND game.finished_at < $3::timestamptz`,
+      [accountId, emptyState.startAt, emptyState.nextRefreshAt]
+    ),
+    client.query(
+      `SELECT task_id
+       FROM cdp_daily_task_claims
+       WHERE account_id = $1::uuid AND refresh_key = $2::date`,
+      [accountId, emptyState.refreshKey]
+    )
+  ]);
+  const summary = summaryResult.rows[0] || {};
+  return buildDailyTaskState({
+    gamesCompleted: summary.games_completed,
+    gamesWon: summary.games_won,
+    bankerGames: summary.banker_games,
+    bottomWins: summary.bottom_wins,
+    trickScore: summary.trick_score
+  }, claimsResult.rows.map((row) => row.task_id), at);
+}
+
 function publicOwnedHeroUnit(row) {
   const unit = HOME_UNIT_BY_ID.get(row.unit_id);
   if (!unit) return null;
@@ -2207,6 +2251,7 @@ async function heroHomeStateFromClient(client, accountId) {
   const pityCount = Number(profile.non_hero_pity_count) || 0;
   const freePull = freeHeroPullState(profile.free_pull_used_at, nowAt);
   const tasks = await heroTasksFromClient(client, accountId, ownedUnits, nowAt);
+  const dailyTasks = await dailyTaskStateFromClient(client, accountId, nowAt);
   return {
     ...publicHeroCatalog(),
     accountId,
@@ -2231,6 +2276,7 @@ async function heroHomeStateFromClient(client, accountId) {
     ownedUnits,
     regions,
     tasks,
+    dailyTasks,
     updatedAt: profile.updated_at ? new Date(profile.updated_at).toISOString() : null
   };
 }
@@ -2244,6 +2290,132 @@ export async function getHeroHomeState(accountId) {
     const state = await heroHomeStateFromClient(client, accountId);
     await client.query("COMMIT");
     return state;
+  } catch (error) {
+    await client.query("ROLLBACK");
+    rememberError(error);
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+export async function claimDailyTask(accountId, taskIdValue, requestIdValue) {
+  const database = requirePool();
+  const taskId = String(taskIdValue || "");
+  const definition = DAILY_TASK_BY_ID.get(taskId);
+  if (!definition) throw commerceError("每日任务不存在", 404);
+  const requestId = normalizedRequestId(requestIdValue);
+  const claimedAt = new Date();
+  const client = await database.connect();
+  try {
+    await client.query("BEGIN");
+    await ensureHeroAccount(client, accountId);
+    await client.query(
+      `SELECT account_id FROM cdp_hero_profiles
+       WHERE account_id = $1::uuid FOR UPDATE`,
+      [accountId]
+    );
+    await client.query(
+      `INSERT INTO cdp_diamond_wallets (account_id)
+       VALUES ($1::uuid)
+       ON CONFLICT (account_id) DO NOTHING`,
+      [accountId]
+    );
+    await client.query(
+      `SELECT balance FROM cdp_diamond_wallets
+       WHERE account_id = $1::uuid FOR UPDATE`,
+      [accountId]
+    );
+
+    const taskState = await dailyTaskStateFromClient(client, accountId, claimedAt);
+    const task = taskState.tasks.find((item) => item.id === taskId);
+    const existing = await client.query(
+      `SELECT reward_diamonds, reward_materials, balance_after, building_materials_after
+       FROM cdp_daily_task_claims
+       WHERE account_id = $1::uuid AND refresh_key = $2::date AND task_id = $3`,
+      [accountId, taskState.refreshKey, taskId]
+    );
+    if (existing.rows[0]) {
+      const state = await heroHomeStateFromClient(client, accountId);
+      await client.query("COMMIT");
+      return {
+        repeated: true,
+        taskId,
+        rewardDiamonds: Number(existing.rows[0].reward_diamonds) || 0,
+        rewardMaterials: Number(existing.rows[0].reward_materials) || 0,
+        state
+      };
+    }
+    if (!task?.completed) throw commerceError("每日任务尚未完成", 409);
+
+    const wallet = await client.query(
+      `UPDATE cdp_diamond_wallets
+       SET balance = balance + $2,
+           lifetime_earned = lifetime_earned + $2,
+           updated_at = now()
+       WHERE account_id = $1::uuid
+       RETURNING balance`,
+      [accountId, definition.rewardDiamonds]
+    );
+    const profile = await client.query(
+      `UPDATE cdp_hero_profiles
+       SET building_materials = building_materials + $2,
+           updated_at = now()
+       WHERE account_id = $1::uuid
+       RETURNING building_materials`,
+      [accountId, definition.rewardMaterials]
+    );
+    const balanceAfter = Number(wallet.rows[0]?.balance) || 0;
+    const buildingMaterialsAfter = Number(profile.rows[0]?.building_materials) || 0;
+    const detail = {
+      taskId,
+      taskName: definition.name,
+      refreshKey: taskState.refreshKey,
+      progress: task.progress,
+      target: definition.target,
+      rewardDiamonds: definition.rewardDiamonds,
+      rewardMaterials: definition.rewardMaterials
+    };
+    await client.query(
+      `INSERT INTO cdp_daily_task_claims (
+         account_id, refresh_key, task_id, rules_version, request_id,
+         progress_value, target_value, reward_diamonds, reward_materials,
+         balance_after, building_materials_after
+       ) VALUES (
+         $1::uuid, $2::date, $3, $4, $5,
+         $6, $7, $8, $9,
+         $10, $11
+       )`,
+      [
+        accountId, taskState.refreshKey, taskId, DAILY_TASK_RULES.version, requestId,
+        task.progress, definition.target, definition.rewardDiamonds, definition.rewardMaterials,
+        balanceAfter, buildingMaterialsAfter
+      ]
+    );
+    await client.query(
+      `INSERT INTO cdp_diamond_ledger (
+         account_id, amount, balance_after, reason, rules_version, idempotency_key, detail
+       ) VALUES ($1::uuid, $2, $3, 'daily_task_reward', $4, $5, $6::jsonb)
+       ON CONFLICT (idempotency_key) DO NOTHING`,
+      [
+        accountId,
+        definition.rewardDiamonds,
+        balanceAfter,
+        DAILY_TASK_RULES.version,
+        `daily_task:${accountId}:${taskState.refreshKey}:${taskId}`,
+        JSON.stringify(detail)
+      ]
+    );
+    const state = await heroHomeStateFromClient(client, accountId);
+    await client.query("COMMIT");
+    return {
+      taskId,
+      rewardDiamonds: definition.rewardDiamonds,
+      rewardMaterials: definition.rewardMaterials,
+      balanceAfter,
+      buildingMaterialsAfter,
+      state
+    };
   } catch (error) {
     await client.query("ROLLBACK");
     rememberError(error);

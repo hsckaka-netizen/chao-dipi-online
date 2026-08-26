@@ -79,6 +79,7 @@ import { calculateHeroSkillReward, HERO_HOME_RULES } from "./hero-home.js";
 import {
   assignHomeUnit,
   chargeBoardHeroSkill,
+  claimDailyTask,
   collectHomeProduction,
   gameHistoryStatus,
   avatarFrameProductExists,
@@ -5576,6 +5577,10 @@ async function handleApi(req, res, pathParts, url) {
     if (req.method === "POST" && pathParts[2] === "tasks" && pathParts[3] === "collect") {
       const body = await readJson(req);
       return writeJson(res, 200, await collectHeroTask(account.id, body.taskId, body.requestId));
+    }
+    if (req.method === "POST" && pathParts[2] === "daily-tasks" && pathParts[3] === "claim") {
+      const body = await readJson(req);
+      return writeJson(res, 200, await claimDailyTask(account.id, body.taskId, body.requestId));
     }
     return writeJson(res, 404, { error: "英雄家园接口不存在" });
   }

@@ -4484,6 +4484,38 @@ function renderHeroTasks() {
   `;
 }
 
+function renderDailyGameTask(task) {
+  const progress = Math.min(Number(task.target) || 0, Number(task.progress) || 0);
+  const progressPercent = task.target ? Math.min(100, Math.round(progress / Number(task.target) * 100)) : 0;
+  const taskInFlight = heroActionInFlight === `daily-task:${task.id}`;
+  const stateLabel = task.claimed ? "已领取" : task.completed ? "可领取" : "进行中";
+  return `
+    <article class="daily-game-task ${task.completed ? "completed" : ""} ${task.claimed ? "claimed" : ""}">
+      <div class="daily-game-task-head">
+        <div><span>${escapeHtml(stateLabel)}</span><h3>${escapeHtml(task.name)}</h3></div>
+        <div class="daily-game-task-reward"><b>💎 ${escapeHtml(task.rewardDiamonds)}</b><b>▰ ${escapeHtml(task.rewardMaterials)}</b></div>
+      </div>
+      <div class="daily-game-task-progress"><i style="width:${escapeHtml(progressPercent)}%"></i></div>
+      <div class="daily-game-task-foot">
+        <span>进度 ${escapeHtml(progress)} / ${escapeHtml(task.target)}</span>
+        <button type="button" data-action="claim-daily-task" data-task-id="${escapeHtml(task.id)}" ${!task.completed || task.claimed || heroActionInFlight ? "disabled" : ""}>${taskInFlight ? "领取中…" : task.claimed ? "已领取" : task.completed ? "领取奖励" : "未完成"}</button>
+      </div>
+    </article>
+  `;
+}
+
+function renderDailyGameTasks() {
+  const dailyTasks = heroHomeState?.dailyTasks;
+  const tasks = dailyTasks?.tasks || [];
+  const claimedCount = tasks.filter((task) => task.claimed).length;
+  return `
+    <section class="panel daily-game-task-section">
+      <div class="section-head"><div><span class="eyebrow">DAILY QUESTS</span><h2>每日任务</h2><p>每天北京时间06:00刷新；进度仅统计自然完成的有效真人牌局，奖励需在刷新前领取。</p></div><div class="daily-game-task-total"><small>今日领取</small><b>${escapeHtml(claimedCount)} / ${escapeHtml(tasks.length)}</b></div></div>
+      <div class="daily-game-task-grid">${tasks.map(renderDailyGameTask).join("")}</div>
+    </section>
+  `;
+}
+
 function renderHeroHomePage() {
   if (authState.account?.role !== "player") {
     homeView = "login";
@@ -4509,6 +4541,7 @@ function renderHeroHomePage() {
     <section class="home-region-grid">
       ${(heroHomeState.regions || []).map(renderHomeRegionCard).join("")}
     </section>
+    ${renderDailyGameTasks()}
     ${renderHeroTasks()}
     <section class="panel hero-home-note">
       <strong>生产规则</strong>
@@ -4752,6 +4785,25 @@ async function collectDailyHeroTask(taskId) {
     setMessage(`已领取 ${data.rewardMaterials} 建材`);
   } catch (error) {
     setMessage(error.message || "领取任务奖励失败", true);
+  } finally {
+    heroActionInFlight = "";
+    render();
+  }
+}
+
+async function claimDailyGameTask(taskId) {
+  if (heroActionInFlight) return;
+  heroActionInFlight = `daily-task:${taskId}`;
+  render();
+  try {
+    const data = await api("/api/heroes/daily-tasks/claim", {
+      method: "POST",
+      body: JSON.stringify({ taskId, requestId: requestId() })
+    });
+    applyHeroMutationState(data.state);
+    setMessage(`已领取 ${data.rewardDiamonds} 钻石和 ${data.rewardMaterials} 建材`);
+  } catch (error) {
+    setMessage(error.message || "领取每日任务奖励失败", true);
   } finally {
     heroActionInFlight = "";
     render();
@@ -8143,7 +8195,7 @@ const mutatingActions = new Set([
   "fry-pass", "dogleg-selected", "play-selected", "confirm-throw", "play-again",
   "send-taunt", "delete-taunt", "kick-player", "buy-shop-product", "equip-avatar-frame", "use-game-item",
   "complete-item-stage", "collect-home", "assign-home-unit", "select-battle-hero",
-  "pull-hero-gacha", "upgrade-hero-unit", "upgrade-home-region", "dispatch-hero-task", "collect-hero-task",
+  "pull-hero-gacha", "upgrade-hero-unit", "upgrade-home-region", "dispatch-hero-task", "collect-hero-task", "claim-daily-task",
   "shen-biesan-activate", "shen-biesan-pass", "yokoyama-activate", "yokoyama-swap", "yokoyama-pass", "shen-jiangwen-activate"
 ]);
 
@@ -8359,6 +8411,9 @@ document.addEventListener("click", (event) => {
   }
   if (action === "collect-hero-task") {
     collectDailyHeroTask(event.target.closest("[data-task-id]")?.dataset.taskId || "");
+  }
+  if (action === "claim-daily-task") {
+    claimDailyGameTask(event.target.closest("[data-task-id]")?.dataset.taskId || "");
   }
   if (action === "select-battle-hero") {
     selectHeroForBattle(event.target.closest("[data-unit-id]")?.dataset.unitId || "");

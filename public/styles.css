@@ -656,6 +656,110 @@
   gap: 16px;
 }
 
+.daily-game-task-section {
+  display: grid;
+  gap: 16px;
+}
+
+.daily-game-task-total {
+  flex: 0 0 auto;
+  display: grid;
+  justify-items: end;
+  gap: 2px;
+  padding: 10px 13px;
+  border-radius: 13px;
+  color: #684b17;
+  background: #fff7df;
+}
+
+.daily-game-task-total small {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.daily-game-task-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.daily-game-task {
+  min-width: 0;
+  display: grid;
+  gap: 13px;
+  padding: 15px;
+  border: 1px solid rgba(65, 91, 78, 0.13);
+  border-radius: 17px;
+  background: linear-gradient(150deg, #fff, #f5f8f6);
+}
+
+.daily-game-task.completed {
+  border-color: rgba(190, 138, 29, 0.32);
+  background: linear-gradient(150deg, #fff, #fff8e8);
+}
+
+.daily-game-task.claimed {
+  opacity: 0.72;
+}
+
+.daily-game-task-head,
+.daily-game-task-foot,
+.daily-game-task-reward {
+  display: flex;
+  align-items: center;
+}
+
+.daily-game-task-head,
+.daily-game-task-foot {
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.daily-game-task-head > div:first-child {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.daily-game-task-head span,
+.daily-game-task-foot > span {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 750;
+}
+
+.daily-game-task-head h3 {
+  margin: 0;
+  font-size: 14px;
+}
+
+.daily-game-task-reward {
+  flex: 0 0 auto;
+  gap: 7px;
+  color: #805d1d;
+  font-size: 11px;
+}
+
+.daily-game-task-progress {
+  height: 7px;
+  overflow: hidden;
+  border-radius: 99px;
+  background: #e4ebe7;
+}
+
+.daily-game-task-progress i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #3f8b6b, #d3a53d);
+}
+
+.daily-game-task-foot button {
+  min-height: 34px;
+  padding: 0 12px;
+  font-size: 11px;
+}
+
 .hero-task-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -1024,18 +1128,29 @@
 }
 
 @media (max-width: 1100px) {
-  .hero-task-grid {
+  .hero-task-grid,
+  .daily-game-task-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 
 @media (max-width: 800px) {
-  .hero-task-grid {
+  .hero-task-grid,
+  .daily-game-task-grid {
     grid-template-columns: 1fr;
   }
 }
 
 @media (max-width: 520px) {
+  .daily-game-task-section .section-head {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .daily-game-task-total {
+    justify-items: start;
+  }
+
   .hero-task-choices,
   .hero-task-actions {
     grid-template-columns: 1fr;
