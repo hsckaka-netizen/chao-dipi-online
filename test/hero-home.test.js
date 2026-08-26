@@ -413,9 +413,11 @@ test("SSR roster, probabilities, production, and paid skill heat use the settled
   assert.equal(shenBiesan.namePrefix, "神");
   assert.equal(shenBiesan.baseName, "瘪三");
   assert.equal(shenBiesan.skillName, "玉面雷神");
-  assert.equal(shenBiesan.paidSkill.cost, 3100);
+  assert.equal(shenBiesan.paidSkill.cost, 2500);
   assert.equal(shenJiangwen.skillName, "排骨之王");
-  assert.equal(shenJiangwen.paidSkill.cost, 2500);
+  assert.equal(shenJiangwen.paidSkill.cost, 500);
+  assert.equal(createBattleHeroSnapshot("shen-jiangwen", 1, 0).paidSkill.cost, 0);
+  assert.equal(createBattleHeroSnapshot("shen-jiangwen", 5, 3).paidSkill.cost, 600);
   assert.equal(yokoyama.skillName, "全能偶像");
   assert.equal(yokoyama.paidSkill.cost, 100);
   assert.equal(HERO_HOME_RULES.ssrPityPulls, 200);
@@ -429,11 +431,28 @@ test("SSR roster, probabilities, production, and paid skill heat use the settled
     stars: 5,
     heat: 3,
     maxHeat: 3,
-    baseCost: 600,
+    baseCost: 0,
     heatCost: 1000,
-    cost: 3600,
-    coolingPerUnusedGame: 0.5
+    cost: 3000,
+    coolingPerUnusedGame: 0.5,
+    heatPerUse: 1
   });
+  assert.deepEqual(paidBoardSkillState(5, 3, "shen-jiangwen"), {
+    stars: 5,
+    heat: 3,
+    maxHeat: 3,
+    baseCost: 0,
+    heatCost: 200,
+    cost: 600,
+    coolingPerUnusedGame: 3,
+    heatPerUse: 3
+  });
+  assert.deepEqual(HERO_HOME_RULES.paidSkillBaseCosts, [0, 0, 0, 0, 0]);
+  assert.deepEqual(HERO_HOME_RULES.shenBiesanCandidateCounts, [1, 1, 2, 2, 2]);
+  assert.deepEqual(HERO_HOME_RULES.shenBiesanRequiredPairedCounts, [0, 1, 1, 2, 2]);
+  assert.deepEqual(HERO_HOME_RULES.shenJiangwenHeatCosts, [500, 400, 400, 300, 200]);
+  assert.deepEqual(HERO_HOME_RULES.shenJiangwenCooling, [1, 1, 2, 2, 3]);
+  assert.deepEqual([1, 2, 3, 4, 5].map((stars) => paidBoardSkillState(stars, 1, "shen-jiangwen").cost), [500, 400, 400, 300, 200]);
 });
 
 test("region levels increase output every level and unlock capacity on milestones", () => {
@@ -532,8 +551,13 @@ test("server and table UI expose all three SSR board skill stages", async () => 
   assert.match(serverSource, /activateShenJiangwenSkill/);
   assert.match(serverSource, /pathParts\[3\] === "board-hero-skill"/);
   assert.match(serverSource, /rulesRank = "LOW_2"/);
+  assert.match(serverSource, /candidateRanksByPlayerId/);
+  assert.match(serverSource, /selectedRankByPlayerId/);
+  assert.match(serverSource, /ownedReplacementRanksForShenBiesan/);
+  assert.match(serverSource, /shenBiesanRequiredPairedCounts/);
   assert.match(serverSource, /directSkillPendingPlayerId/);
   assert.match(appSource, /data-action="shen-biesan-activate"/);
+  assert.match(appSource, /data-replacement-rank/);
   assert.match(appSource, /data-action="yokoyama-swap"/);
   assert.match(appSource, /data-action="shen-jiangwen-activate"/);
   assert.match(appSource, /!isBid && shenJiangwenSkill\.canActivate/);
@@ -607,4 +631,10 @@ test("hero migration stores home, gacha, snapshots, and hero bonus", async () =>
     "utf8"
   );
   assert.match(ssrPityMigration, /non_ssr_pity_count BETWEEN 0 AND 199/);
+
+  const zeroCostSkillMigration = await readFile(
+    fileURLToPath(new URL("../db/migrations/026_zero_cost_hero_skills.sql", import.meta.url)),
+    "utf8"
+  );
+  assert.match(zeroCostSkillMigration, /CHECK \(cost >= 0\)/);
 });

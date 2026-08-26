@@ -880,6 +880,8 @@ function emptyBoardHeroSkills() {
       eligiblePlayerIds: [],
       completedPlayerIds: [],
       applicantPlayerIds: [],
+      candidateRanksByPlayerId: {},
+      selectedRankByPlayerId: {},
       deadlineAt: null,
       resolving: false
     },
@@ -992,18 +994,52 @@ function hasPairedPrintedTwo(player) {
   return suits.some((suit) => player.hand.filter((card) => card.type === "normal" && card.rank === "2" && card.suit === suit.id).length >= 2);
 }
 
+function ownedReplacementRanksForShenBiesan(player) {
+  return OLD_MAN_REPLACEMENT_RANKS.filter((rank) => player.hand.some((card) => card.type === "normal" && card.rank === rank));
+}
+
+function pairedReplacementRanksForShenBiesan(player) {
+  return OLD_MAN_REPLACEMENT_RANKS.filter((rank) => suits.some((suit) => (
+    player.hand.filter((card) => card.type === "normal" && card.rank === rank && card.suit === suit.id).length >= 2
+  )));
+}
+
 function shenBiesanEligiblePlayers(room) {
-  return room.players.filter((player) => playerHasBoardHero(room, player, "shen-biesan") && !hasPairedPrintedTwo(player));
+  return room.players.filter((player) => {
+    if (!playerHasBoardHero(room, player, "shen-biesan")) return false;
+    const stars = Math.max(1, Math.min(5, Number(player.battleHeroSnapshot?.stars) || 1));
+    const candidateCount = HERO_HOME_RULES.shenBiesanCandidateCounts[stars - 1];
+    const requiredPairedCount = HERO_HOME_RULES.shenBiesanRequiredPairedCounts[stars - 1];
+    return ownedReplacementRanksForShenBiesan(player).length >= candidateCount
+      && pairedReplacementRanksForShenBiesan(player).length >= requiredPairedCount
+      && (stars === 5 || !hasPairedPrintedTwo(player));
+  });
+}
+
+function candidateRanksForShenBiesan(player) {
+  const stars = Math.max(1, Math.min(5, Number(player.battleHeroSnapshot?.stars) || 1));
+  const candidateCount = HERO_HOME_RULES.shenBiesanCandidateCounts[stars - 1];
+  const requiredPairedCount = HERO_HOME_RULES.shenBiesanRequiredPairedCounts[stars - 1];
+  const selected = shuffle(pairedReplacementRanksForShenBiesan(player)).slice(0, requiredPairedCount);
+  const remaining = shuffle(ownedReplacementRanksForShenBiesan(player).filter((rank) => !selected.includes(rank)))
+    .slice(0, candidateCount - selected.length);
+  return shuffle([...selected, ...remaining]);
 }
 
 function beginShenBiesanSkillStage(room) {
   clearGameItemStageTimer(room);
   clearBoardHeroSkillTimer(room);
-  const eligiblePlayerIds = shenBiesanEligiblePlayers(room).map((player) => player.id);
+  const eligiblePlayers = shenBiesanEligiblePlayers(room);
+  const eligiblePlayerIds = eligiblePlayers.map((player) => player.id);
+  const candidateRanksByPlayerId = Object.fromEntries(eligiblePlayers.map((player) => {
+    return [player.id, candidateRanksForShenBiesan(player)];
+  }));
   room.boardHeroSkills.shenBiesan = {
     eligiblePlayerIds,
     completedPlayerIds: [],
     applicantPlayerIds: [],
+    candidateRanksByPlayerId,
+    selectedRankByPlayerId: {},
     deadlineAt: eligiblePlayerIds.length
       ? new Date(Date.now() + BOARD_HERO_SKILL_SECONDS * 1000).toISOString()
       : null,
@@ -1017,14 +1053,6 @@ function beginShenBiesanSkillStage(room) {
   room.phase = "玉面雷神发动阶段";
   addEvent(room, "进入玉面雷神发动阶段，符合条件的玩家可选择是否申请发动");
   return true;
-}
-
-function replacementRankForShenBiesan(player) {
-  const pairedRanks = OLD_MAN_REPLACEMENT_RANKS.filter((rank) => suits.some((suit) => (
-    player.hand.filter((card) => card.type === "normal" && card.rank === rank && card.suit === suit.id).length >= 2
-  )));
-  const candidates = pairedRanks.length ? pairedRanks : OLD_MAN_REPLACEMENT_RANKS;
-  return shuffle(candidates)[0] || "A";
 }
 
 function applyShenBiesanReplacement(room, replacementRank) {
@@ -1075,7 +1103,7 @@ async function resolveShenBiesanSkillStage(room) {
   const applicants = shuffle(state.applicantPlayerIds.map((playerId) => playerById(room, playerId)).filter(Boolean));
   for (const player of applicants) {
     try {
-      const replacementRank = replacementRankForShenBiesan(player);
+      const replacementRank = state.selectedRankByPlayerId[player.id];
       const payment = await chargeBoardHeroSkill(
         player.accountId,
         room.gameRecordId,
@@ -1095,13 +1123,19 @@ async function resolveShenBiesanSkillStage(room) {
   return true;
 }
 
-async function submitShenBiesanSkillChoice(room, player, activate) {
+async function submitShenBiesanSkillChoice(room, player, activate, replacementRank = "") {
   if (room.stage !== "shen-biesan-skill") return { error: "当前不是玉面雷神发动阶段", status: 409 };
   const state = room.boardHeroSkills.shenBiesan;
   if (!state.eligiblePlayerIds.includes(player.id)) return { error: "你当前不满足玉面雷神发动条件", status: 403 };
   if (state.completedPlayerIds.includes(player.id)) return { error: "你已经完成选择", status: 409 };
+  if (activate && !(state.candidateRanksByPlayerId[player.id] || []).includes(replacementRank)) {
+    return { error: "请从本局随机生成的成对牌中选择一张替代2", status: 400 };
+  }
   state.completedPlayerIds.push(player.id);
-  if (activate) state.applicantPlayerIds.push(player.id);
+  if (activate) {
+    state.applicantPlayerIds.push(player.id);
+    state.selectedRankByPlayerId[player.id] = replacementRank;
+  }
   addEvent(room, `${player.name}${activate ? "申请发动玉面雷神" : "放弃发动玉面雷神"}`);
   if (state.completedPlayerIds.length >= state.eligiblePlayerIds.length) await resolveShenBiesanSkillStage(room);
   return { ok: true };
@@ -1542,6 +1576,7 @@ function boardHeroSkillsSnapshot(room, viewer = null) {
       viewerEligible: viewerIsBiesanEligible,
       viewerCompleted: viewerCompletedBiesan,
       canChoose: room.stage === "shen-biesan-skill" && viewerIsBiesanEligible && !viewerCompletedBiesan,
+      candidateRanks: viewerIsBiesanEligible ? [...(shenBiesan.candidateRanksByPlayerId[viewer.id] || [])] : [],
       cost: viewer?.battleHeroSnapshot?.heroId === "shen-biesan" ? viewer.battleHeroSnapshot.paidSkill?.cost || 0 : 0,
       heat: viewer?.battleHeroSnapshot?.heroId === "shen-biesan" ? viewer.battleHeroSnapshot.paidSkill?.heat ?? null : null
     },
@@ -6024,7 +6059,7 @@ async function handleApi(req, res, pathParts, url) {
       const viewer = requirePlayer(res, room, body.playerId, body.token);
       if (!viewer) return;
       let result = null;
-      if (body.action === "shen-biesan-activate") result = await submitShenBiesanSkillChoice(room, viewer, true);
+      if (body.action === "shen-biesan-activate") result = await submitShenBiesanSkillChoice(room, viewer, true, String(body.replacementRank || ""));
       else if (body.action === "shen-biesan-pass") result = await submitShenBiesanSkillChoice(room, viewer, false);
       else if (body.action === "yokoyama-activate") result = await activateYokoyamaSkill(room, viewer, body.requestId);
       else if (body.action === "yokoyama-swap") result = finishYokoyamaChoice(room, viewer, String(body.targetPlayerId || ""));

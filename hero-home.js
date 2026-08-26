@@ -1,7 +1,7 @@
 export const HERO_HOME_RULES = Object.freeze({
   version: "2026-08-26-v8",
   skillVersion: "2026-08-24-skill-v6",
-  boardSkillVersion: "2026-08-24-board-skill-v1",
+  boardSkillVersion: "2026-08-26-board-skill-v2",
   maxProductionHours: 6,
   singlePullPrice: 300,
   tenPullPrice: 2700,
@@ -33,9 +33,14 @@ export const HERO_HOME_RULES = Object.freeze({
   maxHoursPerTenLevels: 0.5,
   extraSlotUnlockLevel: 100,
   maxSkillHeat: 3,
-  paidSkillBaseCosts: Object.freeze([1000, 1000, 800, 800, 600]),
+  paidSkillBaseCosts: Object.freeze([0, 0, 0, 0, 0]),
   paidSkillHeatCosts: Object.freeze([1500, 1500, 1200, 1200, 1000]),
   paidSkillCooling: Object.freeze([0.2, 0.3, 0.3, 0.4, 0.5]),
+  shenBiesanCandidateCounts: Object.freeze([1, 1, 2, 2, 2]),
+  shenBiesanRequiredPairedCounts: Object.freeze([0, 1, 1, 2, 2]),
+  shenJiangwenHeatCosts: Object.freeze([500, 400, 400, 300, 200]),
+  shenJiangwenCooling: Object.freeze([1, 1, 2, 2, 3]),
+  shenJiangwenHeatPerUse: 3,
   yokoyamaSkillCost: 100
 });
 
@@ -61,7 +66,7 @@ export const HOME_UNITS = Object.freeze([
   Object.freeze({
     id: "shen-biesan", name: "神 · 瘪三", namePrefix: "神", baseName: "瘪三", shortName: "瘪", type: "hero", rarity: "ssr", gender: "male", regionId: "boka", color: "#9f742c",
     cardImage: "/assets/heroes/shen-biesan-card-v2.png",
-    skillName: "玉面雷神", skillDescription: "叫庄前可将本局用于炒底和牌力的2替换为其他普通点数；按当前热度消耗钻石。"
+    skillName: "玉面雷神", skillDescription: "叫庄前按星级随机生成替代2的持有牌候选：1星1张、2星1张成对牌、3星2张且至少1张成对、4星2张成对牌；5星沿用4星候选并取消2成对限制。"
   }),
   Object.freeze({ id: "boka-youth", name: "博卡青年", shortName: "博", type: "minion", rarity: "minion", gender: null, regionId: "boka", color: "#d6a936" }),
   Object.freeze({
@@ -167,11 +172,12 @@ export function missingDailyHeroTaskSlots(existingTasks = []) {
   return [1, 2, 3].filter((slotIndex) => !occupiedSlots.has(slotIndex));
 }
 
-export function paidBoardSkillState(stars = 1, heatValue = 0) {
+export function paidBoardSkillState(stars = 1, heatValue = 0, unitId = "shen-biesan") {
   const normalizedStarValue = normalizedStars(stars);
   const heat = Math.max(0, Math.min(HERO_HOME_RULES.maxSkillHeat, Math.round((Number(heatValue) || 0) * 10) / 10));
   const baseCost = HERO_HOME_RULES.paidSkillBaseCosts[normalizedStarValue - 1];
-  const heatCost = HERO_HOME_RULES.paidSkillHeatCosts[normalizedStarValue - 1];
+  const isShenJiangwen = unitId === "shen-jiangwen";
+  const heatCost = (isShenJiangwen ? HERO_HOME_RULES.shenJiangwenHeatCosts : HERO_HOME_RULES.paidSkillHeatCosts)[normalizedStarValue - 1];
   return {
     stars: normalizedStarValue,
     heat,
@@ -179,7 +185,8 @@ export function paidBoardSkillState(stars = 1, heatValue = 0) {
     baseCost,
     heatCost,
     cost: Math.round(baseCost + heat * heatCost),
-    coolingPerUnusedGame: HERO_HOME_RULES.paidSkillCooling[normalizedStarValue - 1]
+    coolingPerUnusedGame: (isShenJiangwen ? HERO_HOME_RULES.shenJiangwenCooling : HERO_HOME_RULES.paidSkillCooling)[normalizedStarValue - 1],
+    heatPerUse: isShenJiangwen ? HERO_HOME_RULES.shenJiangwenHeatPerUse : 1
   };
 }
 
@@ -391,7 +398,7 @@ export function createBattleHeroSnapshot(unitId, stars = 1, heatValue = 0) {
     stars: normalizedStars(stars),
     skillVersion: unit.rarity === "ssr" ? HERO_HOME_RULES.boardSkillVersion : HERO_HOME_RULES.skillVersion
   };
-  if (unit.id === "shen-biesan" || unit.id === "shen-jiangwen") snapshot.paidSkill = paidBoardSkillState(stars, heatValue);
+  if (unit.id === "shen-biesan" || unit.id === "shen-jiangwen") snapshot.paidSkill = paidBoardSkillState(stars, heatValue, unit.id);
   if (unit.id === "yokoyama-yui") snapshot.paidSkill = { cost: HERO_HOME_RULES.yokoyamaSkillCost, heat: null, maxHeat: null };
   return snapshot;
 }

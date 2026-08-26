@@ -1869,7 +1869,7 @@ async function completeGameItemStage() {
   }
 }
 
-async function submitBoardHeroSkill(action, targetPlayerId = "") {
+async function submitBoardHeroSkill(action, targetPlayerId = "", replacementRank = "") {
   if (!session || isSpectating()) return;
   const costs = state?.boardHeroSkills || {};
   const cost = action === "shen-biesan-activate"
@@ -1891,13 +1891,14 @@ async function submitBoardHeroSkill(action, targetPlayerId = "") {
         token: session.token,
         action,
         targetPlayerId,
+        replacementRank,
         requestId: requestId()
       })
     });
     if (cost) {
       ensureShopState(true);
-      ensureHeroHomeState(true);
     }
+    if (action.startsWith("shen-biesan") || action.startsWith("shen-jiangwen")) ensureHeroHomeState(true);
     const message = action.endsWith("-pass") ? `已放弃${skillName}`
       : action === "yokoyama-swap" ? "已完成座位交换，身份和手牌保持不变"
         : action === "yokoyama-activate" ? "已生成随机换位候选人"
@@ -5832,15 +5833,20 @@ function renderSetupCenter() {
 
   if (stage === "shen-biesan-skill") {
     const skill = state.boardHeroSkills?.shenBiesan || {};
+    const candidateButtons = (skill.candidateRanks || []).map((rank) => `
+      <button type="button" data-action="shen-biesan-activate" data-replacement-rank="${escapeHtml(rank)}">
+        选择 ${escapeHtml(rank)} 替代 2
+      </button>
+    `).join("");
     body = `
       ${renderSetupLines([
         { label: "当前阶段", value: "神 · 瘪三 · 玉面雷神" },
         { label: "倒计时", value: setupCountdownTag(skill.deadlineAt, " 后自动放弃") },
         { label: "发动费用", value: skill.viewerEligible ? `${escapeHtml(skill.cost || 0)} 钻石（热度 ${escapeHtml(skill.heat ?? 0)}/3）` : "" }
       ])}
-      <div class="meta">符合条件的神 · 瘪三可申请发动；多人申请时随机一人成功，只有成功者扣费。</div>
+      <div class="meta">按星级从你实际持有的牌中随机生成候选，高星候选要求成对；多人申请时随机一人成功，只有成功者扣费。</div>
       <div class="row">
-        ${!isSpectating() && skill.canChoose ? `<button type="button" data-action="shen-biesan-activate">发动玉面雷神</button><button type="button" class="secondary" data-action="shen-biesan-pass">不发动</button>` : ""}
+        ${!isSpectating() && skill.canChoose ? `${candidateButtons}<button type="button" class="secondary" data-action="shen-biesan-pass">不发动</button>` : ""}
         ${!isSpectating() && skill.viewerCompleted ? `<span class="tag good">你已完成选择</span>` : ""}
         ${isSpectating() || (!skill.viewerEligible && !skill.viewerCompleted) ? `<span class="tag">等待符合条件的玩家选择</span>` : ""}
       </div>
@@ -8494,7 +8500,7 @@ document.addEventListener("click", (event) => {
     useGameItem(event.target.closest("[data-item-id]")?.dataset.itemId || "");
   }
   if (action === "complete-item-stage") completeGameItemStage();
-  if (action === "shen-biesan-activate") submitBoardHeroSkill(action);
+  if (action === "shen-biesan-activate") submitBoardHeroSkill(action, "", event.target.closest("[data-replacement-rank]")?.dataset.replacementRank || "");
   if (action === "shen-biesan-pass") submitBoardHeroSkill(action);
   if (action === "yokoyama-activate") submitBoardHeroSkill(action);
   if (action === "yokoyama-swap") submitBoardHeroSkill(action, event.target.closest("[data-target-player-id]")?.dataset.targetPlayerId || "");

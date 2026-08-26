@@ -137,6 +137,10 @@ const MIGRATIONS = [
   {
     version: 25,
     path: fileURLToPath(new URL("./db/migrations/025_ssr_pity_200.sql", import.meta.url))
+  },
+  {
+    version: 26,
+    path: fileURLToPath(new URL("./db/migrations/026_zero_cost_hero_skills.sql", import.meta.url))
   }
 ];
 const HISTORY_ENABLED = String(process.env.GAME_HISTORY_ENABLED || "").toLowerCase() === "true";
@@ -1792,7 +1796,7 @@ async function settleBoardHeroHeat(client, record) {
     if (!owned.rows[0]) continue;
     const heatBefore = Number(owned.rows[0].skill_heat) || 0;
     const usedInGame = uses.some((use) => use?.accountId === player.accountId && use?.heroId === unitId);
-    const cooling = paidBoardSkillState(owned.rows[0].stars, heatBefore).coolingPerUnusedGame;
+    const cooling = paidBoardSkillState(owned.rows[0].stars, heatBefore, unitId).coolingPerUnusedGame;
     const heatAfter = usedInGame ? heatBefore : Math.max(0, Math.round((heatBefore - cooling) * 10) / 10);
     if (heatAfter !== heatBefore) {
       await client.query(
@@ -2705,7 +2709,7 @@ export async function chargeBoardHeroSkill(accountId, gameIdValue, unitIdValue, 
     const stars = Number(owned.rows[0].stars) || 1;
     const paidState = unitId === "yokoyama-yui"
       ? { cost: HERO_HOME_RULES.yokoyamaSkillCost, heat: null }
-      : paidBoardSkillState(stars, owned.rows[0].skill_heat);
+      : paidBoardSkillState(stars, owned.rows[0].skill_heat, unitId);
     await client.query(
       `INSERT INTO cdp_diamond_wallets (account_id) VALUES ($1::uuid)
        ON CONFLICT (account_id) DO NOTHING`,
@@ -2720,7 +2724,7 @@ export async function chargeBoardHeroSkill(accountId, gameIdValue, unitIdValue, 
     );
     if (!wallet.rows[0]) throw commerceError("钻石余额不足", 409);
     const heatBefore = paidState.heat;
-    const heatAfter = heatBefore == null ? null : Math.min(HERO_HOME_RULES.maxSkillHeat, heatBefore + 1);
+    const heatAfter = heatBefore == null ? null : Math.min(HERO_HOME_RULES.maxSkillHeat, heatBefore + paidState.heatPerUse);
     if (heatAfter != null) {
       await client.query(
         `UPDATE cdp_hero_units SET skill_heat = $3, updated_at = now()
@@ -2737,12 +2741,14 @@ export async function chargeBoardHeroSkill(accountId, gameIdValue, unitIdValue, 
       ) VALUES ($1::uuid, $2::uuid, $3::uuid, $4, $5, $6, $7, $8, $9, $10::jsonb)`,
       [useId, gameId, accountId, unitId, requestId, paidState.cost, balanceAfter, heatBefore, heatAfter, JSON.stringify(effectData)]
     );
-    await client.query(
-      `INSERT INTO cdp_diamond_ledger (
-        account_id, amount, balance_after, reason, rules_version, idempotency_key, detail
-      ) VALUES ($1::uuid, $2, $3, 'hero_skill', $4, $5, $6::jsonb)`,
-      [accountId, -paidState.cost, balanceAfter, HERO_HOME_RULES.boardSkillVersion, `hero_skill:${accountId}:${requestId}`, JSON.stringify({ gameId, unitId, effectData })]
-    );
+    if (paidState.cost > 0) {
+      await client.query(
+        `INSERT INTO cdp_diamond_ledger (
+          account_id, amount, balance_after, reason, rules_version, idempotency_key, detail
+        ) VALUES ($1::uuid, $2, $3, 'hero_skill', $4, $5, $6::jsonb)`,
+        [accountId, -paidState.cost, balanceAfter, HERO_HOME_RULES.boardSkillVersion, `hero_skill:${accountId}:${requestId}`, JSON.stringify({ gameId, unitId, effectData })]
+      );
+    }
     await client.query("COMMIT");
     return {
       rulesVersion: HERO_HOME_RULES.boardSkillVersion,
