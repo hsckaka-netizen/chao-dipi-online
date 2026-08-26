@@ -289,6 +289,11 @@ function applyState(nextState, options = {}) {
     selectedCardIds = new Set();
     throwDraftComponents = null;
   }
+  if (previousState?.status === "dealt" && nextState.stage === "lobby") {
+    resetDiamondWallet();
+    resetShopState();
+    resetHeroHomeState();
+  }
   const roomNotice = nextState.notice?.id && nextState.notice.id !== previousState?.notice?.id
     ? nextState.notice
     : null;
@@ -6046,7 +6051,7 @@ function renderRoomActionConfirmDialog() {
   const resetting = pendingRoomAction === "reset";
   const title = resetting ? "确认重开房间？" : "确认解散房间？";
   const description = resetting
-    ? "当前牌局会立即结束，所有玩家回到房间等待状态，已进行的出牌不会保留。"
+    ? "当前牌局会立即作废，本局已使用的对局道具、英雄技能钻石和热度变化会返还，所有玩家回到房间等待状态。"
     : "房间会立即解散，所有玩家和观战者都会离开，之后无法返回本房间。";
   return `
     <div class="modal-backdrop">

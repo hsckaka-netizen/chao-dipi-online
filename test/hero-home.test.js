@@ -541,9 +541,10 @@ test("existing five-person task requirements can be relaxed without changing the
 });
 
 test("server and table UI expose all three SSR board skill stages", async () => {
-  const [serverSource, appSource] = await Promise.all([
+  const [serverSource, appSource, gameHistorySource] = await Promise.all([
     readFile(fileURLToPath(new URL("../server.js", import.meta.url)), "utf8"),
-    readFile(fileURLToPath(new URL("../public/app.js", import.meta.url)), "utf8")
+    readFile(fileURLToPath(new URL("../public/app.js", import.meta.url)), "utf8"),
+    readFile(fileURLToPath(new URL("../game-history.js", import.meta.url)), "utf8")
   ]);
   assert.match(serverSource, /beginShenBiesanSkillStage/);
   assert.match(serverSource, /resolveShenBiesanSkillStage/);
@@ -555,6 +556,8 @@ test("server and table UI expose all three SSR board skill stages", async () => 
   assert.match(serverSource, /selectedRankByPlayerId/);
   assert.match(serverSource, /ownedReplacementRanksForShenBiesan/);
   assert.match(serverSource, /shenBiesanRequiredPairedCounts/);
+  assert.match(serverSource, /refundBoardHeroSkillUses/);
+  assert.match(serverSource, /boardHeroSkillUseInFlight/);
   assert.match(serverSource, /directSkillPendingPlayerId/);
   assert.match(appSource, /data-action="shen-biesan-activate"/);
   assert.match(appSource, /data-replacement-rank/);
@@ -562,6 +565,9 @@ test("server and table UI expose all three SSR board skill stages", async () => 
   assert.match(appSource, /data-action="shen-jiangwen-activate"/);
   assert.match(appSource, /!isBid && shenJiangwenSkill\.canActivate/);
   assert.match(appSource, /英雄技能 · 发动排骨之王/);
+  assert.match(appSource, /英雄技能钻石和热度变化会返还/);
+  assert.match(gameHistorySource, /hero_skill_refund/);
+  assert.match(gameHistorySource, /SET skill_heat = \$3/);
   assert.match(appSource, /每天北京时间06:00生成最多3个新任务；当天完成或领取后不补位/);
   assert.match(appSource, /建材 40%（50个）/);
   assert.match(appSource, /function gameCardRank/);
@@ -637,4 +643,10 @@ test("hero migration stores home, gacha, snapshots, and hero bonus", async () =>
     "utf8"
   );
   assert.match(zeroCostSkillMigration, /CHECK \(cost >= 0\)/);
+
+  const refundableSkillMigration = await readFile(
+    fileURLToPath(new URL("../db/migrations/027_refundable_board_hero_skills.sql", import.meta.url)),
+    "utf8"
+  );
+  assert.match(refundableSkillMigration, /refunded_at timestamptz/);
 });

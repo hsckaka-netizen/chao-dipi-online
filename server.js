@@ -108,6 +108,7 @@ import {
   pullHeroGacha,
   recordStoredAccountLogin,
   refundOrphanedGameItemUses,
+  refundBoardHeroSkillUses,
   refundGameItemUses,
   reserveGameItem,
   resolveRestartGameItemUses,
@@ -1094,6 +1095,20 @@ function recordBoardHeroSkillUse(room, player, heroId, payment, effect = {}) {
   return use;
 }
 
+async function chargeRoomBoardHeroSkill(room, ...args) {
+  if (room.boardHeroSkillUseInFlight) {
+    const error = new Error("正在处理其他英雄技能，请稍后重试");
+    error.status = 409;
+    throw error;
+  }
+  room.boardHeroSkillUseInFlight = true;
+  try {
+    return await chargeBoardHeroSkill(...args);
+  } finally {
+    room.boardHeroSkillUseInFlight = false;
+  }
+}
+
 async function resolveShenBiesanSkillStage(room) {
   const state = room.boardHeroSkills.shenBiesan;
   if (room.stage !== "shen-biesan-skill" || state.resolving) return false;
@@ -1104,7 +1119,8 @@ async function resolveShenBiesanSkillStage(room) {
   for (const player of applicants) {
     try {
       const replacementRank = state.selectedRankByPlayerId[player.id];
-      const payment = await chargeBoardHeroSkill(
+      const payment = await chargeRoomBoardHeroSkill(
+        room,
         player.accountId,
         room.gameRecordId,
         "shen-biesan",
@@ -1309,6 +1325,7 @@ function deal(room, options = {}) {
   room.gameItems = emptyGameItems();
   room.boardHeroSkills = emptyBoardHeroSkills();
   room.boardHeroEffects = emptyBoardHeroEffects();
+  room.boardHeroSkillUseInFlight = false;
   if (!options.preserveRestartUsage) room.restartCardUsedPlayerIds = [];
   if (room.removedCards.length) {
     addEvent(room, `本局开局移除 ${room.removedCards.map((card) => card.label).join("、")}，底牌保持 ${room.kittySize} 张`);
@@ -1373,6 +1390,7 @@ function resetRoomToLobby(room, options = {}) {
   room.boardHeroSkills = emptyBoardHeroSkills();
   room.boardHeroEffects = emptyBoardHeroEffects();
   room.restartCardUsedPlayerIds = [];
+  room.boardHeroSkillUseInFlight = false;
   room.events = [];
   room.players.forEach((player) => {
     player.hand = [];
@@ -2787,7 +2805,8 @@ async function activateYokoyamaSkill(room, player, requestId) {
   const candidates = shuffle(room.players.filter((item) => item.id !== player.id))
     .slice(0, stars)
     .map((item) => item.id);
-  const payment = await chargeBoardHeroSkill(
+  const payment = await chargeRoomBoardHeroSkill(
+    room,
     player.accountId,
     room.gameRecordId,
     "yokoyama-yui",
@@ -2952,7 +2971,8 @@ function completeShenJiangwenOffer(room, player) {
 
 async function activateShenJiangwenSkill(room, player, requestId) {
   if (!shenJiangwenCanActivate(room, player)) return { error: "排骨之王只能在首次轮到本人炒底时发动", status: 409 };
-  const payment = await chargeBoardHeroSkill(
+  const payment = await chargeRoomBoardHeroSkill(
+    room,
     player.accountId,
     room.gameRecordId,
     "shen-jiangwen",
@@ -5705,6 +5725,7 @@ async function handleApi(req, res, pathParts, url) {
       boardHeroEffects: emptyBoardHeroEffects(),
       restartCardUsedPlayerIds: [],
       itemUseInFlight: false,
+      boardHeroSkillUseInFlight: false,
       snapshotVersion: 0
     };
     rooms.set(room.id, room);
@@ -6290,11 +6311,15 @@ async function handleApi(req, res, pathParts, url) {
       const viewer = playerFor(room, body.playerId, body.token);
       if (!viewer) return writeJson(res, 401, { error: "玩家身份已失效" });
       if (!viewer.host) return writeJson(res, 403, { error: "只有房主可以重开" });
-      if (room.gameRecordId && room.gameItems?.uses?.length) {
+      if (room.itemUseInFlight || room.boardHeroSkillUseInFlight) {
+        return writeJson(res, 409, { error: "本局资源正在结算，请稍后重试" });
+      }
+      if (room.gameRecordId && (room.gameItems?.uses?.length || room.boardHeroEffects?.uses?.length)) {
         try {
-          await refundGameItemUses(room.gameRecordId);
+          if (room.gameItems?.uses?.length) await refundGameItemUses(room.gameRecordId);
+          if (room.boardHeroEffects?.uses?.length) await refundBoardHeroSkillUses(room.gameRecordId);
         } catch (error) {
-          return writeJson(res, error.status || 503, { error: "对局道具返还失败，暂不能重置房间" });
+          return writeJson(res, error.status || 503, { error: "本局道具或英雄技能资源返还失败，暂不能重置房间" });
         }
       }
       resetRoomToLobby(room);

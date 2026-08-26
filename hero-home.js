@@ -1,7 +1,7 @@
 export const HERO_HOME_RULES = Object.freeze({
-  version: "2026-08-26-v8",
+  version: "2026-08-26-v9",
   skillVersion: "2026-08-24-skill-v6",
-  boardSkillVersion: "2026-08-26-board-skill-v2",
+  boardSkillVersion: "2026-08-26-board-skill-v3",
   maxProductionHours: 6,
   singlePullPrice: 300,
   tenPullPrice: 2700,

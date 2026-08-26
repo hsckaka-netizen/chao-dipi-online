@@ -141,6 +141,10 @@ const MIGRATIONS = [
   {
     version: 26,
     path: fileURLToPath(new URL("./db/migrations/026_zero_cost_hero_skills.sql", import.meta.url))
+  },
+  {
+    version: 27,
+    path: fileURLToPath(new URL("./db/migrations/027_refundable_board_hero_skills.sql", import.meta.url))
   }
 ];
 const HISTORY_ENABLED = String(process.env.GAME_HISTORY_ENABLED || "").toLowerCase() === "true";
@@ -2759,6 +2763,75 @@ export async function chargeBoardHeroSkill(accountId, gameIdValue, unitIdValue, 
       heatAfter,
       effectData
     };
+  } catch (error) {
+    await client.query("ROLLBACK");
+    rememberError(error);
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+export async function refundBoardHeroSkillUses(gameIdValue) {
+  const database = requirePool();
+  const gameId = String(gameIdValue || "");
+  const client = await database.connect();
+  try {
+    await client.query("BEGIN");
+    const uses = await client.query(
+      `SELECT use_id, account_id, unit_id, cost, heat_before
+       FROM cdp_game_hero_skill_uses
+       WHERE game_id = $1::uuid AND refunded_at IS NULL
+       ORDER BY created_at, use_id
+       FOR UPDATE`,
+      [gameId]
+    );
+    let diamondsRefunded = 0;
+    for (const use of uses.rows) {
+      const cost = Number(use.cost) || 0;
+      if (use.heat_before != null) {
+        const restored = await client.query(
+          `UPDATE cdp_hero_units
+           SET skill_heat = $3, updated_at = now()
+           WHERE account_id = $1::uuid AND unit_id = $2
+           RETURNING skill_heat`,
+          [use.account_id, use.unit_id, Number(use.heat_before) || 0]
+        );
+        if (!restored.rows[0]) throw commerceError("英雄技能热度恢复失败", 409);
+      }
+      if (cost > 0) {
+        const wallet = await client.query(
+          `UPDATE cdp_diamond_wallets
+           SET balance = balance + $2, updated_at = now()
+           WHERE account_id = $1::uuid
+           RETURNING balance`,
+          [use.account_id, cost]
+        );
+        if (!wallet.rows[0]) throw commerceError("英雄技能钻石返还失败", 409);
+        await client.query(
+          `INSERT INTO cdp_diamond_ledger (
+            account_id, amount, balance_after, reason, rules_version, idempotency_key, detail
+          ) VALUES ($1::uuid, $2, $3, 'hero_skill_refund', $4, $5, $6::jsonb)`,
+          [
+            use.account_id,
+            cost,
+            Number(wallet.rows[0].balance) || 0,
+            HERO_HOME_RULES.boardSkillVersion,
+            `hero_skill_refund:${use.use_id}`,
+            JSON.stringify({ gameId, useId: use.use_id, unitId: use.unit_id })
+          ]
+        );
+        diamondsRefunded += cost;
+      }
+      await client.query(
+        `UPDATE cdp_game_hero_skill_uses
+         SET refunded_at = now()
+         WHERE use_id = $1::uuid`,
+        [use.use_id]
+      );
+    }
+    await client.query("COMMIT");
+    return { resolved: uses.rows.length, diamondsRefunded };
   } catch (error) {
     await client.query("ROLLBACK");
     rememberError(error);
