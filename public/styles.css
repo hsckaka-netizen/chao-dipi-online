@@ -1612,8 +1612,22 @@ section.game-room-overview {
   color: #79530a;
 }
 
-.table-dogleg-players {
+.table-dogleg-tag.random-order {
   max-width: 100%;
+  flex-wrap: wrap;
+}
+
+.table-dogleg-tag.random-order > span {
+  white-space: nowrap;
+}
+
+.table-dogleg-tag.random-order > span + span::before {
+  content: "｜";
+  margin-inline-end: 4px;
+  color: #7ba691;
+}
+
+.table-dogleg-tag.random-order > span:last-child {
   white-space: normal;
   overflow-wrap: anywhere;
 }

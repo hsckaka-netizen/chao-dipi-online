@@ -6685,16 +6685,20 @@ function renderDoglegTableTag() {
   if (setup.doglegMode === "random-order") {
     const card = setup.doglegCard;
     if (!card || (state.stage !== "playing" && state.stage !== "finished")) return "";
-    const positions = (setup.doglegTargetPositions || []).map((position) => `第${position}次`).join("、") || "无";
+    const targetPositions = setup.doglegTargetPositions || [];
+    const positions = targetPositions.map((position) => `第${position}次`).join("、") || "无";
+    const compactPositions = targetPositions.join("、") || "无";
     const sequence = Number(setup.doglegHitSequence) || 0;
     const doglegNames = names.length ? names.join("、") : "尚未出现";
+    const compactDoglegNames = names.length ? names.join("、") : "无";
     const revealText = `生效顺位：${positions}；当前已计 ${sequence} 次；狗腿：${doglegNames}`;
     return `
-      <span class="tag table-dogleg-tag" title="${escapeHtml(revealText)}">
-        顺位狗腿 <strong class="${escapeHtml(card.color || suitColor(card.suit))}">${escapeHtml(doglegCardText(card))}</strong>
-        <i>${names.length}/${needed} · ${sequence}次</i>
+      <span class="tag table-dogleg-tag random-order" title="${escapeHtml(revealText)}">
+        <span>顺位狗腿 <strong class="${escapeHtml(card.color || suitColor(card.suit))}">${escapeHtml(doglegCardText(card))}</strong></span>
+        <span>顺位 ${escapeHtml(compactPositions)}</span>
+        <span>计 ${sequence}</span>
+        <span>狗腿 ${escapeHtml(compactDoglegNames)}</span>
       </span>
-      <span class="tag table-dogleg-players" title="${escapeHtml(`狗腿：${doglegNames}`)}">狗腿：${escapeHtml(doglegNames)}</span>
     `;
   }
   const card = setup.doglegCard;

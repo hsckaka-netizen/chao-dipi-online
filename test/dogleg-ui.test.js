@@ -45,8 +45,11 @@ test("顺位狗腿显示同色同点双花色牌、生效顺位和当前计数",
   const source = await readFile(appPath, "utf8");
   assert.match(source, /card\.suits\.map\(\(suit\) => `\$\{symbols\[suit\] \|\| ""\}\$\{card\.rank\}`\)/);
   assert.match(source, /生效顺位：\$\{positions\}/);
+  assert.match(source, /class="tag table-dogleg-tag random-order"/);
+  assert.match(source, /<span>顺位 \$\{escapeHtml\(compactPositions\)\}<\/span>/);
+  assert.match(source, /<span>计 \$\{sequence\}<\/span>/);
+  assert.match(source, /<span>狗腿 \$\{escapeHtml\(compactDoglegNames\)\}<\/span>/);
   assert.doesNotMatch(source, /setup\.doglegCandidateCount/);
-  assert.match(source, /狗腿：\$\{escapeHtml\(doglegNames\)\}/);
   assert.match(source, /names\.length \? names\.join\("、"\) : "尚未出现"/);
   assert.match(source, /doglegCard\.type === "joker"/);
   assert.match(source, /正副皇牌组/);
