@@ -42,11 +42,13 @@ test("home production uses star rates, keeps fractions, and stops at six hours",
   assert.equal(preview.isFull, true);
 });
 
-test("minions use their own production and upgrade curves", () => {
+test("minions keep their upgrade curve while heroes use the new star costs", () => {
   assert.equal(unitProductionRate("trainee", 4), 14);
   assert.equal(starUpgradeCost("trainee", 1), 10);
-  assert.equal(starUpgradeCost("xiaoxu", 4), 80);
-  assert.equal(starUpgradeCost("xiaoxu", 5), null);
+  assert.deepEqual(
+    [1, 2, 3, 4, 5].map((stars) => starUpgradeCost("xiaoxu", stars)),
+    [40, 80, 120, 200, null]
+  );
 });
 
 test("first-pull guarantee selection can prefer an unowned hero", () => {
@@ -649,4 +651,20 @@ test("hero migration stores home, gacha, snapshots, and hero bonus", async () =>
     "utf8"
   );
   assert.match(refundableSkillMigration, /refunded_at timestamptz/);
+
+  const starResetMigration = await readFile(
+    fileURLToPath(new URL("../db/migrations/029_reset_hero_stars.sql", import.meta.url)),
+    "utf8"
+  );
+  assert.match(starResetMigration, /home_production_before_star_reset/);
+  assert.match(starResetMigration, /ARRAY\[16, 22, 28, 34, 40\]/);
+  assert.match(starResetMigration, /WHEN 5 THEN 200/);
+  assert.match(starResetMigration, /stars = 1/);
+  assert.equal((starResetMigration.match(/unit_id NOT IN \('boka-youth', 'brick-worker', 'trainee'\)/g) || []).length, 2);
+
+  const gameHistorySource = await readFile(
+    fileURLToPath(new URL("../game-history.js", import.meta.url)),
+    "utf8"
+  );
+  assert.match(gameHistorySource, /029_reset_hero_stars\.sql/);
 });

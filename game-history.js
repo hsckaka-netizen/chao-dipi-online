@@ -154,6 +154,10 @@ const MIGRATIONS = [
   {
     version: 28,
     path: fileURLToPath(new URL("./db/migrations/028_daily_game_tasks.sql", import.meta.url))
+  },
+  {
+    version: 29,
+    path: fileURLToPath(new URL("./db/migrations/029_reset_hero_stars.sql", import.meta.url))
   }
 ];
 const HISTORY_ENABLED = String(process.env.GAME_HISTORY_ENABLED || "").toLowerCase() === "true";

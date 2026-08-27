@@ -1,5 +1,5 @@
 export const HERO_HOME_RULES = Object.freeze({
-  version: "2026-08-26-v9",
+  version: "2026-08-27-v1",
   skillVersion: "2026-08-24-skill-v6",
   boardSkillVersion: "2026-08-26-board-skill-v3",
   maxProductionHours: 6,
@@ -22,7 +22,7 @@ export const HERO_HOME_RULES = Object.freeze({
   maxMinionDuplicateUniversalFragments: 1,
   ssrUniversalFragmentRatio: 10,
   ssrLeftoverUniversalPerFragment: 5,
-  heroStarCosts: Object.freeze({ 2: 20, 3: 40, 4: 60, 5: 80 }),
+  heroStarCosts: Object.freeze({ 2: 40, 3: 80, 4: 120, 5: 200 }),
   minionStarCosts: Object.freeze({ 2: 10, 3: 20, 4: 30, 5: 40 }),
   heroProduction: Object.freeze([16, 22, 28, 34, 40]),
   srProduction: Object.freeze([16, 22, 28, 34, 40]),
