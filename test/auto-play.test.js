@@ -476,8 +476,13 @@ test("顺位狗腿公开同色同点牌组与随机顺位，并按有效打出�
   const playing = await waitForHumanPlayingTurn(stateUrl, actionUrl, credentials);
   assert.equal(playing.stage, "playing", "顺位狗腿不应停在庄家选狗腿牌阶段");
   assert.equal(playing.setup.doglegMode, "random-order");
-  assert.equal(playing.setup.doglegCard.type, "normal");
-  assert.equal(playing.setup.doglegCard.suits.length, 2);
+  if (playing.setup.doglegCard.type === "joker") {
+    assert.deepEqual(playing.setup.doglegCard.jokers, ["big", "small"]);
+    assert.equal(playing.setup.doglegCard.label, "正皇 / 副皇");
+  } else {
+    assert.equal(playing.setup.doglegCard.type, "normal");
+    assert.equal(playing.setup.doglegCard.suits.length, 2);
+  }
   assert.equal(new Set(playing.setup.doglegTargetPositions).size, playing.setup.doglegTargetPositions.length);
   assert.equal(playing.setup.doglegTargetCount, Math.min(2, playing.setup.doglegCandidateCount));
   assert.ok(playing.setup.doglegTargetPositions.every((position) => position >= 1 && position <= playing.setup.doglegCandidateCount));

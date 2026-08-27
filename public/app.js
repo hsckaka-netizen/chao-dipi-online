@@ -3311,7 +3311,7 @@ function renderDoglegModeControl() {
     { id: "traditional", label: "传统狗腿", title: "由庄家选择统一狗腿牌" },
     { id: "dynamic", label: "动态狗腿", title: "每名非庄家玩家独立随机狗腿牌，按标记数实时排名" },
     { id: "hidden", label: "暗狗腿", title: "随机确定固定狗腿，专属狗腿牌打出后公开身份" },
-    { id: "random-order", label: "顺位狗腿", title: "随机同色同点狗腿牌，并随机指定生效出牌顺位" }
+    { id: "random-order", label: "顺位狗腿", title: "随机同色同点牌组或正副皇牌组，并随机指定生效出牌顺位" }
   ];
   return `
     <span class="dogleg-count-control dogleg-mode-control">
@@ -7907,6 +7907,7 @@ function isDoglegHandCard(card) {
   if (state?.stage !== "playing" || !doglegCard || !viewerId || !needed) return false;
   if (revealedIds.length >= needed || viewerId === setup.bankerId || revealedIds.includes(viewerId)) return false;
   if (setup.doglegMode === "random-order") {
+    if (doglegCard.type === "joker") return card?.type === "joker";
     return card?.type === "normal" && card.rank === doglegCard.rank && card.color === doglegCard.color;
   }
   return card?.type === "normal" && card.suit === doglegCard.suit && card.rank === doglegCard.rank;

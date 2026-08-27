@@ -19,7 +19,7 @@ import {
   hiddenDoglegRevealedPlayerIds,
   normalizeDoglegMode,
   rankDynamicDoglegs,
-  sameColorRankDoglegCard
+  sameRandomOrderDoglegCard
 } from "../dogleg-mechanism.js";
 
 function card(id, type = "normal") {
@@ -53,8 +53,26 @@ test("顺位狗腿把同颜色同点数的两个花色作为一组，并按候�
   assert.equal(state.card.label, "♠5 / ♣5");
   assert.equal(state.candidateCount, 3);
   assert.deepEqual(state.targetPositions, [2, 3]);
-  assert.equal(sameColorRankDoglegCard({ type: "normal", suit: "C", color: "black", rank: "5" }, state.card), true);
-  assert.equal(sameColorRankDoglegCard({ type: "normal", suit: "H", color: "red", rank: "5" }, state.card), false);
+  assert.equal(sameRandomOrderDoglegCard({ type: "normal", suit: "C", color: "black", rank: "5" }, state.card), true);
+  assert.equal(sameRandomOrderDoglegCard({ type: "normal", suit: "H", color: "red", rank: "5" }, state.card), false);
+});
+
+test("顺位狗腿把正皇和副皇作为同一组", () => {
+  const values = [0, 0.999];
+  const state = createRandomOrderDoglegState([
+    { id: "banker", hand: [{ id: "banker-big", type: "joker", joker: "big" }] },
+    { id: "idle-a", hand: [{ id: "a-big", type: "joker", joker: "big" }] },
+    { id: "idle-b", hand: [{ id: "b-small", type: "joker", joker: "small" }] },
+    { id: "idle-c", hand: [{ id: "c-s5", type: "normal", suit: "S", color: "black", rank: "5" }] }
+  ], "banker", 1, () => values.shift() ?? 0);
+
+  assert.equal(state.card.type, "joker");
+  assert.equal(state.card.label, "正皇 / 副皇");
+  assert.equal(state.candidateCount, 2);
+  assert.deepEqual(state.targetPositions, [2]);
+  assert.equal(sameRandomOrderDoglegCard({ type: "joker", joker: "big" }, state.card), true);
+  assert.equal(sameRandomOrderDoglegCard({ type: "joker", joker: "small" }, state.card), true);
+  assert.equal(sameRandomOrderDoglegCard({ type: "normal", suit: "S", color: "black", rank: "JOKER" }, state.card), false);
 });
 
 test("顺位狗腿按有效出牌次数推进，成为狗腿后再次打出不计数", () => {

@@ -48,7 +48,7 @@ import {
   hiddenDoglegIsRevealed,
   hiddenDoglegPlayerIds,
   normalizeDoglegMode,
-  sameColorRankDoglegCard
+  sameRandomOrderDoglegCard
 } from "./dogleg-mechanism.js";
 import {
   allocateBankerTeamScores,
@@ -3209,7 +3209,7 @@ function sameDoglegCard(card, doglegCard) {
 
 function sameRoomDoglegCard(room, card) {
   if (normalizeDoglegMode(room.doglegMode) === DOGLEG_MODE_RANDOM_ORDER) {
-    return sameColorRankDoglegCard(card, room.doglegCard);
+    return sameRandomOrderDoglegCard(card, room.doglegCard);
   }
   return sameDoglegCard(card, room.doglegCard);
 }
@@ -3266,7 +3266,7 @@ function revealDoglegIfNeeded(room, player, selected) {
     room.randomOrderDogleg = outcome.state;
     room.doglegPlayerIds = outcome.doglegPlayerIds;
     if (!outcome.hit) return;
-    const hitCard = selected.find((card) => sameColorRankDoglegCard(card, room.doglegCard));
+    const hitCard = selected.find((card) => sameRandomOrderDoglegCard(card, room.doglegCard));
     if (outcome.hit.becameDogleg) {
       addEvent(room, `${player.name} 第 ${outcome.hit.sequence} 次有效打出顺位狗腿牌${hitCard?.label ? ` ${hitCard.label}` : ""}，命中顺位并成为狗腿`);
     } else {

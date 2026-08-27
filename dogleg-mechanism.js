@@ -119,13 +119,25 @@ const COLOR_SUIT_IDS = Object.freeze({
 
 const SUIT_SYMBOLS = Object.freeze({ S: "♠", H: "♥", C: "♣", D: "♦" });
 
-export function sameColorRankDoglegCard(card, doglegCard) {
+export function sameRandomOrderDoglegCard(card, doglegCard) {
+  if (doglegCard?.type === "joker") {
+    return card?.type === "joker" && (card.joker === "big" || card.joker === "small");
+  }
   if (card?.type !== "normal" || doglegCard?.type !== "normal") return false;
   return Boolean(card.rank && card.rank === doglegCard.rank
     && normalCardColor(card) === normalCardColor(doglegCard));
 }
 
 function randomOrderDoglegCard(card) {
+  if (card?.type === "joker") {
+    return {
+      type: "joker",
+      color: "",
+      rank: "JOKER",
+      jokers: ["big", "small"],
+      label: "正皇 / 副皇"
+    };
+  }
   if (card?.type !== "normal" || !card.rank) return null;
   const color = normalCardColor(card);
   const suits = COLOR_SUIT_IDS[color];
@@ -144,11 +156,12 @@ function randomOrderDoglegCard(card) {
 
 export function createRandomOrderDoglegState(players, bankerId, needed, random = Math.random) {
   const nonBankers = (players || []).filter((player) => player?.id && player.id !== bankerId);
-  const eligibleCards = nonBankers.flatMap((player) => (player.hand || []).filter((card) => card?.type === "normal"));
+  const eligibleCards = nonBankers.flatMap((player) => (player.hand || [])
+    .filter((card) => card?.type === "normal" || card?.type === "joker"));
   const selectedCard = eligibleCards[randomIndex(eligibleCards.length, random)] || null;
   const doglegCard = randomOrderDoglegCard(selectedCard);
   const candidateCount = doglegCard
-    ? nonBankers.filter((player) => (player.hand || []).some((card) => sameColorRankDoglegCard(card, doglegCard))).length
+    ? nonBankers.filter((player) => (player.hand || []).some((card) => sameRandomOrderDoglegCard(card, doglegCard))).length
     : 0;
   const limit = Math.max(0, Math.min(candidateCount, Math.round(Number(needed) || 0)));
   const availablePositions = Array.from({ length: candidateCount }, (_, index) => index + 1);
@@ -173,7 +186,7 @@ export function applyRandomOrderDoglegPlay(state, options = {}) {
   const playerId = options.playerId;
   const doglegPlayerIds = Array.isArray(state?.playerIds) ? state.playerIds : [];
   const targetPositions = Array.isArray(state?.targetPositions) ? state.targetPositions : [];
-  const hitCard = (options.playedCards || []).find((card) => sameColorRankDoglegCard(card, state?.card));
+  const hitCard = (options.playedCards || []).find((card) => sameRandomOrderDoglegCard(card, state?.card));
   if (!playerId || !hitCard || doglegPlayerIds.includes(playerId) || doglegPlayerIds.length >= targetPositions.length) {
     return { hit: null, state, doglegPlayerIds: [...doglegPlayerIds] };
   }
