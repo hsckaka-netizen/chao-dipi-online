@@ -1530,9 +1530,6 @@ function setupSnapshot(room, viewer = null) {
           ? Number(room.randomOrderDogleg?.playSequence) || 0
           : 0,
     doglegHits,
-    doglegCandidateCount: mode === DOGLEG_MODE_RANDOM_ORDER
-      ? Math.max(0, Number(room.randomOrderDogleg?.candidateCount) || 0)
-      : 0,
     doglegTargetPositions: mode === DOGLEG_MODE_RANDOM_ORDER
       ? [...(room.randomOrderDogleg?.targetPositions || [])]
       : [],
@@ -3093,7 +3090,7 @@ function finishFrying(room) {
     room.doglegCard = room.randomOrderDogleg.card;
     beginPlaying(room);
     const positions = room.randomOrderDogleg.targetPositions.map((position) => `第 ${position} 次`).join("、") || "无";
-    addEvent(room, `本局使用顺位狗腿，狗腿牌为 ${room.doglegCard?.label || "未生成"}；${room.randomOrderDogleg.candidateCount} 名非庄玩家持有，生效顺位为${positions}`);
+    addEvent(room, `本局使用顺位狗腿，狗腿牌为 ${room.doglegCard?.label || "未生成"}；生效顺位为${positions}`);
     return;
   }
   room.dynamicDogleg = null;

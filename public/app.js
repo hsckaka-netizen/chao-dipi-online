@@ -6687,12 +6687,14 @@ function renderDoglegTableTag() {
     if (!card || (state.stage !== "playing" && state.stage !== "finished")) return "";
     const positions = (setup.doglegTargetPositions || []).map((position) => `第${position}次`).join("、") || "无";
     const sequence = Number(setup.doglegHitSequence) || 0;
-    const revealText = `生效顺位：${positions}；当前已计 ${sequence} 次；${setup.doglegCandidateCount || 0} 名非庄玩家持有`;
+    const doglegNames = names.length ? names.join("、") : "尚未出现";
+    const revealText = `生效顺位：${positions}；当前已计 ${sequence} 次；狗腿：${doglegNames}`;
     return `
       <span class="tag table-dogleg-tag" title="${escapeHtml(revealText)}">
         顺位狗腿 <strong class="${escapeHtml(card.color || suitColor(card.suit))}">${escapeHtml(doglegCardText(card))}</strong>
         <i>${names.length}/${needed} · ${sequence}次</i>
       </span>
+      <span class="tag table-dogleg-players" title="${escapeHtml(`狗腿：${doglegNames}`)}">狗腿：${escapeHtml(doglegNames)}</span>
     `;
   }
   const card = setup.doglegCard;

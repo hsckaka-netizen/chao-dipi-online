@@ -1612,6 +1612,12 @@ section.game-room-overview {
   color: #79530a;
 }
 
+.table-dogleg-players {
+  max-width: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
 .topbar-actions {
   display: flex;
   flex-wrap: wrap;

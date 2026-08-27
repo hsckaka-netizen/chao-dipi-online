@@ -205,6 +205,20 @@ function jsonValue(value, fallback) {
   return JSON.parse(JSON.stringify(value));
 }
 
+function publicHistorySetup(value) {
+  const setup = jsonValue(value, {});
+  if (setup.randomOrderDogleg && typeof setup.randomOrderDogleg === "object") {
+    delete setup.randomOrderDogleg.candidateCount;
+  }
+  if (Array.isArray(setup.events)) {
+    setup.events = setup.events.map((event) => ({
+      ...event,
+      text: String(event?.text || "").replace(/；\s*\d+\s*名非庄玩家持有，(?=生效顺位为)/g, "；")
+    }));
+  }
+  return setup;
+}
+
 function profileIdForRoomPlayer(room, roomPlayerId) {
   return room.players.find((player) => player.id === roomPlayerId)?.profileId || null;
 }
@@ -1649,7 +1663,7 @@ export function buildGameRecord(room) {
     bottomPoints: Number(result.bottomPoints) || 0,
     bottomCards: (result.bottomCards || []).map(compactCardId),
     removedCards: (room.removedCards || []).map(compactCardId),
-    setup: {
+    setup: publicHistorySetup({
       ...jsonValue(room.setup, {}),
       bankerScoreMode: room.bankerScoreMode || "banker-remainder",
       doglegMode: room.doglegMode || "traditional",
@@ -1657,7 +1671,7 @@ export function buildGameRecord(room) {
       hiddenDogleg: jsonValue(room.hiddenDogleg, null),
       randomOrderDogleg: jsonValue(room.randomOrderDogleg, null),
       events: jsonValue([...(room.events || [])].reverse(), [])
-    },
+    }),
     result: compactResult(result),
     trickHistory: compactTrickHistory(room.settledTrickHistory?.length ? room.settledTrickHistory : room.trickHistory),
     boardHeroEffects: jsonValue(room.boardHeroEffects, {}),
@@ -3986,6 +4000,7 @@ export async function getGameHistory(gameId) {
     dogleg_card: row.dogleg_card ? historyCardFromId(row.dogleg_card) : null,
     bottom_cards: (row.bottom_cards || []).map(historyCardFromId),
     removed_cards: (row.removed_cards || []).map(historyCardFromId),
+    setup_data: publicHistorySetup(row.setup_data),
     trick_history: expandHistoryTricks(row.trick_history)
   };
 }

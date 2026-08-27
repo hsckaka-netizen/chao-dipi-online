@@ -184,6 +184,27 @@ test("settled game is converted to an immutable history record", () => {
   assert.equal(record.players[2].name, "陈然");
 });
 
+test("顺位狗腿历史不保存候选持有人数，并脱敏旧版事件文案", () => {
+  const room = settledRoom();
+  room.doglegMode = "random-order";
+  room.randomOrderDogleg = {
+    card: { type: "normal", color: "black", rank: "J", suits: ["S", "C"] },
+    candidateCount: 5,
+    targetPositions: [2, 4],
+    playerIds: ["room-dogleg"]
+  };
+  room.events = [{
+    id: "legacy-event",
+    at: "2026-07-20T10:10:00.000Z",
+    text: "本局使用顺位狗腿，狗腿牌为 ♠J / ♣J；5 名非庄玩家持有，生效顺位为第 2 次、第 4 次"
+  }];
+
+  const record = buildGameRecord(room);
+
+  assert.equal(Object.hasOwn(record.setup.randomOrderDogleg, "candidateCount"), false);
+  assert.equal(record.setup.events[0].text, "本局使用顺位狗腿，狗腿牌为 ♠J / ♣J；生效顺位为第 2 次、第 4 次");
+});
+
 test("history keeps original and item-adjusted scores separately", () => {
   const room = settledRoom();
   Object.assign(room.result.playerResults[2], {

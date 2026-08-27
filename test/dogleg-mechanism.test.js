@@ -51,7 +51,7 @@ test("顺位狗腿把同颜色同点数的两个花色作为一组，并按候�
   ], "banker", 2, () => values.shift() ?? 0);
 
   assert.equal(state.card.label, "♠5 / ♣5");
-  assert.equal(state.candidateCount, 3);
+  assert.equal(Object.hasOwn(state, "candidateCount"), false);
   assert.deepEqual(state.targetPositions, [2, 3]);
   assert.equal(sameRandomOrderDoglegCard({ type: "normal", suit: "C", color: "black", rank: "5" }, state.card), true);
   assert.equal(sameRandomOrderDoglegCard({ type: "normal", suit: "H", color: "red", rank: "5" }, state.card), false);
@@ -68,7 +68,7 @@ test("顺位狗腿把正皇和副皇作为同一组", () => {
 
   assert.equal(state.card.type, "joker");
   assert.equal(state.card.label, "正皇 / 副皇");
-  assert.equal(state.candidateCount, 2);
+  assert.equal(Object.hasOwn(state, "candidateCount"), false);
   assert.deepEqual(state.targetPositions, [2]);
   assert.equal(sameRandomOrderDoglegCard({ type: "joker", joker: "big" }, state.card), true);
   assert.equal(sameRandomOrderDoglegCard({ type: "joker", joker: "small" }, state.card), true);
@@ -78,7 +78,6 @@ test("顺位狗腿把正皇和副皇作为同一组", () => {
 test("顺位狗腿按有效出牌次数推进，成为狗腿后再次打出不计数", () => {
   const state = {
     card: { type: "normal", color: "black", rank: "5", suits: ["S", "C"] },
-    candidateCount: 3,
     targetPositions: [2, 3],
     playSequence: 0,
     plays: [],

@@ -173,7 +173,6 @@ export function createRandomOrderDoglegState(players, bankerId, needed, random =
 
   return {
     card: doglegCard,
-    candidateCount,
     targetPositions,
     playSequence: 0,
     lastPlay: null,

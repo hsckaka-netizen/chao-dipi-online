@@ -484,9 +484,12 @@ test("顺位狗腿公开同色同点牌组与随机顺位，并按有效打出�
     assert.equal(playing.setup.doglegCard.suits.length, 2);
   }
   assert.equal(new Set(playing.setup.doglegTargetPositions).size, playing.setup.doglegTargetPositions.length);
-  assert.equal(playing.setup.doglegTargetCount, Math.min(2, playing.setup.doglegCandidateCount));
-  assert.ok(playing.setup.doglegTargetPositions.every((position) => position >= 1 && position <= playing.setup.doglegCandidateCount));
-  assert.ok(playing.events.some((event) => event.text.includes("本局使用顺位狗腿")));
+  assert.equal(Object.hasOwn(playing.setup, "doglegCandidateCount"), false);
+  assert.ok(playing.setup.doglegTargetCount >= 1 && playing.setup.doglegTargetCount <= 2);
+  assert.ok(playing.setup.doglegTargetPositions.every((position) => position >= 1));
+  const setupEvent = playing.events.find((event) => event.text.includes("本局使用顺位狗腿"));
+  assert.ok(setupEvent);
+  assert.doesNotMatch(setupEvent.text, /名非庄玩家持有/);
 
   await jsonRequest(actionUrl("auto-play"), {
     method: "POST",
@@ -500,6 +503,7 @@ test("顺位狗腿公开同色同点牌组与随机顺位，并按有效打出�
   );
 
   assert.equal(finished.setup.doglegPlayerIds.length, finished.setup.doglegTargetCount);
+  assert.equal(finished.setup.doglegPlayerNames.length, finished.setup.doglegTargetCount);
   assert.equal(finished.setup.doglegPlayerIds.includes(finished.setup.bankerId), false);
   assert.deepEqual(finished.result.bankerTeamIds, [finished.setup.bankerId, ...finished.setup.doglegPlayerIds]);
   assert.equal(finished.result.playerResults.filter((player) => player.role === "狗腿").length, finished.setup.doglegTargetCount);
