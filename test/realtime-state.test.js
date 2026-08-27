@@ -146,6 +146,14 @@ test("host configures the opening bid from 10% to 40% before a score-bidding gam
 
   await jsonRequest(`${roomUrl}/dogleg-mode`, {
     method: "POST",
+    body: JSON.stringify({ ...credentials, mode: "random-order" })
+  });
+  const randomOrderDoglegLobby = await jsonRequest(`${roomUrl}/state?${stateParams.toString()}`);
+  assert.equal(randomOrderDoglegLobby.doglegMode, "random-order");
+  assert.equal(randomOrderDoglegLobby.setup.doglegModeName, "顺位狗腿");
+
+  await jsonRequest(`${roomUrl}/dogleg-mode`, {
+    method: "POST",
     body: JSON.stringify({ ...credentials, mode: "dynamic" })
   });
 

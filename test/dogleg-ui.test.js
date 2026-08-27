@@ -6,13 +6,15 @@ import { fileURLToPath } from "node:url";
 const appPath = fileURLToPath(new URL("../public/app.js", import.meta.url));
 const stylesPath = fileURLToPath(new URL("../public/styles.css", import.meta.url));
 
-test("房间提供传统、动态与暗狗腿切换", async () => {
+test("房间提供传统、动态、暗狗腿与顺位狗腿切换", async () => {
   const source = await readFile(appPath, "utf8");
   assert.match(source, /function renderDoglegModeControl\(\)/);
   assert.match(source, /data-action="dogleg-mode"/);
   assert.match(source, /传统狗腿/);
   assert.match(source, /动态狗腿/);
   assert.match(source, /暗狗腿/);
+  assert.match(source, /顺位狗腿/);
+  assert.match(source, /random-order/);
   assert.match(source, /\/dogleg-mode/);
 });
 
@@ -33,9 +35,18 @@ test("动态狗腿牌按具体牌 ID 标记", async () => {
 
 test("暗狗腿沿用具体牌爪印，并展示公开人数", async () => {
   const source = await readFile(appPath, "utf8");
-  assert.match(source, /setup\.doglegMode === "dynamic" \|\| setup\.doglegMode === "hidden"/);
+  assert.match(source, /setup\.doglegMode === "dynamic"/);
+  assert.match(source, /setup\.doglegMode === "hidden"/);
   assert.match(source, /暗狗腿 <i>\$\{names\.length\}\/\$\{needed\}<\/i>/);
   assert.match(source, /随机确定固定狗腿，专属狗腿牌打出后公开身份/);
+});
+
+test("顺位狗腿显示同色同点双花色牌、生效顺位和当前计数", async () => {
+  const source = await readFile(appPath, "utf8");
+  assert.match(source, /card\.suits\.map\(\(suit\) => `\$\{symbols\[suit\] \|\| ""\}\$\{card\.rank\}`\)/);
+  assert.match(source, /生效顺位：\$\{positions\}/);
+  assert.match(source, /setup\.doglegCandidateCount/);
+  assert.match(source, /card\.rank === doglegCard\.rank && card\.color === doglegCard\.color/);
 });
 
 test("头像边为每个累计标记渲染一个爪印图标", async () => {

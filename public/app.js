@@ -403,7 +403,9 @@ function captureGameplayEffects(previousState, nextState) {
 
     const previousDoglegs = new Set(previousState.setup?.doglegPlayerIds || []);
     const nextDoglegs = new Set(nextState.setup?.doglegPlayerIds || []);
-    if (nextState.setup?.doglegMode === "dynamic" || nextState.setup?.doglegMode === "hidden") {
+    if (nextState.setup?.doglegMode === "dynamic"
+      || nextState.setup?.doglegMode === "hidden"
+      || nextState.setup?.doglegMode === "random-order") {
       const previousSequence = Number(previousState.setup?.doglegHitSequence) || 0;
       (nextState.setup?.doglegHits || [])
         .filter((hit) => Number(hit.sequence) > previousSequence)
@@ -487,6 +489,17 @@ function transitionNotice(previousState, nextState) {
       return `${name} 打出狗腿牌，获得第 ${latestHit.count} 个狗腿标记。当前狗腿：${currentNames}。`;
     }
   }
+  if (nextState.setup?.doglegMode === "random-order") {
+    const previousSequence = Number(previousState.setup?.doglegHitSequence) || 0;
+    const hits = (nextState.setup?.doglegHits || []).filter((hit) => Number(hit.sequence) > previousSequence);
+    const latestHit = hits[hits.length - 1];
+    if (latestHit) {
+      const name = nextState.players?.find((player) => player.id === latestHit.playerId)?.name || "玩家";
+      return latestHit.becameDogleg
+        ? `${name} 第 ${latestHit.sequence} 次有效打出顺位狗腿牌，命中顺位并成为狗腿。`
+        : `${name} 第 ${latestHit.sequence} 次有效打出顺位狗腿牌，未命中生效顺位。`;
+    }
+  }
   const previousDoglegs = new Set(previousState.setup?.doglegPlayerIds || []);
   const newDoglegIds = (nextState.setup?.doglegPlayerIds || []).filter((playerId) => !previousDoglegs.has(playerId));
   if (newDoglegIds.length) {
@@ -535,10 +548,14 @@ function transitionNotice(previousState, nextState) {
   }
   if ((previousState.stage === "frying" || previousState.stage === "fry-burying")
     && nextState.stage === "playing"
-    && (nextState.setup?.doglegMode === "dynamic" || nextState.setup?.doglegMode === "hidden")
+    && (nextState.setup?.doglegMode === "dynamic"
+      || nextState.setup?.doglegMode === "hidden"
+      || nextState.setup?.doglegMode === "random-order")
     && Number(nextState.setup?.doglegNeeded) > 0) {
     const trump = nextState.setup?.currentTrumpSuitName || nextState.setup?.trumpSuitName || "主牌";
-    const modeName = nextState.setup?.doglegMode === "hidden" ? "暗狗腿" : "动态狗腿";
+    const modeName = nextState.setup?.doglegMode === "hidden"
+      ? "暗狗腿"
+      : nextState.setup?.doglegMode === "random-order" ? "顺位狗腿" : "动态狗腿";
     return `炒底结束：主牌确定为${trump}，${modeName}已生效，开始出牌。`;
   }
   if (previousState.stage === "dogleg" && nextState.stage === "playing") {
@@ -1973,7 +1990,7 @@ async function setDoglegMode(mode) {
       method: "POST",
       body: JSON.stringify({ playerId: session.playerId, token: session.token, mode })
     });
-    const modeNames = { traditional: "传统狗腿", dynamic: "动态狗腿", hidden: "暗狗腿" };
+    const modeNames = { traditional: "传统狗腿", dynamic: "动态狗腿", hidden: "暗狗腿", "random-order": "顺位狗腿" };
     setMessage(`本局已切换为${state.doglegModeName || modeNames[mode] || "传统狗腿"}。`);
   } catch (error) {
     setMessage(error.message, true);
@@ -3287,13 +3304,14 @@ function renderDoglegCountControl() {
 }
 
 function renderDoglegModeControl() {
-  const current = ["traditional", "dynamic", "hidden"].includes(state.doglegMode)
+  const current = ["traditional", "dynamic", "hidden", "random-order"].includes(state.doglegMode)
     ? state.doglegMode
     : "traditional";
   const options = [
     { id: "traditional", label: "传统狗腿", title: "由庄家选择统一狗腿牌" },
     { id: "dynamic", label: "动态狗腿", title: "每名非庄家玩家独立随机狗腿牌，按标记数实时排名" },
-    { id: "hidden", label: "暗狗腿", title: "随机确定固定狗腿，专属狗腿牌打出后公开身份" }
+    { id: "hidden", label: "暗狗腿", title: "随机确定固定狗腿，专属狗腿牌打出后公开身份" },
+    { id: "random-order", label: "顺位狗腿", title: "随机同色同点狗腿牌，并随机指定生效出牌顺位" }
   ];
   return `
     <span class="dogleg-count-control dogleg-mode-control">
@@ -5772,6 +5790,10 @@ function trumpSuitActionButtons() {
 
 function doglegCardText(card) {
   if (!card) return "未确定";
+  if (Array.isArray(card.suits) && card.suits.length > 1 && card.rank) {
+    const symbols = { S: "♠", H: "♥", C: "♣", D: "♦" };
+    return card.suits.map((suit) => `${symbols[suit] || ""}${card.rank}`).join(" / ");
+  }
   return displayCardLabel(card);
 }
 
@@ -6639,7 +6661,9 @@ function renderGameInfoTags() {
 function renderDoglegTableTag() {
   const setup = state.setup || {};
   const names = setup.doglegPlayerNames || [];
-  const needed = Number(setup.doglegNeeded) || 0;
+  const needed = setup.doglegMode === "random-order"
+    ? Number(setup.doglegTargetCount) || 0
+    : Number(setup.doglegNeeded) || 0;
   if (setup.doglegMode === "dynamic") {
     if (!needed || (state.stage !== "playing" && state.stage !== "finished")) return "";
     const revealText = names.length ? `当前狗腿：${names.join("、")}` : "尚无玩家获得狗腿标记";
@@ -6655,6 +6679,19 @@ function renderDoglegTableTag() {
     return `
       <span class="tag table-dogleg-tag hidden" title="${escapeHtml(revealText)}">
         暗狗腿 <i>${names.length}/${needed}</i>
+      </span>
+    `;
+  }
+  if (setup.doglegMode === "random-order") {
+    const card = setup.doglegCard;
+    if (!card || (state.stage !== "playing" && state.stage !== "finished")) return "";
+    const positions = (setup.doglegTargetPositions || []).map((position) => `第${position}次`).join("、") || "无";
+    const sequence = Number(setup.doglegHitSequence) || 0;
+    const revealText = `生效顺位：${positions}；当前已计 ${sequence} 次；${setup.doglegCandidateCount || 0} 名非庄玩家持有`;
+    return `
+      <span class="tag table-dogleg-tag" title="${escapeHtml(revealText)}">
+        顺位狗腿 <strong class="${escapeHtml(card.color || suitColor(card.suit))}">${escapeHtml(doglegCardText(card))}</strong>
+        <i>${names.length}/${needed} · ${sequence}次</i>
       </span>
     `;
   }
@@ -7863,10 +7900,15 @@ function isDoglegHandCard(card) {
   }
   const doglegCard = setup.doglegCard;
   const revealedIds = setup.doglegPlayerIds || [];
-  const needed = Number(setup.doglegNeeded) || 0;
+  const needed = setup.doglegMode === "random-order"
+    ? Number(setup.doglegTargetCount) || 0
+    : Number(setup.doglegNeeded) || 0;
   const viewerId = state?.viewer?.id;
   if (state?.stage !== "playing" || !doglegCard || !viewerId || !needed) return false;
   if (revealedIds.length >= needed || viewerId === setup.bankerId || revealedIds.includes(viewerId)) return false;
+  if (setup.doglegMode === "random-order") {
+    return card?.type === "normal" && card.rank === doglegCard.rank && card.color === doglegCard.color;
+  }
   return card?.type === "normal" && card.suit === doglegCard.suit && card.rank === doglegCard.rank;
 }
 

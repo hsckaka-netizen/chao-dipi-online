@@ -1655,6 +1655,7 @@ export function buildGameRecord(room) {
       doglegMode: room.doglegMode || "traditional",
       dynamicDogleg: jsonValue(room.dynamicDogleg, null),
       hiddenDogleg: jsonValue(room.hiddenDogleg, null),
+      randomOrderDogleg: jsonValue(room.randomOrderDogleg, null),
       events: jsonValue([...(room.events || [])].reverse(), [])
     },
     result: compactResult(result),

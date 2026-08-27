@@ -4074,7 +4074,8 @@ button.joinable-room-player.spectate-player {
 }
 
 .dogleg-mode-control .segmented button {
-  min-width: 74px;
+  min-width: 66px;
+  padding-inline: 6px;
 }
 
 .meta {

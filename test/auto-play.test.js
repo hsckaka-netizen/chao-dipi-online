@@ -439,6 +439,72 @@ test("暗狗腿仅向本人暴露专属牌，打出后公开并按固定身份�
   );
 });
 
+test("顺位狗腿公开同色同点牌组与随机顺位，并按有效打出顺序确定狗腿", async (t) => {
+  const server = await startServer({ AI_SETUP_DELAY_MS: "0", AI_PLAY_DELAY_MS: "0" });
+  t.after(() => server.child.kill());
+
+  const created = await jsonRequest(`${server.baseUrl}/api/rooms`, {
+    method: "POST",
+    body: JSON.stringify({ profileId: "player-benlei" })
+  });
+  const credentials = { playerId: created.playerId, token: created.token };
+  const stateParams = new URLSearchParams(credentials);
+  const stateUrl = `${server.baseUrl}/api/rooms/${created.roomId}/state?${stateParams.toString()}`;
+  const actionUrl = (action) => `${server.baseUrl}/api/rooms/${created.roomId}/${action}`;
+
+  await jsonRequest(actionUrl("test-players"), {
+    method: "POST",
+    body: JSON.stringify({ ...credentials, targetCount: 5 })
+  });
+  await jsonRequest(actionUrl("dogleg-mode"), {
+    method: "POST",
+    body: JSON.stringify({ ...credentials, mode: "random-order" })
+  });
+  await jsonRequest(actionUrl("doglegs"), {
+    method: "POST",
+    body: JSON.stringify({ ...credentials, count: 2 })
+  });
+  await jsonRequest(actionUrl("ready"), {
+    method: "POST",
+    body: JSON.stringify({ ...credentials, ready: true })
+  });
+  await jsonRequest(actionUrl("start"), {
+    method: "POST",
+    body: JSON.stringify(credentials)
+  });
+
+  const playing = await waitForHumanPlayingTurn(stateUrl, actionUrl, credentials);
+  assert.equal(playing.stage, "playing", "顺位狗腿不应停在庄家选狗腿牌阶段");
+  assert.equal(playing.setup.doglegMode, "random-order");
+  assert.equal(playing.setup.doglegCard.type, "normal");
+  assert.equal(playing.setup.doglegCard.suits.length, 2);
+  assert.equal(new Set(playing.setup.doglegTargetPositions).size, playing.setup.doglegTargetPositions.length);
+  assert.equal(playing.setup.doglegTargetCount, Math.min(2, playing.setup.doglegCandidateCount));
+  assert.ok(playing.setup.doglegTargetPositions.every((position) => position >= 1 && position <= playing.setup.doglegCandidateCount));
+  assert.ok(playing.events.some((event) => event.text.includes("本局使用顺位狗腿")));
+
+  await jsonRequest(actionUrl("auto-play"), {
+    method: "POST",
+    body: JSON.stringify({ ...credentials, enabled: true })
+  });
+  const finished = await waitForState(
+    stateUrl,
+    (snapshot) => snapshot.stage === "finished",
+    "顺位狗腿托管牌局没有在预期时间内结束",
+    20_000
+  );
+
+  assert.equal(finished.setup.doglegPlayerIds.length, finished.setup.doglegTargetCount);
+  assert.equal(finished.setup.doglegPlayerIds.includes(finished.setup.bankerId), false);
+  assert.deepEqual(finished.result.bankerTeamIds, [finished.setup.bankerId, ...finished.setup.doglegPlayerIds]);
+  assert.equal(finished.result.playerResults.filter((player) => player.role === "狗腿").length, finished.setup.doglegTargetCount);
+  assert.ok(finished.setup.doglegHitSequence >= Math.max(...finished.setup.doglegTargetPositions));
+  assert.equal(
+    Math.round(finished.result.playerResults.reduce((sum, player) => sum + player.gameScore, 0) * 100) / 100,
+    0
+  );
+});
+
 test("players leave a finished result independently and auto-ready for the next game", async (t) => {
   const server = await startServer({ AI_PLAY_DELAY_MS: "0" });
   t.after(() => server.child.kill());

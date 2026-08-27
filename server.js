@@ -33,10 +33,13 @@ import {
 import {
   applyDynamicDoglegPlay,
   applyHiddenDoglegPlay,
+  applyRandomOrderDoglegPlay,
   createDynamicDoglegState,
   createHiddenDoglegState,
+  createRandomOrderDoglegState,
   DOGLEG_MODE_DYNAMIC,
   DOGLEG_MODE_HIDDEN,
+  DOGLEG_MODE_RANDOM_ORDER,
   DOGLEG_MODE_TRADITIONAL,
   doglegModeName,
   dynamicDoglegCardId,
@@ -44,7 +47,8 @@ import {
   hiddenDoglegCardId,
   hiddenDoglegIsRevealed,
   hiddenDoglegPlayerIds,
-  normalizeDoglegMode
+  normalizeDoglegMode,
+  sameColorRankDoglegCard
 } from "./dogleg-mechanism.js";
 import {
   allocateBankerTeamScores,
@@ -1314,6 +1318,7 @@ function deal(room, options = {}) {
   room.doglegPlayerIds = [];
   room.dynamicDogleg = null;
   room.hiddenDogleg = null;
+  room.randomOrderDogleg = null;
   room.doglegNeeded = clampDoglegCount(room.doglegNeeded, count);
   room.result = null;
   room.setup = emptySetup();
@@ -1378,6 +1383,7 @@ function resetRoomToLobby(room, options = {}) {
   room.doglegPlayerIds = [];
   room.dynamicDogleg = null;
   room.hiddenDogleg = null;
+  room.randomOrderDogleg = null;
   syncLobbyDoglegCount(room);
   room.result = null;
   room.setup = emptySetup();
@@ -1490,7 +1496,9 @@ function setupSnapshot(room, viewer = null) {
     ? room.dynamicDogleg.hits.slice(-20).map((hit) => ({ ...hit }))
     : mode === DOGLEG_MODE_HIDDEN && Array.isArray(room.hiddenDogleg?.reveals)
       ? room.hiddenDogleg.reveals.slice(-20).map((hit) => ({ ...hit }))
-      : [];
+      : mode === DOGLEG_MODE_RANDOM_ORDER && Array.isArray(room.randomOrderDogleg?.plays)
+        ? room.randomOrderDogleg.plays.slice(-20).map((hit) => ({ ...hit }))
+        : [];
   const markedCardId = mode === DOGLEG_MODE_DYNAMIC && viewer
     ? dynamicDoglegCardId(room.dynamicDogleg, viewer.id)
     : mode === DOGLEG_MODE_HIDDEN && viewer && room.stage === "playing"
@@ -1518,8 +1526,19 @@ function setupSnapshot(room, viewer = null) {
       ? Number(room.dynamicDogleg?.hitSequence) || 0
       : mode === DOGLEG_MODE_HIDDEN
         ? Number(room.hiddenDogleg?.revealSequence) || 0
-        : 0,
+        : mode === DOGLEG_MODE_RANDOM_ORDER
+          ? Number(room.randomOrderDogleg?.playSequence) || 0
+          : 0,
     doglegHits,
+    doglegCandidateCount: mode === DOGLEG_MODE_RANDOM_ORDER
+      ? Math.max(0, Number(room.randomOrderDogleg?.candidateCount) || 0)
+      : 0,
+    doglegTargetPositions: mode === DOGLEG_MODE_RANDOM_ORDER
+      ? [...(room.randomOrderDogleg?.targetPositions || [])]
+      : [],
+    doglegTargetCount: mode === DOGLEG_MODE_RANDOM_ORDER
+      ? (room.randomOrderDogleg?.targetPositions || []).length
+      : room.doglegNeeded || 0,
     doglegPlayerIds: [...(room.doglegPlayerIds || [])],
     doglegPlayerNames: (room.doglegPlayerIds || []).map((playerId) => playerName(room, playerId)),
     doglegNeeded: room.doglegNeeded || 0,
@@ -3041,6 +3060,7 @@ function finishFrying(room) {
     room.doglegPlayerIds = [];
     room.dynamicDogleg = null;
     room.hiddenDogleg = null;
+    room.randomOrderDogleg = null;
     beginPlaying(room);
     addEvent(room, "本局不设置狗腿，直接开始打牌");
     return;
@@ -3050,6 +3070,7 @@ function finishFrying(room) {
     room.doglegPlayerIds = [];
     room.dynamicDogleg = createDynamicDoglegState(room.players, room.bankerId);
     room.hiddenDogleg = null;
+    room.randomOrderDogleg = null;
     beginPlaying(room);
     addEvent(room, "本局使用动态狗腿，已为每名非庄家玩家随机标记一张狗腿牌");
     return;
@@ -3059,12 +3080,25 @@ function finishFrying(room) {
     room.doglegPlayerIds = [];
     room.dynamicDogleg = null;
     room.hiddenDogleg = createHiddenDoglegState(room.players, room.bankerId, room.doglegNeeded);
+    room.randomOrderDogleg = null;
     beginPlaying(room);
     addEvent(room, `本局使用暗狗腿，已随机确定 ${hiddenDoglegPlayerIds(room.hiddenDogleg).length} 名暗狗腿并分别标记专属狗腿牌`);
     return;
   }
+  if (normalizeDoglegMode(room.doglegMode) === DOGLEG_MODE_RANDOM_ORDER) {
+    room.doglegPlayerIds = [];
+    room.dynamicDogleg = null;
+    room.hiddenDogleg = null;
+    room.randomOrderDogleg = createRandomOrderDoglegState(room.players, room.bankerId, room.doglegNeeded);
+    room.doglegCard = room.randomOrderDogleg.card;
+    beginPlaying(room);
+    const positions = room.randomOrderDogleg.targetPositions.map((position) => `第 ${position} 次`).join("、") || "无";
+    addEvent(room, `本局使用顺位狗腿，狗腿牌为 ${room.doglegCard?.label || "未生成"}；${room.randomOrderDogleg.candidateCount} 名非庄玩家持有，生效顺位为${positions}`);
+    return;
+  }
   room.dynamicDogleg = null;
   room.hiddenDogleg = null;
+  room.randomOrderDogleg = null;
   room.stage = "dogleg";
   room.phase = `主牌为${suitName(room.trumpSuit)}，等待庄家选择狗腿牌`;
 }
@@ -3173,6 +3207,20 @@ function sameDoglegCard(card, doglegCard) {
   return card.type === "normal" && card.suit === doglegCard.suit && card.rank === doglegCard.rank;
 }
 
+function sameRoomDoglegCard(room, card) {
+  if (normalizeDoglegMode(room.doglegMode) === DOGLEG_MODE_RANDOM_ORDER) {
+    return sameColorRankDoglegCard(card, room.doglegCard);
+  }
+  return sameDoglegCard(card, room.doglegCard);
+}
+
+function doglegTargetCount(room) {
+  if (normalizeDoglegMode(room.doglegMode) === DOGLEG_MODE_RANDOM_ORDER) {
+    return (room.randomOrderDogleg?.targetPositions || []).length;
+  }
+  return Math.max(0, Number(room.doglegNeeded) || 0);
+}
+
 function revealDoglegIfNeeded(room, player, selected) {
   if (normalizeDoglegMode(room.doglegMode) === DOGLEG_MODE_HIDDEN) {
     if (!room.hiddenDogleg) return;
@@ -3209,6 +3257,23 @@ function revealDoglegIfNeeded(room, player, selected) {
     }
     return;
   }
+  if (normalizeDoglegMode(room.doglegMode) === DOGLEG_MODE_RANDOM_ORDER) {
+    if (player.id === room.bankerId || !room.randomOrderDogleg) return;
+    const outcome = applyRandomOrderDoglegPlay(room.randomOrderDogleg, {
+      playerId: player.id,
+      playedCards: selected
+    });
+    room.randomOrderDogleg = outcome.state;
+    room.doglegPlayerIds = outcome.doglegPlayerIds;
+    if (!outcome.hit) return;
+    const hitCard = selected.find((card) => sameColorRankDoglegCard(card, room.doglegCard));
+    if (outcome.hit.becameDogleg) {
+      addEvent(room, `${player.name} 第 ${outcome.hit.sequence} 次有效打出顺位狗腿牌${hitCard?.label ? ` ${hitCard.label}` : ""}，命中顺位并成为狗腿`);
+    } else {
+      addEvent(room, `${player.name} 第 ${outcome.hit.sequence} 次有效打出顺位狗腿牌${hitCard?.label ? ` ${hitCard.label}` : ""}，未命中生效顺位`);
+    }
+    return;
+  }
   if (!room.doglegCard || player.id === room.bankerId) return;
   if ((room.doglegPlayerIds || []).includes(player.id)) return;
   if ((room.doglegPlayerIds || []).length >= (room.doglegNeeded || 0)) return;
@@ -3240,6 +3305,7 @@ function selectDogleg(room, player, cardIds) {
   room.doglegPlayerIds = [];
   room.dynamicDogleg = null;
   room.hiddenDogleg = null;
+  room.randomOrderDogleg = null;
   beginPlaying(room);
   addEvent(room, `${player.name} 选择 ${card.label} 为狗腿牌，开始打牌`);
   return { ok: true };
@@ -4574,6 +4640,12 @@ function hiddenDoglegInHand(room, player) {
     return Boolean(markedCardId && !hiddenDoglegIsRevealed(room.hiddenDogleg, player.id)
       && player.hand.some((card) => card.id === markedCardId));
   }
+  if (mode === DOGLEG_MODE_RANDOM_ORDER) {
+    return Boolean(room.doglegCard && player.id !== room.bankerId
+      && !(room.doglegPlayerIds || []).includes(player.id)
+      && (room.doglegPlayerIds || []).length < doglegTargetCount(room)
+      && player.hand.some((card) => sameRoomDoglegCard(room, card)));
+  }
   return Boolean(room.doglegCard && player.id !== room.bankerId && !(room.doglegPlayerIds || []).includes(player.id)
     && player.hand.some((card) => sameDoglegCard(card, room.doglegCard)));
 }
@@ -4585,6 +4657,9 @@ function cardIsHiddenDogleg(room, player, card) {
   }
   if (mode === DOGLEG_MODE_HIDDEN) {
     return Boolean(hiddenDoglegInHand(room, player) && card?.id === hiddenDoglegCardId(room.hiddenDogleg, player.id));
+  }
+  if (mode === DOGLEG_MODE_RANDOM_ORDER) {
+    return Boolean(hiddenDoglegInHand(room, player) && sameRoomDoglegCard(room, card));
   }
   return Boolean(hiddenDoglegInHand(room, player) && sameDoglegCard(card, room.doglegCard));
 }
@@ -4599,7 +4674,7 @@ function aiVisibleTeam(room, perspectivePlayer, targetPlayerId) {
   if (targetPlayerId === room.bankerId) return "banker";
   if ((room.doglegPlayerIds || []).includes(targetPlayerId)) return "banker";
   if (targetPlayerId === perspectivePlayer.id) return aiOwnTeam(room, perspectivePlayer);
-  if ((room.doglegPlayerIds || []).length >= (room.doglegNeeded || 0)) return "idle";
+  if ((room.doglegPlayerIds || []).length >= doglegTargetCount(room)) return "idle";
   return "unknown";
 }
 
@@ -4791,8 +4866,8 @@ function canRevealDoglegWithCards(room, player, cards) {
     const markedCardId = hiddenDoglegCardId(room.hiddenDogleg, player.id);
     return cards.some((card) => card.id === markedCardId);
   }
-  if ((room.doglegPlayerIds || []).length >= (room.doglegNeeded || 0)) return false;
-  return cards.some((card) => sameDoglegCard(card, room.doglegCard));
+  if ((room.doglegPlayerIds || []).length >= doglegTargetCount(room)) return false;
+  return cards.some((card) => sameRoomDoglegCard(room, card));
 }
 
 function doglegCopiesInHand(room, player) {
@@ -4801,7 +4876,7 @@ function doglegCopiesInHand(room, player) {
     return hiddenDoglegInHand(room, player) ? 1 : 0;
   }
   if (!room.doglegCard) return 0;
-  return player.hand.filter((card) => sameDoglegCard(card, room.doglegCard)).length;
+  return player.hand.filter((card) => sameRoomDoglegCard(room, card)).length;
 }
 
 function doglegRevealProbability(room, player) {
@@ -4816,7 +4891,7 @@ function doglegRevealProbability(room, player) {
   if (!doglegCard) return 0;
   const doglegSuit = playSuit(doglegCard, room.trumpSuit);
   const sameSuitCount = player.hand.filter((card) => playSuit(card, room.trumpSuit) === doglegSuit).length;
-  const remainingDoglegs = Math.max(1, (room.doglegNeeded || 0) - (room.doglegPlayerIds || []).length);
+  const remainingDoglegs = Math.max(1, doglegTargetCount(room) - (room.doglegPlayerIds || []).length);
   const copyPressure = Math.min(0.38, copies * 0.17);
   const suitPressure = sameSuitCount <= copies
     ? 0.34
@@ -5703,6 +5778,7 @@ async function handleApi(req, res, pathParts, url) {
       doglegPlayerIds: [],
       dynamicDogleg: null,
       hiddenDogleg: null,
+      randomOrderDogleg: null,
       doglegNeeded: 0,
       doglegConfigured: false,
       result: null,
@@ -5964,8 +6040,9 @@ async function handleApi(req, res, pathParts, url) {
       if (room.status !== "lobby") return writeJson(res, 409, { error: "只有开局前可以切换狗腿机制" });
       if (body.mode !== DOGLEG_MODE_TRADITIONAL
         && body.mode !== DOGLEG_MODE_DYNAMIC
-        && body.mode !== DOGLEG_MODE_HIDDEN) {
-        return writeJson(res, 400, { error: "狗腿机制只支持传统狗腿、动态狗腿或暗狗腿" });
+        && body.mode !== DOGLEG_MODE_HIDDEN
+        && body.mode !== DOGLEG_MODE_RANDOM_ORDER) {
+        return writeJson(res, 400, { error: "狗腿机制只支持传统狗腿、动态狗腿、暗狗腿或顺位狗腿" });
       }
       room.doglegMode = body.mode;
       addEvent(room, `房主将本局狗腿机制设为${doglegModeName(body.mode)}`);

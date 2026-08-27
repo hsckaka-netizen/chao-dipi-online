@@ -1,10 +1,12 @@
 export const DOGLEG_MODE_TRADITIONAL = "traditional";
 export const DOGLEG_MODE_DYNAMIC = "dynamic";
 export const DOGLEG_MODE_HIDDEN = "hidden";
+export const DOGLEG_MODE_RANDOM_ORDER = "random-order";
 
 export function normalizeDoglegMode(value) {
   if (value === DOGLEG_MODE_DYNAMIC) return DOGLEG_MODE_DYNAMIC;
   if (value === DOGLEG_MODE_HIDDEN) return DOGLEG_MODE_HIDDEN;
+  if (value === DOGLEG_MODE_RANDOM_ORDER) return DOGLEG_MODE_RANDOM_ORDER;
   return DOGLEG_MODE_TRADITIONAL;
 }
 
@@ -12,6 +14,7 @@ export function doglegModeName(value) {
   const mode = normalizeDoglegMode(value);
   if (mode === DOGLEG_MODE_DYNAMIC) return "动态狗腿";
   if (mode === DOGLEG_MODE_HIDDEN) return "暗狗腿";
+  if (mode === DOGLEG_MODE_RANDOM_ORDER) return "顺位狗腿";
   return "传统狗腿";
 }
 
@@ -100,6 +103,98 @@ function randomIndex(length, random = Math.random) {
   const value = Number(random());
   const normalized = Number.isFinite(value) ? Math.max(0, Math.min(0.999999999999, value)) : 0;
   return Math.floor(normalized * length);
+}
+
+function normalCardColor(card) {
+  if (card?.color === "red" || card?.color === "black") return card.color;
+  if (card?.suit === "H" || card?.suit === "D") return "red";
+  if (card?.suit === "S" || card?.suit === "C") return "black";
+  return "";
+}
+
+const COLOR_SUIT_IDS = Object.freeze({
+  black: Object.freeze(["S", "C"]),
+  red: Object.freeze(["H", "D"])
+});
+
+const SUIT_SYMBOLS = Object.freeze({ S: "♠", H: "♥", C: "♣", D: "♦" });
+
+export function sameColorRankDoglegCard(card, doglegCard) {
+  if (card?.type !== "normal" || doglegCard?.type !== "normal") return false;
+  return Boolean(card.rank && card.rank === doglegCard.rank
+    && normalCardColor(card) === normalCardColor(doglegCard));
+}
+
+function randomOrderDoglegCard(card) {
+  if (card?.type !== "normal" || !card.rank) return null;
+  const color = normalCardColor(card);
+  const suits = COLOR_SUIT_IDS[color];
+  if (!suits) return null;
+  return {
+    type: "normal",
+    color,
+    suit: card.suit,
+    suitName: card.suitName,
+    symbol: card.symbol,
+    rank: card.rank,
+    suits: [...suits],
+    label: suits.map((suit) => `${SUIT_SYMBOLS[suit]}${card.rank}`).join(" / ")
+  };
+}
+
+export function createRandomOrderDoglegState(players, bankerId, needed, random = Math.random) {
+  const nonBankers = (players || []).filter((player) => player?.id && player.id !== bankerId);
+  const eligibleCards = nonBankers.flatMap((player) => (player.hand || []).filter((card) => card?.type === "normal"));
+  const selectedCard = eligibleCards[randomIndex(eligibleCards.length, random)] || null;
+  const doglegCard = randomOrderDoglegCard(selectedCard);
+  const candidateCount = doglegCard
+    ? nonBankers.filter((player) => (player.hand || []).some((card) => sameColorRankDoglegCard(card, doglegCard))).length
+    : 0;
+  const limit = Math.max(0, Math.min(candidateCount, Math.round(Number(needed) || 0)));
+  const availablePositions = Array.from({ length: candidateCount }, (_, index) => index + 1);
+  const targetPositions = [];
+  while (targetPositions.length < limit && availablePositions.length) {
+    targetPositions.push(availablePositions.splice(randomIndex(availablePositions.length, random), 1)[0]);
+  }
+  targetPositions.sort((a, b) => a - b);
+
+  return {
+    card: doglegCard,
+    candidateCount,
+    targetPositions,
+    playSequence: 0,
+    lastPlay: null,
+    plays: [],
+    playerIds: []
+  };
+}
+
+export function applyRandomOrderDoglegPlay(state, options = {}) {
+  const playerId = options.playerId;
+  const doglegPlayerIds = Array.isArray(state?.playerIds) ? state.playerIds : [];
+  const targetPositions = Array.isArray(state?.targetPositions) ? state.targetPositions : [];
+  const hitCard = (options.playedCards || []).find((card) => sameColorRankDoglegCard(card, state?.card));
+  if (!playerId || !hitCard || doglegPlayerIds.includes(playerId) || doglegPlayerIds.length >= targetPositions.length) {
+    return { hit: null, state, doglegPlayerIds: [...doglegPlayerIds] };
+  }
+
+  const sequence = Math.max(0, Number(state.playSequence) || 0) + 1;
+  const becameDogleg = targetPositions.includes(sequence);
+  if (becameDogleg) doglegPlayerIds.push(playerId);
+  const hit = {
+    sequence,
+    playerId,
+    cardId: hitCard.id || null,
+    becameDogleg,
+    doglegNumber: becameDogleg ? doglegPlayerIds.length : null
+  };
+  state.playSequence = sequence;
+  state.lastPlay = hit;
+  state.playerIds = doglegPlayerIds;
+  if (!Array.isArray(state.plays)) state.plays = [];
+  state.plays.push(hit);
+
+  return { hit, state, doglegPlayerIds: [...doglegPlayerIds] };
 }
 
 export function createHiddenDoglegState(players, bankerId, needed, random = Math.random) {

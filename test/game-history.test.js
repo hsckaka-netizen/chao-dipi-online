@@ -176,6 +176,7 @@ test("settled game is converted to an immutable history record", () => {
   assert.equal(record.setup.doglegMode, "traditional");
   assert.equal(record.setup.dynamicDogleg, null);
   assert.equal(record.setup.hiddenDogleg, null);
+  assert.equal(record.setup.randomOrderDogleg, null);
   assert.deepEqual(record.setup.events, []);
   assert.notEqual(record.result, room.result);
 

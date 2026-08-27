@@ -4,10 +4,13 @@ import assert from "node:assert/strict";
 import {
   applyDynamicDoglegPlay,
   applyHiddenDoglegPlay,
+  applyRandomOrderDoglegPlay,
   createDynamicDoglegState,
   createHiddenDoglegState,
+  createRandomOrderDoglegState,
   DOGLEG_MODE_DYNAMIC,
   DOGLEG_MODE_HIDDEN,
+  DOGLEG_MODE_RANDOM_ORDER,
   DOGLEG_MODE_TRADITIONAL,
   dynamicDoglegCardId,
   dynamicDoglegMarkCount,
@@ -15,7 +18,8 @@ import {
   hiddenDoglegPlayerIds,
   hiddenDoglegRevealedPlayerIds,
   normalizeDoglegMode,
-  rankDynamicDoglegs
+  rankDynamicDoglegs,
+  sameColorRankDoglegCard
 } from "../dogleg-mechanism.js";
 
 function card(id, type = "normal") {
@@ -33,6 +37,65 @@ test("动态狗腿排除庄家，且可从任意手牌中随机标记", () => {
   assert.equal(normalizeDoglegMode("unknown"), DOGLEG_MODE_TRADITIONAL);
   assert.equal(normalizeDoglegMode(DOGLEG_MODE_DYNAMIC), DOGLEG_MODE_DYNAMIC);
   assert.equal(normalizeDoglegMode(DOGLEG_MODE_HIDDEN), DOGLEG_MODE_HIDDEN);
+  assert.equal(normalizeDoglegMode(DOGLEG_MODE_RANDOM_ORDER), DOGLEG_MODE_RANDOM_ORDER);
+});
+
+test("顺位狗腿把同颜色同点数的两个花色作为一组，并按候选玩家数抽取顺位", () => {
+  const values = [0, 0.34, 0.999];
+  const state = createRandomOrderDoglegState([
+    { id: "banker", hand: [{ id: "banker-c5", type: "normal", suit: "C", color: "black", rank: "5" }] },
+    { id: "idle-a", hand: [{ id: "a-s5", type: "normal", suit: "S", color: "black", rank: "5" }] },
+    { id: "idle-b", hand: [{ id: "b-c5", type: "normal", suit: "C", color: "black", rank: "5" }] },
+    { id: "idle-c", hand: [{ id: "c-h5", type: "normal", suit: "H", color: "red", rank: "5" }] },
+    { id: "idle-d", hand: [{ id: "d-s5", type: "normal", suit: "S", color: "black", rank: "5" }] }
+  ], "banker", 2, () => values.shift() ?? 0);
+
+  assert.equal(state.card.label, "♠5 / ♣5");
+  assert.equal(state.candidateCount, 3);
+  assert.deepEqual(state.targetPositions, [2, 3]);
+  assert.equal(sameColorRankDoglegCard({ type: "normal", suit: "C", color: "black", rank: "5" }, state.card), true);
+  assert.equal(sameColorRankDoglegCard({ type: "normal", suit: "H", color: "red", rank: "5" }, state.card), false);
+});
+
+test("顺位狗腿按有效出牌次数推进，成为狗腿后再次打出不计数", () => {
+  const state = {
+    card: { type: "normal", color: "black", rank: "5", suits: ["S", "C"] },
+    candidateCount: 3,
+    targetPositions: [2, 3],
+    playSequence: 0,
+    plays: [],
+    playerIds: []
+  };
+
+  const first = applyRandomOrderDoglegPlay(state, {
+    playerId: "idle-a",
+    playedCards: [{ id: "a-s5-1", type: "normal", suit: "S", color: "black", rank: "5" }]
+  });
+  assert.equal(first.hit.sequence, 1);
+  assert.equal(first.hit.becameDogleg, false);
+
+  const second = applyRandomOrderDoglegPlay(state, {
+    playerId: "idle-a",
+    playedCards: [{ id: "a-c5-2", type: "normal", suit: "C", color: "black", rank: "5" }]
+  });
+  assert.equal(second.hit.sequence, 2);
+  assert.equal(second.hit.becameDogleg, true);
+  assert.deepEqual(second.doglegPlayerIds, ["idle-a"]);
+
+  const ignored = applyRandomOrderDoglegPlay(state, {
+    playerId: "idle-a",
+    playedCards: [{ id: "a-s5-3", type: "normal", suit: "S", color: "black", rank: "5" }]
+  });
+  assert.equal(ignored.hit, null);
+  assert.equal(state.playSequence, 2);
+
+  const third = applyRandomOrderDoglegPlay(state, {
+    playerId: "idle-b",
+    playedCards: [{ id: "b-c5", type: "normal", suit: "C", color: "black", rank: "5" }]
+  });
+  assert.equal(third.hit.sequence, 3);
+  assert.equal(third.hit.becameDogleg, true);
+  assert.deepEqual(third.doglegPlayerIds, ["idle-a", "idle-b"]);
 });
 
 test("打出具体标记牌后增加一个标记，并从剩余手牌重新随机", () => {
