@@ -423,9 +423,9 @@ test("SSR roster, probabilities, production, and paid skill heat use the settled
   assert.equal(yokoyama.skillName, "全能偶像");
   assert.equal(yokoyama.paidSkill.cost, 100);
   assert.equal(HERO_HOME_RULES.ssrPityPulls, 200);
-  assert.deepEqual(HERO_HOME_RULES.srProduction, [16, 22, 28, 34, 40]);
-  assert.deepEqual(HERO_HOME_RULES.ssrProduction, [24, 33, 42, 51, 60]);
-  assert.equal(unitProductionRate("shen-biesan", 5), 60);
+  assert.deepEqual(HERO_HOME_RULES.srProduction, [16, 22, 28, 34, 46]);
+  assert.deepEqual(HERO_HOME_RULES.ssrProduction, [30, 40, 50, 60, 80]);
+  assert.equal(unitProductionRate("shen-biesan", 5), 80);
   assert.equal(drawHomeUnit({ randomFloat: () => 0 }).rarity, "ssr");
   assert.equal(drawHomeUnit({ randomFloat: () => 0.05 }).rarity, "sr");
   assert.equal(drawHomeUnit({ randomFloat: () => 0.5 }).rarity, "minion");
@@ -486,7 +486,7 @@ test("region levels increase output every level and unlock capacity on milestone
     settledAt: "2026-08-14T00:00:00.000Z"
   }, "2026-08-14T01:00:00.000Z");
   assert.equal(preview.productionMultiplier, 1.1);
-  assert.ok(Math.abs(preview.ratePerHour - 26.4) < 1e-9);
+  assert.ok(Math.abs(preview.ratePerHour - 33) < 1e-9);
   assert.equal(preview.maxProductionHours, 7);
   assert.equal(preview.extraSlotUnlocked, false);
 });
@@ -667,4 +667,14 @@ test("hero migration stores home, gacha, snapshots, and hero bonus", async () =>
     "utf8"
   );
   assert.match(gameHistorySource, /029_reset_hero_stars\.sql/);
+
+  const productionRewardMigration = await readFile(
+    fileURLToPath(new URL("../db/migrations/030_hero_production_reward_curve.sql", import.meta.url)),
+    "utf8"
+  );
+  assert.match(productionRewardMigration, /home_production_before_reward_curve/);
+  assert.match(productionRewardMigration, /ARRAY\[24, 33, 42, 51, 60\]/);
+  assert.match(productionRewardMigration, /ARRAY\[16, 22, 28, 34, 40\]/);
+  assert.match(productionRewardMigration, /unit_id NOT IN \('boka-youth', 'brick-worker', 'trainee'\)/);
+  assert.match(gameHistorySource, /030_hero_production_reward_curve\.sql/);
 });
