@@ -2,7 +2,7 @@ const BEIJING_OFFSET_MS = 8 * 60 * 60 * 1000;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 export const DAILY_TASK_RULES = Object.freeze({
-  version: "2026-08-26-v1",
+  version: "2026-08-27-v1",
   refreshHourBeijing: 6,
   tasks: Object.freeze([
     Object.freeze({
@@ -10,7 +10,7 @@ export const DAILY_TASK_RULES = Object.freeze({
       name: "完成一局对局",
       metric: "gamesCompleted",
       target: 1,
-      rewardDiamonds: 500,
+      rewardDiamonds: 300,
       rewardMaterials: 100
     }),
     Object.freeze({
@@ -18,7 +18,7 @@ export const DAILY_TASK_RULES = Object.freeze({
       name: "完成3局对局",
       metric: "gamesCompleted",
       target: 3,
-      rewardDiamonds: 300,
+      rewardDiamonds: 200,
       rewardMaterials: 50
     }),
     Object.freeze({
@@ -26,7 +26,7 @@ export const DAILY_TASK_RULES = Object.freeze({
       name: "获得一次牌局胜利",
       metric: "gamesWon",
       target: 1,
-      rewardDiamonds: 300,
+      rewardDiamonds: 200,
       rewardMaterials: 50
     }),
     Object.freeze({
@@ -34,7 +34,7 @@ export const DAILY_TASK_RULES = Object.freeze({
       name: "成为一次庄家",
       metric: "bankerGames",
       target: 1,
-      rewardDiamonds: 300,
+      rewardDiamonds: 200,
       rewardMaterials: 50
     }),
     Object.freeze({
@@ -42,7 +42,7 @@ export const DAILY_TASK_RULES = Object.freeze({
       name: "拿到一次底牌",
       metric: "bottomWins",
       target: 1,
-      rewardDiamonds: 300,
+      rewardDiamonds: 200,
       rewardMaterials: 50
     }),
     Object.freeze({
@@ -50,7 +50,7 @@ export const DAILY_TASK_RULES = Object.freeze({
       name: "累计获得500牌分",
       metric: "trickScore",
       target: 500,
-      rewardDiamonds: 300,
+      rewardDiamonds: 200,
       rewardMaterials: 50
     })
   ])

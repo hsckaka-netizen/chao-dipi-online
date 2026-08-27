@@ -9,6 +9,7 @@ import {
 } from "../daily-tasks.js";
 
 test("daily task definitions keep refresh, targets, and rewards in one configuration", () => {
+  assert.equal(DAILY_TASK_RULES.version, "2026-08-27-v1");
   assert.equal(DAILY_TASK_RULES.refreshHourBeijing, 6);
   assert.deepEqual(DAILY_TASK_RULES.tasks.map((task) => ({
     id: task.id,
@@ -16,12 +17,12 @@ test("daily task definitions keep refresh, targets, and rewards in one configura
     diamonds: task.rewardDiamonds,
     materials: task.rewardMaterials
   })), [
-    { id: "complete-game-1", target: 1, diamonds: 500, materials: 100 },
-    { id: "complete-game-3", target: 3, diamonds: 300, materials: 50 },
-    { id: "win-game-1", target: 1, diamonds: 300, materials: 50 },
-    { id: "become-banker-1", target: 1, diamonds: 300, materials: 50 },
-    { id: "win-bottom-1", target: 1, diamonds: 300, materials: 50 },
-    { id: "earn-trick-score-500", target: 500, diamonds: 300, materials: 50 }
+    { id: "complete-game-1", target: 1, diamonds: 300, materials: 100 },
+    { id: "complete-game-3", target: 3, diamonds: 200, materials: 50 },
+    { id: "win-game-1", target: 1, diamonds: 200, materials: 50 },
+    { id: "become-banker-1", target: 1, diamonds: 200, materials: 50 },
+    { id: "win-bottom-1", target: 1, diamonds: 200, materials: 50 },
+    { id: "earn-trick-score-500", target: 500, diamonds: 200, materials: 50 }
   ]);
 });
 
