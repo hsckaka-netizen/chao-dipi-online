@@ -6258,7 +6258,7 @@ button.auto-play-toggle.active {
 .history-trick-plays {
   min-width: 0;
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: minmax(0, 1fr);
   gap: 8px;
 }
 
@@ -6267,7 +6267,7 @@ button.auto-play-toggle.active {
   display: grid;
   align-content: start;
   gap: 8px;
-  overflow: hidden;
+  overflow: visible;
   border: 1px solid #e1e7e3;
   border-radius: 7px;
   background: #fff;
@@ -6285,19 +6285,18 @@ button.auto-play-toggle.active {
 }
 
 .history-trick-play .mini-cards {
-  --mini-card-overlap: -24px;
-  flex-wrap: nowrap;
-  gap: 0;
-  overflow-x: auto;
-  overflow-y: hidden;
-  padding: 1px 0 5px 24px;
-  scrollbar-width: thin;
+  --mini-card-overlap: 0;
+  flex-wrap: wrap;
+  gap: 6px;
+  overflow: visible;
+  padding: 1px 0 5px;
 }
 
 .history-trick-play .mini-card {
   flex-basis: 48px;
   width: 48px;
   min-height: 60px;
+  margin-left: 0;
 }
 
 .result-modal {

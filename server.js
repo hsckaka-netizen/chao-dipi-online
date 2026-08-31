@@ -79,6 +79,7 @@ import {
 } from "./shop-and-items.js";
 import { versionedAssetUrl } from "./public/asset-versions.js";
 import { createStatePatch } from "./public/state-patch.js";
+import { applyShenBiesanCardRules, suitTractorOrderValue } from "./public/replacement-rank-rules.js";
 import { calculateHeroSkillReward, HERO_HOME_RULES } from "./hero-home.js";
 import {
   assignHomeUnit,
@@ -1062,19 +1063,7 @@ function beginShenBiesanSkillStage(room) {
 }
 
 function applyShenBiesanReplacement(room, replacementRank) {
-  const annotate = (card) => {
-    if (card.type !== "normal") return card;
-    delete card.rulesRank;
-    delete card.rulesReplacementRank;
-    if (card.rank === replacementRank) {
-      card.rulesRank = "2";
-      card.rulesReplacementRank = replacementRank;
-    } else if (card.rank === "2") {
-      card.rulesRank = "LOW_2";
-      card.rulesReplacementRank = replacementRank;
-    }
-    return card;
-  };
+  const annotate = (card) => applyShenBiesanCardRules(card, replacementRank);
   room.players.forEach((player) => {
     player.hand = sortHand(player.hand.map(annotate));
   });
@@ -4159,31 +4148,15 @@ function rankValue(card, trumpSuit) {
   return patternValue(card, trumpSuit);
 }
 
-function effectiveRankOrder(card) {
-  const replacementRank = card?.rulesReplacementRank || null;
-  if (!replacementRank) return rankOrder;
-  return rankOrder.map((rank) => rank === replacementRank ? "2" : rank === "2" ? "LOW_2" : rank);
-}
-
 function nonMainRankOrderValue(card, trumpSuit) {
-  if (!card || card.type !== "normal") return 99;
-  const availableRanks = effectiveRankOrder(card).filter((rank) => {
-    const sample = { type: "normal", suit: card.suit, rank, rulesRank: rank };
-    return !isMainPlayCard(sample, trumpSuit);
-  });
-  const index = availableRanks.indexOf(gameRank(card));
-  return index >= 0 ? index : 99;
+  return suitTractorOrderValue(card, trumpSuit);
 }
 
 function mainTractorOrderValue(card, trumpSuit) {
   if (!card) return 99;
   if (card.type === "normal" && trumpSuit && card.suit === trumpSuit && !isCompareCard(card, trumpSuit)) {
-    const availableRanks = effectiveRankOrder(card).filter((rank) => {
-      const sample = { type: "normal", suit: trumpSuit, rank, rulesRank: rank };
-      return !isCompareCard(sample, trumpSuit);
-    });
-    const index = availableRanks.indexOf(gameRank(card));
-    return index >= 0 ? 8 + index : 99;
+    const index = suitTractorOrderValue(card, trumpSuit);
+    return index < 99 ? 8 + index : 99;
   }
   return patternValue(card, trumpSuit);
 }

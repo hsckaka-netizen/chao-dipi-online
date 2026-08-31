@@ -18,6 +18,14 @@ test("房间提供传统、动态、暗狗腿与顺位狗腿切换", async () =>
   assert.match(source, /\/dogleg-mode/);
 });
 
+test("准备阶段向所有玩家展示狗腿模式与狗腿数", async () => {
+  const source = await readFile(appPath, "utf8");
+  assert.match(source, /狗腿模式：\$\{escapeHtml\(state\.doglegModeName/);
+  assert.match(source, /狗腿数：\$\{escapeHtml\(state\.setup\?\.doglegNeeded \?\? 0\)\} 个/);
+  assert.match(source, /preparationTag\("传统狗腿"\)/);
+  assert.match(source, /preparationTag\("顺位狗腿", "random-order"\)/);
+});
+
 test("新房间默认庄家承余并允许房主切回庄队均摊", async () => {
   const source = await readFile(appPath, "utf8");
   assert.match(source, /function renderBankerScoreModeControl\(\)/);

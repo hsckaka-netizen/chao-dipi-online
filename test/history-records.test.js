@@ -10,6 +10,7 @@ import {
 } from "../public/history-records.js";
 
 const appPath = fileURLToPath(new URL("../public/app.js", import.meta.url));
+const stylesPath = fileURLToPath(new URL("../public/styles.css", import.meta.url));
 
 test("玩家牌局历史可在保存结算与出牌记录之间切换", async () => {
   const source = await readFile(appPath, "utf8");
@@ -77,4 +78,17 @@ test("suit filters keep the whole round when any play contains that suit", () =>
     3
   );
   assert.deepEqual(filterHistoryTimelineEntries([fry, matchingRound], "fry"), [fry]);
+});
+
+test("出牌记录隐藏不炒过程，并按单玩家一行让牌面自动折行", async () => {
+  const [source, styles] = await Promise.all([
+    readFile(appPath, "utf8"),
+    readFile(stylesPath, "utf8")
+  ]);
+
+  assert.match(source, /function isHiddenHistoryEvent\(text\)/);
+  assert.match(source, /选择不炒底\|炒底倒计时结束，自动不炒/);
+  assert.match(styles, /\.history-trick-plays\s*\{[\s\S]*grid-template-columns:\s*minmax\(0, 1fr\)/);
+  assert.match(styles, /\.history-trick-play \.mini-cards\s*\{[\s\S]*flex-wrap:\s*wrap[\s\S]*overflow:\s*visible/);
+  assert.doesNotMatch(styles, /\.history-trick-play \.mini-cards\s*\{[\s\S]*overflow-x:\s*auto/);
 });

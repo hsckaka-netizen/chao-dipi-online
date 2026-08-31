@@ -2,6 +2,7 @@ import { applyStatePatch } from "./state-patch.js?v=9330552c7e1e";
 import { detectNewDraggedFiveEffects, detectNewLargePlayEffects } from "./gameplay-effects.js?v=14791e626d30";
 import { ASSET_URLS, versionedAssetUrl } from "./asset-versions.js?v=509d418f590d";
 import { createHistoryTrickEntry, filterHistoryTimelineEntries } from "./history-records.js?v=874ba3c97732";
+import { suitTractorOrderValue } from "./replacement-rank-rules.js?v=3b3650aa685e";
 
 const app = document.querySelector("#app");
 document.documentElement.style.setProperty("--joker-face-image", `url("${ASSET_URLS.jokerFace}")`);
@@ -2866,31 +2867,15 @@ function rankValue(card, trumpSuit = currentTrumpSuit()) {
   return patternValue(card, trumpSuit);
 }
 
-function effectiveRankOrder(card) {
-  const replacementRank = card?.rulesReplacementRank || null;
-  if (!replacementRank) return rankOrder;
-  return rankOrder.map((rank) => rank === replacementRank ? "2" : rank === "2" ? "LOW_2" : rank);
-}
-
 function nonMainRankOrderValue(card, trumpSuit = currentTrumpSuit()) {
-  if (!card || card.type !== "normal") return 99;
-  const availableRanks = effectiveRankOrder(card).filter((rank) => {
-    const sample = { type: "normal", suit: card.suit, rank, rulesRank: rank };
-    return !isMainPlayCard(sample, trumpSuit);
-  });
-  const index = availableRanks.indexOf(gameCardRank(card));
-  return index >= 0 ? index : 99;
+  return suitTractorOrderValue(card, trumpSuit);
 }
 
 function mainTractorOrderValue(card, trumpSuit = currentTrumpSuit()) {
   if (!card) return 99;
   if (card.type === "normal" && trumpSuit && card.suit === trumpSuit && !isComparePlayCard(card, trumpSuit)) {
-    const availableRanks = effectiveRankOrder(card).filter((rank) => {
-      const sample = { type: "normal", suit: trumpSuit, rank, rulesRank: rank };
-      return !isComparePlayCard(sample, trumpSuit);
-    });
-    const index = availableRanks.indexOf(gameCardRank(card));
-    return index >= 0 ? 8 + index : 99;
+    const index = suitTractorOrderValue(card, trumpSuit);
+    return index < 99 ? 8 + index : 99;
   }
   return patternValue(card, trumpSuit);
 }
@@ -5693,6 +5678,8 @@ function renderRoom() {
               <span class="tag">${escapeHtml(waitingNextRound ? "等待其他玩家进入下一局" : state.phase)}</span>
               ${inLobbyView ? `<span class="tag">起叫 ${escapeHtml(state.openingBidPercent || 40)}%</span>` : ""}
               ${inLobbyView ? `<span class="tag">${escapeHtml(state.bankerScoreModeName || "庄家承余")}</span>` : ""}
+              ${inLobbyView ? `<span class="tag">狗腿模式：${escapeHtml(state.doglegModeName || state.setup?.doglegModeName || "传统狗腿")}</span>` : ""}
+              ${inLobbyView ? `<span class="tag">狗腿数：${escapeHtml(state.setup?.doglegNeeded ?? 0)} 个</span>` : ""}
               ${inLobbyView ? `<span class="tag good">${escapeHtml(readyStatusText())}</span>` : ""}
             </div>
           </div>
@@ -6661,11 +6648,18 @@ function renderGameInfoTags() {
 function renderDoglegTableTag() {
   const setup = state.setup || {};
   const names = setup.doglegPlayerNames || [];
+  const configuredCount = Number(setup.doglegNeeded) || 0;
   const needed = setup.doglegMode === "random-order"
-    ? Number(setup.doglegTargetCount) || 0
-    : Number(setup.doglegNeeded) || 0;
+    ? Number(setup.doglegTargetCount) || configuredCount
+    : configuredCount;
+  const activeIdentityStage = state.stage === "playing" || state.stage === "finished";
+  const preparationTag = (modeName, modeClass = "") => `
+    <span class="tag table-dogleg-tag ${escapeHtml(modeClass)}" title="本局设置：${escapeHtml(modeName)}，狗腿数 ${needed} 个">
+      ${escapeHtml(modeName)} <i>狗腿数 ${needed}</i>
+    </span>
+  `;
   if (setup.doglegMode === "dynamic") {
-    if (!needed || (state.stage !== "playing" && state.stage !== "finished")) return "";
+    if (!needed || !activeIdentityStage) return preparationTag("动态狗腿", "dynamic");
     const revealText = names.length ? `当前狗腿：${names.join("、")}` : "尚无玩家获得狗腿标记";
     return `
       <span class="tag table-dogleg-tag dynamic" title="${escapeHtml(revealText)}">
@@ -6674,7 +6668,7 @@ function renderDoglegTableTag() {
     `;
   }
   if (setup.doglegMode === "hidden") {
-    if (!needed || (state.stage !== "playing" && state.stage !== "finished")) return "";
+    if (!needed || !activeIdentityStage) return preparationTag("暗狗腿", "hidden");
     const revealText = names.length ? `已公开：${names.join("、")}` : "暗狗腿身份尚未公开";
     return `
       <span class="tag table-dogleg-tag hidden" title="${escapeHtml(revealText)}">
@@ -6684,7 +6678,7 @@ function renderDoglegTableTag() {
   }
   if (setup.doglegMode === "random-order") {
     const card = setup.doglegCard;
-    if (!card || (state.stage !== "playing" && state.stage !== "finished")) return "";
+    if (!card || !activeIdentityStage) return preparationTag("顺位狗腿", "random-order");
     const targetPositions = setup.doglegTargetPositions || [];
     const positions = targetPositions.map((position) => `第${position}次`).join("、") || "无";
     const compactPositions = targetPositions.join("、") || "无";
@@ -6695,6 +6689,7 @@ function renderDoglegTableTag() {
     return `
       <span class="tag table-dogleg-tag random-order" title="${escapeHtml(revealText)}">
         <span>顺位狗腿 <strong class="${escapeHtml(card.color || suitColor(card.suit))}">${escapeHtml(doglegCardText(card))}</strong></span>
+        <span>狗腿数 ${needed}</span>
         <span>顺位 ${escapeHtml(compactPositions)}</span>
         <span>计 ${sequence}</span>
         <span>狗腿 ${escapeHtml(compactDoglegNames)}</span>
@@ -6702,7 +6697,7 @@ function renderDoglegTableTag() {
     `;
   }
   const card = setup.doglegCard;
-  if (!card) return "";
+  if (!card) return preparationTag("传统狗腿");
   const revealText = names.length ? `已出现：${names.join("、")}` : "尚未出现";
   return `
     <span class="tag table-dogleg-tag" title="${escapeHtml(revealText)}">
@@ -7433,10 +7428,14 @@ function isDuplicatedPlayEvent(text) {
   return / 第 \d+ 轮出了 /.test(text) || /^第 \d+ 轮结束：/.test(text);
 }
 
+function isHiddenHistoryEvent(text) {
+  return /选择不炒底|炒底倒计时结束，自动不炒/.test(text);
+}
+
 function historyTimelineEntries(source) {
   let sequence = 0;
   const events = (source.events || [])
-    .filter((event) => event?.text && !isDuplicatedPlayEvent(event.text))
+    .filter((event) => event?.text && !isDuplicatedPlayEvent(event.text) && !isHiddenHistoryEvent(event.text))
     .map((event) => ({
       kind: timelineEventKind(event.text),
       label: timelineEventKind(event.text) === "fry" ? "炒底" : "牌局",
@@ -7491,7 +7490,6 @@ function renderHistoryTimelineEntry(entry, source) {
       <article class="history-timeline-entry history-${escapeHtml(entry.kind)}">
         <time>${escapeHtml(fmtTime(entry.at))}</time>
         <div class="history-entry-body">
-          <div class="history-entry-head"><span class="tag ${entry.kind === "fry" ? "accent" : ""}">${escapeHtml(entry.label)}</span></div>
           <p>${escapeHtml(entry.text)}</p>
         </div>
       </article>

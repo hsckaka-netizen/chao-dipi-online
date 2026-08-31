@@ -543,17 +543,18 @@ test("existing five-person task requirements can be relaxed without changing the
 });
 
 test("server and table UI expose all three SSR board skill stages", async () => {
-  const [serverSource, appSource, gameHistorySource] = await Promise.all([
+  const [serverSource, appSource, gameHistorySource, replacementRankRulesSource] = await Promise.all([
     readFile(fileURLToPath(new URL("../server.js", import.meta.url)), "utf8"),
     readFile(fileURLToPath(new URL("../public/app.js", import.meta.url)), "utf8"),
-    readFile(fileURLToPath(new URL("../game-history.js", import.meta.url)), "utf8")
+    readFile(fileURLToPath(new URL("../game-history.js", import.meta.url)), "utf8"),
+    readFile(fileURLToPath(new URL("../public/replacement-rank-rules.js", import.meta.url)), "utf8")
   ]);
   assert.match(serverSource, /beginShenBiesanSkillStage/);
   assert.match(serverSource, /resolveShenBiesanSkillStage/);
   assert.match(serverSource, /beginYokoyamaSkillStage/);
   assert.match(serverSource, /activateShenJiangwenSkill/);
   assert.match(serverSource, /pathParts\[3\] === "board-hero-skill"/);
-  assert.match(serverSource, /rulesRank = "LOW_2"/);
+  assert.match(replacementRankRulesSource, /rulesRank = "LOW_2"/);
   assert.match(serverSource, /candidateRanksByPlayerId/);
   assert.match(serverSource, /selectedRankByPlayerId/);
   assert.match(serverSource, /ownedReplacementRanksForShenBiesan/);
