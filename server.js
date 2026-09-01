@@ -143,6 +143,7 @@ import {
   aiPublicPlayerStats,
   buildAiPublicKnowledge
 } from "./ai-public-knowledge.js";
+import { createSeededRandom, shuffleWithRandom, stableAiSeed } from "./ai-random.js";
 
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
 const publicDir = join(__dirname, "public");
@@ -169,6 +170,12 @@ const configuredAiSetupDelay = Number(process.env.AI_SETUP_DELAY_MS || 450);
 const AI_SETUP_DELAY_MS = Number.isFinite(configuredAiSetupDelay) ? Math.max(0, configuredAiSetupDelay) : 450;
 const configuredAiPlayDelay = Number(process.env.AI_PLAY_DELAY_MS || 1000);
 const AI_PLAY_DELAY_MS = Number.isFinite(configuredAiPlayDelay) ? Math.max(0, configuredAiPlayDelay) : 1000;
+const AI_STRATEGY_HEURISTIC = "heuristic-v2";
+const AI_STRATEGY_MONTE_CARLO = "monte-carlo-v3";
+const AI_MONTE_CARLO_CANDIDATES = 3;
+const AI_MONTE_CARLO_SAMPLES = 6;
+const AI_MONTE_CARLO_ROLLOUT_WEIGHT = 0.3;
+const AI_MONTE_CARLO_OVERRIDE_MARGIN = 8;
 const MAX_GAME_EVENTS = 700;
 const AVATAR_CHANGE_COOLDOWN_MS = 7 * 24 * 60 * 60 * 1000;
 const ADMIN_BOOTSTRAP_USERNAME = String(process.env.ADMIN_BOOTSTRAP_USERNAME || "").trim();
@@ -5232,7 +5239,7 @@ function throwLeadScore(room, player, plan, context) {
   return score;
 }
 
-function chooseLeadAutoPlay(room, player, context) {
+function leadAutoPlayPlans(room, player, context) {
   const candidates = leadPatternCandidates(room, player);
   const plans = candidates.map((cards) => ({
     cards,
@@ -5244,13 +5251,14 @@ function chooseLeadAutoPlay(room, player, context) {
     plans.push({ ...plan, score: throwLeadScore(room, player, plan, context) });
   });
   if (!plans.length) {
-    return {
+    return [{
       cards: [sortForDiscard(room, player, player.hand)[0]].filter(Boolean),
       throwPlay: false,
-      throwComponents: null
-    };
+      throwComponents: null,
+      score: 0
+    }];
   }
-  return plans.sort((a, b) => b.score - a.score || b.cards.length - a.cards.length)[0];
+  return plans.sort((a, b) => b.score - a.score || b.cards.length - a.cards.length);
 }
 
 function followCandidateScore(room, player, cards, info, winning, context) {
@@ -5312,22 +5320,276 @@ function followCandidateScore(room, player, cards, info, winning, context) {
   return score;
 }
 
-function chooseFollowAutoPlay(room, player, info, context) {
+function followAutoPlayPlans(room, player, info, context) {
   const candidates = legalFollowCandidates(room, player, info);
-  if (!candidates.length) return { cards: [], throwPlay: false, throwComponents: null };
+  if (!candidates.length) return [];
   const winning = currentWinningState(room);
-  const best = candidates
+  return candidates
     .map((cards) => ({ cards, score: followCandidateScore(room, player, cards, info, winning, context) }))
-    .sort((a, b) => b.score - a.score || cardsPoint(b.cards) - cardsPoint(a.cards))[0];
-  return { cards: best.cards, throwPlay: false, throwComponents: null };
+    .map((plan) => ({ ...plan, throwPlay: false, throwComponents: null }))
+    .sort((a, b) => b.score - a.score || cardsPoint(b.cards) - cardsPoint(a.cards));
 }
 
-function legalAutoPlay(room, player) {
-  if (!player.hand.length) return { cards: [], throwPlay: false, throwComponents: null };
-  const context = aiDecisionContext(room, player);
+function heuristicAutoPlayPlans(room, player, context = aiDecisionContext(room, player)) {
+  if (!player.hand.length) return [];
   const info = leadInfo(room.currentTrick, room.trumpSuit);
-  if (!info) return chooseLeadAutoPlay(room, player, context);
-  return chooseFollowAutoPlay(room, player, info, context);
+  return info
+    ? followAutoPlayPlans(room, player, info, context)
+    : leadAutoPlayPlans(room, player, context);
+}
+
+function legalHeuristicAutoPlay(room, player, context = aiDecisionContext(room, player)) {
+  const best = heuristicAutoPlayPlans(room, player, context)[0];
+  if (!best) {
+    return {
+      cards: [],
+      throwPlay: false,
+      throwComponents: null,
+      strategy: AI_STRATEGY_HEURISTIC
+    };
+  }
+  return { ...best, strategy: AI_STRATEGY_HEURISTIC };
+}
+
+function aiDecisionSeed(room, player) {
+  const ownCards = player.hand.map((card) => card.id).sort().join(",");
+  const publicPlays = (room.currentTrick?.plays || [])
+    .map((play) => `${play.playerId}:${play.cards.map((card) => card.id).sort().join(",")}`)
+    .join(";");
+  const publicHistory = (room.trickHistory || [])
+    .map((trick) => `${trick.number}:${trick.winnerId || ""}:${trick.plays
+      .map((play) => play.cards.map((card) => card.id).sort().join(","))
+      .join("/")}`)
+    .join(";");
+  const handCounts = room.players.map((target) => `${target.id}:${target.hand.length}`).join(",");
+  return stableAiSeed([
+    room.players.length,
+    room.trumpSuit || "",
+    player.id,
+    room.currentTrick?.number || 0,
+    ownCards,
+    handCounts,
+    publicPlays,
+    publicHistory
+  ].join("|"));
+}
+
+function aiSampleHiddenHands(room, player, context, random) {
+  const targets = room.players
+    .filter((target) => target.id !== player.id)
+    .map((target) => ({
+      id: target.id,
+      count: target.hand.length,
+      voidRoutes: context.knowledge.voidRoutesByPlayerId.get(target.id) || new Set()
+    }))
+    .sort((left, right) => right.voidRoutes.size - left.voidRoutes.size || right.count - left.count);
+
+  for (let attempt = 0; attempt < 6; attempt += 1) {
+    let remaining = shuffleWithRandom(context.unseenCards, random);
+    const hands = new Map();
+    let failed = false;
+    for (const target of targets) {
+      const allowed = remaining.filter((card) => !target.voidRoutes.has(playSuit(card, room.trumpSuit)));
+      if (allowed.length < target.count) {
+        failed = true;
+        break;
+      }
+      const selected = allowed.slice(0, target.count);
+      const selectedIds = new Set(selected.map((card) => card.id));
+      hands.set(target.id, selected);
+      remaining = remaining.filter((card) => !selectedIds.has(card.id));
+    }
+    if (!failed) return { hands, hiddenKitty: remaining };
+  }
+  return null;
+}
+
+function aiSampleWorlds(room, player, context, sampleCount = AI_MONTE_CARLO_SAMPLES) {
+  const random = createSeededRandom(aiDecisionSeed(room, player));
+  const worlds = [];
+  for (let index = 0; index < sampleCount; index += 1) {
+    const world = aiSampleHiddenHands(room, player, context, random);
+    if (world) worlds.push(world);
+  }
+  return worlds;
+}
+
+function aiSimulationRoom(room, player, world) {
+  return {
+    ...room,
+    players: room.players.map((target) => ({
+      ...target,
+      hand: target.id === player.id
+        ? [...player.hand]
+        : [...(world.hands.get(target.id) || [])]
+    })),
+    kitty: [...world.hiddenKitty],
+    currentTrick: {
+      ...room.currentTrick,
+      plays: (room.currentTrick?.plays || []).map((play) => ({
+        ...play,
+        cards: [...play.cards],
+        forcedProtectedFiveIds: [...(play.forcedProtectedFiveIds || [])]
+      }))
+    },
+    doglegPlayerIds: [...(room.doglegPlayerIds || [])],
+    events: []
+  };
+}
+
+function aiPlanPlayRecord(room, player, plan) {
+  let throwComponents = null;
+  if (plan.throwPlay) {
+    const parsed = throwComponentsFromExplicitGroups(plan.cards, plan.throwComponents, room.trumpSuit);
+    if (parsed.error) return null;
+    throwComponents = publicThrowComponents(parsed.components);
+  }
+  return {
+    playerId: player.id,
+    cards: [...plan.cards],
+    forcedProtectedFiveIds: [],
+    throwPlay: Boolean(plan.throwPlay),
+    throwFailed: false,
+    throwComponents
+  };
+}
+
+function aiAppendSimulatedPlay(room, player, plan) {
+  const play = aiPlanPlayRecord(room, player, plan);
+  if (!play) return false;
+  const leadCards = room.currentTrick.plays[0]?.cards || [];
+  play.forcedProtectedFiveIds = leadCards.length
+    ? forcedProtectedFiveIds({
+      hand: player.hand,
+      selected: play.cards,
+      leadCards,
+      trumpSuit: room.trumpSuit
+    })
+    : [];
+  const selectedIds = new Set(play.cards.map((card) => card.id));
+  player.hand = player.hand.filter((card) => !selectedIds.has(card.id));
+  room.currentTrick.plays.push(play);
+  return true;
+}
+
+function aiTeamAffinity(context, playerId) {
+  const relation = context.teams.relationByPlayerId.get(playerId);
+  if (relation === "self" || relation === "ally") return 1;
+  if (relation === "opponent") return -1;
+  return 1 - context.teams.opponentProbability(playerId) * 2;
+}
+
+function aiSimulatedTrickValue(room, context, outcome) {
+  const winnerAffinity = aiTeamAffinity(context, outcome.winnerId);
+  let value = winnerAffinity * (28 + outcome.points * 3.2);
+  room.currentTrick.plays.forEach((play) => {
+    if (play.playerId === outcome.winnerId) return;
+    const ownerAffinity = aiTeamAffinity(context, play.playerId);
+    play.cards.forEach((card) => {
+      if (!isProtectedFive(card)) return;
+      const fiveWeight = card.suit === "H" ? 92 : 68;
+      value += (winnerAffinity - ownerAffinity) * fiveWeight / 2;
+    });
+  });
+  return value;
+}
+
+function aiSimulatePlan(room, player, plan, context, world) {
+  const simulatedRoom = aiSimulationRoom(room, player, world);
+  const simulatedPlayer = playerById(simulatedRoom, player.id);
+  if (!simulatedPlayer || !aiAppendSimulatedPlay(simulatedRoom, simulatedPlayer, plan)) return null;
+
+  let remainingTurns = simulatedRoom.players.length;
+  while (simulatedRoom.currentTrick.plays.length < simulatedRoom.players.length && remainingTurns > 0) {
+    remainingTurns -= 1;
+    const nextId = expectedPlayerId(simulatedRoom);
+    const nextPlayer = playerById(simulatedRoom, nextId);
+    if (!nextPlayer) return null;
+    const response = legalHeuristicAutoPlay(simulatedRoom, nextPlayer);
+    if (!response.cards.length || !aiAppendSimulatedPlay(simulatedRoom, nextPlayer, response)) return null;
+  }
+  if (simulatedRoom.currentTrick.plays.length !== simulatedRoom.players.length) return null;
+  return aiSimulatedTrickValue(
+    simulatedRoom,
+    context,
+    settleTrick(simulatedRoom, simulatedRoom.currentTrick)
+  );
+}
+
+function chooseMonteCarloAutoPlay(room, player, plans, context, options = {}) {
+  const candidateLimit = Math.max(1, Math.min(
+    AI_MONTE_CARLO_CANDIDATES,
+    Number(options.candidateLimit) || AI_MONTE_CARLO_CANDIDATES
+  ));
+  const defaultSampleCount = room.players.length >= 7 ? 4 : AI_MONTE_CARLO_SAMPLES;
+  const sampleCount = Math.max(1, Math.min(
+    AI_MONTE_CARLO_SAMPLES,
+    Number(options.sampleCount) || defaultSampleCount
+  ));
+  const rolloutWeight = clampNumber(
+    Number.isFinite(Number(options.rolloutWeight)) ? Number(options.rolloutWeight) : AI_MONTE_CARLO_ROLLOUT_WEIGHT,
+    0,
+    2
+  );
+  const overrideMargin = clampNumber(
+    Number.isFinite(Number(options.overrideMargin)) ? Number(options.overrideMargin) : AI_MONTE_CARLO_OVERRIDE_MARGIN,
+    0,
+    100
+  );
+  const candidates = plans.slice(0, candidateLimit);
+  const worlds = aiSampleWorlds(room, player, context, sampleCount);
+  if (candidates.length < 2 || !worlds.length) {
+    return { ...plans[0], strategy: AI_STRATEGY_MONTE_CARLO, sampleCount: worlds.length };
+  }
+
+  const evaluated = candidates.map((plan) => {
+    const outcomes = worlds
+      .map((world) => aiSimulatePlan(room, player, plan, context, world))
+      .filter(Number.isFinite);
+    const rolloutScore = outcomes.length
+      ? outcomes.reduce((total, value) => total + value, 0) / outcomes.length
+      : 0;
+    return {
+      ...plan,
+      heuristicScore: plan.score,
+      rolloutScore,
+      sampleCount: outcomes.length,
+      combinedScore: plan.score + rolloutScore * rolloutWeight
+    };
+  });
+  const heuristicBestKey = cardIdsKey(plans[0].cards);
+  const ranked = evaluated.sort((left, right) =>
+    right.combinedScore - left.combinedScore
+    || right.heuristicScore - left.heuristicScore
+    || right.cards.length - left.cards.length
+  );
+  const heuristicBest = evaluated.find((plan) => cardIdsKey(plan.cards) === heuristicBestKey)
+    || ranked[0];
+  const rolloutBest = ranked[0];
+  const selected = rolloutBest !== heuristicBest
+    && rolloutBest.combinedScore < heuristicBest.combinedScore + overrideMargin
+    ? heuristicBest
+    : rolloutBest;
+  return {
+    ...selected,
+    strategy: AI_STRATEGY_MONTE_CARLO
+  };
+}
+
+function legalAutoPlay(room, player, options = {}) {
+  if (!player.hand.length) {
+    return { cards: [], throwPlay: false, throwComponents: null, strategy: options.strategy || AI_STRATEGY_MONTE_CARLO };
+  }
+  const context = aiDecisionContext(room, player);
+  const plans = heuristicAutoPlayPlans(room, player, context);
+  if (!plans.length) {
+    return { cards: [], throwPlay: false, throwComponents: null, strategy: options.strategy || AI_STRATEGY_MONTE_CARLO };
+  }
+  if (
+    options.strategy === AI_STRATEGY_HEURISTIC
+    || normalizeDoglegMode(room.doglegMode) !== DOGLEG_MODE_TRADITIONAL
+  ) return legalHeuristicAutoPlay(room, player, context);
+  return chooseMonteCarloAutoPlay(room, player, plans, context, options);
 }
 
 function compareCardsSmallToLarge(room, a, b) {
@@ -6869,11 +7131,17 @@ const server = createServer(async (req, res) => {
 });
 
 export const __aiPlayTesting = {
+  AI_STRATEGY_HEURISTIC,
+  AI_STRATEGY_MONTE_CARLO,
   aiDecisionContext,
   aiPublicKnowledge,
+  aiSampleHiddenHands,
   aiSafeThrowPlans,
   createDeck,
+  expectedPlayerId,
+  legalHeuristicAutoPlay,
   legalAutoPlay,
+  playCards,
   playSuit
 };
 

@@ -1,10 +1,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
+import { createSeededRandom } from "../ai-random.js";
 import { __aiPlayTesting } from "../server.js";
 
 const {
+  AI_STRATEGY_HEURISTIC,
   aiDecisionContext,
+  aiSampleHiddenHands,
   aiSafeThrowPlans,
   createDeck,
   legalAutoPlay
@@ -131,4 +134,60 @@ test("robot feeds a safe ally but does not volunteer a protected five", () => {
   const decision = legalAutoPlay(room, robot);
   assert.deepEqual(decision.cards.map((card) => card.id), ["1-S-4"]);
   assert.equal(decision.throwPlay, false);
+});
+
+test("sampled hidden hands honor public void knowledge and public hand counts", () => {
+  const deck = createDeck(5);
+  const robot = player("robot", [cardById(deck, "1-S-A"), cardById(deck, "1-C-K")]);
+  const voidPlayer = player("void-player", [cardById(deck, "2-H-9"), cardById(deck, "2-H-10"), cardById(deck, "2-H-J")]);
+  const otherPlayers = [player("banker", [cardById(deck, "3-D-4")]), player("other-1"), player("other-2")];
+  const room = baseRoom({
+    players: [robot, voidPlayer, ...otherPlayers],
+    currentTrick: { number: 2, leaderId: "robot", plays: [] },
+    trickHistory: [{
+      number: 1,
+      leaderId: "robot",
+      winnerId: "robot",
+      points: 0,
+      plays: [
+        { playerId: "robot", cards: [cardById(deck, "1-H-6"), cardById(deck, "1-H-7")] },
+        { playerId: "void-player", cards: [cardById(deck, "2-H-8"), cardById(deck, "2-C-9")] },
+        { playerId: "banker", cards: [cardById(deck, "3-H-6"), cardById(deck, "3-H-7")] },
+        { playerId: "other-1", cards: [cardById(deck, "4-H-6"), cardById(deck, "4-H-7")] },
+        { playerId: "other-2", cards: [cardById(deck, "5-H-6"), cardById(deck, "5-H-7")] }
+      ]
+    }]
+  });
+  const context = aiDecisionContext(room, robot);
+  const sample = aiSampleHiddenHands(room, robot, context, createSeededRandom("void-sample"));
+
+  assert.ok(sample);
+  assert.equal(sample.hands.get("void-player").length, voidPlayer.hand.length);
+  assert.equal(
+    sample.hands.get("void-player").some((card) => __aiPlayTesting.playSuit(card, room.trumpSuit) === "H"),
+    false
+  );
+  otherPlayers.forEach((target) => {
+    assert.equal(sample.hands.get(target.id).length, target.hand.length);
+  });
+});
+
+test("one-trick sampling falls back to the fair heuristic in nontraditional dogleg modes", () => {
+  const deck = createDeck(5);
+  const robot = player("robot", [
+    cardById(deck, "1-C-A"),
+    cardById(deck, "1-C-K"),
+    cardById(deck, "1-D-4")
+  ]);
+  const room = baseRoom({
+    players: [robot, player("banker"), player("other-1"), player("other-2"), player("other-3")],
+    currentTrick: { number: 1, leaderId: "robot", plays: [] }
+  });
+  room.doglegMode = "hidden";
+  room.hiddenDogleg = { players: {} };
+
+  const decision = legalAutoPlay(room, robot);
+  const baseline = legalAutoPlay(room, robot, { strategy: AI_STRATEGY_HEURISTIC });
+  assert.equal(decision.strategy, AI_STRATEGY_HEURISTIC);
+  assert.deepEqual(decision.cards.map((card) => card.id), baseline.cards.map((card) => card.id));
 });
