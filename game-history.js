@@ -16,6 +16,7 @@ import {
 } from "./daily-tasks.js";
 import { buildGameEvaluations } from "./game-evaluations.js";
 import { annotateForcedProtectedFives } from "./dragged-five-attribution.js";
+import { calculateSeasonReward, SEASON_REWARD_RULES } from "./season-rewards.js";
 import { CONSUMABLE_ITEMS, SHOP_RULES_VERSION, shopProductIdFromPath } from "./shop-and-items.js";
 import {
   beijingHeroRefreshKey,
@@ -162,6 +163,10 @@ const MIGRATIONS = [
   {
     version: 30,
     path: fileURLToPath(new URL("./db/migrations/030_hero_production_reward_curve.sql", import.meta.url))
+  },
+  {
+    version: 31,
+    path: fileURLToPath(new URL("./db/migrations/031_season_ranking_rewards.sql", import.meta.url))
   }
 ];
 const HISTORY_ENABLED = String(process.env.GAME_HISTORY_ENABLED || "").toLowerCase() === "true";
@@ -169,6 +174,8 @@ const DATABASE_URL = String(process.env.DATABASE_URL || "").trim();
 
 let pool = null;
 let retryTimer = null;
+let seasonRewardTimer = null;
+let seasonRewardCheckInFlight = false;
 let flushInFlight = false;
 const storedProfileIds = new Set();
 const pendingRecords = new Map();
@@ -185,6 +192,9 @@ const status = {
   lastProfileSavedAt: null,
   pendingCount: 0,
   lastSavedAt: null,
+  seasonRewardRulesVersion: SEASON_REWARD_RULES.version,
+  lastSeasonRewardCheckAt: null,
+  lastSeasonRewardSettlement: null,
   lastErrorAt: null,
   lastErrorCode: null,
   lastErrorMessage: null
@@ -294,6 +304,10 @@ export async function initializeGameHistory() {
     console.error("[game-history] database initialization failed", error.message);
   } finally {
     client?.release();
+  }
+  if (status.connected) {
+    await runSeasonRewardCheck();
+    scheduleSeasonRewardChecks();
   }
   return safeStatus();
 }
@@ -3444,6 +3458,249 @@ export async function getDiamondWallet(accountId, limit = 20) {
       finishedAt: row.finished_at ? new Date(row.finished_at).toISOString() : null
     }))
   };
+}
+
+async function settleSeasonDiamondRewards(database, season) {
+  const client = await database.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [`season_reward:${season.season_id}`]);
+    const currentResult = await client.query(
+      `SELECT season_id, name, starts_at, ends_at
+       FROM cdp_seasons
+       WHERE season_id = $1::bigint
+       FOR UPDATE`,
+      [season.season_id]
+    );
+    const current = currentResult.rows[0];
+    if (!current?.ends_at || new Date(current.ends_at).getTime() > Date.now() - 60_000) {
+      await client.query("COMMIT");
+      return { status: "not-ready", seasonId: String(season.season_id) };
+    }
+    const existing = await client.query(
+      `SELECT player_count, total_amount, settled_at
+       FROM cdp_season_reward_settlements
+       WHERE season_id = $1::bigint`,
+      [season.season_id]
+    );
+    if (existing.rows[0]) {
+      await client.query("COMMIT");
+      return {
+        status: "already-settled",
+        seasonId: String(season.season_id),
+        playerCount: Number(existing.rows[0].player_count) || 0,
+        totalAmount: Number(existing.rows[0].total_amount) || 0
+      };
+    }
+
+    const ranking = await client.query(
+      `WITH season_players AS (
+         SELECT
+           player.account_id,
+           count(*)::integer AS games_played,
+           count(*) FILTER (WHERE player.won)::integer AS wins,
+           coalesce(sum(player.game_score), 0)::numeric(12, 2) AS total_score
+         FROM cdp_game_players player
+         JOIN cdp_games game ON game.game_id = player.game_id
+         WHERE NOT player.is_ai
+           AND player.account_id IS NOT NULL
+           AND game.finished_at >= $1::timestamptz
+           AND game.finished_at < $2::timestamptz
+         GROUP BY player.account_id
+       ), latest_identity AS (
+         SELECT DISTINCT ON (player.account_id)
+           player.account_id,
+           player.name_snapshot AS latest_name
+         FROM cdp_game_players player
+         JOIN cdp_games game ON game.game_id = player.game_id
+         WHERE NOT player.is_ai
+           AND player.account_id IS NOT NULL
+           AND game.finished_at >= $1::timestamptz
+           AND game.finished_at < $2::timestamptz
+         ORDER BY player.account_id, game.finished_at DESC, player.game_id DESC
+       )
+       SELECT
+         season_players.account_id,
+         season_players.total_score,
+         season_players.wins,
+         season_players.games_played,
+         latest_identity.latest_name,
+         row_number() OVER (
+           ORDER BY
+             season_players.total_score DESC,
+             season_players.wins DESC,
+             season_players.games_played DESC,
+             latest_identity.latest_name ASC,
+             season_players.account_id ASC
+         )::integer AS final_rank
+       FROM season_players
+       JOIN latest_identity USING (account_id)
+       ORDER BY final_rank`,
+      [current.starts_at, current.ends_at]
+    );
+
+    let totalAmount = 0;
+    for (const row of ranking.rows) {
+      const reward = calculateSeasonReward({
+        rank: row.final_rank,
+        totalScore: row.total_score
+      });
+      await client.query(
+        `INSERT INTO cdp_diamond_wallets (account_id)
+         VALUES ($1::uuid)
+         ON CONFLICT (account_id) DO NOTHING`,
+        [row.account_id]
+      );
+      const wallet = await client.query(
+        `UPDATE cdp_diamond_wallets
+         SET balance = balance + $2,
+             lifetime_earned = lifetime_earned + $2,
+             updated_at = now()
+         WHERE account_id = $1::uuid
+         RETURNING balance`,
+        [row.account_id, reward.totalAmount]
+      );
+      const balanceAfter = Number(wallet.rows[0]?.balance) || 0;
+      await client.query(
+        `INSERT INTO cdp_season_diamond_rewards (
+           season_id, account_id, final_rank, total_score,
+           rank_amount, positive_score_bonus, awarded_amount,
+           balance_after, rules_version
+         ) VALUES (
+           $1::bigint, $2::uuid, $3, $4::numeric,
+           $5, $6, $7, $8, $9
+         )`,
+        [
+          current.season_id,
+          row.account_id,
+          row.final_rank,
+          row.total_score,
+          reward.rankAmount,
+          reward.positiveScoreBonus,
+          reward.totalAmount,
+          balanceAfter,
+          SEASON_REWARD_RULES.version
+        ]
+      );
+      await client.query(
+        `INSERT INTO cdp_diamond_ledger (
+           account_id, amount, balance_after, reason,
+           rules_version, idempotency_key, detail
+         ) VALUES ($1::uuid, $2, $3, 'season_reward', $4, $5, $6::jsonb)`,
+        [
+          row.account_id,
+          reward.totalAmount,
+          balanceAfter,
+          SEASON_REWARD_RULES.version,
+          `season_reward:${current.season_id}:${row.account_id}`,
+          JSON.stringify({
+            seasonId: String(current.season_id),
+            seasonName: current.name,
+            finalRank: Number(row.final_rank),
+            totalScore: String(row.total_score),
+            rankAmount: reward.rankAmount,
+            positiveScoreBonus: reward.positiveScoreBonus
+          })
+        ]
+      );
+      totalAmount += reward.totalAmount;
+    }
+
+    await client.query(
+      `INSERT INTO cdp_season_reward_settlements (
+         season_id, rules_version, player_count, total_amount
+       ) VALUES ($1::bigint, $2, $3, $4)`,
+      [current.season_id, SEASON_REWARD_RULES.version, ranking.rows.length, totalAmount]
+    );
+    await client.query("COMMIT");
+    return {
+      status: "settled",
+      seasonId: String(current.season_id),
+      seasonName: current.name,
+      playerCount: ranking.rows.length,
+      totalAmount
+    };
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+export async function settleCompletedSeasonDiamondRewards() {
+  const database = requirePool();
+  const candidates = await database.query(
+    `WITH numbered_seasons AS (
+       SELECT
+         season_id, name, starts_at, ends_at,
+         row_number() OVER (ORDER BY starts_at ASC, season_id ASC) AS season_number
+       FROM cdp_seasons
+     )
+     SELECT season.season_id, season.name, season.starts_at, season.ends_at
+     FROM numbered_seasons season
+     LEFT JOIN cdp_season_reward_settlements settlement
+       ON settlement.season_id = season.season_id
+     WHERE season.season_number >= $1
+       AND season.ends_at IS NOT NULL
+       AND season.ends_at <= now() - interval '1 minute'
+       AND settlement.season_id IS NULL
+     ORDER BY season.ends_at ASC, season.season_id ASC`,
+    [SEASON_REWARD_RULES.firstEligibleSeasonNumber]
+  );
+  const results = [];
+  for (const season of candidates.rows) {
+    results.push(await settleSeasonDiamondRewards(database, season));
+  }
+  const latest = await database.query(
+    `SELECT
+       settlement.season_id,
+       season.name AS season_name,
+       settlement.player_count,
+       settlement.total_amount,
+       settlement.settled_at
+     FROM cdp_season_reward_settlements settlement
+     JOIN cdp_seasons season ON season.season_id = settlement.season_id
+     ORDER BY settlement.settled_at DESC, settlement.season_id DESC
+     LIMIT 1`
+  );
+  status.lastSeasonRewardCheckAt = new Date().toISOString();
+  status.lastSeasonRewardSettlement = latest.rows[0]
+    ? {
+      seasonId: String(latest.rows[0].season_id),
+      seasonName: latest.rows[0].season_name,
+      playerCount: Number(latest.rows[0].player_count) || 0,
+      totalAmount: Number(latest.rows[0].total_amount) || 0,
+      settledAt: latest.rows[0].settled_at
+        ? new Date(latest.rows[0].settled_at).toISOString()
+        : null
+    }
+    : null;
+  return results;
+}
+
+async function runSeasonRewardCheck() {
+  if (seasonRewardCheckInFlight || !pool || !status.connected) return;
+  seasonRewardCheckInFlight = true;
+  try {
+    const results = await settleCompletedSeasonDiamondRewards();
+    for (const result of results.filter((item) => item.status === "settled")) {
+      console.log(
+        `[season-rewards] settled ${result.seasonName} (${result.seasonId}); ${result.playerCount} players; ${result.totalAmount} diamonds`
+      );
+    }
+  } catch (error) {
+    rememberError(error);
+    console.error("[season-rewards] settlement check failed", error.message);
+  } finally {
+    seasonRewardCheckInFlight = false;
+  }
+}
+
+function scheduleSeasonRewardChecks() {
+  if (seasonRewardTimer) return;
+  seasonRewardTimer = setInterval(() => void runSeasonRewardCheck(), 5 * 60_000);
+  seasonRewardTimer.unref?.();
 }
 
 function seasonError(message, statusCode = 400) {
