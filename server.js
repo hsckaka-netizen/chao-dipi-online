@@ -2,7 +2,7 @@ import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
 import { createReadStream } from "node:fs";
 import { extname, join, normalize } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { randomBytes, randomInt, randomUUID } from "node:crypto";
 
 import {
@@ -138,6 +138,11 @@ import {
   tauntAvailableToAccount,
   validateTauntText
 } from "./taunt-presets.js";
+import {
+  aiKnowsPlayerVoid,
+  aiPublicPlayerStats,
+  buildAiPublicKnowledge
+} from "./ai-public-knowledge.js";
 
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
 const publicDir = join(__dirname, "public");
@@ -4656,6 +4661,201 @@ function aiTeamRelation(room, perspectivePlayer, targetPlayerId) {
   return ownTeam === targetTeam ? "ally" : "opponent";
 }
 
+function aiPublicKnowledge(room) {
+  return buildAiPublicKnowledge({
+    playerIds: room.players.map((player) => player.id),
+    trickHistory: room.trickHistory || [],
+    currentTrick: room.currentTrick,
+    trumpSuit: room.trumpSuit,
+    routeOfCard: playSuit,
+    pointsOfCards: cardsPoint,
+    isProtectedFive
+  });
+}
+
+function aiTeamContext(room, perspectivePlayer) {
+  const ownTeam = aiOwnTeam(room, perspectivePlayer);
+  const relationByPlayerId = new Map(room.players.map((player) => [
+    player.id,
+    aiTeamRelation(room, perspectivePlayer, player.id)
+  ]));
+  const unknownIds = room.players
+    .filter((player) => relationByPlayerId.get(player.id) === "unknown")
+    .map((player) => player.id);
+  const remainingBankerSlots = Math.max(0, doglegTargetCount(room) - (room.doglegPlayerIds || []).length);
+  const unknownBankerProbability = unknownIds.length
+    ? clampNumber(remainingBankerSlots / unknownIds.length, 0, 1)
+    : 0;
+
+  function opponentProbability(playerId) {
+    const relation = relationByPlayerId.get(playerId);
+    if (relation === "self" || relation === "ally") return 0;
+    if (relation === "opponent") return 1;
+    return ownTeam === "banker" ? 1 - unknownBankerProbability : unknownBankerProbability;
+  }
+
+  return {
+    ownTeam,
+    relationByPlayerId,
+    unknownBankerProbability,
+    opponentProbability
+  };
+}
+
+function aiCardsWithCurrentReplacement(room, cards) {
+  const replacementRank = room.boardHeroEffects?.replacementRank || null;
+  if (!replacementRank) return cards;
+  return cards.map((card) => {
+    if (card.type !== "normal" || (card.rank !== replacementRank && card.rank !== "2")) return card;
+    return { ...card, rulesReplacementRank: replacementRank };
+  });
+}
+
+function aiUnseenCards(room, player, knowledge) {
+  const publicKnownIds = new Set([
+    ...knowledge.seenCardIds,
+    ...player.hand.map((card) => card.id),
+    ...(room.removedCards || []).map((card) => card.id)
+  ]);
+  return aiCardsWithCurrentReplacement(room, createDeck(room.players.length))
+    .filter((card) => !publicKnownIds.has(card.id));
+}
+
+function aiDecisionContext(room, player) {
+  const knowledge = aiPublicKnowledge(room);
+  return {
+    knowledge,
+    teams: aiTeamContext(room, player),
+    unseenCards: aiUnseenCards(room, player, knowledge)
+  };
+}
+
+function aiPlayersAfterCurrent(room, player) {
+  const ordered = orderedPlayersFrom(room, room.currentTrick?.leaderId);
+  const index = ordered.findIndex((item) => item.id === player.id);
+  return index < 0 ? [] : ordered.slice(index + 1);
+}
+
+function aiExpectedIdleScore(room, player, context) {
+  return room.players.reduce((total, target) => {
+    const visibleTeam = aiVisibleTeam(room, player, target.id);
+    const idleProbability = visibleTeam === "idle"
+      ? 1
+      : visibleTeam === "banker"
+        ? 0
+        : 1 - context.teams.unknownBankerProbability;
+    return total + (Number(target.score) || 0) * idleProbability;
+  }, 0);
+}
+
+function aiScoreUrgency(room, player, context, pointsAtStake) {
+  const idleScore = aiExpectedIdleScore(room, player, context);
+  const distance = gameWinThreshold(room) - idleScore;
+  const swing = Math.max(10, Number(pointsAtStake) || 0);
+  const nearDecision = Math.abs(distance) <= swing * 1.5;
+  if (!nearDecision) return 1;
+  return context.teams.ownTeam === "idle" ? 1.28 : 1.34;
+}
+
+function aiPatternThreat(room, player, cards, context, playerIds = null) {
+  const pattern = detectPlayPattern(cards, room.trumpSuit);
+  const route = playSuit(cards[0], room.trumpSuit);
+  if (!pattern || !route) return { opponentRisk: 0.5, allySupport: 0 };
+  const targets = (playerIds || room.players.map((target) => target.id))
+    .filter((playerId) => playerId !== player.id);
+  const routeTargets = targets.filter((playerId) => !aiKnowsPlayerVoid(context.knowledge, playerId, route));
+  const routeCards = context.unseenCards.filter((card) => playSuit(card, room.trumpSuit) === route);
+  const strongerPatterns = exactPatternCandidates(routeCards, pattern, room.trumpSuit)
+    .filter((candidate) => playPower(candidate, room.trumpSuit) < playPower(cards, room.trumpSuit));
+  const baseRisk = strongerPatterns.length
+    ? clampNumber(0.18 + strongerPatterns.length / Math.max(4, routeTargets.length * 3), 0.18, 0.94)
+    : 0;
+  const opponentWeight = routeTargets.reduce(
+    (total, playerId) => total + context.teams.opponentProbability(playerId),
+    0
+  );
+  const allyWeight = Math.max(0, routeTargets.length - opponentWeight);
+  const totalWeight = Math.max(1, opponentWeight + allyWeight);
+  let opponentRisk = baseRisk * opponentWeight / totalWeight;
+  let allySupport = baseRisk * allyWeight / totalWeight;
+
+  if (route !== "TRUMP") {
+    const knownVoidIds = targets.filter((playerId) => aiKnowsPlayerVoid(context.knowledge, playerId, route));
+    const trumpPatternExists = exactPatternCandidates(
+      context.unseenCards.filter((card) => playSuit(card, room.trumpSuit) === "TRUMP"),
+      pattern,
+      room.trumpSuit
+    ).length > 0;
+    if (trumpPatternExists && knownVoidIds.length) {
+      const voidOpponentWeight = knownVoidIds.reduce(
+        (total, playerId) => total + context.teams.opponentProbability(playerId),
+        0
+      );
+      const voidAllyWeight = Math.max(0, knownVoidIds.length - voidOpponentWeight);
+      opponentRisk += 0.42 * voidOpponentWeight / Math.max(1, knownVoidIds.length);
+      allySupport += 0.28 * voidAllyWeight / Math.max(1, knownVoidIds.length);
+    }
+  }
+
+  return {
+    opponentRisk: clampNumber(opponentRisk, 0, 0.98),
+    allySupport: clampNumber(allySupport, 0, 0.8)
+  };
+}
+
+function aiPublicBankerSupport(room, context) {
+  if (!room.bankerId) return 0;
+  const stats = aiPublicPlayerStats(context.knowledge, room.bankerId);
+  const trickCount = Math.max(1, context.knowledge.completedTrickCount);
+  const winRate = stats.tricksWon / trickCount;
+  const pointRate = stats.pointsCaptured / Math.max(40, trickCount * 30);
+  return clampNumber((winRate - 0.22) * 55 + (pointRate - 0.2) * 24, -24, 34);
+}
+
+function aiVoluntaryProtectedFiveCount(room, player, cards, info = null) {
+  const forcedIds = new Set(info
+    ? forcedProtectedFiveIds({
+      hand: player.hand,
+      selected: cards,
+      leadCards: room.currentTrick?.plays?.[0]?.cards || [],
+      trumpSuit: room.trumpSuit
+    })
+    : []);
+  return cards.filter((card) => isProtectedFive(card) && !forcedIds.has(card.id)).length;
+}
+
+function aiCreatedVoidBonus(room, player, cards) {
+  const selectedIds = new Set(cards.map((card) => card.id));
+  const routes = new Set(player.hand.map((card) => playSuit(card, room.trumpSuit)));
+  let bonus = 0;
+  routes.forEach((route) => {
+    if (!route || route === "TRUMP") return;
+    const routeCards = player.hand.filter((card) => playSuit(card, room.trumpSuit) === route);
+    if (routeCards.length && routeCards.every((card) => selectedIds.has(card.id))) bonus += 16;
+  });
+  return bonus;
+}
+
+function sortForShapeDiscard(room, player, cards) {
+  return [...cards].sort((a, b) => {
+    return cardShapeAssetCost(room, player, a) - cardShapeAssetCost(room, player, b)
+      || (isProtectedFive(a) ? 1 : 0) - (isProtectedFive(b) ? 1 : 0)
+      || cardPoint(a) - cardPoint(b)
+      || patternValue(b, room.trumpSuit) - patternValue(a, room.trumpSuit)
+      || a.id.localeCompare(b.id);
+  });
+}
+
+function addPreferredFillCandidate(candidates, base, preferred, pool, count) {
+  const selected = [...base, ...preferred.slice(0, count)];
+  const selectedIds = new Set(selected.map((card) => card.id));
+  const missing = count - preferred.slice(0, count).length;
+  if (missing > 0) {
+    selected.push(...pool.filter((card) => !selectedIds.has(card.id)).slice(0, missing));
+  }
+  addCandidate(candidates, selected);
+}
+
 function cardAssetCost(room, player, card) {
   let cost = 0;
   if (isProtectedFive(card)) cost += card.suit === "H" ? 90 : 65;
@@ -4790,6 +4990,60 @@ function leadPatternCandidates(room, player) {
   return candidates.map((candidate) => candidate.cards).filter((cards) => detectPlayPattern(cards, room.trumpSuit));
 }
 
+function aiComponentIsPubliclySafe(room, cards, context) {
+  const pattern = detectPlayPattern(cards, room.trumpSuit);
+  const route = playSuit(cards[0], room.trumpSuit);
+  if (!pattern || !route) return false;
+  const unseenInRoute = context.unseenCards.filter((card) => playSuit(card, room.trumpSuit) === route);
+  return !exactPatternCandidates(unseenInRoute, pattern, room.trumpSuit)
+    .some((candidate) => playPower(candidate, room.trumpSuit) < playPower(cards, room.trumpSuit));
+}
+
+function addAiThrowPlan(plans, room, components) {
+  if (components.length < 2) return;
+  const cards = components.flat();
+  if (cards.length < 2 || cards.length > 14 || detectPlayPattern(cards, room.trumpSuit)) return;
+  const key = cardIdsKey(cards);
+  if (plans.some((plan) => plan.key === key)) return;
+  plans.push({
+    key,
+    cards,
+    throwPlay: true,
+    throwComponents: components.map((component) => component.map((card) => card.id))
+  });
+}
+
+function aiSafeThrowPlans(room, player, context) {
+  const plans = [];
+  const candidatesByRoute = new Map();
+  leadPatternCandidates(room, player)
+    .filter((cards) => aiComponentIsPubliclySafe(room, cards, context))
+    .forEach((cards) => {
+      const route = playSuit(cards[0], room.trumpSuit);
+      if (!candidatesByRoute.has(route)) candidatesByRoute.set(route, []);
+      candidatesByRoute.get(route).push(cards);
+    });
+
+  candidatesByRoute.forEach((routeCandidates) => {
+    const ordered = [...routeCandidates].sort((left, right) => {
+      return playPower(left, room.trumpSuit) - playPower(right, room.trumpSuit)
+        || right.length - left.length
+        || cardsPoint(right) - cardsPoint(left);
+    });
+    const selected = [];
+    const usedIds = new Set();
+    for (const cards of ordered) {
+      if (cards.some((card) => usedIds.has(card.id))) continue;
+      if (selected.reduce((total, component) => total + component.length, 0) + cards.length > 14) continue;
+      selected.push(cards);
+      cards.forEach((card) => usedIds.add(card.id));
+    }
+    addAiThrowPlan(plans, room, selected.slice(0, 2));
+    addAiThrowPlan(plans, room, selected);
+  });
+  return plans;
+}
+
 function currentWinningState(room) {
   const trick = room.currentTrick;
   const info = leadInfo(trick, room.trumpSuit);
@@ -4875,22 +5129,11 @@ function doglegRevealProbability(room, player) {
   return Math.max(0.05, Math.min(0.9, 0.08 + copyPressure + suitPressure + lateHandPressure + multiDoglegPressure));
 }
 
-function bankerSupportForDogleg(room) {
-  const banker = playerById(room, room.bankerId);
-  if (!banker) return 0;
-  const control = setupControlScore(banker.hand, room.trumpSuit);
-  const mainCount = banker.hand.filter((card) => isMainPlayCard(card, room.trumpSuit)).length;
-  if (control >= 165 || mainCount >= 18) return 34;
-  if (control >= 135 || mainCount >= 14) return 20;
-  if (control >= 105 || mainCount >= 10) return 8;
-  return -24;
-}
-
-function doglegRevealValue(room, player, cards, { beats = false, pointsAtStake = 0, leading = false } = {}) {
+function doglegRevealValue(room, player, cards, context, { beats = false, pointsAtStake = 0, leading = false } = {}) {
   if (!canRevealDoglegWithCards(room, player, cards)) return 0;
   const control = setupControlScore(player.hand, room.trumpSuit);
   const revealProbability = doglegRevealProbability(room, player);
-  let value = -58 + revealProbability * 78 + bankerSupportForDogleg(room) * 0.75;
+  let value = -58 + revealProbability * 78 + aiPublicBankerSupport(room, context) * 0.75;
   if (pointsAtStake >= 20) value += pointsAtStake * 1.8;
   else if (pointsAtStake <= 5 && !beats) value -= 18;
   if (beats) value += 24;
@@ -4908,13 +5151,39 @@ function legalFollowCandidates(room, player, info) {
     addCandidate(candidates, takeCards(sortForDiscard(room, player, sameSuit), info.count));
     addCandidate(candidates, takeCards(sortForFeed(room, player, sameSuit), info.count));
     addCandidate(candidates, takeCards(sortForStrength(room, sameSuit), info.count));
+    addCandidate(candidates, takeCards(sortForShapeDiscard(room, player, sameSuit), info.count));
+    cardsByRank(sameSuit, room.trumpSuit).forEach((group) => {
+      const preferred = [...group.cards, ...sortForShapeDiscard(
+        room,
+        player,
+        sameSuit.filter((card) => !group.cards.some((item) => item.id === card.id))
+      )];
+      addCandidate(candidates, takeCards(preferred, info.count));
+    });
     exactPatternCandidates(sameSuit, info.pattern, room.trumpSuit).forEach((cards) => addCandidate(candidates, cards));
   } else {
     const base = sortForDiscard(room, player, sameSuit);
     const shortage = info.count - base.length;
-    addCandidate(candidates, [...base, ...takeCards(sortForDiscard(room, player, others), shortage)]);
+    const discardPool = sortForDiscard(room, player, others);
+    addCandidate(candidates, [...base, ...takeCards(discardPool, shortage)]);
     addCandidate(candidates, [...base, ...takeCards(sortForFeed(room, player, others), shortage)]);
     addCandidate(candidates, [...base, ...takeCards(sortForStrength(room, others), shortage)]);
+    addCandidate(candidates, [...base, ...takeCards(sortForShapeDiscard(room, player, others), shortage)]);
+    const byRoute = new Map();
+    others.forEach((card) => {
+      const route = playSuit(card, room.trumpSuit);
+      if (!byRoute.has(route)) byRoute.set(route, []);
+      byRoute.get(route).push(card);
+    });
+    byRoute.forEach((routeCards) => {
+      addPreferredFillCandidate(
+        candidates,
+        base,
+        sortForShapeDiscard(room, player, routeCards),
+        discardPool,
+        shortage
+      );
+    });
     if (sameSuit.length === 0 && info.suit !== "TRUMP") {
       const trumpCards = player.hand.filter((card) => playSuit(card, room.trumpSuit) === "TRUMP");
       exactPatternCandidates(trumpCards, info.pattern, room.trumpSuit).forEach((cards) => addCandidate(candidates, cards));
@@ -4926,77 +5195,139 @@ function legalFollowCandidates(room, player, info) {
     .filter((cards) => cards.length === info.count && !validatePlay(room, player, cards));
 }
 
-function leadCandidateScore(room, player, cards) {
+function leadCandidateScore(room, player, cards, context) {
   const pattern = detectPlayPattern(cards, room.trumpSuit);
   if (!pattern) return -Infinity;
   const points = cardsPoint(cards);
   const power = playPower(cards, room.trumpSuit);
-  const protectedFiveCount = cards.filter(isProtectedFive).length;
+  const voluntaryProtectedFives = aiVoluntaryProtectedFiveCount(room, player, cards);
   const endgame = player.hand.length <= 10;
+  const threat = aiPatternThreat(room, player, cards, context);
+  const urgency = aiScoreUrgency(room, player, context, points);
   let score = 0;
   score += cards.length * 8;
   if (pattern.type === "tractor") score += 32 + pattern.length * 10 + pattern.width * 6;
   if (pattern.type === "multi") score += 14 + pattern.width * 5;
   score += Math.max(0, 35 - power * 2);
-  score += points * (power <= 8 ? 1.8 : -0.8);
-  if (protectedFiveCount && power > 2) score -= protectedFiveCount * 45;
-  score += doglegRevealValue(room, player, cards, { pointsAtStake: points, leading: true });
+  score += points * (power <= 8 ? 1.8 : -0.8) * urgency;
+  score += (1 - threat.opponentRisk) * (18 + cards.length * 3);
+  score += threat.allySupport * (12 + points);
+  score -= threat.opponentRisk * (22 + points * 2.4);
+  if (voluntaryProtectedFives && power > 2) score -= voluntaryProtectedFives * 72;
+  score += doglegRevealValue(room, player, cards, context, { pointsAtStake: points, leading: true });
+  score += aiCreatedVoidBonus(room, player, cards);
   if (endgame) score += Math.max(0, 30 - power) + cards.length * 4;
   score -= cardsAssetCost(room, player, cards) * 0.12;
   return score;
 }
 
-function chooseLeadAutoCards(room, player) {
-  const candidates = leadPatternCandidates(room, player);
-  if (!candidates.length) return [sortForDiscard(room, player, player.hand)[0]].filter(Boolean);
-  return candidates
-    .map((cards) => ({ cards, score: leadCandidateScore(room, player, cards) }))
-    .sort((a, b) => b.score - a.score || b.cards.length - a.cards.length)[0].cards;
+function throwLeadScore(room, player, plan, context) {
+  const points = cardsPoint(plan.cards);
+  const voluntaryProtectedFives = aiVoluntaryProtectedFiveCount(room, player, plan.cards);
+  let score = 150 + plan.cards.length * 11 + points * 2.2;
+  score += aiCreatedVoidBonus(room, player, plan.cards);
+  score += doglegRevealValue(room, player, plan.cards, context, { pointsAtStake: points, leading: true });
+  score -= voluntaryProtectedFives * 58;
+  score -= cardsAssetCost(room, player, plan.cards) * 0.08;
+  return score;
 }
 
-function followCandidateScore(room, player, cards, info, winning) {
+function chooseLeadAutoPlay(room, player, context) {
+  const candidates = leadPatternCandidates(room, player);
+  const plans = candidates.map((cards) => ({
+    cards,
+    throwPlay: false,
+    throwComponents: null,
+    score: leadCandidateScore(room, player, cards, context)
+  }));
+  aiSafeThrowPlans(room, player, context).forEach((plan) => {
+    plans.push({ ...plan, score: throwLeadScore(room, player, plan, context) });
+  });
+  if (!plans.length) {
+    return {
+      cards: [sortForDiscard(room, player, player.hand)[0]].filter(Boolean),
+      throwPlay: false,
+      throwComponents: null
+    };
+  }
+  return plans.sort((a, b) => b.score - a.score || b.cards.length - a.cards.length)[0];
+}
+
+function followCandidateScore(room, player, cards, info, winning, context) {
   const relation = winning ? aiTeamRelation(room, player, winning.playerId) : "opponent";
   const pointsInCandidate = cardsPoint(cards);
   const pointsOnTable = cardsPoint((room.currentTrick?.plays || []).flatMap((play) => play.cards)) + pointsInCandidate;
   const opponentProtectedFives = protectedFivesInTrickByRelation(room, player, "opponent");
-  const selfProtectedFives = cards.filter(isProtectedFive).length;
+  const voluntaryProtectedFives = aiVoluntaryProtectedFiveCount(room, player, cards, info);
   const { beats, comparison } = candidateBeatsCurrent(room, info, cards, winning);
   const endgame = player.hand.length <= info.count * 2 + 2;
   const cost = cardsAssetCost(room, player, cards);
+  const remainingIds = aiPlayersAfterCurrent(room, player).map((target) => target.id);
+  const candidateThreat = beats
+    ? aiPatternThreat(room, player, cards, context, remainingIds).opponentRisk
+    : 0;
+  const currentThreat = winning
+    ? aiPatternThreat(room, player, winning.play.cards, context, remainingIds).opponentRisk
+    : 1;
+  const urgency = aiScoreUrgency(room, player, context, pointsOnTable);
   let score = 0;
 
   if (relation === "opponent") {
-    if (beats) score += (pointsOnTable >= 10 || opponentProtectedFives || endgame ? 120 : 72) + pointsOnTable * 3 + opponentProtectedFives * 80;
-    else score -= pointsInCandidate * 3 + selfProtectedFives * 90;
+    if (beats) {
+      const captureValue = (pointsOnTable >= 10 || opponentProtectedFives || endgame ? 120 : 72)
+        + pointsOnTable * 3 * urgency
+        + opponentProtectedFives * 80;
+      score += captureValue * (1 - candidateThreat * 0.72);
+      score -= candidateThreat * cost * 0.35;
+    } else {
+      score -= pointsInCandidate * 3 * urgency + voluntaryProtectedFives * 95;
+    }
   } else if (relation === "ally" || relation === "self") {
-    if (beats) score -= 55 + cost * 0.4;
-    else score += pointsInCandidate * 4 - selfProtectedFives * 75;
+    if (beats) {
+      score += (currentThreat - candidateThreat) * (85 + pointsOnTable * 0.8);
+      score -= 38 + cost * 0.3;
+    } else {
+      score += pointsInCandidate * 4 * (1 - currentThreat) * urgency;
+      score -= currentThreat * pointsInCandidate * 4.5;
+      score -= voluntaryProtectedFives * 88;
+    }
   } else {
-    if (beats && (pointsOnTable >= 20 || opponentProtectedFives)) score += 70 + pointsOnTable * 1.5;
-    else score -= pointsInCandidate + selfProtectedFives * 75;
+    const unknownOpponentProbability = winning
+      ? context.teams.opponentProbability(winning.playerId)
+      : 0.5;
+    if (beats && (pointsOnTable >= 20 || opponentProtectedFives)) {
+      score += (70 + pointsOnTable * 1.5 * urgency) * unknownOpponentProbability * (1 - candidateThreat * 0.65);
+    } else {
+      score += pointsInCandidate * 2.2 * (1 - unknownOpponentProbability) * (1 - currentThreat);
+      score -= pointsInCandidate * unknownOpponentProbability;
+      score -= voluntaryProtectedFives * 82;
+    }
   }
 
   if (beats && comparison) score += Math.max(0, 35 - comparison.power);
-  score += doglegRevealValue(room, player, cards, { beats, pointsAtStake: pointsOnTable });
+  score += doglegRevealValue(room, player, cards, context, { beats, pointsAtStake: pointsOnTable });
+  score += aiCreatedVoidBonus(room, player, cards);
   if (endgame && beats) score += 35 + pointsOnTable;
   score -= cost * (beats ? 0.25 : 0.55);
   return score;
 }
 
-function chooseFollowAutoCards(room, player, info) {
+function chooseFollowAutoPlay(room, player, info, context) {
   const candidates = legalFollowCandidates(room, player, info);
-  if (!candidates.length) return [];
+  if (!candidates.length) return { cards: [], throwPlay: false, throwComponents: null };
   const winning = currentWinningState(room);
-  return candidates
-    .map((cards) => ({ cards, score: followCandidateScore(room, player, cards, info, winning) }))
-    .sort((a, b) => b.score - a.score || cardsPoint(b.cards) - cardsPoint(a.cards))[0].cards;
+  const best = candidates
+    .map((cards) => ({ cards, score: followCandidateScore(room, player, cards, info, winning, context) }))
+    .sort((a, b) => b.score - a.score || cardsPoint(b.cards) - cardsPoint(a.cards))[0];
+  return { cards: best.cards, throwPlay: false, throwComponents: null };
 }
 
-function legalAutoCards(room, player) {
-  if (!player.hand.length) return [];
+function legalAutoPlay(room, player) {
+  if (!player.hand.length) return { cards: [], throwPlay: false, throwComponents: null };
+  const context = aiDecisionContext(room, player);
   const info = leadInfo(room.currentTrick, room.trumpSuit);
-  if (!info) return chooseLeadAutoCards(room, player);
-  return chooseFollowAutoCards(room, player, info);
+  if (!info) return chooseLeadAutoPlay(room, player, context);
+  return chooseFollowAutoPlay(room, player, info, context);
 }
 
 function compareCardsSmallToLarge(room, a, b) {
@@ -5065,17 +5396,33 @@ function scheduleNextAiPlay(room, delayMs = AI_PLAY_DELAY_MS) {
     if (rooms.get(room.id) !== room || room.status !== "dealt" || room.stage !== "playing") return;
     const currentPlayer = playerById(room, expectedPlayerId(room));
     if (!playerUsesAutomaticPlay(currentPlayer)) return;
-    const cards = currentPlayer.test
-      ? legalAutoCards(room, currentPlayer)
-      : smallestLegalAutoCards(room, currentPlayer);
-    if (!cards.length) return;
-    const result = playCards(room, currentPlayer, cards.map((card) => card.id));
+    const automaticPlay = currentPlayer.test
+      ? legalAutoPlay(room, currentPlayer)
+      : {
+        cards: smallestLegalAutoCards(room, currentPlayer),
+        throwPlay: false,
+        throwComponents: null
+      };
+    if (!automaticPlay.cards.length) return;
+    const result = playCards(
+      room,
+      currentPlayer,
+      automaticPlay.cards.map((card) => card.id),
+      {
+        throwPlay: Boolean(currentPlayer.test && automaticPlay.throwPlay),
+        throwComponents: automaticPlay.throwComponents
+      }
+    );
     if (result.error) {
       addEvent(room, `${currentPlayer.name} ${currentPlayer.test ? "自动" : "托管"}出牌失败：${result.error}`);
       broadcast(room);
       return;
     }
     broadcast(room);
+    if (result.resumeAt) {
+      scheduleFailedThrowResolution(room, currentPlayer, result);
+      return;
+    }
     scheduleNextAiPlay(room);
   }, Math.max(0, delayMs, pauseDelay + 20));
   return true;
@@ -5186,6 +5533,38 @@ function playCards(room, player, cardIds, options = {}) {
     return { ok: true, revealAt: throwMeta.revealUntil, resumeAt };
   }
   return { ok: true };
+}
+
+function scheduleFailedThrowResolution(room, player, result) {
+  if (!result?.resumeAt || !result?.revealAt) return false;
+  const revealAt = result.revealAt;
+  const resumeAt = result.resumeAt;
+  const noticeId = `throw-${room.currentTrick?.number || 0}-${player.id}-${revealAt}`;
+  setTimeout(() => {
+    const activeRoom = rooms.get(room.id);
+    if (!activeRoom || activeRoom.playPauseUntil !== resumeAt) return;
+    const failedPlayer = playerById(activeRoom, player.id);
+    const failedPlay = activeRoom.currentTrick?.plays?.find((play) => play.playerId === player.id && play.throwFailed);
+    if (failedPlayer && failedPlay) {
+      failedPlayer.throwFailures = (failedPlayer.throwFailures || 0) + 1;
+      addEvent(activeRoom, `${failedPlayer.name} 甩牌失败，改出 ${failedPlay.cards.map((card) => card.label).join(" ")}，累计甩牌失败 ${failedPlayer.throwFailures} 次`);
+    }
+    activeRoom.notice = {
+      id: noticeId,
+      text: `${player.name} 甩牌失败，已自动改出被压过的牌型。`,
+      bad: true,
+      expiresAt: new Date(Date.now() + 4500).toISOString()
+    };
+    broadcast(activeRoom);
+  }, Math.max(0, new Date(revealAt).getTime() - Date.now()) + 20);
+  setTimeout(() => {
+    const activeRoom = rooms.get(room.id);
+    if (!activeRoom || activeRoom.playPauseUntil !== resumeAt) return;
+    activeRoom.playPauseUntil = null;
+    broadcast(activeRoom);
+    scheduleNextAiPlay(activeRoom);
+  }, Math.max(0, new Date(resumeAt).getTime() - Date.now()) + 20);
+  return true;
 }
 
 function writeJson(res, status, data, extraHeaders = {}) {
@@ -6305,34 +6684,8 @@ async function handleApi(req, res, pathParts, url) {
       });
       if (result.error) return writeJson(res, result.status, { error: result.error });
       if (result.resumeAt) {
-        const revealAt = result.revealAt;
-        const resumeAt = result.resumeAt;
-        const noticeId = `throw-${room.currentTrick?.number || 0}-${viewer.id}-${revealAt}`;
         broadcast(room);
-        setTimeout(() => {
-          const activeRoom = rooms.get(room.id);
-          if (!activeRoom || activeRoom.playPauseUntil !== resumeAt) return;
-          const failedPlayer = playerById(activeRoom, viewer.id);
-          const failedPlay = activeRoom.currentTrick?.plays?.find((play) => play.playerId === viewer.id && play.throwFailed);
-          if (failedPlayer && failedPlay) {
-            failedPlayer.throwFailures = (failedPlayer.throwFailures || 0) + 1;
-            addEvent(activeRoom, `${failedPlayer.name} 甩牌失败，改出 ${failedPlay.cards.map((card) => card.label).join(" ")}，累计甩牌失败 ${failedPlayer.throwFailures} 次`);
-          }
-          activeRoom.notice = {
-            id: noticeId,
-            text: `${viewer.name} 甩牌失败，已自动改出被压过的牌型。`,
-            bad: true,
-            expiresAt: new Date(Date.now() + 4500).toISOString()
-          };
-          broadcast(activeRoom);
-        }, Math.max(0, new Date(revealAt).getTime() - Date.now()) + 20);
-        setTimeout(() => {
-          const activeRoom = rooms.get(room.id);
-          if (!activeRoom || activeRoom.playPauseUntil !== resumeAt) return;
-          activeRoom.playPauseUntil = null;
-          broadcast(activeRoom);
-          scheduleNextAiPlay(activeRoom);
-        }, Math.max(0, new Date(resumeAt).getTime() - Date.now()) + 20);
+        scheduleFailedThrowResolution(room, viewer, result);
         return writeJson(res, 200, roomStateAck(room));
       }
       broadcast(room);
@@ -6515,9 +6868,21 @@ const server = createServer(async (req, res) => {
   }
 });
 
-server.listen(port, () => {
-  console.log(`炒地皮在线版已启动：http://localhost:${port}`);
-  void initializePersistence().catch((error) => {
-    console.error("[persistence] background initialization failed", error.message);
+export const __aiPlayTesting = {
+  aiDecisionContext,
+  aiPublicKnowledge,
+  aiSafeThrowPlans,
+  createDeck,
+  legalAutoPlay,
+  playSuit
+};
+
+const executedFileUrl = process.argv[1] ? pathToFileURL(process.argv[1]).href : "";
+if (executedFileUrl === import.meta.url) {
+  server.listen(port, () => {
+    console.log(`炒地皮在线版已启动：http://localhost:${port}`);
+    void initializePersistence().catch((error) => {
+      console.error("[persistence] background initialization failed", error.message);
+    });
   });
-});
+}

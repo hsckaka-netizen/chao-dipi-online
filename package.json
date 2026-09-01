@@ -6,7 +6,7 @@
   "type": "module",
   "scripts": {
     "start": "node server.js",
-    "check": "node --check server.js && node --check room-identities.js && node --check dogleg-mechanism.js && node --check banker-score-mode.js && node --check account-auth.js && node --check public/app.js && node --check public/history-records.js && node --check public/replacement-rank-rules.js && node --check public/state-patch.js && node --check public/gameplay-effects.js && node --check game-evaluations.js && node --check dragged-five-attribution.js && node --check diamond-rewards.js && node --check daily-tasks.js && node --check hero-home.js && node --check taunt-presets.js && node --check shop-and-items.js && node --check game-history.js",
+    "check": "node --check server.js && node --check ai-public-knowledge.js && node --check room-identities.js && node --check dogleg-mechanism.js && node --check banker-score-mode.js && node --check account-auth.js && node --check public/app.js && node --check public/history-records.js && node --check public/replacement-rank-rules.js && node --check public/state-patch.js && node --check public/gameplay-effects.js && node --check game-evaluations.js && node --check dragged-five-attribution.js && node --check diamond-rewards.js && node --check daily-tasks.js && node --check hero-home.js && node --check taunt-presets.js && node --check shop-and-items.js && node --check game-history.js",
     "test": "node --test",
     "release": "node scripts/release.mjs"
   },
