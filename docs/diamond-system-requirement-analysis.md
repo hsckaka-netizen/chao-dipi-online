@@ -114,7 +114,7 @@ sequenceDiagram
 | 尽 | 获得 `exhausted` | 10 |
 | 擎 | 获得 `pillar` | 额外 10 |
 
-英雄技能奖励读取正式发牌时锁定的英雄快照与原始结算事实，独立于称号奖励 50 钻封顶；六英雄的条件和星级数值见 `docs/card-system-requirement-analysis.md`。
+英雄技能奖励读取正式发牌时锁定的英雄快照与原始结算事实，独立于称号奖励 50 钻封顶；九名英雄的条件和星级数值见 `docs/card-system-requirement-analysis.md`。SSR 被动奖励与 SR 一样只追加钻石，不反向改变牌分、积分、身份、胜负、称号或历史统计。
 
 `couch`、`pit`、`stiff`、`stiffest`、`thunder`、`god-pit` 不提供称号钻石。相同称号去重后再计算。`神 + 天之上` 和 `尽 + 擎` 的高级称号采用增量奖励。
 

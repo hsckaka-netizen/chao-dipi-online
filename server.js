@@ -901,16 +901,14 @@ function emptyBoardHeroSkills() {
       eligiblePlayerIds: [],
       completedPlayerIds: [],
       applicantPlayerIds: [],
-      candidateRanksByPlayerId: {},
-      selectedRankByPlayerId: {},
+      replacementRankByPlayerId: {},
+      resetCooldownByPlayerId: {},
       deadlineAt: null,
       resolving: false
     },
     yokoyama: {
       queuePlayerIds: [],
       currentPlayerId: null,
-      candidates: [],
-      paid: false,
       deadlineAt: null
     },
     shenJiangwen: {
@@ -924,7 +922,7 @@ function emptyBoardHeroEffects() {
   return {
     uses: [],
     replacementRank: null,
-    seatSwaps: []
+    seatRandomizations: []
   };
 }
 
@@ -1019,32 +1017,15 @@ function ownedReplacementRanksForShenBiesan(player) {
   return OLD_MAN_REPLACEMENT_RANKS.filter((rank) => player.hand.some((card) => card.type === "normal" && card.rank === rank));
 }
 
-function pairedReplacementRanksForShenBiesan(player) {
-  return OLD_MAN_REPLACEMENT_RANKS.filter((rank) => suits.some((suit) => (
-    player.hand.filter((card) => card.type === "normal" && card.rank === rank && card.suit === suit.id).length >= 2
-  )));
-}
-
 function shenBiesanEligiblePlayers(room) {
   return room.players.filter((player) => {
     if (!playerHasBoardHero(room, player, "shen-biesan")) return false;
-    const stars = Math.max(1, Math.min(5, Number(player.battleHeroSnapshot?.stars) || 1));
-    const candidateCount = HERO_HOME_RULES.shenBiesanCandidateCounts[stars - 1];
-    const requiredPairedCount = HERO_HOME_RULES.shenBiesanRequiredPairedCounts[stars - 1];
-    return ownedReplacementRanksForShenBiesan(player).length >= candidateCount
-      && pairedReplacementRanksForShenBiesan(player).length >= requiredPairedCount
-      && (stars === 5 || !hasPairedPrintedTwo(player));
+    return !hasPairedPrintedTwo(player) && ownedReplacementRanksForShenBiesan(player).length > 0;
   });
 }
 
-function candidateRanksForShenBiesan(player) {
-  const stars = Math.max(1, Math.min(5, Number(player.battleHeroSnapshot?.stars) || 1));
-  const candidateCount = HERO_HOME_RULES.shenBiesanCandidateCounts[stars - 1];
-  const requiredPairedCount = HERO_HOME_RULES.shenBiesanRequiredPairedCounts[stars - 1];
-  const selected = shuffle(pairedReplacementRanksForShenBiesan(player)).slice(0, requiredPairedCount);
-  const remaining = shuffle(ownedReplacementRanksForShenBiesan(player).filter((rank) => !selected.includes(rank)))
-    .slice(0, candidateCount - selected.length);
-  return shuffle([...selected, ...remaining]);
+function replacementRankForShenBiesan(player) {
+  return shuffle(ownedReplacementRanksForShenBiesan(player))[0] || null;
 }
 
 function beginShenBiesanSkillStage(room) {
@@ -1052,15 +1033,16 @@ function beginShenBiesanSkillStage(room) {
   clearBoardHeroSkillTimer(room);
   const eligiblePlayers = shenBiesanEligiblePlayers(room);
   const eligiblePlayerIds = eligiblePlayers.map((player) => player.id);
-  const candidateRanksByPlayerId = Object.fromEntries(eligiblePlayers.map((player) => {
-    return [player.id, candidateRanksForShenBiesan(player)];
-  }));
+  const replacementRankByPlayerId = Object.fromEntries(eligiblePlayers.map((player) => [
+    player.id,
+    replacementRankForShenBiesan(player)
+  ]));
   room.boardHeroSkills.shenBiesan = {
     eligiblePlayerIds,
     completedPlayerIds: [],
     applicantPlayerIds: [],
-    candidateRanksByPlayerId,
-    selectedRankByPlayerId: {},
+    replacementRankByPlayerId,
+    resetCooldownByPlayerId: {},
     deadlineAt: eligiblePlayerIds.length
       ? new Date(Date.now() + BOARD_HERO_SKILL_SECONDS * 1000).toISOString()
       : null,
@@ -1094,8 +1076,8 @@ function recordBoardHeroSkillUse(room, player, heroId, payment, effect = {}) {
     skillName: player.battleHeroSnapshot?.skillName || "",
     stars: player.battleHeroSnapshot?.stars || 1,
     cost: payment.cost,
-    heatBefore: payment.heatBefore,
-    heatAfter: payment.heatAfter,
+    cooldownBefore: payment.cooldownBefore,
+    cooldownAfter: payment.cooldownAfter,
     effect,
     at: now()
   };
@@ -1126,14 +1108,18 @@ async function resolveShenBiesanSkillStage(room) {
   const applicants = shuffle(state.applicantPlayerIds.map((playerId) => playerById(room, playerId)).filter(Boolean));
   for (const player of applicants) {
     try {
-      const replacementRank = state.selectedRankByPlayerId[player.id];
+      const replacementRank = state.replacementRankByPlayerId[player.id];
       const payment = await chargeRoomBoardHeroSkill(
         room,
         player.accountId,
         room.gameRecordId,
         "shen-biesan",
         `shen-biesan:${room.gameRecordId}:${player.id}`,
-        { replacementRank }
+        {
+          replacementRank,
+          resetCooldown: Boolean(state.resetCooldownByPlayerId[player.id]),
+          skillStars: player.battleHeroSnapshot?.stars || 1
+        }
       );
       applyShenBiesanReplacement(room, replacementRank);
       recordBoardHeroSkillUse(room, player, "shen-biesan", payment, { replacementRank });
@@ -1147,18 +1133,15 @@ async function resolveShenBiesanSkillStage(room) {
   return true;
 }
 
-async function submitShenBiesanSkillChoice(room, player, activate, replacementRank = "") {
+async function submitShenBiesanSkillChoice(room, player, activate, resetCooldown = false) {
   if (room.stage !== "shen-biesan-skill") return { error: "当前不是玉面雷神发动阶段", status: 409 };
   const state = room.boardHeroSkills.shenBiesan;
   if (!state.eligiblePlayerIds.includes(player.id)) return { error: "你当前不满足玉面雷神发动条件", status: 403 };
   if (state.completedPlayerIds.includes(player.id)) return { error: "你已经完成选择", status: 409 };
-  if (activate && !(state.candidateRanksByPlayerId[player.id] || []).includes(replacementRank)) {
-    return { error: "请从本局随机生成的成对牌中选择一张替代2", status: 400 };
-  }
   state.completedPlayerIds.push(player.id);
   if (activate) {
     state.applicantPlayerIds.push(player.id);
-    state.selectedRankByPlayerId[player.id] = replacementRank;
+    state.resetCooldownByPlayerId[player.id] = Boolean(resetCooldown);
   }
   addEvent(room, `${player.name}${activate ? "申请发动玉面雷神" : "放弃发动玉面雷神"}`);
   if (state.completedPlayerIds.length >= state.eligiblePlayerIds.length) await resolveShenBiesanSkillStage(room);
@@ -1605,6 +1588,13 @@ function boardHeroSkillsSnapshot(room, viewer = null) {
   const viewerIsBiesanEligible = Boolean(viewer && shenBiesan.eligiblePlayerIds.includes(viewer.id));
   const viewerCompletedBiesan = Boolean(viewer && shenBiesan.completedPlayerIds.includes(viewer.id));
   const viewerIsCurrentYokoyama = Boolean(viewer && yokoyama.currentPlayerId === viewer.id);
+  const biesanSkill = viewer?.battleHeroSnapshot?.heroId === "shen-biesan" ? viewer.battleHeroSnapshot.paidSkill : null;
+  const jiangwenSkill = viewer?.battleHeroSnapshot?.heroId === "shen-jiangwen" ? viewer.battleHeroSnapshot.paidSkill : null;
+  const yokoyamaPlayer = playerById(room, yokoyama.currentPlayerId);
+  const yokoyamaSkill = yokoyamaPlayer?.battleHeroSnapshot?.paidSkill || null;
+  const yokoyamaUsedCount = (room.boardHeroEffects?.uses || [])
+    .filter((use) => use.playerId === yokoyama.currentPlayerId && use.heroId === "yokoyama-yui").length;
+  const yokoyamaMaxUses = Number(yokoyamaSkill?.maxUsesPerGame) || 1;
   return {
     replacementRank: room.boardHeroEffects?.replacementRank || null,
     shenBiesan: {
@@ -1614,31 +1604,27 @@ function boardHeroSkillsSnapshot(room, viewer = null) {
       viewerEligible: viewerIsBiesanEligible,
       viewerCompleted: viewerCompletedBiesan,
       canChoose: room.stage === "shen-biesan-skill" && viewerIsBiesanEligible && !viewerCompletedBiesan,
-      candidateRanks: viewerIsBiesanEligible ? [...(shenBiesan.candidateRanksByPlayerId[viewer.id] || [])] : [],
-      cost: viewer?.battleHeroSnapshot?.heroId === "shen-biesan" ? viewer.battleHeroSnapshot.paidSkill?.cost || 0 : 0,
-      heat: viewer?.battleHeroSnapshot?.heroId === "shen-biesan" ? viewer.battleHeroSnapshot.paidSkill?.heat ?? null : null
+      cost: biesanSkill?.cost || 0,
+      cooldown: biesanSkill?.cooldown || 0,
+      cooldownAfterUse: biesanSkill?.cooldownAfterUse || 0
     },
     yokoyama: {
       active: room.stage === "yokoyama-skill",
       currentPlayerId: yokoyama.currentPlayerId,
       currentPlayerName: yokoyama.currentPlayerId ? playerName(room, yokoyama.currentPlayerId) : "",
       deadlineAt: yokoyama.deadlineAt,
-      paid: viewerIsCurrentYokoyama ? Boolean(yokoyama.paid) : false,
-      canActivate: room.stage === "yokoyama-skill" && viewerIsCurrentYokoyama && !yokoyama.paid,
+      canActivate: room.stage === "yokoyama-skill" && viewerIsCurrentYokoyama && yokoyamaUsedCount < yokoyamaMaxUses,
       canFinish: room.stage === "yokoyama-skill" && viewerIsCurrentYokoyama,
-      cost: HERO_HOME_RULES.yokoyamaSkillCost,
-      candidates: viewerIsCurrentYokoyama && yokoyama.paid
-        ? yokoyama.candidates.map((playerId) => ({
-            playerId,
-            playerName: playerName(room, playerId),
-            seat: room.players.findIndex((player) => player.id === playerId) + 1
-          }))
-        : []
+      cost: 0,
+      usedCount: yokoyamaUsedCount,
+      maxUses: yokoyamaMaxUses,
+      remainingUses: Math.max(0, yokoyamaMaxUses - yokoyamaUsedCount)
     },
     shenJiangwen: {
       canActivate: shenJiangwenCanActivate(room, viewer),
-      cost: viewer?.battleHeroSnapshot?.heroId === "shen-jiangwen" ? viewer.battleHeroSnapshot.paidSkill?.cost || 0 : 0,
-      heat: viewer?.battleHeroSnapshot?.heroId === "shen-jiangwen" ? viewer.battleHeroSnapshot.paidSkill?.heat ?? null : null
+      cost: jiangwenSkill?.cost || 0,
+      cooldown: jiangwenSkill?.cooldown || 0,
+      cooldownAfterUse: jiangwenSkill?.cooldownAfterUse || 0
     },
     uses: (room.boardHeroEffects?.uses || []).map((use) => ({
       playerId: use.playerId,
@@ -1646,10 +1632,12 @@ function boardHeroSkillsSnapshot(room, viewer = null) {
       heroId: use.heroId,
       skillName: use.skillName,
       cost: use.cost,
+      cooldownBefore: use.cooldownBefore,
+      cooldownAfter: use.cooldownAfter,
       effect: use.effect,
       at: use.at
     })),
-    seatSwaps: [...(room.boardHeroEffects?.seatSwaps || [])]
+    seatRandomizations: [...(room.boardHeroEffects?.seatRandomizations || [])]
   };
 }
 
@@ -2469,7 +2457,11 @@ function finishGame(room, completedTrick) {
       snapshot: roomPlayer?.battleHeroSnapshot,
       playerId: playerResult.playerId,
       playerResult,
-      trickHistory: room.trickHistory
+      playerResults: room.result.playerResults,
+      gameResult: room.result,
+      trickHistory: room.trickHistory,
+      fryHistory: room.setup?.fry?.history || [],
+      boardHeroUses: room.boardHeroEffects?.uses || []
     });
   });
   attachDiamondRewards(room);
@@ -2793,8 +2785,6 @@ function beginYokoyamaSkillStage(room) {
   room.boardHeroSkills.yokoyama = {
     queuePlayerIds,
     currentPlayerId: null,
-    candidates: [],
-    paid: false,
     deadlineAt: null
   };
   return advanceYokoyamaSkillStage(room);
@@ -2803,8 +2793,6 @@ function beginYokoyamaSkillStage(room) {
 function advanceYokoyamaSkillStage(room) {
   const state = room.boardHeroSkills.yokoyama;
   state.currentPlayerId = state.queuePlayerIds.shift() || null;
-  state.candidates = [];
-  state.paid = false;
   if (!state.currentPlayerId) {
     state.deadlineAt = null;
     enterTrumpSelecting(room);
@@ -2820,50 +2808,50 @@ async function activateYokoyamaSkill(room, player, requestId) {
   if (room.stage !== "yokoyama-skill") return { error: "当前不是全能偶像发动阶段", status: 409 };
   const state = room.boardHeroSkills.yokoyama;
   if (state.currentPlayerId !== player.id) return { error: `现在轮到 ${playerName(room, state.currentPlayerId)} 选择`, status: 409 };
-  if (state.paid) return { error: "已经生成候选玩家", status: 409 };
-  const stars = Math.max(1, Math.min(5, Number(player.battleHeroSnapshot?.stars) || 1));
-  const candidates = shuffle(room.players.filter((item) => item.id !== player.id))
-    .slice(0, stars)
-    .map((item) => item.id);
+  const maxUses = Number(player.battleHeroSnapshot?.paidSkill?.maxUsesPerGame) || 1;
+  const usedCount = (room.boardHeroEffects?.uses || [])
+    .filter((use) => use.playerId === player.id && use.heroId === "yokoyama-yui").length;
+  if (usedCount >= maxUses) return { error: "本局全能偶像发动次数已用完", status: 409 };
+  const beforePlayerIds = room.players.map((item) => item.id);
+  const randomizedPlayers = shuffle(room.players);
+  if (randomizedPlayers.length > 1 && randomizedPlayers.every((item, index) => item.id === beforePlayerIds[index])) {
+    randomizedPlayers.push(randomizedPlayers.shift());
+  }
+  const afterPlayerIds = randomizedPlayers.map((item) => item.id);
+  const effect = { beforePlayerIds, afterPlayerIds };
   const payment = await chargeRoomBoardHeroSkill(
     room,
     player.accountId,
     room.gameRecordId,
     "yokoyama-yui",
-    requestId || `yokoyama:${room.gameRecordId}:${player.id}`,
-    { candidatePlayerIds: candidates }
+    requestId || `yokoyama:${room.gameRecordId}:${player.id}:${usedCount + 1}`,
+    { ...effect, skillStars: player.battleHeroSnapshot?.stars || 1 }
   );
-  recordBoardHeroSkillUse(room, player, "yokoyama-yui", payment, { candidatePlayerIds: candidates });
-  state.paid = true;
-  state.candidates = candidates;
-  state.deadlineAt = new Date(Date.now() + BOARD_HERO_SKILL_SECONDS * 1000).toISOString();
-  room.phase = `${player.name} 已发动全能偶像，等待选择换位玩家`;
-  addEvent(room, `${player.name} 发动全能偶像，获得 ${candidates.length} 名随机换位候选人`);
+  if (payment.repeated) return { ok: true, repeated: true };
+  room.players = randomizedPlayers;
+  recordBoardHeroSkillUse(room, player, "yokoyama-yui", payment, effect);
+  room.boardHeroEffects.seatRandomizations.push({
+    playerId: player.id,
+    beforePlayerIds,
+    afterPlayerIds,
+    at: now()
+  });
+  const nextUsedCount = usedCount + 1;
+  addEvent(room, `${player.name} 发动全能偶像，全桌座位已重新随机（${nextUsedCount}/${maxUses}）`);
+  if (nextUsedCount >= maxUses) {
+    advanceYokoyamaSkillStage(room);
+  } else {
+    state.deadlineAt = new Date(Date.now() + BOARD_HERO_SKILL_SECONDS * 1000).toISOString();
+    room.phase = `等待 ${player.name} 决定是否继续发动全能偶像`;
+  }
   return { ok: true };
 }
 
-function finishYokoyamaChoice(room, player, targetPlayerId = null) {
+function passYokoyamaSkill(room, player) {
   if (room.stage !== "yokoyama-skill") return { error: "当前不是全能偶像发动阶段", status: 409 };
   const state = room.boardHeroSkills.yokoyama;
   if (state.currentPlayerId !== player.id) return { error: `现在轮到 ${playerName(room, state.currentPlayerId)} 选择`, status: 409 };
-  if (targetPlayerId) {
-    if (!state.paid || !state.candidates.includes(targetPlayerId)) return { error: "该玩家不在本次随机候选中", status: 400 };
-    const selfIndex = room.players.findIndex((item) => item.id === player.id);
-    const targetIndex = room.players.findIndex((item) => item.id === targetPlayerId);
-    if (selfIndex < 0 || targetIndex < 0) return { error: "换位玩家已经离开房间", status: 409 };
-    const target = room.players[targetIndex];
-    [room.players[selfIndex], room.players[targetIndex]] = [room.players[targetIndex], room.players[selfIndex]];
-    room.boardHeroEffects.seatSwaps.push({
-      playerId: player.id,
-      targetPlayerId: target.id,
-      fromSeat: selfIndex + 1,
-      toSeat: targetIndex + 1,
-      at: now()
-    });
-    addEvent(room, `${player.name} 使用全能偶像，与 ${target.name} 交换座位；双方身份和手牌不变`);
-  } else {
-    addEvent(room, `${player.name}${state.paid ? "放弃本次换位" : "不发动全能偶像"}`);
-  }
+  addEvent(room, `${player.name} 结束发动全能偶像`);
   advanceYokoyamaSkillStage(room);
   return { ok: true };
 }
@@ -2989,7 +2977,7 @@ function completeShenJiangwenOffer(room, player) {
   if (!offered.includes(player.id)) offered.push(player.id);
 }
 
-async function activateShenJiangwenSkill(room, player, requestId) {
+async function activateShenJiangwenSkill(room, player, requestId, resetCooldown = false) {
   if (!shenJiangwenCanActivate(room, player)) return { error: "排骨之王只能在首次轮到本人炒底时发动", status: 409 };
   const payment = await chargeRoomBoardHeroSkill(
     room,
@@ -2997,7 +2985,11 @@ async function activateShenJiangwenSkill(room, player, requestId) {
     room.gameRecordId,
     "shen-jiangwen",
     requestId || `shen-jiangwen:${room.gameRecordId}:${player.id}`,
-    { directFry: true }
+    {
+      directFry: true,
+      resetCooldown: Boolean(resetCooldown),
+      skillStars: player.battleHeroSnapshot?.stars || 1
+    }
   );
   completeShenJiangwenOffer(room, player);
   recordBoardHeroSkillUse(room, player, "shen-jiangwen", payment, { directFry: true });
@@ -4059,7 +4051,7 @@ async function autoAdvanceExpiredBoardHeroSkill(room) {
       return true;
     }
     addEvent(room, `${player.name} 全能偶像选择超时`);
-    finishYokoyamaChoice(room, player);
+    passYokoyamaSkill(room, player);
     return true;
   }
   return false;
@@ -7033,12 +7025,11 @@ async function handleApi(req, res, pathParts, url) {
       const viewer = requirePlayer(res, room, body.playerId, body.token);
       if (!viewer) return;
       let result = null;
-      if (body.action === "shen-biesan-activate") result = await submitShenBiesanSkillChoice(room, viewer, true, String(body.replacementRank || ""));
+      if (body.action === "shen-biesan-activate") result = await submitShenBiesanSkillChoice(room, viewer, true, body.resetCooldown);
       else if (body.action === "shen-biesan-pass") result = await submitShenBiesanSkillChoice(room, viewer, false);
       else if (body.action === "yokoyama-activate") result = await activateYokoyamaSkill(room, viewer, body.requestId);
-      else if (body.action === "yokoyama-swap") result = finishYokoyamaChoice(room, viewer, String(body.targetPlayerId || ""));
-      else if (body.action === "yokoyama-pass") result = finishYokoyamaChoice(room, viewer);
-      else if (body.action === "shen-jiangwen-activate") result = await activateShenJiangwenSkill(room, viewer, body.requestId);
+      else if (body.action === "yokoyama-pass") result = passYokoyamaSkill(room, viewer);
+      else if (body.action === "shen-jiangwen-activate") result = await activateShenJiangwenSkill(room, viewer, body.requestId, body.resetCooldown);
       else return writeJson(res, 400, { error: "未知的英雄技能操作" });
       if (result.error) return writeJson(res, result.status, { error: result.error });
       broadcastAndContinueAutomation(room);

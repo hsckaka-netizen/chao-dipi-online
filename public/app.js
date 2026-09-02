@@ -1892,7 +1892,7 @@ async function completeGameItemStage() {
   }
 }
 
-async function submitBoardHeroSkill(action, targetPlayerId = "", replacementRank = "") {
+async function submitBoardHeroSkill(action) {
   if (!session || isSpectating()) return;
   const costs = state?.boardHeroSkills || {};
   const cost = action === "shen-biesan-activate"
@@ -1900,12 +1900,17 @@ async function submitBoardHeroSkill(action, targetPlayerId = "", replacementRank
     : action === "shen-jiangwen-activate"
       ? Number(costs.shenJiangwen?.cost) || 0
       : action === "yokoyama-activate"
-        ? Number(costs.yokoyama?.cost) || 100
+        ? Number(costs.yokoyama?.cost) || 0
         : 0;
   const skillName = action.startsWith("shen-biesan") ? "玉面雷神"
     : action.startsWith("shen-jiangwen") ? "排骨之王"
       : "全能偶像";
-  if (cost && !window.confirm(`发动${skillName}将消耗 ${cost} 钻石，确定继续吗？`)) return;
+  const cooldown = action === "shen-biesan-activate"
+    ? Number(costs.shenBiesan?.cooldown) || 0
+    : action === "shen-jiangwen-activate"
+      ? Number(costs.shenJiangwen?.cooldown) || 0
+      : 0;
+  if (cost && !window.confirm(`重置${cooldown}轮冷却并发动${skillName}将消耗 ${cost} 钻石，确定继续吗？`)) return;
   try {
     await roomAction(`/api/rooms/${session.roomId}/board-hero-skill`, {
       method: "POST",
@@ -1913,8 +1918,7 @@ async function submitBoardHeroSkill(action, targetPlayerId = "", replacementRank
         playerId: session.playerId,
         token: session.token,
         action,
-        targetPlayerId,
-        replacementRank,
+        resetCooldown: cost > 0,
         requestId: requestId()
       })
     });
@@ -1922,9 +1926,9 @@ async function submitBoardHeroSkill(action, targetPlayerId = "", replacementRank
       ensureShopState(true);
     }
     if (action.startsWith("shen-biesan") || action.startsWith("shen-jiangwen")) ensureHeroHomeState(true);
-    const message = action.endsWith("-pass") ? `已放弃${skillName}`
-      : action === "yokoyama-swap" ? "已完成座位交换，身份和手牌保持不变"
-        : action === "yokoyama-activate" ? "已生成随机换位候选人"
+    const message = action === "shen-biesan-pass" ? "已放弃玉面雷神"
+      : action === "yokoyama-pass" ? "已结束全能偶像"
+        : action === "yokoyama-activate" ? "全桌座位已重新随机，身份和手牌保持不变"
           : `已提交${skillName}`;
     setMessage(message);
   } catch (error) {
@@ -4239,7 +4243,7 @@ function renderHeroCardPreview(unit) {
               <h3>${escapeHtml(unit.skillName || "暂无技能")}</h3>
               <p>${escapeHtml(unit.skillDescription || "暂无技能说明")}</p>
             </div>
-            ${unit.rarity === "ssr" && owned ? `<p class="meta">当前热度 ${Number(owned.skillHeat || 0).toFixed(1)} / 3</p>` : ""}
+            ${unit.rarity === "ssr" && owned ? `<p class="meta">当前技能 CD ${escapeHtml(owned.skillCooldown || 0)} 轮</p>` : ""}
             <p class="meta">英雄出战不影响家园钻石产出；正式发牌时锁定当局英雄、星级和技能版本。</p>
           </div>
         </div>
@@ -4573,7 +4577,7 @@ function renderCatalogUnit(unit) {
         <div class="hero-fragment-line">
           <span>专属碎片 <b>${owned ? escapeHtml(owned.exclusiveFragments || 0) : "—"}</b></span>
           ${unit.type === "hero" ? `<span>通用碎片 <b>${escapeHtml(heroHomeState.universalFragments || 0)}</b></span>` : ""}
-          ${unit.rarity === "ssr" && owned ? `<span>热度 <b>${Number(owned.skillHeat || 0).toFixed(1)} / 3</b></span>` : ""}
+          ${unit.rarity === "ssr" && owned ? `<span>技能 CD <b>${escapeHtml(owned.skillCooldown || 0)} 轮</b></span>` : ""}
         </div>
       </div>
       <div class="hero-upgrade-action">
@@ -5899,20 +5903,19 @@ function renderSetupCenter() {
 
   if (stage === "shen-biesan-skill") {
     const skill = state.boardHeroSkills?.shenBiesan || {};
-    const candidateButtons = (skill.candidateRanks || []).map((rank) => `
-      <button type="button" data-action="shen-biesan-activate" data-replacement-rank="${escapeHtml(rank)}">
-        选择 ${escapeHtml(rank)} 替代 2
-      </button>
-    `).join("");
+    const activationText = Number(skill.cooldown) > 0
+      ? `花费 ${escapeHtml(skill.cost || 0)} 钻石重置 CD 并发动`
+      : "免费发动并随机比牌";
     body = `
       ${renderSetupLines([
         { label: "当前阶段", value: "神 · 瘪三 · 玉面雷神" },
         { label: "倒计时", value: setupCountdownTag(skill.deadlineAt, " 后自动放弃") },
-        { label: "发动费用", value: skill.viewerEligible ? `${escapeHtml(skill.cost || 0)} 钻石（热度 ${escapeHtml(skill.heat ?? 0)}/3）` : "" }
+        { label: "技能 CD", value: skill.viewerEligible ? `${escapeHtml(skill.cooldown || 0)} 轮` : "" },
+        { label: "重置费用", value: skill.viewerEligible && Number(skill.cooldown) > 0 ? `${escapeHtml(skill.cost || 0)} 钻石` : "" }
       ])}
-      <div class="meta">按星级从你实际持有的牌中随机生成候选，高星候选要求成对；多人申请时随机一人成功，只有成功者扣费。</div>
+      <div class="meta">仅在你没有同花色成对 2 时可发动；服务端会从你实际持有的合法点数中随机 1 个替代 2。多人申请时随机 1 人成功，只有成功者支付 CD 重置费。</div>
       <div class="row">
-        ${!isSpectating() && skill.canChoose ? `${candidateButtons}<button type="button" class="secondary" data-action="shen-biesan-pass">不发动</button>` : ""}
+        ${!isSpectating() && skill.canChoose ? `<button type="button" data-action="shen-biesan-activate">${activationText}</button><button type="button" class="secondary" data-action="shen-biesan-pass">不发动</button>` : ""}
         ${!isSpectating() && skill.viewerCompleted ? `<span class="tag good">你已完成选择</span>` : ""}
         ${isSpectating() || (!skill.viewerEligible && !skill.viewerCompleted) ? `<span class="tag">等待符合条件的玩家选择</span>` : ""}
       </div>
@@ -5954,22 +5957,16 @@ function renderSetupCenter() {
 
   if (stage === "yokoyama-skill") {
     const skill = state.boardHeroSkills?.yokoyama || {};
-    const candidateButtons = (skill.candidates || []).map((candidate) => `
-      <button type="button" data-action="yokoyama-swap" data-target-player-id="${escapeHtml(candidate.playerId)}">
-        与 ${escapeHtml(candidate.playerName)}（${escapeHtml(candidate.seat)}号位）换位
-      </button>
-    `).join("");
     body = `
       ${renderSetupLines([
         { label: "当前阶段", value: "横山由依 · 全能偶像" },
         { label: "当前玩家", value: escapeHtml(skill.currentPlayerName || "") },
         { label: "倒计时", value: setupCountdownTag(skill.deadlineAt, " 后自动放弃") },
-        { label: "发动费用", value: skill.canFinish ? `${escapeHtml(skill.cost || 100)} 钻石` : "" }
+        { label: "本局次数", value: skill.canFinish ? `${escapeHtml(skill.usedCount || 0)} / ${escapeHtml(skill.maxUses || 1)}（剩余 ${escapeHtml(skill.remainingUses || 0)} 次）` : "" }
       ])}
-      <div class="meta">发动后按星级随机展示候选玩家，可选择其中一人交换座位；身份与手牌保持不变。</div>
+      <div class="meta">每次发动都会将全桌座位重新随机；庄家、阵营、手牌和已叫分结果都跟随玩家保持不变。</div>
       <div class="row">
-        ${!isSpectating() && skill.canActivate ? `<button type="button" data-action="yokoyama-activate">花费 ${escapeHtml(skill.cost || 100)} 钻石生成候选</button><button type="button" class="secondary" data-action="yokoyama-pass">不发动</button>` : ""}
-        ${!isSpectating() && skill.paid ? `${candidateButtons}<button type="button" class="secondary" data-action="yokoyama-pass">放弃换位</button>` : ""}
+        ${!isSpectating() && skill.canActivate ? `<button type="button" data-action="yokoyama-activate">免费随机全桌座位</button><button type="button" class="secondary" data-action="yokoyama-pass">结束发动</button>` : ""}
         ${!skill.canFinish ? `<span class="tag">等待 ${escapeHtml(skill.currentPlayerName || "玩家")} 选择</span>` : ""}
       </div>
     `;
@@ -6112,7 +6109,7 @@ function renderRoomActionConfirmDialog() {
   const resetting = pendingRoomAction === "reset";
   const title = resetting ? "确认重开房间？" : "确认解散房间？";
   const description = resetting
-    ? "当前牌局会立即作废，本局已使用的对局道具、英雄技能钻石和热度变化会返还，所有玩家回到房间等待状态。"
+    ? "当前牌局会立即作废，本局已使用的对局道具、英雄技能钻石和 CD 变化会返还，所有玩家回到房间等待状态。"
     : "房间会立即解散，所有玩家和观战者都会离开，之后无法返回本房间。";
   return `
     <div class="modal-backdrop">
@@ -6508,6 +6505,9 @@ function renderBidFryDialog(type) {
   const fryDeadline = state.setup?.fry?.deadlineAt || "";
   const passLabel = isBid ? "过" : (setupCountdownText(fryDeadline, "）", "不炒（") || "不炒");
   const passCountdownAttrs = isBid ? "" : setupCountdownAttributes(fryDeadline, "）", "不炒（");
+  const jiangwenActivationText = Number(shenJiangwenSkill.cooldown) > 0
+    ? `花费 ${escapeHtml(shenJiangwenSkill.cost || 0)} 钻石重置 ${escapeHtml(shenJiangwenSkill.cooldown)} 轮 CD 并发动`
+    : "免费发动";
   return `
     <div class="modal-backdrop">
       <section class="modal-card" role="dialog" aria-modal="true" aria-label="${escapeHtml(title)}">
@@ -6528,7 +6528,7 @@ function renderBidFryDialog(type) {
         </div>
         <div class="dialog-actions">
           ${renderGameItemControl()}
-          ${!isBid && shenJiangwenSkill.canActivate ? `<button type="button" data-action="shen-jiangwen-activate">英雄技能 · 发动排骨之王（${escapeHtml(shenJiangwenSkill.cost || 0)}钻石）</button>` : ""}
+          ${!isBid && shenJiangwenSkill.canActivate ? `<button type="button" data-action="shen-jiangwen-activate">英雄技能 · 排骨之王（${jiangwenActivationText}）</button>` : ""}
           ${canPass ? `<button type="button" class="secondary" data-action="${passAction}" ${passCountdownAttrs}>${escapeHtml(passLabel)}</button>` : `<button type="button" class="secondary" data-action="close-dialog">过</button>`}
           <button type="button" data-action="${isBid ? "bid-selected" : "fry-selected"}" ${validation.ok ? "" : "disabled"}>${escapeHtml(title)}</button>
           ${!validation.ok && validation.reason ? `<span class="action-reason">${escapeHtml(validation.reason)}</span>` : ""}
@@ -6855,8 +6855,8 @@ function setupSeatStatus(player) {
     return { text: scoreBidState.currentPlayerId ? "可加分/过" : "可起叫", tone: scoreBidState.currentPlayerId ? "good" : "" };
   }
   if (state.stage === "yokoyama-skill") {
-    if (state.boardHeroSkills?.yokoyama?.currentPlayerId === player.id) return { text: "换位/放弃", tone: "good" };
-    return { text: "等待换位", tone: "" };
+    if (state.boardHeroSkills?.yokoyama?.currentPlayerId === player.id) return { text: "随机座位/结束", tone: "good" };
+    return { text: "等待座位随机", tone: "" };
   }
   if (state.stage === "trump-selecting") {
     if (setup.bankerId === player.id) return { text: "选主花色", tone: "good" };
@@ -8243,7 +8243,7 @@ const mutatingActions = new Set([
   "send-taunt", "delete-taunt", "kick-player", "buy-shop-product", "equip-avatar-frame", "use-game-item",
   "complete-item-stage", "collect-home", "assign-home-unit", "select-battle-hero",
   "pull-hero-gacha", "upgrade-hero-unit", "upgrade-home-region", "dispatch-hero-task", "collect-hero-task", "claim-daily-task",
-  "shen-biesan-activate", "shen-biesan-pass", "yokoyama-activate", "yokoyama-swap", "yokoyama-pass", "shen-jiangwen-activate"
+  "shen-biesan-activate", "shen-biesan-pass", "yokoyama-activate", "yokoyama-pass", "shen-jiangwen-activate"
 ]);
 
 function isRapidMutatingAction(action) {
@@ -8607,10 +8607,9 @@ document.addEventListener("click", (event) => {
     useGameItem(event.target.closest("[data-item-id]")?.dataset.itemId || "");
   }
   if (action === "complete-item-stage") completeGameItemStage();
-  if (action === "shen-biesan-activate") submitBoardHeroSkill(action, "", event.target.closest("[data-replacement-rank]")?.dataset.replacementRank || "");
+  if (action === "shen-biesan-activate") submitBoardHeroSkill(action);
   if (action === "shen-biesan-pass") submitBoardHeroSkill(action);
   if (action === "yokoyama-activate") submitBoardHeroSkill(action);
-  if (action === "yokoyama-swap") submitBoardHeroSkill(action, event.target.closest("[data-target-player-id]")?.dataset.targetPlayerId || "");
   if (action === "yokoyama-pass") submitBoardHeroSkill(action);
   if (action === "shen-jiangwen-activate") submitBoardHeroSkill(action);
   if (action === "send-taunt") {

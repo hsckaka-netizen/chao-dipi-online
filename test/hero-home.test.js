@@ -4,6 +4,7 @@ import { readFile, stat } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 
 import {
+  boardHeroSkillState,
   calculateHeroSkillReward,
   createBattleHeroSnapshot,
   createHeroTaskDefinition,
@@ -16,7 +17,6 @@ import {
   homeRegionMaxHours,
   HOME_UNIT_BY_ID,
   missingDailyHeroTaskSlots,
-  paidBoardSkillState,
   previewHomeRegion,
   regionUpgradeCost,
   selectHeroTaskUnits,
@@ -135,7 +135,10 @@ test("all hero skill descriptions expose concrete per-star diamond values", () =
     xiaoxu: "7/9/11/12/14",
     gelu: "100/90/80/70/60",
     "maeda-atsuko": "185/230/280/325/370",
-    "watanabe-mayu": "55/70/85/100/115"
+    "watanabe-mayu": "55/70/85/100/115",
+    "shen-biesan": "5/7/9/12/15",
+    "shen-jiangwen": "15/20/25/30/40",
+    "yokoyama-yui": "15/20/25/30/40"
   };
   Object.entries(expectedValues).forEach(([unitId, values]) => {
     const description = HOME_UNIT_BY_ID.get(unitId)?.skillDescription || "";
@@ -318,7 +321,7 @@ test("gelu uses the star score threshold and rewards thirty-two diamonds per tri
   assert.equal(reward.matchedCount, 1);
   assert.equal(reward.cap, null);
   assert.equal(reward.amount, 32);
-  assert.equal(reward.rulesVersion, "2026-08-24-skill-v6");
+  assert.equal(reward.rulesVersion, "2026-09-02-skill-v7");
 });
 
 test("gelu has no trigger or diamond cap at five stars", () => {
@@ -407,21 +410,72 @@ test("watanabe mayu scales each positive title without a total cap", () => {
   assert.equal(reward.amount, 805);
 });
 
-test("SSR roster, probabilities, production, and paid skill heat use the settled values", () => {
-  const shenBiesan = createBattleHeroSnapshot("shen-biesan", 5, 2.5);
+test("SSR passive diamond skills follow frozen stars and original game facts", () => {
+  const shenJiangwen = calculateHeroSkillReward({
+    snapshot: createBattleHeroSnapshot("shen-jiangwen", 1),
+    playerId: "jiangwen",
+    playerResult: { team: "banker", evaluation: {} },
+    fryHistory: [{ playerId: "jiangwen" }, { playerId: "other" }, { playerId: "jiangwen" }],
+    boardHeroUses: [{ playerId: "jiangwen", heroId: "shen-jiangwen" }]
+  });
+  assert.equal(shenJiangwen.matchedCount, 3);
+  assert.equal(shenJiangwen.amount, 45);
+
+  const shenBiesan = calculateHeroSkillReward({
+    snapshot: createBattleHeroSnapshot("shen-biesan", 5),
+    playerId: "biesan",
+    playerResult: { playerId: "biesan", team: "banker", draggedRedFives: 4, draggedDiamondFives: 4 },
+    playerResults: [
+      { playerId: "biesan", team: "banker", draggedRedFives: 4, draggedDiamondFives: 4 },
+      { playerId: "idle-a", team: "idle", draggedRedFives: 1, draggedDiamondFives: 2 }
+    ]
+  });
+  assert.equal(shenBiesan.matchedCount, 4);
+  assert.equal(shenBiesan.amount, 60);
+
+  const shenBiesanWithBottom = calculateHeroSkillReward({
+    snapshot: createBattleHeroSnapshot("shen-biesan", 5),
+    playerId: "idle-biesan",
+    playerResult: { playerId: "idle-biesan", team: "idle" },
+    playerResults: [
+      { playerId: "idle-biesan", team: "idle" },
+      { playerId: "banker", team: "banker", draggedRedFives: 1, draggedDiamondFives: 1 }
+    ],
+    gameResult: {
+      bottomWinnerTeam: "idle",
+      bottomDraggedRedFives: 1,
+      bottomDraggedDiamondFives: 1
+    }
+  });
+  assert.equal(shenBiesanWithBottom.matchedCount, 6);
+  assert.equal(shenBiesanWithBottom.amount, 90);
+
+  const yokoyama = calculateHeroSkillReward({
+    snapshot: createBattleHeroSnapshot("yokoyama-yui", 3),
+    playerId: "yokoyama",
+    playerResult: { team: "idle", evaluation: { teammateAssistPoints: 85 } }
+  });
+  assert.equal(yokoyama.matchedCount, 2);
+  assert.equal(yokoyama.amount, 50);
+});
+
+test("SSR roster, probabilities, production, and cooldown reset costs use the settled values", () => {
+  const shenBiesan = createBattleHeroSnapshot("shen-biesan", 5, 2);
   const shenJiangwen = createBattleHeroSnapshot("shen-jiangwen", 1, 1);
   const yokoyama = createBattleHeroSnapshot("yokoyama-yui", 3);
   assert.equal(shenBiesan.name, "神 · 瘪三");
   assert.equal(shenBiesan.namePrefix, "神");
   assert.equal(shenBiesan.baseName, "瘪三");
   assert.equal(shenBiesan.skillName, "玉面雷神");
-  assert.equal(shenBiesan.paidSkill.cost, 2500);
+  assert.equal(shenBiesan.paidSkill.cost, 1000);
+  assert.equal(shenBiesan.paidSkill.cooldownAfterUse, 1);
   assert.equal(shenJiangwen.skillName, "排骨之王");
   assert.equal(shenJiangwen.paidSkill.cost, 500);
   assert.equal(createBattleHeroSnapshot("shen-jiangwen", 1, 0).paidSkill.cost, 0);
-  assert.equal(createBattleHeroSnapshot("shen-jiangwen", 5, 3).paidSkill.cost, 600);
+  assert.equal(createBattleHeroSnapshot("shen-jiangwen", 5, 3).paidSkill.cost, 1500);
   assert.equal(yokoyama.skillName, "全能偶像");
-  assert.equal(yokoyama.paidSkill.cost, 100);
+  assert.equal(yokoyama.paidSkill.cost, 0);
+  assert.equal(yokoyama.paidSkill.maxUsesPerGame, 2);
   assert.equal(HERO_HOME_RULES.ssrPityPulls, 200);
   assert.deepEqual(HERO_HOME_RULES.srProduction, [16, 22, 28, 34, 46]);
   assert.deepEqual(HERO_HOME_RULES.ssrProduction, [30, 40, 50, 60, 80]);
@@ -429,32 +483,18 @@ test("SSR roster, probabilities, production, and paid skill heat use the settled
   assert.equal(drawHomeUnit({ randomFloat: () => 0 }).rarity, "ssr");
   assert.equal(drawHomeUnit({ randomFloat: () => 0.05 }).rarity, "sr");
   assert.equal(drawHomeUnit({ randomFloat: () => 0.5 }).rarity, "minion");
-  assert.deepEqual(paidBoardSkillState(5, 3), {
+  assert.deepEqual(boardHeroSkillState(5, 3), {
     stars: 5,
-    heat: 3,
-    maxHeat: 3,
-    baseCost: 0,
-    heatCost: 1000,
-    cost: 3000,
-    coolingPerUnusedGame: 0.5,
-    heatPerUse: 1
+    cooldown: 3,
+    cooldownAfterUse: 1,
+    resetCostPerRound: 500,
+    resetCost: 1500,
+    cost: 1500,
+    maxUsesPerGame: 1
   });
-  assert.deepEqual(paidBoardSkillState(5, 3, "shen-jiangwen"), {
-    stars: 5,
-    heat: 3,
-    maxHeat: 3,
-    baseCost: 0,
-    heatCost: 200,
-    cost: 600,
-    coolingPerUnusedGame: 3,
-    heatPerUse: 3
-  });
-  assert.deepEqual(HERO_HOME_RULES.paidSkillBaseCosts, [0, 0, 0, 0, 0]);
-  assert.deepEqual(HERO_HOME_RULES.shenBiesanCandidateCounts, [1, 1, 2, 2, 2]);
-  assert.deepEqual(HERO_HOME_RULES.shenBiesanRequiredPairedCounts, [0, 1, 1, 2, 2]);
-  assert.deepEqual(HERO_HOME_RULES.shenJiangwenHeatCosts, [500, 400, 400, 300, 200]);
-  assert.deepEqual(HERO_HOME_RULES.shenJiangwenCooling, [1, 1, 2, 2, 3]);
-  assert.deepEqual([1, 2, 3, 4, 5].map((stars) => paidBoardSkillState(stars, 1, "shen-jiangwen").cost), [500, 400, 400, 300, 200]);
+  assert.deepEqual(HERO_HOME_RULES.boardSkillCooldowns, [5, 4, 3, 2, 1]);
+  assert.equal(HERO_HOME_RULES.boardSkillResetCostPerRound, 500);
+  assert.deepEqual(HERO_HOME_RULES.yokoyamaUsesPerGame, [1, 1, 2, 2, 3]);
 });
 
 test("region levels increase output every level and unlock capacity on milestones", () => {
@@ -555,22 +595,21 @@ test("server and table UI expose all three SSR board skill stages", async () => 
   assert.match(serverSource, /activateShenJiangwenSkill/);
   assert.match(serverSource, /pathParts\[3\] === "board-hero-skill"/);
   assert.match(replacementRankRulesSource, /rulesRank = "LOW_2"/);
-  assert.match(serverSource, /candidateRanksByPlayerId/);
-  assert.match(serverSource, /selectedRankByPlayerId/);
+  assert.match(serverSource, /replacementRankByPlayerId/);
+  assert.match(serverSource, /resetCooldownByPlayerId/);
   assert.match(serverSource, /ownedReplacementRanksForShenBiesan/);
-  assert.match(serverSource, /shenBiesanRequiredPairedCounts/);
+  assert.match(serverSource, /!hasPairedPrintedTwo\(player\)/);
   assert.match(serverSource, /refundBoardHeroSkillUses/);
   assert.match(serverSource, /boardHeroSkillUseInFlight/);
   assert.match(serverSource, /directSkillPendingPlayerId/);
   assert.match(appSource, /data-action="shen-biesan-activate"/);
-  assert.match(appSource, /data-replacement-rank/);
-  assert.match(appSource, /data-action="yokoyama-swap"/);
+  assert.match(appSource, /免费随机全桌座位/);
   assert.match(appSource, /data-action="shen-jiangwen-activate"/);
   assert.match(appSource, /!isBid && shenJiangwenSkill\.canActivate/);
-  assert.match(appSource, /英雄技能 · 发动排骨之王/);
-  assert.match(appSource, /英雄技能钻石和热度变化会返还/);
+  assert.match(appSource, /英雄技能 · 排骨之王/);
+  assert.match(appSource, /英雄技能钻石和 CD 变化会返还/);
   assert.match(gameHistorySource, /hero_skill_refund/);
-  assert.match(gameHistorySource, /SET skill_heat = \$3/);
+  assert.match(gameHistorySource, /SET skill_cooldown = \$3/);
   assert.match(appSource, /每天北京时间06:00生成最多3个新任务；当天完成或领取后不补位/);
   assert.match(appSource, /建材 40%（50个）/);
   assert.match(appSource, /function gameCardRank/);
@@ -678,4 +717,14 @@ test("hero migration stores home, gacha, snapshots, and hero bonus", async () =>
   assert.match(productionRewardMigration, /ARRAY\[16, 22, 28, 34, 40\]/);
   assert.match(productionRewardMigration, /unit_id NOT IN \('boka-youth', 'brick-worker', 'trainee'\)/);
   assert.match(gameHistorySource, /030_hero_production_reward_curve\.sql/);
+
+  const cooldownMigration = await readFile(
+    fileURLToPath(new URL("../db/migrations/032_ssr_skill_cooldowns.sql", import.meta.url)),
+    "utf8"
+  );
+  assert.match(cooldownMigration, /skill_cooldown smallint/);
+  assert.match(cooldownMigration, /cooldown_before smallint/);
+  assert.match(cooldownMigration, /DROP CONSTRAINT IF EXISTS cdp_game_hero_skill_uses_game_id_account_id_unit_id_key/);
+  assert.match(cooldownMigration, /CREATE TABLE IF NOT EXISTS cdp_hero_cooldown_settlements/);
+  assert.match(gameHistorySource, /032_ssr_skill_cooldowns\.sql/);
 });

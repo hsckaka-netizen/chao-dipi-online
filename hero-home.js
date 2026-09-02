@@ -1,7 +1,7 @@
 export const HERO_HOME_RULES = Object.freeze({
-  version: "2026-08-27-v2",
-  skillVersion: "2026-08-24-skill-v6",
-  boardSkillVersion: "2026-08-26-board-skill-v3",
+  version: "2026-09-02-v4",
+  skillVersion: "2026-09-02-skill-v7",
+  boardSkillVersion: "2026-09-02-board-skill-v4",
   maxProductionHours: 6,
   singlePullPrice: 300,
   tenPullPrice: 2700,
@@ -32,16 +32,9 @@ export const HERO_HOME_RULES = Object.freeze({
   productionBonusPerLevel: 0.005,
   maxHoursPerTenLevels: 0.5,
   extraSlotUnlockLevel: 100,
-  maxSkillHeat: 3,
-  paidSkillBaseCosts: Object.freeze([0, 0, 0, 0, 0]),
-  paidSkillHeatCosts: Object.freeze([1500, 1500, 1200, 1200, 1000]),
-  paidSkillCooling: Object.freeze([0.2, 0.3, 0.3, 0.4, 0.5]),
-  shenBiesanCandidateCounts: Object.freeze([1, 1, 2, 2, 2]),
-  shenBiesanRequiredPairedCounts: Object.freeze([0, 1, 1, 2, 2]),
-  shenJiangwenHeatCosts: Object.freeze([500, 400, 400, 300, 200]),
-  shenJiangwenCooling: Object.freeze([1, 1, 2, 2, 3]),
-  shenJiangwenHeatPerUse: 3,
-  yokoyamaSkillCost: 100
+  boardSkillCooldowns: Object.freeze([5, 4, 3, 2, 1]),
+  boardSkillResetCostPerRound: 500,
+  yokoyamaUsesPerGame: Object.freeze([1, 1, 2, 2, 3])
 });
 
 const REGION_UPGRADE_COSTS = Object.freeze([60, 70, 80, 100, 130, 160, 190, 230, 280, 350]);
@@ -66,7 +59,7 @@ export const HOME_UNITS = Object.freeze([
   Object.freeze({
     id: "shen-biesan", name: "神 · 瘪三", namePrefix: "神", baseName: "瘪三", shortName: "瘪", type: "hero", rarity: "ssr", gender: "male", regionId: "boka", color: "#9f742c",
     cardImage: "/assets/heroes/shen-biesan-card-v2.png",
-    skillName: "玉面雷神", skillDescription: "叫庄前按星级随机生成替代2的持有牌候选：1星1张、2星1张成对牌、3星2张且至少1张成对、4星2张成对牌；5星沿用4星候选并取消2成对限制。"
+    skillName: "玉面雷神", skillDescription: "被动：对方阵营每被拖1点红五/方五积分，1～5星分别额外获得5/7/9/12/15钻石。主动：叫庄前若本人没有同花色成对2，可随机一个持有点数替代2成为本局比牌；CD为5/4/3/2/1轮。"
   }),
   Object.freeze({ id: "boka-youth", name: "博卡青年", shortName: "博", type: "minion", rarity: "minion", gender: null, regionId: "boka", color: "#d6a936" }),
   Object.freeze({
@@ -82,7 +75,7 @@ export const HOME_UNITS = Object.freeze([
   Object.freeze({
     id: "shen-jiangwen", name: "神 · 姜文", namePrefix: "神", baseName: "姜文", shortName: "姜", type: "hero", rarity: "ssr", gender: "male", regionId: "brick", color: "#4f5e52",
     cardImage: "/assets/heroes/shen-jiangwen-card-v2.png",
-    skillName: "排骨之王", skillDescription: "首次轮到本人炒底时可以直接拿底并贴底，不提高炒底门槛；按当前热度消耗钻石。"
+    skillName: "排骨之王", skillDescription: "被动：本局每进行1次炒底，1～5星分别额外获得15/20/25/30/40钻石。主动：首次轮到本人炒底时可强制炒底1次，不提高炒底门槛；CD为5/4/3/2/1轮。"
   }),
   Object.freeze({ id: "brick-worker", name: "搬砖工", shortName: "砖", type: "minion", rarity: "minion", gender: null, regionId: "brick", color: "#a67445" }),
   Object.freeze({
@@ -98,7 +91,7 @@ export const HOME_UNITS = Object.freeze([
   Object.freeze({
     id: "yokoyama-yui", name: "横山由依", shortName: "横", type: "hero", rarity: "ssr", gender: "female", regionId: "stage", color: "#bd4d83",
     cardImage: "/assets/heroes/yokoyama-yui-card-v2.png",
-    skillName: "全能偶像", skillDescription: "叫庄结束后随机展示最多1/2/3/4/5名其他玩家，可选择其中一人交换座位；每次消耗100钻石。"
+    skillName: "全能偶像", skillDescription: "被动：本局每为友方贴出40分，1～5星分别额外获得15/20/25/30/40钻石。主动：叫庄结束后可将全桌座位重新随机，每局可发动1/1/2/2/3次，CD为0轮。"
   }),
   Object.freeze({ id: "trainee", name: "练习生", shortName: "练", type: "minion", rarity: "minion", gender: null, regionId: "stage", color: "#7197bd" })
 ]);
@@ -128,6 +121,9 @@ const XIAOXU_DIAMONDS_PER_SOURCE = Object.freeze([7, 9, 11, 12, 14]);
 const GELU_POINTS_PER_TRIGGER = Object.freeze([100, 90, 80, 70, 60]);
 const GELU_DIAMONDS_PER_TRIGGER = 32;
 const WATANABE_DIAMONDS_PER_TITLE = Object.freeze([55, 70, 85, 100, 115]);
+const SHEN_JIANGWEN_DIAMONDS_PER_FRY = Object.freeze([15, 20, 25, 30, 40]);
+const SHEN_BIESAN_DIAMONDS_PER_DRAG_POINT = Object.freeze([5, 7, 9, 12, 15]);
+const YOKOYAMA_DIAMONDS_PER_ASSIST = Object.freeze([15, 20, 25, 30, 40]);
 const DAY_MS = 24 * 3600 * 1000;
 const BEIJING_OFFSET_MS = 8 * 3600 * 1000;
 
@@ -172,21 +168,20 @@ export function missingDailyHeroTaskSlots(existingTasks = []) {
   return [1, 2, 3].filter((slotIndex) => !occupiedSlots.has(slotIndex));
 }
 
-export function paidBoardSkillState(stars = 1, heatValue = 0, unitId = "shen-biesan") {
+export function boardHeroSkillState(stars = 1, cooldownValue = 0, unitId = "shen-biesan") {
   const normalizedStarValue = normalizedStars(stars);
-  const heat = Math.max(0, Math.min(HERO_HOME_RULES.maxSkillHeat, Math.round((Number(heatValue) || 0) * 10) / 10));
-  const baseCost = HERO_HOME_RULES.paidSkillBaseCosts[normalizedStarValue - 1];
-  const isShenJiangwen = unitId === "shen-jiangwen";
-  const heatCost = (isShenJiangwen ? HERO_HOME_RULES.shenJiangwenHeatCosts : HERO_HOME_RULES.paidSkillHeatCosts)[normalizedStarValue - 1];
+  const cooldown = Math.max(0, Math.trunc(Number(cooldownValue) || 0));
+  const isYokoyama = unitId === "yokoyama-yui";
+  const cooldownAfterUse = isYokoyama ? 0 : HERO_HOME_RULES.boardSkillCooldowns[normalizedStarValue - 1];
+  const resetCost = cooldown * HERO_HOME_RULES.boardSkillResetCostPerRound;
   return {
     stars: normalizedStarValue,
-    heat,
-    maxHeat: HERO_HOME_RULES.maxSkillHeat,
-    baseCost,
-    heatCost,
-    cost: Math.round(baseCost + heat * heatCost),
-    coolingPerUnusedGame: (isShenJiangwen ? HERO_HOME_RULES.shenJiangwenCooling : HERO_HOME_RULES.paidSkillCooling)[normalizedStarValue - 1],
-    heatPerUse: isShenJiangwen ? HERO_HOME_RULES.shenJiangwenHeatPerUse : 1
+    cooldown,
+    cooldownAfterUse,
+    resetCostPerRound: HERO_HOME_RULES.boardSkillResetCostPerRound,
+    resetCost,
+    cost: resetCost,
+    maxUsesPerGame: isYokoyama ? HERO_HOME_RULES.yokoyamaUsesPerGame[normalizedStarValue - 1] : 1
   };
 }
 
@@ -380,7 +375,7 @@ export function heroGachaCharge(pullCount, freePullAvailable = false) {
   return null;
 }
 
-export function createBattleHeroSnapshot(unitId, stars = 1, heatValue = 0) {
+export function createBattleHeroSnapshot(unitId, stars = 1, cooldownValue = 0) {
   const unit = HOME_UNIT_BY_ID.get(String(unitId || ""));
   if (!unit || unit.type !== "hero") return null;
   const snapshot = {
@@ -398,8 +393,7 @@ export function createBattleHeroSnapshot(unitId, stars = 1, heatValue = 0) {
     stars: normalizedStars(stars),
     skillVersion: unit.rarity === "ssr" ? HERO_HOME_RULES.boardSkillVersion : HERO_HOME_RULES.skillVersion
   };
-  if (unit.id === "shen-biesan" || unit.id === "shen-jiangwen") snapshot.paidSkill = paidBoardSkillState(stars, heatValue, unit.id);
-  if (unit.id === "yokoyama-yui") snapshot.paidSkill = { cost: HERO_HOME_RULES.yokoyamaSkillCost, heat: null, maxHeat: null };
+  if (unit.rarity === "ssr") snapshot.paidSkill = boardHeroSkillState(stars, cooldownValue, unit.id);
   return snapshot;
 }
 
@@ -420,7 +414,16 @@ function baseSkillResult(snapshot, matched, cap, amount, detail) {
   };
 }
 
-export function calculateHeroSkillReward({ snapshot, playerId, playerResult, trickHistory = [] } = {}) {
+export function calculateHeroSkillReward({
+  snapshot,
+  playerId,
+  playerResult,
+  playerResults = [],
+  gameResult = null,
+  trickHistory = [],
+  fryHistory = [],
+  boardHeroUses = []
+} = {}) {
   if (!snapshot?.heroId || !playerId || !playerResult) return null;
   const stars = normalizedStars(snapshot.stars);
   const history = Array.isArray(trickHistory) ? trickHistory : [];
@@ -472,6 +475,36 @@ export function calculateHeroSkillReward({ snapshot, playerId, playerResult, tri
     const diamondsPerTitle = WATANABE_DIAMONDS_PER_TITLE[stars - 1];
     const amount = codes.size * diamondsPerTitle;
     return baseSkillResult(snapshot, codes.size, null, amount, `获得${codes.size}个白名单正向称号，每个奖励${diamondsPerTitle}钻，不设总上限`);
+  }
+
+  if (snapshot.heroId === "shen-jiangwen") {
+    const normalFryCount = (Array.isArray(fryHistory) ? fryHistory : [])
+      .filter((fry) => fry?.playerId === playerId).length;
+    const forcedFryCount = (Array.isArray(boardHeroUses) ? boardHeroUses : [])
+      .filter((use) => use?.playerId === playerId && use?.heroId === "shen-jiangwen").length;
+    const fryCount = normalFryCount + forcedFryCount;
+    const diamondsPerFry = SHEN_JIANGWEN_DIAMONDS_PER_FRY[stars - 1];
+    return baseSkillResult(snapshot, fryCount, null, fryCount * diamondsPerFry, `本局炒底${fryCount}次，每次奖励${diamondsPerFry}钻`);
+  }
+
+  if (snapshot.heroId === "shen-biesan") {
+    const opponents = (Array.isArray(playerResults) ? playerResults : [])
+      .filter((result) => result?.team && result.team !== playerResult.team);
+    const redFives = opponents.reduce((sum, result) => sum + (Number(result.draggedRedFives) || 0), 0);
+    const diamondFives = opponents.reduce((sum, result) => sum + (Number(result.draggedDiamondFives) || 0), 0);
+    const bottomExtra = playerResult.team === "idle" && gameResult?.bottomWinnerTeam === "idle"
+      ? (Number(gameResult.bottomDraggedRedFives) || 0) * 2 + (Number(gameResult.bottomDraggedDiamondFives) || 0)
+      : 0;
+    const dragPoints = redFives * 2 + diamondFives + bottomExtra;
+    const diamondsPerPoint = SHEN_BIESAN_DIAMONDS_PER_DRAG_POINT[stars - 1];
+    return baseSkillResult(snapshot, dragPoints, null, dragPoints * diamondsPerPoint, `对方阵营被拖红五${redFives}张、方五${diamondFives}张${bottomExtra ? `，含保底翻倍追加${bottomExtra}点` : ""}，共${dragPoints}点被拖积分，每点奖励${diamondsPerPoint}钻`);
+  }
+
+  if (snapshot.heroId === "yokoyama-yui") {
+    const assistPoints = Math.max(0, Number(playerResult.evaluation?.teammateAssistPoints) || 0);
+    const matched = Math.floor(assistPoints / 40);
+    const diamondsPerAssist = YOKOYAMA_DIAMONDS_PER_ASSIST[stars - 1];
+    return baseSkillResult(snapshot, matched, null, matched * diamondsPerAssist, `本局为友方贴出${assistPoints}分，每满40分奖励${diamondsPerAssist}钻，共触发${matched}次`);
   }
 
   return null;

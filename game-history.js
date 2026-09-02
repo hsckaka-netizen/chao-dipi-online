@@ -31,7 +31,7 @@ import {
   HOME_REGION_BY_ID,
   HOME_UNIT_BY_ID,
   missingDailyHeroTaskSlots,
-  paidBoardSkillState,
+  boardHeroSkillState,
   previewHomeRegion,
   publicHeroCatalog,
   regionUpgradeCost,
@@ -167,6 +167,10 @@ const MIGRATIONS = [
   {
     version: 31,
     path: fileURLToPath(new URL("./db/migrations/031_season_ranking_rewards.sql", import.meta.url))
+  },
+  {
+    version: 32,
+    path: fileURLToPath(new URL("./db/migrations/032_ssr_skill_cooldowns.sql", import.meta.url))
   }
 ];
 const HISTORY_ENABLED = String(process.env.GAME_HISTORY_ENABLED || "").toLowerCase() === "true";
@@ -1826,40 +1830,39 @@ async function saveDiamondRewards(client, record) {
   return outcomes;
 }
 
-async function settleBoardHeroHeat(client, record) {
+async function settleBoardHeroCooldown(client, record) {
   const uses = Array.isArray(record.boardHeroEffects?.uses) ? record.boardHeroEffects.uses : [];
   for (const player of record.players) {
     const unitId = player.battleHeroSnapshot?.heroId;
-    if (!player.accountId || !["shen-biesan", "shen-jiangwen"].includes(unitId)) continue;
+    if (!player.accountId || player.diamondReward?.status === "ineligible" || !["shen-biesan", "shen-jiangwen"].includes(unitId)) continue;
     const existing = await client.query(
-      `SELECT game_id FROM cdp_hero_heat_settlements
+      `SELECT game_id FROM cdp_hero_cooldown_settlements
        WHERE game_id = $1::uuid AND account_id = $2::uuid AND unit_id = $3`,
       [record.gameId, player.accountId, unitId]
     );
     if (existing.rows[0]) continue;
     const owned = await client.query(
-      `SELECT stars, skill_heat FROM cdp_hero_units
+      `SELECT skill_cooldown FROM cdp_hero_units
        WHERE account_id = $1::uuid AND unit_id = $2
        FOR UPDATE`,
       [player.accountId, unitId]
     );
     if (!owned.rows[0]) continue;
-    const heatBefore = Number(owned.rows[0].skill_heat) || 0;
+    const cooldownBefore = Math.max(0, Number(owned.rows[0].skill_cooldown) || 0);
     const usedInGame = uses.some((use) => use?.accountId === player.accountId && use?.heroId === unitId);
-    const cooling = paidBoardSkillState(owned.rows[0].stars, heatBefore, unitId).coolingPerUnusedGame;
-    const heatAfter = usedInGame ? heatBefore : Math.max(0, Math.round((heatBefore - cooling) * 10) / 10);
-    if (heatAfter !== heatBefore) {
+    const cooldownAfter = usedInGame ? cooldownBefore : Math.max(0, cooldownBefore - 1);
+    if (cooldownAfter !== cooldownBefore) {
       await client.query(
-        `UPDATE cdp_hero_units SET skill_heat = $3, updated_at = now()
+        `UPDATE cdp_hero_units SET skill_cooldown = $3, updated_at = now()
          WHERE account_id = $1::uuid AND unit_id = $2`,
-        [player.accountId, unitId, heatAfter]
+        [player.accountId, unitId, cooldownAfter]
       );
     }
     await client.query(
-      `INSERT INTO cdp_hero_heat_settlements (
-        game_id, account_id, unit_id, heat_before, heat_after, used_in_game
+      `INSERT INTO cdp_hero_cooldown_settlements (
+        game_id, account_id, unit_id, cooldown_before, cooldown_after, used_in_game
       ) VALUES ($1::uuid, $2::uuid, $3, $4, $5, $6)`,
-      [record.gameId, player.accountId, unitId, heatBefore, heatAfter, usedInGame]
+      [record.gameId, player.accountId, unitId, cooldownBefore, cooldownAfter, usedInGame]
     );
   }
 }
@@ -1993,7 +1996,7 @@ async function saveGameRecord(record) {
       );
     }
     const diamondRewards = await saveDiamondRewards(client, record);
-    await settleBoardHeroHeat(client, record);
+    await settleBoardHeroCooldown(client, record);
     await client.query("COMMIT");
     status.connected = true;
     status.lastSavedAt = new Date().toISOString();
@@ -2130,7 +2133,7 @@ function publicOwnedHeroUnit(row) {
     ...unit,
     stars,
     exclusiveFragments: Number(row.exclusive_fragments) || 0,
-    skillHeat: Number(row.skill_heat) || 0,
+    skillCooldown: Math.max(0, Number(row.skill_cooldown) || 0),
     upgradeCost: starUpgradeCost(unit.id, stars),
     obtainedAt: row.obtained_at ? new Date(row.obtained_at).toISOString() : null
   };
@@ -2245,7 +2248,7 @@ async function heroHomeStateFromClient(client, accountId) {
       [accountId]
     ),
     client.query(
-      `SELECT unit_id, stars, exclusive_fragments, skill_heat, obtained_at, updated_at
+      `SELECT unit_id, stars, exclusive_fragments, skill_cooldown, obtained_at, updated_at
        FROM cdp_hero_units
        WHERE account_id = $1::uuid
        ORDER BY obtained_at, unit_id`,
@@ -2307,7 +2310,7 @@ async function heroHomeStateFromClient(client, accountId) {
       ? createBattleHeroSnapshot(
           profile.battle_unit_id,
           ownedById.get(profile.battle_unit_id)?.stars,
-          ownedById.get(profile.battle_unit_id)?.skillHeat
+          ownedById.get(profile.battle_unit_id)?.skillCooldown
         )
       : null,
     ownedUnits,
@@ -2894,7 +2897,7 @@ export async function chargeBoardHeroSkill(accountId, gameIdValue, unitIdValue, 
     await client.query("BEGIN");
     await ensureHeroAccount(client, accountId);
     const repeated = await client.query(
-      `SELECT cost, balance_after, heat_before, heat_after, effect_data
+      `SELECT unit_id, cost, balance_after, cooldown_before, cooldown_after, effect_data
        FROM cdp_game_hero_skill_uses
        WHERE account_id = $1::uuid AND request_id = $2`,
       [accountId, requestId]
@@ -2903,26 +2906,33 @@ export async function chargeBoardHeroSkill(accountId, gameIdValue, unitIdValue, 
       await client.query("COMMIT");
       return {
         rulesVersion: HERO_HOME_RULES.boardSkillVersion,
-        unitId,
+        unitId: repeated.rows[0].unit_id,
         cost: Number(repeated.rows[0].cost),
         balanceAfter: Number(repeated.rows[0].balance_after),
-        heatBefore: repeated.rows[0].heat_before == null ? null : Number(repeated.rows[0].heat_before),
-        heatAfter: repeated.rows[0].heat_after == null ? null : Number(repeated.rows[0].heat_after),
+        cooldownBefore: Number(repeated.rows[0].cooldown_before) || 0,
+        cooldownAfter: Number(repeated.rows[0].cooldown_after) || 0,
         effectData: repeated.rows[0].effect_data || {},
         repeated: true
       };
     }
     const owned = await client.query(
-      `SELECT stars, skill_heat FROM cdp_hero_units
+      `SELECT stars, skill_cooldown FROM cdp_hero_units
        WHERE account_id = $1::uuid AND unit_id = $2
        FOR UPDATE`,
       [accountId, unitId]
     );
     if (!owned.rows[0]) throw commerceError("尚未拥有这个SSR英雄", 403);
-    const stars = Number(owned.rows[0].stars) || 1;
-    const paidState = unitId === "yokoyama-yui"
-      ? { cost: HERO_HOME_RULES.yokoyamaSkillCost, heat: null }
-      : paidBoardSkillState(stars, owned.rows[0].skill_heat, unitId);
+    const storedStars = Number(owned.rows[0].stars) || 1;
+    const snapshotStars = Math.max(1, Math.min(storedStars, Math.trunc(Number(effectData.skillStars) || storedStars)));
+    const paidState = boardHeroSkillState(snapshotStars, owned.rows[0].skill_cooldown, unitId);
+    if (paidState.cooldown > 0 && !effectData.resetCooldown) {
+      throw commerceError(`技能还需冷却${paidState.cooldown}轮，可花费${paidState.resetCost}钻石重置`, 409);
+    }
+    const storedEffectData = {
+      ...effectData,
+      skillStars: snapshotStars,
+      cooldownResetRounds: paidState.cooldown
+    };
     await client.query(
       `INSERT INTO cdp_diamond_wallets (account_id) VALUES ($1::uuid)
        ON CONFLICT (account_id) DO NOTHING`,
@@ -2936,30 +2946,28 @@ export async function chargeBoardHeroSkill(accountId, gameIdValue, unitIdValue, 
       [accountId, paidState.cost]
     );
     if (!wallet.rows[0]) throw commerceError("钻石余额不足", 409);
-    const heatBefore = paidState.heat;
-    const heatAfter = heatBefore == null ? null : Math.min(HERO_HOME_RULES.maxSkillHeat, heatBefore + paidState.heatPerUse);
-    if (heatAfter != null) {
-      await client.query(
-        `UPDATE cdp_hero_units SET skill_heat = $3, updated_at = now()
-         WHERE account_id = $1::uuid AND unit_id = $2`,
-        [accountId, unitId, heatAfter]
-      );
-    }
+    const cooldownBefore = paidState.cooldown;
+    const cooldownAfter = paidState.cooldownAfterUse;
+    await client.query(
+      `UPDATE cdp_hero_units SET skill_cooldown = $3, updated_at = now()
+       WHERE account_id = $1::uuid AND unit_id = $2`,
+      [accountId, unitId, cooldownAfter]
+    );
     const balanceAfter = Number(wallet.rows[0].balance) || 0;
     const useId = randomUUID();
     await client.query(
       `INSERT INTO cdp_game_hero_skill_uses (
         use_id, game_id, account_id, unit_id, request_id, cost, balance_after,
-        heat_before, heat_after, effect_data
-      ) VALUES ($1::uuid, $2::uuid, $3::uuid, $4, $5, $6, $7, $8, $9, $10::jsonb)`,
-      [useId, gameId, accountId, unitId, requestId, paidState.cost, balanceAfter, heatBefore, heatAfter, JSON.stringify(effectData)]
+        heat_before, heat_after, cooldown_before, cooldown_after, effect_data
+      ) VALUES ($1::uuid, $2::uuid, $3::uuid, $4, $5, $6, $7, NULL, NULL, $8, $9, $10::jsonb)`,
+      [useId, gameId, accountId, unitId, requestId, paidState.cost, balanceAfter, cooldownBefore, cooldownAfter, JSON.stringify(storedEffectData)]
     );
     if (paidState.cost > 0) {
       await client.query(
         `INSERT INTO cdp_diamond_ledger (
           account_id, amount, balance_after, reason, rules_version, idempotency_key, detail
         ) VALUES ($1::uuid, $2, $3, 'hero_skill', $4, $5, $6::jsonb)`,
-        [accountId, -paidState.cost, balanceAfter, HERO_HOME_RULES.boardSkillVersion, `hero_skill:${accountId}:${requestId}`, JSON.stringify({ gameId, unitId, effectData })]
+        [accountId, -paidState.cost, balanceAfter, HERO_HOME_RULES.boardSkillVersion, `hero_skill:${accountId}:${requestId}`, JSON.stringify({ gameId, unitId, effectData: storedEffectData })]
       );
     }
     await client.query("COMMIT");
@@ -2968,9 +2976,9 @@ export async function chargeBoardHeroSkill(accountId, gameIdValue, unitIdValue, 
       unitId,
       cost: paidState.cost,
       balanceAfter,
-      heatBefore,
-      heatAfter,
-      effectData
+      cooldownBefore,
+      cooldownAfter,
+      effectData: storedEffectData
     };
   } catch (error) {
     await client.query("ROLLBACK");
@@ -2988,17 +2996,26 @@ export async function refundBoardHeroSkillUses(gameIdValue) {
   try {
     await client.query("BEGIN");
     const uses = await client.query(
-      `SELECT use_id, account_id, unit_id, cost, heat_before
+      `SELECT use_id, account_id, unit_id, cost, heat_before, cooldown_before
        FROM cdp_game_hero_skill_uses
        WHERE game_id = $1::uuid AND refunded_at IS NULL
-       ORDER BY created_at, use_id
+       ORDER BY created_at DESC, use_id DESC
        FOR UPDATE`,
       [gameId]
     );
     let diamondsRefunded = 0;
     for (const use of uses.rows) {
       const cost = Number(use.cost) || 0;
-      if (use.heat_before != null) {
+      if (use.cooldown_before != null) {
+        const restored = await client.query(
+          `UPDATE cdp_hero_units
+           SET skill_cooldown = $3, updated_at = now()
+           WHERE account_id = $1::uuid AND unit_id = $2
+           RETURNING skill_cooldown`,
+          [use.account_id, use.unit_id, Number(use.cooldown_before) || 0]
+        );
+        if (!restored.rows[0]) throw commerceError("英雄技能冷却恢复失败", 409);
+      } else if (use.heat_before != null) {
         const restored = await client.query(
           `UPDATE cdp_hero_units
            SET skill_heat = $3, updated_at = now()
@@ -3006,7 +3023,7 @@ export async function refundBoardHeroSkillUses(gameIdValue) {
            RETURNING skill_heat`,
           [use.account_id, use.unit_id, Number(use.heat_before) || 0]
         );
-        if (!restored.rows[0]) throw commerceError("英雄技能热度恢复失败", 409);
+        if (!restored.rows[0]) throw commerceError("英雄技能状态恢复失败", 409);
       }
       if (cost > 0) {
         const wallet = await client.query(
@@ -3395,7 +3412,7 @@ export async function getBattleHeroSnapshots(accountIds = []) {
   const uniqueIds = [...new Set(accountIds.filter(Boolean).map(String))];
   if (!uniqueIds.length) return {};
   const result = await requirePool().query(
-    `SELECT profile.account_id, profile.battle_unit_id, unit.stars, unit.skill_heat
+    `SELECT profile.account_id, profile.battle_unit_id, unit.stars, unit.skill_cooldown
      FROM cdp_hero_profiles profile
      JOIN cdp_hero_units unit
        ON unit.account_id = profile.account_id AND unit.unit_id = profile.battle_unit_id
@@ -3407,7 +3424,7 @@ export async function getBattleHeroSnapshots(accountIds = []) {
   );
   return Object.fromEntries(result.rows.map((row) => [
     row.account_id,
-    createBattleHeroSnapshot(row.battle_unit_id, row.stars, row.skill_heat)
+    createBattleHeroSnapshot(row.battle_unit_id, row.stars, row.skill_cooldown)
   ]));
 }
 
