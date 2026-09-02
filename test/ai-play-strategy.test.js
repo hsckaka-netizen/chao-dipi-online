@@ -7,6 +7,7 @@ import { __aiPlayTesting } from "../server.js";
 const {
   AI_STRATEGY_FIXED_TEAM,
   AI_STRATEGY_HEURISTIC,
+  AI_STRATEGY_SAFE_FIVE,
   aiDecisionContext,
   aiSampleHiddenHands,
   aiSafeThrowPlans,
@@ -143,7 +144,7 @@ test("robot feeds a safe ally but does not volunteer a protected five", () => {
   assert.equal(decision.throwPlay, false);
 });
 
-test("fixed-team strategy safely takes the trick with an unstructured diamond five from last seat", () => {
+test("default robot safely takes the trick with an unstructured diamond five from last seat", () => {
   const deck = createDeck(5);
   const banker = player("banker");
   const opponents = [player("other-1"), player("other-2"), player("other-3")];
@@ -165,13 +166,10 @@ test("fixed-team strategy safely takes the trick with an unstructured diamond fi
   });
 
   const baseline = legalAutoPlay(room, robot, { strategy: AI_STRATEGY_HEURISTIC });
-  const decision = legalAutoPlay(room, robot, {
-    strategy: AI_STRATEGY_FIXED_TEAM,
-    fixedFiveRun: true
-  });
+  const decision = legalAutoPlay(room, robot);
   assert.deepEqual(baseline.cards.map((card) => card.id), ["1-H-4"]);
   assert.deepEqual(decision.cards.map((card) => card.id), ["1-D-5"]);
-  assert.equal(decision.strategy, AI_STRATEGY_FIXED_TEAM);
+  assert.equal(decision.strategy, AI_STRATEGY_SAFE_FIVE);
 });
 
 test("sampled hidden hands honor public void knowledge and public hand counts", () => {

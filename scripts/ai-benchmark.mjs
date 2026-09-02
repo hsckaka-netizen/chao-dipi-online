@@ -67,10 +67,11 @@ if (!isMainThread) {
   const deals = Math.max(1, Math.floor(Number(argumentValue("deals", 10)) || 10));
   const playerCount = Math.max(5, Math.min(9, Math.floor(Number(argumentValue("players", 5)) || 5)));
   const seed = String(argumentValue("seed", "20260901"));
-  const requestedCandidate = String(argumentValue("candidate", "monte-carlo-v3"));
-  const candidateStrategy = requestedCandidate === "fixed-team-v4" ? requestedCandidate : "monte-carlo-v3";
-  const requestedBaseline = String(argumentValue("baseline", "heuristic-v2"));
-  const baselineStrategy = requestedBaseline === "monte-carlo-v3" ? requestedBaseline : "heuristic-v2";
+  const supportedStrategies = new Set(["heuristic-v2", "monte-carlo-v3", "monte-carlo-v4", "fixed-team-v4"]);
+  const requestedCandidate = String(argumentValue("candidate", "monte-carlo-v4"));
+  const candidateStrategy = supportedStrategies.has(requestedCandidate) ? requestedCandidate : "monte-carlo-v4";
+  const requestedBaseline = String(argumentValue("baseline", "monte-carlo-v3"));
+  const baselineStrategy = supportedStrategies.has(requestedBaseline) ? requestedBaseline : "monte-carlo-v3";
   const rolloutWeight = Number(argumentValue("rollout-weight", 0.3));
   const overrideMargin = Number(argumentValue("override-margin", 8));
   const sampleCount = Number(argumentValue("samples", 0));

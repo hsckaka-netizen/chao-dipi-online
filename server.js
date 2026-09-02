@@ -172,6 +172,7 @@ const configuredAiPlayDelay = Number(process.env.AI_PLAY_DELAY_MS || 1000);
 const AI_PLAY_DELAY_MS = Number.isFinite(configuredAiPlayDelay) ? Math.max(0, configuredAiPlayDelay) : 1000;
 const AI_STRATEGY_HEURISTIC = "heuristic-v2";
 const AI_STRATEGY_MONTE_CARLO = "monte-carlo-v3";
+const AI_STRATEGY_SAFE_FIVE = "monte-carlo-v4";
 const AI_STRATEGY_FIXED_TEAM = "fixed-team-v4";
 const AI_MONTE_CARLO_CANDIDATES = 3;
 const AI_MONTE_CARLO_SAMPLES = 6;
@@ -5785,45 +5786,64 @@ function chooseMonteCarloAutoPlay(room, player, plans, context, options = {}) {
   };
 }
 
+function protectedFiveCandidatePlans(plans) {
+  const protectedFivePlans = plans.filter((plan) => plan.cards.some(isProtectedFive)).slice(0, 3);
+  const candidates = [];
+  const seenPlans = new Set();
+  [
+    ...plans.slice(0, 3),
+    ...protectedFivePlans,
+    ...plans
+  ].forEach((plan) => {
+    const key = cardIdsKey(plan.cards);
+    if (seenPlans.has(key)) return;
+    seenPlans.add(key);
+    candidates.push(plan);
+  });
+  return { candidates, protectedFivePlans };
+}
+
 function legalAutoPlay(room, player, options = {}) {
+  const strategy = options.strategy || AI_STRATEGY_SAFE_FIVE;
   if (!player.hand.length) {
-    return { cards: [], throwPlay: false, throwComponents: null, strategy: options.strategy || AI_STRATEGY_MONTE_CARLO };
+    return { cards: [], throwPlay: false, throwComponents: null, strategy };
   }
   const context = aiDecisionContext(room, player);
   const plans = heuristicAutoPlayPlans(room, player, context);
   if (!plans.length) {
-    return { cards: [], throwPlay: false, throwComponents: null, strategy: options.strategy || AI_STRATEGY_MONTE_CARLO };
+    return { cards: [], throwPlay: false, throwComponents: null, strategy };
   }
   if (
-    options.strategy === AI_STRATEGY_HEURISTIC
+    strategy === AI_STRATEGY_HEURISTIC
     || normalizeDoglegMode(room.doglegMode) !== DOGLEG_MODE_TRADITIONAL
   ) return legalHeuristicAutoPlay(room, player, context);
-  if (options.strategy === AI_STRATEGY_FIXED_TEAM) {
+  if (strategy === AI_STRATEGY_SAFE_FIVE) {
+    const { candidates, protectedFivePlans } = protectedFiveCandidatePlans(plans);
+    return chooseMonteCarloAutoPlay(room, player, candidates, context, {
+      ...options,
+      fixedTeam: true,
+      fixedFiveRun: true,
+      fixedTeamDepth: 1,
+      strategyName: AI_STRATEGY_SAFE_FIVE,
+      candidateLimit: Number(options.candidateLimit)
+        || Math.min(6, AI_MONTE_CARLO_CANDIDATES + protectedFivePlans.length),
+      sampleCount: Number(options.sampleCount) || (room.players.length >= 7 ? 4 : 6)
+    });
+  }
+  if (strategy === AI_STRATEGY_FIXED_TEAM) {
     const scoredPlans = plans
       .map((plan) => ({
         ...plan,
         score: plan.score + aiFixedTeamPlanAdjustment(room, player, plan, context, options)
       }))
       .sort((left, right) => right.score - left.score || right.cards.length - left.cards.length);
-    const strategicFivePlans = scoredPlans.filter((plan) => plan.cards.some(isProtectedFive)).slice(0, 3);
-    const fixedTeamPlans = [];
-    const seenPlans = new Set();
-    [
-      ...scoredPlans.slice(0, 3),
-      ...strategicFivePlans,
-      ...scoredPlans
-    ].forEach((plan) => {
-      const key = cardIdsKey(plan.cards);
-      if (seenPlans.has(key)) return;
-      seenPlans.add(key);
-      fixedTeamPlans.push(plan);
-    });
-    return chooseMonteCarloAutoPlay(room, player, fixedTeamPlans, context, {
+    const { candidates, protectedFivePlans } = protectedFiveCandidatePlans(scoredPlans);
+    return chooseMonteCarloAutoPlay(room, player, candidates, context, {
       ...options,
       fixedTeam: true,
       strategyName: AI_STRATEGY_FIXED_TEAM,
       candidateLimit: Number(options.candidateLimit) || (options.fixedFiveRun === true
-        ? Math.min(6, AI_MONTE_CARLO_CANDIDATES + strategicFivePlans.length)
+        ? Math.min(6, AI_MONTE_CARLO_CANDIDATES + protectedFivePlans.length)
         : AI_MONTE_CARLO_CANDIDATES),
       sampleCount: Number(options.sampleCount) || (room.players.length >= 7 ? 4 : 6),
       fixedTeamDepth: Math.max(1, Math.min(2, Number(options.fixedTeamDepth) || 2))
@@ -7374,6 +7394,7 @@ export const __aiPlayTesting = {
   AI_STRATEGY_FIXED_TEAM,
   AI_STRATEGY_HEURISTIC,
   AI_STRATEGY_MONTE_CARLO,
+  AI_STRATEGY_SAFE_FIVE,
   aiDecisionContext,
   aiPublicKnowledge,
   aiSampleHiddenHands,

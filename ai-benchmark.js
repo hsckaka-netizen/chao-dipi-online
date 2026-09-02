@@ -7,6 +7,7 @@ import { __aiPlayTesting } from "./server.js";
 const {
   AI_STRATEGY_HEURISTIC,
   AI_STRATEGY_MONTE_CARLO,
+  AI_STRATEGY_SAFE_FIVE,
   createDeck,
   expectedPlayerId,
   legalAutoPlay,
@@ -238,8 +239,8 @@ export function runAiBenchmarkGame({
   doglegSeat = 1,
   trumpSuit = "S",
   candidateTeam = "banker",
-  baselineStrategy = AI_STRATEGY_HEURISTIC,
-  candidateStrategy = AI_STRATEGY_MONTE_CARLO,
+  baselineStrategy = AI_STRATEGY_MONTE_CARLO,
+  candidateStrategy = AI_STRATEGY_SAFE_FIVE,
   candidateOptions = {}
 } = {}) {
   const room = createAiBenchmarkRoom({ seed, playerCount, bankerSeat, doglegSeat, trumpSuit });
@@ -264,7 +265,7 @@ export function runAiBenchmarkGame({
     const startedAt = performance.now();
     const decision = legalAutoPlay(room, player, {
       strategy,
-      ...((strategy === candidateStrategy || strategy === AI_STRATEGY_MONTE_CARLO) ? candidateOptions : {})
+      ...(strategy === candidateStrategy ? candidateOptions : {})
     });
     const durationMs = performance.now() - startedAt;
     const stats = strategyStats[strategy];
@@ -434,8 +435,8 @@ export function runPairedAiBenchmark({
   deals = 10,
   seed = "20260901",
   playerCount = 5,
-  baselineStrategy = AI_STRATEGY_HEURISTIC,
-  candidateStrategy = AI_STRATEGY_MONTE_CARLO,
+  baselineStrategy = AI_STRATEGY_MONTE_CARLO,
+  candidateStrategy = AI_STRATEGY_SAFE_FIVE,
   candidateOptions = {}
 } = {}) {
   const normalizedDeals = Math.max(1, Math.floor(Number(deals) || 1));
