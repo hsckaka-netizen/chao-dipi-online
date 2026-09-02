@@ -172,6 +172,7 @@ const configuredAiPlayDelay = Number(process.env.AI_PLAY_DELAY_MS || 1000);
 const AI_PLAY_DELAY_MS = Number.isFinite(configuredAiPlayDelay) ? Math.max(0, configuredAiPlayDelay) : 1000;
 const AI_STRATEGY_HEURISTIC = "heuristic-v2";
 const AI_STRATEGY_MONTE_CARLO = "monte-carlo-v3";
+const AI_STRATEGY_FIXED_TEAM = "fixed-team-v4";
 const AI_MONTE_CARLO_CANDIDATES = 3;
 const AI_MONTE_CARLO_SAMPLES = 6;
 const AI_MONTE_CARLO_ROLLOUT_WEIGHT = 0.3;
@@ -4819,6 +4820,59 @@ function aiPublicBankerSupport(room, context) {
   return clampNumber((winRate - 0.22) * 55 + (pointRate - 0.2) * 24, -24, 34);
 }
 
+function aiSetupStrengthSignal(room, context, playerId) {
+  const fryHistory = room.setup?.fry?.history || [];
+  const fryStrength = fryHistory.reduce((total, bid) => {
+    if (bid.playerId !== playerId) return total;
+    return total + 16 + Math.max(0, (Number(bid.count) || 1) - 1) * 8;
+  }, 0);
+  const stats = aiPublicPlayerStats(context.knowledge, playerId);
+  const trickCount = Math.max(1, context.knowledge.completedTrickCount);
+  return clampNumber(
+    fryStrength + stats.tricksWon / trickCount * 28 + stats.pointsCaptured / Math.max(40, trickCount * 24) * 12,
+    0,
+    80
+  );
+}
+
+function aiFixedTeamLeadTransferAdjustment(room, player, cards, context) {
+  if (room.currentTrick?.plays?.length) return 0;
+  const route = playSuit(cards[0], room.trumpSuit);
+  if (!route) return 0;
+  const ownStrength = aiSetupStrengthSignal(room, context, player.id);
+  const ownControl = setupControlScore(player.hand, room.trumpSuit);
+  if (ownControl >= 105) return 0;
+  const ordered = orderedPlayersFrom(room, player.id).slice(1);
+  let best = 0;
+  ordered.forEach((target, index) => {
+    if (aiTeamRelation(room, player, target.id) !== "ally") return;
+    const intervening = ordered.slice(0, index);
+    const opponentBarriers = intervening.filter((seat) => aiTeamRelation(room, player, seat.id) === "opponent").length;
+    const allyStrength = aiSetupStrengthSignal(room, context, target.id);
+    if (allyStrength < ownStrength + 8) return;
+    const allyVoid = route !== "TRUMP" && aiKnowsPlayerVoid(context.knowledge, target.id, route);
+    const barrierVoidRisk = route === "TRUMP" ? 0 : intervening.filter((seat) => {
+      return aiTeamRelation(room, player, seat.id) === "opponent"
+        && aiKnowsPlayerVoid(context.knowledge, seat.id, route);
+    }).length;
+    const weakOwnLead = Math.min(20, Math.max(0, playPower(cards, room.trumpSuit) - 6) * 1.1);
+    const publicStrengthEdge = Math.max(0, allyStrength - ownStrength) * 0.45;
+    const weakHandNeed = Math.max(0, 105 - ownControl) * 0.16;
+    const value = 8 + weakOwnLead + publicStrengthEdge + weakHandNeed
+      + (allyVoid ? 16 : 0)
+      - opponentBarriers * 8
+      - barrierVoidRisk * 18;
+    best = Math.max(best, value);
+  });
+  return best;
+}
+
+function aiFixedTeamPlanAdjustment(room, player, plan, context, options = {}) {
+  let score = 0;
+  if (options.fixedLeadTransfer === true) score += aiFixedTeamLeadTransferAdjustment(room, player, plan.cards, context);
+  return score;
+}
+
 function aiVoluntaryProtectedFiveCount(room, player, cards, info = null) {
   const forcedIds = new Set(info
     ? forcedProtectedFiveIds({
@@ -5424,6 +5478,7 @@ function aiSimulationRoom(room, player, world) {
         : [...(world.hands.get(target.id) || [])]
     })),
     kitty: [...world.hiddenKitty],
+    trickHistory: [...(room.trickHistory || [])],
     currentTrick: {
       ...room.currentTrick,
       plays: (room.currentTrick?.plays || []).map((play) => ({
@@ -5479,7 +5534,8 @@ function aiTeamAffinity(context, playerId) {
   return 1 - context.teams.opponentProbability(playerId) * 2;
 }
 
-function aiSimulatedTrickValue(room, context, outcome) {
+function aiSimulatedTrickValue(room, context, outcome, options = {}) {
+  const { fixedTeam = false } = options;
   const winnerAffinity = aiTeamAffinity(context, outcome.winnerId);
   let value = winnerAffinity * (28 + outcome.points * 3.2);
   room.currentTrick.plays.forEach((play) => {
@@ -5491,10 +5547,57 @@ function aiSimulatedTrickValue(room, context, outcome) {
       value += (winnerAffinity - ownerAffinity) * fiveWeight / 2;
     });
   });
+  if (fixedTeam && options.fixedTeamControl === true) {
+    const relation = context.teams.relationByPlayerId.get(outcome.winnerId);
+    const selfId = [...context.teams.relationByPlayerId.entries()]
+      .find(([, targetRelation]) => targetRelation === "self")?.[0];
+    const winnerStrength = aiSetupStrengthSignal(room, context, outcome.winnerId);
+    const selfStrength = selfId ? aiSetupStrengthSignal(room, context, selfId) : 0;
+    if (relation === "ally") value += 14 + Math.max(0, winnerStrength - selfStrength) * 0.6;
+    if (relation === "opponent") value -= winnerStrength * 0.35;
+  }
   return value;
 }
 
-function aiSimulatePlan(room, player, plan, context, world) {
+function aiSimulatedFiveLosses(trick, outcome, player, context) {
+  const losses = { own: 0, ally: 0, opponent: 0 };
+  trick.plays.forEach((play) => {
+    if (play.playerId === outcome.winnerId) return;
+    const fiveLoss = play.cards.reduce((total, card) => {
+      if (!isProtectedFive(card)) return total;
+      return total + (card.suit === "H" ? 2 : 1);
+    }, 0);
+    if (!fiveLoss) return;
+    if (play.playerId === player.id) losses.own += fiveLoss;
+    else if (aiTeamAffinity(context, play.playerId) > 0) losses.ally += fiveLoss;
+    else losses.opponent += fiveLoss;
+  });
+  return losses;
+}
+
+function aiAdvanceSimulatedTrick(room, outcome) {
+  const completed = { ...room.currentTrick, ...outcome };
+  const winner = playerById(room, outcome.winnerId);
+  if (winner) winner.score = (winner.score || 0) + outcome.points;
+  room.trickHistory = [...(room.trickHistory || []), completed];
+  room.currentTrick = createEmptyTrick(completed.number + 1, outcome.winnerId);
+}
+
+function aiSimulateNextTrick(room) {
+  let remainingTurns = room.players.length;
+  while (room.currentTrick.plays.length < room.players.length && remainingTurns > 0) {
+    remainingTurns -= 1;
+    const nextId = expectedPlayerId(room);
+    const nextPlayer = playerById(room, nextId);
+    if (!nextPlayer?.hand?.length) return null;
+    const response = legalHeuristicAutoPlay(room, nextPlayer);
+    if (!response.cards.length || !aiAppendSimulatedPlay(room, nextPlayer, response)) return null;
+  }
+  if (room.currentTrick.plays.length !== room.players.length) return null;
+  return settleTrick(room, room.currentTrick);
+}
+
+function aiSimulatePlan(room, player, plan, context, world, options = {}) {
   const simulatedRoom = aiSimulationRoom(room, player, world);
   const simulatedPlayer = playerById(simulatedRoom, player.id);
   if (!simulatedPlayer || !aiAppendSimulatedPlay(simulatedRoom, simulatedPlayer, plan)) return null;
@@ -5509,21 +5612,112 @@ function aiSimulatePlan(room, player, plan, context, world) {
     if (!response.cards.length || !aiAppendSimulatedPlay(simulatedRoom, nextPlayer, response)) return null;
   }
   if (simulatedRoom.currentTrick.plays.length !== simulatedRoom.players.length) return null;
-  return aiSimulatedTrickValue(
-    simulatedRoom,
-    context,
-    settleTrick(simulatedRoom, simulatedRoom.currentTrick)
-  );
+  const outcome = settleTrick(simulatedRoom, simulatedRoom.currentTrick);
+  const firstLosses = aiSimulatedFiveLosses(simulatedRoom.currentTrick, outcome, player, context);
+  let value = aiSimulatedTrickValue(simulatedRoom, context, outcome, options);
+  let ownFiveLoss = firstLosses.own;
+  let allyFiveLoss = firstLosses.ally;
+  let opponentFiveLoss = firstLosses.opponent;
+  let finalWinnerId = outcome.winnerId;
+  const depth = Math.max(1, Math.min(2, Number(options.fixedTeamDepth) || 1));
+  if (depth >= 2 && simulatedRoom.players.some((target) => target.hand.length > 0)) {
+    aiAdvanceSimulatedTrick(simulatedRoom, outcome);
+    const nextOutcome = aiSimulateNextTrick(simulatedRoom);
+    if (nextOutcome) {
+      const nextLosses = aiSimulatedFiveLosses(simulatedRoom.currentTrick, nextOutcome, player, context);
+      value += aiSimulatedTrickValue(simulatedRoom, context, nextOutcome, options) * 0.55;
+      ownFiveLoss += nextLosses.own;
+      allyFiveLoss += nextLosses.ally;
+      opponentFiveLoss += nextLosses.opponent;
+      finalWinnerId = nextOutcome.winnerId;
+    }
+  }
+  return {
+    value,
+    winnerId: finalWinnerId,
+    ownFiveLoss,
+    allyFiveLoss,
+    opponentFiveLoss
+  };
+}
+
+function aiTeamFiveExposure(room, context) {
+  const exposure = {
+    allyRedPlayers: new Set(),
+    opponentRedPlayers: new Set(),
+    allyDiamondPlayers: new Set(),
+    opponentDiamondPlayers: new Set()
+  };
+  (room.trickHistory || []).forEach((trick) => {
+    const winningPlay = (trick.plays || []).find((play) => play.playerId === trick.winnerId);
+    if (!winningPlay) return;
+    const relation = context.teams.relationByPlayerId.get(winningPlay.playerId);
+    const side = relation === "self" || relation === "ally" ? "ally" : relation === "opponent" ? "opponent" : null;
+    if (!side) return;
+    if (winningPlay.cards.some((card) => isProtectedFive(card) && card.suit === "H")) {
+      exposure[`${side}RedPlayers`].add(winningPlay.playerId);
+    }
+    if (winningPlay.cards.some((card) => isProtectedFive(card) && card.suit === "D")) {
+      exposure[`${side}DiamondPlayers`].add(winningPlay.playerId);
+    }
+  });
+  return exposure;
+}
+
+function aiFixedTeamRolloutAdjustment(room, context, plan, simulations, options = {}) {
+  if (!simulations.length) return 0;
+  let score = 0;
+  const plannedDiamondFives = plan.cards.filter((card) => isProtectedFive(card) && card.suit === "D").length;
+  const plannedRedFives = plan.cards.filter((card) => isProtectedFive(card) && card.suit === "H").length;
+  if (options.fixedFiveRun === true && (plannedDiamondFives || plannedRedFives)) {
+    const unsafeRate = simulations.filter((result) => result.ownFiveLoss > 0).length / simulations.length;
+    const acceptableRate = plannedDiamondFives >= 3 ? 0.09 : 0;
+    if (unsafeRate > acceptableRate) score -= (plannedRedFives * 2 + plannedDiamondFives) * 260;
+    else if (plannedDiamondFives) score += plannedDiamondFives * 56;
+  }
+  if (
+    options.fixedFiveDrag === true
+    && !room.currentTrick?.plays?.length
+    && !plannedDiamondFives
+    && !plannedRedFives
+  ) {
+    const allyLoss = simulations.reduce((total, result) => total + result.allyFiveLoss, 0) / simulations.length;
+    const opponentLoss = simulations.reduce((total, result) => total + result.opponentFiveLoss, 0) / simulations.length;
+    const net = opponentLoss - allyLoss;
+    const pattern = detectPlayPattern(plan.cards, room.trumpSuit);
+    const strongMainLead = playSuit(plan.cards[0], room.trumpSuit) === "TRUMP"
+      && plan.cards.length >= 2
+      && (pattern?.type === "tractor" || pattern?.type === "multi");
+    const exposure = aiTeamFiveExposure(room, context);
+    const redRunnerBias = exposure.opponentRedPlayers.size - exposure.allyRedPlayers.size;
+    const allyRiskMultiplier = strongMainLead ? 1 + Math.max(0, redRunnerBias) * 0.45 : 1;
+    const requiredNet = strongMainLead ? 0.3 + Math.max(0, redRunnerBias) * 0.25 : 0.3;
+    if (strongMainLead && redRunnerBias > 0) score -= redRunnerBias * 10;
+    if (allyLoss > 0.08 || net < requiredNet) score -= allyLoss * 140 * allyRiskMultiplier;
+    else score += net * 14;
+  }
+  return score;
+}
+
+function aiFixedTeamNeedsFullSampling(room, plan) {
+  if (plan.cards.some(isProtectedFive)) return true;
+  if (room.currentTrick?.plays?.length) return false;
+  const pattern = detectPlayPattern(plan.cards, room.trumpSuit);
+  return playSuit(plan.cards[0], room.trumpSuit) === "TRUMP"
+    && plan.cards.length >= 2
+    && (pattern?.type === "tractor" || pattern?.type === "multi");
 }
 
 function chooseMonteCarloAutoPlay(room, player, plans, context, options = {}) {
+  const maximumCandidates = options.fixedTeam ? 6 : AI_MONTE_CARLO_CANDIDATES;
   const candidateLimit = Math.max(1, Math.min(
-    AI_MONTE_CARLO_CANDIDATES,
+    maximumCandidates,
     Number(options.candidateLimit) || AI_MONTE_CARLO_CANDIDATES
   ));
-  const defaultSampleCount = room.players.length >= 7 ? 4 : AI_MONTE_CARLO_SAMPLES;
+  const maximumSamples = options.fixedTeam ? 12 : AI_MONTE_CARLO_SAMPLES;
+  const defaultSampleCount = options.fixedTeam ? (room.players.length >= 7 ? 8 : 12) : room.players.length >= 7 ? 4 : AI_MONTE_CARLO_SAMPLES;
   const sampleCount = Math.max(1, Math.min(
-    AI_MONTE_CARLO_SAMPLES,
+    maximumSamples,
     Number(options.sampleCount) || defaultSampleCount
   ));
   const rolloutWeight = clampNumber(
@@ -5539,22 +5733,34 @@ function chooseMonteCarloAutoPlay(room, player, plans, context, options = {}) {
   const candidates = plans.slice(0, candidateLimit);
   const worlds = aiSampleWorlds(room, player, context, sampleCount);
   if (candidates.length < 2 || !worlds.length) {
-    return { ...plans[0], strategy: AI_STRATEGY_MONTE_CARLO, sampleCount: worlds.length };
+    return {
+      ...plans[0],
+      strategy: options.strategyName || AI_STRATEGY_MONTE_CARLO,
+      sampleCount: worlds.length,
+      overrodeHeuristic: false
+    };
   }
 
   const evaluated = candidates.map((plan) => {
-    const outcomes = worlds
-      .map((world) => aiSimulatePlan(room, player, plan, context, world))
-      .filter(Number.isFinite);
-    const rolloutScore = outcomes.length
-      ? outcomes.reduce((total, value) => total + value, 0) / outcomes.length
+    const planWorlds = options.fixedTeam && !aiFixedTeamNeedsFullSampling(room, plan)
+      ? worlds.slice(0, AI_MONTE_CARLO_SAMPLES)
+      : worlds;
+    const simulations = planWorlds
+      .map((world) => aiSimulatePlan(room, player, plan, context, world, options))
+      .filter(Boolean);
+    const rolloutScore = simulations.length
+      ? simulations.reduce((total, result) => total + result.value, 0) / simulations.length
+      : 0;
+    const fixedTeamAdjustment = options.fixedTeam
+      ? aiFixedTeamRolloutAdjustment(room, context, plan, simulations, options)
       : 0;
     return {
       ...plan,
       heuristicScore: plan.score,
       rolloutScore,
-      sampleCount: outcomes.length,
-      combinedScore: plan.score + rolloutScore * rolloutWeight
+      sampleCount: simulations.length,
+      combinedScore: plan.score + rolloutScore * rolloutWeight + fixedTeamAdjustment,
+      fixedTeamAdjustment
     };
   });
   const heuristicBestKey = cardIdsKey(plans[0].cards);
@@ -5572,7 +5778,10 @@ function chooseMonteCarloAutoPlay(room, player, plans, context, options = {}) {
     : rolloutBest;
   return {
     ...selected,
-    strategy: AI_STRATEGY_MONTE_CARLO
+    strategy: options.strategyName || AI_STRATEGY_MONTE_CARLO,
+    overrodeHeuristic: selected !== heuristicBest,
+    heuristicBestScore: heuristicBest.combinedScore,
+    selectedScoreAdvantage: selected.combinedScore - heuristicBest.combinedScore
   };
 }
 
@@ -5589,6 +5798,37 @@ function legalAutoPlay(room, player, options = {}) {
     options.strategy === AI_STRATEGY_HEURISTIC
     || normalizeDoglegMode(room.doglegMode) !== DOGLEG_MODE_TRADITIONAL
   ) return legalHeuristicAutoPlay(room, player, context);
+  if (options.strategy === AI_STRATEGY_FIXED_TEAM) {
+    const scoredPlans = plans
+      .map((plan) => ({
+        ...plan,
+        score: plan.score + aiFixedTeamPlanAdjustment(room, player, plan, context, options)
+      }))
+      .sort((left, right) => right.score - left.score || right.cards.length - left.cards.length);
+    const strategicFivePlans = scoredPlans.filter((plan) => plan.cards.some(isProtectedFive)).slice(0, 3);
+    const fixedTeamPlans = [];
+    const seenPlans = new Set();
+    [
+      ...scoredPlans.slice(0, 3),
+      ...strategicFivePlans,
+      ...scoredPlans
+    ].forEach((plan) => {
+      const key = cardIdsKey(plan.cards);
+      if (seenPlans.has(key)) return;
+      seenPlans.add(key);
+      fixedTeamPlans.push(plan);
+    });
+    return chooseMonteCarloAutoPlay(room, player, fixedTeamPlans, context, {
+      ...options,
+      fixedTeam: true,
+      strategyName: AI_STRATEGY_FIXED_TEAM,
+      candidateLimit: Number(options.candidateLimit) || (options.fixedFiveRun === true
+        ? Math.min(6, AI_MONTE_CARLO_CANDIDATES + strategicFivePlans.length)
+        : AI_MONTE_CARLO_CANDIDATES),
+      sampleCount: Number(options.sampleCount) || (room.players.length >= 7 ? 4 : 6),
+      fixedTeamDepth: Math.max(1, Math.min(2, Number(options.fixedTeamDepth) || 2))
+    });
+  }
   return chooseMonteCarloAutoPlay(room, player, plans, context, options);
 }
 
@@ -7131,6 +7371,7 @@ const server = createServer(async (req, res) => {
 });
 
 export const __aiPlayTesting = {
+  AI_STRATEGY_FIXED_TEAM,
   AI_STRATEGY_HEURISTIC,
   AI_STRATEGY_MONTE_CARLO,
   aiDecisionContext,

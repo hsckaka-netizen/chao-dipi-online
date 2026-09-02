@@ -183,13 +183,51 @@ function teamForPlayer(room, playerId) {
   return playerId === room.bankerId || room.doglegPlayerIds.includes(playerId) ? "banker" : "idle";
 }
 
+function benchmarkCardPoints(cards) {
+  return cards.reduce((total, card) => {
+    if (card.type !== "normal") return total;
+    if (card.rank === "5") return total + 5;
+    if (card.rank === "10" || card.rank === "K") return total + 10;
+    return total;
+  }, 0);
+}
+
+function benchmarkProtectedFiveCount(cards) {
+  return cards.filter((card) => card.type === "normal" && card.rank === "5"
+    && (card.suit === "H" || card.suit === "D")).length;
+}
+
+function decisionPhase(handSize) {
+  if (handSize > 35) return "early";
+  if (handSize > 17) return "middle";
+  return "late";
+}
+
+function emptyDecisionDiagnostics() {
+  return {
+    overrides: 0,
+    overrideLeads: 0,
+    overrideFollows: 0,
+    overrideEarly: 0,
+    overrideMiddle: 0,
+    overrideLate: 0,
+    overrideTeamTrickWins: 0,
+    overridePointsWon: 0,
+    overridePointsLost: 0,
+    overrideProtectedFivePlays: 0
+  };
+}
+
 function emptyStrategyStats() {
   return {
     decisions: 0,
     durationsMs: [],
     throwAttempts: 0,
     throwFailures: 0,
-    protectedFiveLoss: 0
+    draggedRedFives: 0,
+    draggedDiamondFives: 0,
+    protectedFiveLoss: 0,
+    decisionDiagnostics: emptyDecisionDiagnostics()
   };
 }
 
@@ -200,17 +238,20 @@ export function runAiBenchmarkGame({
   doglegSeat = 1,
   trumpSuit = "S",
   candidateTeam = "banker",
+  baselineStrategy = AI_STRATEGY_HEURISTIC,
+  candidateStrategy = AI_STRATEGY_MONTE_CARLO,
   candidateOptions = {}
 } = {}) {
   const room = createAiBenchmarkRoom({ seed, playerCount, bankerSeat, doglegSeat, trumpSuit });
   const strategyByPlayerId = new Map(room.players.map((player) => [
     player.id,
-    teamForPlayer(room, player.id) === candidateTeam ? AI_STRATEGY_MONTE_CARLO : AI_STRATEGY_HEURISTIC
+    teamForPlayer(room, player.id) === candidateTeam ? candidateStrategy : baselineStrategy
   ]));
   const strategyStats = {
-    [AI_STRATEGY_HEURISTIC]: emptyStrategyStats(),
-    [AI_STRATEGY_MONTE_CARLO]: emptyStrategyStats()
+    [baselineStrategy]: emptyStrategyStats(),
+    [candidateStrategy]: emptyStrategyStats()
   };
+  const decisionRecords = [];
   let guard = 0;
 
   while (room.stage === "playing") {
@@ -223,12 +264,23 @@ export function runAiBenchmarkGame({
     const startedAt = performance.now();
     const decision = legalAutoPlay(room, player, {
       strategy,
-      ...(strategy === AI_STRATEGY_MONTE_CARLO ? candidateOptions : {})
+      ...((strategy === candidateStrategy || strategy === AI_STRATEGY_MONTE_CARLO) ? candidateOptions : {})
     });
     const durationMs = performance.now() - startedAt;
     const stats = strategyStats[strategy];
     stats.decisions += 1;
     stats.durationsMs.push(durationMs);
+    if (strategy === candidateStrategy && decision.overrodeHeuristic) {
+      decisionRecords.push({
+        trickNumber: room.currentTrick.number,
+        playerId: player.id,
+        team: teamForPlayer(room, player.id),
+        leading: room.currentTrick.plays.length === 0,
+        phase: decisionPhase(player.hand.length),
+        pointsCommitted: benchmarkCardPoints(decision.cards),
+        protectedFivesCommitted: benchmarkProtectedFiveCount(decision.cards)
+      });
+    }
     if (decision.throwPlay) stats.throwAttempts += 1;
     if (!decision.cards.length) throw new Error(`AI benchmark strategy ${strategy} returned no cards`);
     const result = playCards(room, player, decision.cards.map((card) => card.id), {
@@ -246,10 +298,33 @@ export function runAiBenchmarkGame({
   if (!room.result) throw new Error("AI benchmark game did not settle");
   room.result.playerResults.forEach((result) => {
     const strategy = strategyByPlayerId.get(result.playerId);
+    strategyStats[strategy].draggedRedFives += result.draggedRedFives;
+    strategyStats[strategy].draggedDiamondFives += result.draggedDiamondFives;
     strategyStats[strategy].protectedFiveLoss += result.draggedRedFives * 2 + result.draggedDiamondFives;
   });
-  const candidateWon = room.result.winnerTeam === candidateTeam;
-  const candidateScoreMargin = candidateTeam === "idle"
+  const trickByNumber = new Map(room.trickHistory.map((trick) => [trick.number, trick]));
+  decisionRecords.forEach((record) => {
+    const diagnostics = strategyStats[candidateStrategy].decisionDiagnostics;
+    const trick = trickByNumber.get(record.trickNumber);
+    const winnerTeam = trick ? teamForPlayer(room, trick.winnerId) : null;
+    diagnostics.overrides += 1;
+    diagnostics[record.leading ? "overrideLeads" : "overrideFollows"] += 1;
+    diagnostics[`override${record.phase[0].toUpperCase()}${record.phase.slice(1)}`] += 1;
+    diagnostics.overrideProtectedFivePlays += record.protectedFivesCommitted;
+    if (winnerTeam === record.team) {
+      diagnostics.overrideTeamTrickWins += 1;
+      diagnostics.overridePointsWon += trick?.points || 0;
+    } else {
+      diagnostics.overridePointsLost += trick?.points || 0;
+    }
+  });
+  const settlementWinnerTeam = room.result.evaluationWinnerTeam;
+  const candidateWon = settlementWinnerTeam === candidateTeam;
+  const candidateDraw = settlementWinnerTeam === null;
+  const candidateSettlementMargin = candidateTeam === "idle"
+    ? room.result.idleEachScore
+    : -room.result.idleEachScore;
+  const candidateCardPointMargin = candidateTeam === "idle"
     ? room.result.idleScore - room.result.threshold
     : room.result.threshold - room.result.idleScore;
 
@@ -260,9 +335,14 @@ export function runAiBenchmarkGame({
     doglegSeat,
     trumpSuit,
     candidateTeam,
-    winnerTeam: room.result.winnerTeam,
+    baselineStrategy,
+    candidateStrategy,
+    winnerTeam: settlementWinnerTeam,
+    cardPointWinnerTeam: room.result.winnerTeam,
     candidateWon,
-    candidateScoreMargin,
+    candidateDraw,
+    candidateScoreMargin: candidateSettlementMargin,
+    candidateCardPointMargin,
     idleScore: room.result.idleScore,
     threshold: room.result.threshold,
     bottomWinnerTeam: room.result.bottomWinnerTeam,
@@ -281,7 +361,72 @@ function mergeStrategyStats(games, strategy) {
     maxDecisionMs: round(Math.max(0, ...durations), 3),
     throwAttempts: stats.reduce((total, item) => total + item.throwAttempts, 0),
     throwFailures: stats.reduce((total, item) => total + item.throwFailures, 0),
-    protectedFiveLoss: stats.reduce((total, item) => total + item.protectedFiveLoss, 0)
+    draggedRedFives: stats.reduce((total, item) => total + item.draggedRedFives, 0),
+    draggedDiamondFives: stats.reduce((total, item) => total + item.draggedDiamondFives, 0),
+    protectedFiveLoss: stats.reduce((total, item) => total + item.protectedFiveLoss, 0),
+    decisionDiagnostics: Object.fromEntries(Object.keys(emptyDecisionDiagnostics()).map((key) => [
+      key,
+      stats.reduce((total, item) => total + item.decisionDiagnostics[key], 0)
+    ]))
+  };
+}
+
+function mergeStrategySummaries(results, strategy) {
+  const summaries = results.map((result) => result.strategyStats[strategy]);
+  const decisions = summaries.reduce((total, item) => total + item.decisions, 0);
+  return {
+    decisions,
+    averageDecisionMs: round(summaries.reduce(
+      (total, item) => total + item.averageDecisionMs * item.decisions,
+      0
+    ) / Math.max(1, decisions), 3),
+    p95DecisionMs: round(Math.max(0, ...summaries.map((item) => item.p95DecisionMs)), 3),
+    maxDecisionMs: round(Math.max(0, ...summaries.map((item) => item.maxDecisionMs)), 3),
+    throwAttempts: summaries.reduce((total, item) => total + item.throwAttempts, 0),
+    throwFailures: summaries.reduce((total, item) => total + item.throwFailures, 0),
+    draggedRedFives: summaries.reduce((total, item) => total + item.draggedRedFives, 0),
+    draggedDiamondFives: summaries.reduce((total, item) => total + item.draggedDiamondFives, 0),
+    protectedFiveLoss: summaries.reduce((total, item) => total + item.protectedFiveLoss, 0),
+    decisionDiagnostics: Object.fromEntries(Object.keys(emptyDecisionDiagnostics()).map((key) => [
+      key,
+      summaries.reduce((total, item) => total + item.decisionDiagnostics[key], 0)
+    ]))
+  };
+}
+
+export function mergePairedAiBenchmarkResults(results, { seed = "parallel" } = {}) {
+  if (!results.length) throw new Error("AI benchmark merge requires at least one result");
+  const first = results[0];
+  const games = results.reduce((total, result) => total + result.games, 0);
+  const deals = results.reduce((total, result) => total + result.deals, 0);
+  const candidateWins = results.reduce((total, result) => total + result.candidateWins, 0);
+  const draws = results.reduce((total, result) => total + (result.draws || 0), 0);
+  return {
+    seed: String(seed),
+    deals,
+    games,
+    playerCount: first.playerCount,
+    baselineStrategy: first.baselineStrategy,
+    candidateStrategy: first.candidateStrategy,
+    candidateOptions: first.candidateOptions,
+    candidateWins,
+    baselineWins: games - candidateWins - draws,
+    draws,
+    candidateWinRate: round(candidateWins / games, 4),
+    averageCandidateScoreMargin: round(results.reduce(
+      (total, result) => total + result.averageCandidateScoreMargin * result.games,
+      0
+    ) / Math.max(1, games), 2),
+    averageCandidateCardPointMargin: round(results.reduce(
+      (total, result) => total + result.averageCandidateCardPointMargin * result.games,
+      0
+    ) / Math.max(1, games), 2),
+    candidateCardPointWins: results.reduce((total, result) => total + result.candidateCardPointWins, 0),
+    strategyStats: {
+      [first.baselineStrategy]: mergeStrategySummaries(results, first.baselineStrategy),
+      [first.candidateStrategy]: mergeStrategySummaries(results, first.candidateStrategy)
+    },
+    gameResults: results.flatMap((result) => result.gameResults)
   };
 }
 
@@ -289,6 +434,8 @@ export function runPairedAiBenchmark({
   deals = 10,
   seed = "20260901",
   playerCount = 5,
+  baselineStrategy = AI_STRATEGY_HEURISTIC,
+  candidateStrategy = AI_STRATEGY_MONTE_CARLO,
   candidateOptions = {}
 } = {}) {
   const normalizedDeals = Math.max(1, Math.floor(Number(deals) || 1));
@@ -306,6 +453,8 @@ export function runPairedAiBenchmark({
       doglegSeat,
       trumpSuit,
       candidateTeam: "banker",
+      baselineStrategy,
+      candidateStrategy,
       candidateOptions
     }));
     games.push(runAiBenchmarkGame({
@@ -315,37 +464,50 @@ export function runPairedAiBenchmark({
       doglegSeat,
       trumpSuit,
       candidateTeam: "idle",
+      baselineStrategy,
+      candidateStrategy,
       candidateOptions
     }));
   }
 
   const candidateWins = games.filter((game) => game.candidateWon).length;
+  const draws = games.filter((game) => game.candidateDraw).length;
   const scoreMargins = games.map((game) => game.candidateScoreMargin);
+  const cardPointMargins = games.map((game) => game.candidateCardPointMargin);
   return {
     seed: String(seed),
     deals: normalizedDeals,
     games: games.length,
     playerCount,
-    baselineStrategy: AI_STRATEGY_HEURISTIC,
-    candidateStrategy: AI_STRATEGY_MONTE_CARLO,
+    baselineStrategy,
+    candidateStrategy,
     candidateOptions,
     candidateWins,
-    baselineWins: games.length - candidateWins,
+    baselineWins: games.length - candidateWins - draws,
+    draws,
     candidateWinRate: round(candidateWins / games.length, 4),
     averageCandidateScoreMargin: round(
       scoreMargins.reduce((total, value) => total + value, 0) / Math.max(1, scoreMargins.length),
       2
     ),
+    averageCandidateCardPointMargin: round(
+      cardPointMargins.reduce((total, value) => total + value, 0) / Math.max(1, cardPointMargins.length),
+      2
+    ),
+    candidateCardPointWins: games.filter((game) => game.cardPointWinnerTeam === game.candidateTeam).length,
     strategyStats: {
-      [AI_STRATEGY_HEURISTIC]: mergeStrategyStats(games, AI_STRATEGY_HEURISTIC),
-      [AI_STRATEGY_MONTE_CARLO]: mergeStrategyStats(games, AI_STRATEGY_MONTE_CARLO)
+      [baselineStrategy]: mergeStrategyStats(games, baselineStrategy),
+      [candidateStrategy]: mergeStrategyStats(games, candidateStrategy)
     },
     gameResults: games.map((game) => ({
       seed: game.seed,
       candidateTeam: game.candidateTeam,
       winnerTeam: game.winnerTeam,
+      cardPointWinnerTeam: game.cardPointWinnerTeam,
       candidateWon: game.candidateWon,
-      candidateScoreMargin: game.candidateScoreMargin
+      candidateDraw: game.candidateDraw,
+      candidateScoreMargin: game.candidateScoreMargin,
+      candidateCardPointMargin: game.candidateCardPointMargin
     }))
   };
 }

@@ -5,6 +5,7 @@ import { createSeededRandom } from "../ai-random.js";
 import { __aiPlayTesting } from "../server.js";
 
 const {
+  AI_STRATEGY_FIXED_TEAM,
   AI_STRATEGY_HEURISTIC,
   aiDecisionContext,
   aiSampleHiddenHands,
@@ -54,17 +55,21 @@ test("robot decisions do not change when only the hidden banker hand changes", (
   const highBankerHand = ["2-H-5", "2-D-5", "2-JOKER-BIG", "2-JOKER-SMALL", "2-S-3"].map((id) => cardById(deck, id));
   const otherPlayers = [player("other-1"), player("other-2"), player("other-3")];
 
-  function decision(bankerHand) {
+  function decision(bankerHand, strategy) {
     const robot = player("robot", robotHand);
     const room = baseRoom({
       players: [robot, player("banker", bankerHand), ...otherPlayers],
       currentTrick: { number: 1, leaderId: "robot", plays: [] }
     });
     room.doglegCard = cardById(deck, "1-C-A");
-    return legalAutoPlay(room, robot).cards.map((card) => card.id).sort();
+    return legalAutoPlay(room, robot, strategy ? { strategy } : {}).cards.map((card) => card.id).sort();
   }
 
   assert.deepEqual(decision(lowBankerHand), decision(highBankerHand));
+  assert.deepEqual(
+    decision(lowBankerHand, AI_STRATEGY_FIXED_TEAM),
+    decision(highBankerHand, AI_STRATEGY_FIXED_TEAM)
+  );
 });
 
 test("robot can assemble a throw only from components proven safe by public cards", () => {
@@ -132,8 +137,41 @@ test("robot feeds a safe ally but does not volunteer a protected five", () => {
   });
 
   const decision = legalAutoPlay(room, robot);
+  const fixedTeamDecision = legalAutoPlay(room, robot, { strategy: AI_STRATEGY_FIXED_TEAM });
   assert.deepEqual(decision.cards.map((card) => card.id), ["1-S-4"]);
+  assert.deepEqual(fixedTeamDecision.cards.map((card) => card.id), ["1-S-4"]);
   assert.equal(decision.throwPlay, false);
+});
+
+test("fixed-team strategy safely takes the trick with an unstructured diamond five from last seat", () => {
+  const deck = createDeck(5);
+  const banker = player("banker");
+  const opponents = [player("other-1"), player("other-2"), player("other-3")];
+  const robot = player("robot", [cardById(deck, "1-D-5"), cardById(deck, "1-H-4")]);
+  const room = baseRoom({
+    players: [banker, ...opponents, robot],
+    bankerId: "banker",
+    doglegPlayerIds: ["robot"],
+    currentTrick: {
+      number: 8,
+      leaderId: "banker",
+      plays: [
+        { playerId: "banker", cards: [cardById(deck, "1-C-A")] },
+        { playerId: "other-1", cards: [cardById(deck, "2-C-K")] },
+        { playerId: "other-2", cards: [cardById(deck, "3-C-Q")] },
+        { playerId: "other-3", cards: [cardById(deck, "4-C-J")] }
+      ]
+    }
+  });
+
+  const baseline = legalAutoPlay(room, robot, { strategy: AI_STRATEGY_HEURISTIC });
+  const decision = legalAutoPlay(room, robot, {
+    strategy: AI_STRATEGY_FIXED_TEAM,
+    fixedFiveRun: true
+  });
+  assert.deepEqual(baseline.cards.map((card) => card.id), ["1-H-4"]);
+  assert.deepEqual(decision.cards.map((card) => card.id), ["1-D-5"]);
+  assert.equal(decision.strategy, AI_STRATEGY_FIXED_TEAM);
 });
 
 test("sampled hidden hands honor public void knowledge and public hand counts", () => {

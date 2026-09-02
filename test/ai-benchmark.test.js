@@ -27,6 +27,10 @@ test("AI benchmark completes a legal full game and reports both strategy costs",
 
   assert.ok(["banker", "idle"].includes(result.winnerTeam));
   assert.equal(typeof result.candidateWon, "boolean");
+  assert.equal(result.candidateWon, result.winnerTeam === result.candidateTeam);
+  assert.equal(Math.sign(result.candidateScoreMargin), result.candidateWon ? 1 : -1);
+  assert.ok(["banker", "idle"].includes(result.cardPointWinnerTeam));
   assert.ok(result.strategyStats["heuristic-v2"].decisions > 0);
   assert.ok(result.strategyStats["monte-carlo-v3"].decisions > 0);
+  assert.ok(result.strategyStats["monte-carlo-v3"].decisionDiagnostics.overrides >= 0);
 });
