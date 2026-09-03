@@ -2284,7 +2284,7 @@ function finishGame(room, completedTrick) {
   const scoreDiff = idleScore - threshold;
   const baseScore = idleScore >= threshold ? 2 : -2;
   const scoreStep = scoreDiff >= 0 ? Math.floor(scoreDiff / 40) : -Math.floor(Math.abs(scoreDiff) / 40);
-  const bottomDelta = bottomWinnerTeam === "idle" ? 1 : -1;
+  const bottomDelta = bottomWinnerTeam === "idle" ? 2 : -1;
 
   let bankerDraggedValue = 0;
   let idleDraggedValue = 0;
