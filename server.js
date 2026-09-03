@@ -152,6 +152,11 @@ const port = Number(process.env.PORT || 3000);
 const MIN_PLAYERS = 5;
 const MAX_PLAYERS = 9;
 const HAND_SIZE = 53;
+const PLAYER_COUNT_REMOVAL_SUITS = new Map([
+  [7, ["H"]],
+  [8, ["H", "D"]],
+  [9, ["H", "H", "D"]]
+]);
 const CALL_MODE_SCORE = "score";
 const OPENING_BID_PERCENTAGES = new Set([10, 20, 30, 40]);
 const DEFAULT_OPENING_BID_PERCENT = 40;
@@ -1218,17 +1223,13 @@ function shuffle(cards) {
 
 function deckForPlayerCount(playerCount) {
   const fullDeck = createDeck(playerCount);
-  const removeCount = Math.max(0, playerCount - 6);
-  if (!removeCount) return { deck: fullDeck, removedCards: [] };
+  const removalSuits = PLAYER_COUNT_REMOVAL_SUITS.get(playerCount) || [];
+  if (!removalSuits.length) return { deck: fullDeck, removedCards: [] };
 
-  const selectedSuits = shuffle(suits.map((suit) => suit.id)).slice(0, removeCount);
   const deck = [...fullDeck];
-  const removedCards = selectedSuits.map((suit) => {
-    const candidates = deck
-      .map((card, index) => ({ card, index }))
-      .filter(({ card }) => card.type === "normal" && card.rank === "4" && card.suit === suit);
-    const selected = candidates[randomInt(candidates.length)];
-    return deck.splice(selected.index, 1)[0];
+  const removedCards = removalSuits.map((suit) => {
+    const index = deck.findIndex((card) => card.type === "normal" && card.rank === "5" && card.suit === suit);
+    return deck.splice(index, 1)[0];
   });
   return { deck, removedCards };
 }
@@ -7391,6 +7392,7 @@ export const __aiPlayTesting = {
   aiSampleHiddenHands,
   aiSafeThrowPlans,
   createDeck,
+  deckForPlayerCount,
   expectedPlayerId,
   legalHeuristicAutoPlay,
   legalAutoPlay,

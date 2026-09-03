@@ -7552,7 +7552,7 @@ function renderHistoryRecordDialog(source, options = {}) {
         ${removedCards.length && historyFilter === "all" ? `
           <div class="history-removed-cards">
             <div class="section-head compact">
-              <h3>开局移除的4</h3>
+              <h3>开局移除的牌</h3>
               <span class="tag">${removedCards.length} 张</span>
             </div>
             <div class="kitty-cards">${sortCardsForPlay(removedCards, source.trumpSuit).map(renderStaticCard).join("")}</div>

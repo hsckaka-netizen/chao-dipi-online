@@ -461,12 +461,15 @@ test("room snapshots stay monotonic and visual assets are cached", async (t) => 
     assert.equal(countStartedAck.snapshotVersion, countStarted.snapshotVersion);
     assert.equal(countStarted.players.length, playerCount);
     const expectedKittySize = Math.min(playerCount, 6);
-    const expectedRemovedCount = Math.max(0, playerCount - 6);
+    const expectedRemovedCards = {
+      6: [],
+      7: ["H5"],
+      8: ["H5", "D5"],
+      9: ["H5", "H5", "D5"]
+    }[playerCount];
     assert.equal(countStarted.kittySize, expectedKittySize);
     assert.equal(countStarted.kittyCount, expectedKittySize);
-    assert.equal(countStarted.removedCards.length, expectedRemovedCount);
-    assert.ok(countStarted.removedCards.every((card) => card.rank === "4"));
-    assert.equal(new Set(countStarted.removedCards.map((card) => card.suit)).size, expectedRemovedCount);
+    assert.deepEqual(countStarted.removedCards.map((card) => `${card.suit}${card.rank}`), expectedRemovedCards);
     assert.equal(countStarted.hand.length, 53);
     assert.equal(countStarted.stage, "score-bidding");
 

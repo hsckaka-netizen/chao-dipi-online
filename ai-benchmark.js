@@ -8,7 +8,7 @@ const {
   AI_STRATEGY_HEURISTIC,
   AI_STRATEGY_MONTE_CARLO,
   AI_STRATEGY_SAFE_FIVE,
-  createDeck,
+  deckForPlayerCount,
   expectedPlayerId,
   legalAutoPlay,
   playCards
@@ -30,16 +30,7 @@ function round(value, digits = 2) {
 }
 
 function deterministicBenchmarkDeck(playerCount, random) {
-  const deck = createDeck(playerCount);
-  const removedCards = [];
-  const removeCount = Math.max(0, playerCount - 6);
-  const removedSuits = shuffleWithRandom(TRUMP_SUITS, random).slice(0, removeCount);
-  removedSuits.forEach((suit) => {
-    const candidates = deck.filter((card) => card.type === "normal" && card.rank === "4" && card.suit === suit);
-    const selected = candidates[Math.floor(random() * candidates.length)];
-    const index = deck.findIndex((card) => card.id === selected.id);
-    removedCards.push(deck.splice(index, 1)[0]);
-  });
+  const { deck, removedCards } = deckForPlayerCount(playerCount);
   return { deck: shuffleWithRandom(deck, random), removedCards };
 }
 
