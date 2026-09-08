@@ -8590,3 +8590,85 @@ button.auto-play-toggle.active {
 .card-rules-rank.muted {
   background: #6b7280;
 }
+
+.team-lobby-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.team-lobby-column {
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid rgba(65, 91, 78, 0.13);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.58);
+}
+
+.team-lobby-column.team-a {
+  border-color: rgba(190, 67, 67, 0.25);
+  background: rgba(255, 241, 239, 0.72);
+}
+
+.team-lobby-column.team-b {
+  border-color: rgba(53, 111, 178, 0.25);
+  background: rgba(238, 247, 255, 0.72);
+}
+
+.team-lobby-column > header,
+.team-random-toggle {
+  display: flex;
+  align-items: center;
+}
+
+.team-lobby-column > header {
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.team-lobby-column > header span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.team-tag.team-a {
+  color: #a43737;
+  background: #ffe7e4;
+}
+
+.team-tag.team-b {
+  color: #2e619b;
+  background: #e5f2ff;
+}
+
+.team-choice button {
+  padding: 6px 9px;
+  font-size: 12px;
+}
+
+.team-random-toggle {
+  gap: 7px;
+  min-height: 36px;
+  padding: 0 10px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.65);
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.team-random-toggle input {
+  width: auto;
+  margin: 0;
+}
+
+@media (max-width: 620px) {
+  .team-lobby-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .game-mode-control,
+  .team-random-toggle {
+    width: 100%;
+  }
+}

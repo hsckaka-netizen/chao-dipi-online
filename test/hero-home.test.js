@@ -244,7 +244,7 @@ test("room entry defers auxiliary statistics and rate-limits full state recovery
   const renderRoomSource = appSource.slice(appSource.indexOf("function renderRoom()"), appSource.indexOf("function bidText("));
   assert.doesNotMatch(renderRoomSource, /ensurePlayerStatistics\(\)/);
   assert.match(renderRoomSource, /state\.gameItems\?\.canUse\) ensureShopState\(\)/);
-  assert.match(appSource, /api\("\/api\/history\/statistics\?seasonId=all"\)/);
+  assert.match(appSource, /api\(`\/api\/history\/statistics\?seasonId=all&gameMode=/);
   assert.match(appSource, /function waitForStateVersion\(version, timeoutMs = 4000\)/);
   assert.match(appSource, /eventAge > 18_000/);
   assert.match(appSource, /stateSyncAge > 15_000/);
@@ -321,7 +321,7 @@ test("gelu uses the star score threshold and rewards thirty-two diamonds per tri
   assert.equal(reward.matchedCount, 1);
   assert.equal(reward.cap, null);
   assert.equal(reward.amount, 32);
-  assert.equal(reward.rulesVersion, "2026-09-02-skill-v7");
+  assert.equal(reward.rulesVersion, "2026-09-08-skill-v8");
 });
 
 test("gelu has no trigger or diamond cap at five stars", () => {
@@ -457,6 +457,38 @@ test("SSR passive diamond skills follow frozen stars and original game facts", (
   });
   assert.equal(yokoyama.matchedCount, 2);
   assert.equal(yokoyama.amount, 50);
+});
+
+test("yokoyama counts points fed before a dogleg identity became public from final teams", () => {
+  const reward = calculateHeroSkillReward({
+    snapshot: createBattleHeroSnapshot("yokoyama-yui", 1),
+    playerId: "yokoyama",
+    playerResult: { playerId: "yokoyama", team: "banker", evaluation: { teammateAssistPoints: 0 } },
+    playerResults: [
+      { playerId: "banker", team: "banker" },
+      { playerId: "yokoyama", team: "banker" },
+      { playerId: "idle", team: "idle" }
+    ],
+    trickHistory: [
+      {
+        winnerId: "banker",
+        plays: [
+          { playerId: "yokoyama", cards: [
+            { type: "normal", rank: "K" },
+            { type: "normal", rank: "10" },
+            { type: "normal", rank: "10" },
+            { type: "normal", rank: "5" },
+            { type: "normal", rank: "5" }
+          ] },
+          { playerId: "banker", cards: [] },
+          { playerId: "idle", cards: [] }
+        ]
+      }
+    ]
+  });
+  assert.equal(reward.matchedCount, 1);
+  assert.equal(reward.amount, 15);
+  assert.match(reward.detail, /40分/);
 });
 
 test("SSR roster, probabilities, production, and cooldown reset costs use the settled values", () => {

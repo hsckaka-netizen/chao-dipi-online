@@ -159,7 +159,9 @@ test("settled game is converted to an immutable history record", () => {
   assert.equal(record.players[2].tags[0].code, "mvp");
   assert.equal(record.players[3].profileId, null);
   assert.equal(record.players[3].isAi, true);
-  assert.equal(record.recordFormatVersion, 2);
+  assert.equal(record.recordFormatVersion, 3);
+  assert.equal(record.gameMode, "pvp");
+  assert.equal(record.playMode, "brawl");
   assert.equal(record.doglegCard, "1-C-A");
   assert.deepEqual(record.bottomCards, ["3-H-10"]);
   assert.deepEqual(record.removedCards, ["1-D-4"]);
@@ -267,7 +269,7 @@ test("leaderboard wins follow final settlement score instead of card-score team"
 
 test("history queue remains a no-op when the feature flag is disabled", () => {
   assert.equal(gameHistoryStatus().enabled, false);
-  assert.equal(gameHistoryStatus().recordPolicy, "logged-in-human-only-settlement");
+  assert.equal(gameHistoryStatus().recordPolicy, "eligible-pvp-and-pve-human-settlement");
   assert.deepEqual(queueGameRecord(settledRoom()), { status: "disabled" });
 });
 
@@ -280,6 +282,41 @@ test("only all-human games are eligible for history persistence", () => {
     player.accountId = `3d173ad8-a44f-44f6-8896-4139b7de${String(9600 + index)}`;
   });
   assert.equal(isHumanOnlyGame(room), true);
+});
+
+test("official PVE games are eligible and keep AI participants in the record", () => {
+  const room = settledRoom();
+  room.gameMode = "pve";
+  room.playMode = "team";
+  room.players = room.players.slice(0, 4);
+  room.players[0].test = false;
+  room.players[0].accountId = "3d173ad8-a44f-44f6-8896-4139b7de9600";
+  room.players[1].test = false;
+  room.players[1].accountId = "3d173ad8-a44f-44f6-8896-4139b7de9601";
+  room.players[2].test = true;
+  room.players[2].pveRobot = true;
+  room.players[2].accountId = null;
+  room.players[3].test = true;
+  room.players[3].pveRobot = true;
+  room.players[3].accountId = null;
+  room.result.gameMode = "pve";
+  room.result.playMode = "team";
+
+  assert.equal(isHumanOnlyGame(room), true);
+  const record = buildGameRecord(room);
+  assert.equal(record.gameMode, "pve");
+  assert.equal(record.players.filter((player) => player.isAi).length, 2);
+});
+
+test("game mode migration and leaderboard filters separate PVP from PVE", async () => {
+  const migration = await readFile(fileURLToPath(new URL("../db/migrations/033_game_modes.sql", import.meta.url)), "utf8");
+  const source = await readFile(fileURLToPath(new URL("../game-history.js", import.meta.url)), "utf8");
+  assert.match(migration, /game_mode varchar\(16\).*DEFAULT 'pvp'/s);
+  assert.match(migration, /play_mode varchar\(16\).*DEFAULT 'brawl'/s);
+  assert.match(source, /game\.game_mode = \$4/);
+  assert.match(source, /game\.play_mode = \$5/);
+  assert.match(source, /game\.player_count = \$6/);
+  assert.match(source, /version: 33,[\s\S]*033_game_modes\.sql/);
 });
 
 test("player profile persistence remains optional when no database is configured", async () => {

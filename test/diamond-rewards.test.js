@@ -102,6 +102,32 @@ test("only unique logged-in human accounts are diamond eligible", () => {
   assert.equal(isDiamondEligibleGame(room), false);
 });
 
+test("official PVE rewards logged-in humans but never computer players", () => {
+  const room = {
+    gameMode: "pve",
+    playMode: "team",
+    players: [
+      { id: "h1", accountId: "account-a", test: false },
+      { id: "h2", accountId: "account-b", test: false },
+      { id: "r1", accountId: null, test: true, pveRobot: true },
+      { id: "r2", accountId: null, test: true, pveRobot: true }
+    ],
+    result: {
+      playerResults: [
+        { playerId: "h1", gameScore: 2, evaluationTags: [] },
+        { playerId: "h2", gameScore: 2, evaluationTags: [] },
+        { playerId: "r1", gameScore: -2, evaluationTags: [] },
+        { playerId: "r2", gameScore: -2, evaluationTags: [] }
+      ]
+    }
+  };
+  assert.equal(isDiamondEligibleGame(room), true);
+  attachDiamondRewards(room);
+  assert.equal(room.result.playerResults[0].diamondReward.status, "pending");
+  assert.equal(room.result.playerResults[2].diamondReward.status, "ineligible");
+  assert.equal(room.result.playerResults[2].diamondReward.reason, "robot");
+});
+
 test("win bonuses remain disabled after item-adjusted score changes", () => {
   const room = {
     players: [

@@ -133,6 +133,9 @@ const statisticsRelationshipSorts = {
   opponents: { key: "games_played", direction: "desc" }
 };
 let statisticsSeasonId = "all";
+let statisticsGameMode = "pvp";
+let statisticsPlayMode = "all";
+let statisticsPlayerCount = "all";
 let statisticsSeasons = [];
 let statisticsSeasonsLoaded = false;
 let statisticsSeasonInitialized = false;
@@ -1332,6 +1335,25 @@ async function roomAction(path, options = {}) {
   return state;
 }
 
+function statisticsFilterKey() {
+  return `${statisticsGameMode}:${statisticsPlayMode}:${statisticsPlayerCount}`;
+}
+
+function statisticsQueryParams(seasonId = statisticsSeasonId) {
+  const params = new URLSearchParams({ seasonId, gameMode: statisticsGameMode });
+  if (statisticsPlayMode !== "all") params.set("playMode", statisticsPlayMode);
+  if (statisticsPlayerCount !== "all") params.set("playerCount", statisticsPlayerCount);
+  return params.toString();
+}
+
+function resetStatisticsViewForFilters() {
+  statisticsSelectedAccountId = "";
+  statisticsGameDate = "";
+  statisticsGameLogId = "";
+  playerStatisticsRows = [];
+  playerStatisticsLoaded = false;
+}
+
 function ensureProfiles() {
   if (profilesLoaded || profilesLoading) return;
   profilesLoading = true;
@@ -1367,15 +1389,16 @@ function ensurePlayerStatistics(force = false) {
         statisticsSeasonInitialized = true;
       }
       const requestedSeasonId = statisticsSeasonId;
+      const requestedFilters = statisticsFilterKey();
       return Promise.all([
-        api(`/api/history/statistics?seasonId=${encodeURIComponent(requestedSeasonId)}`),
+        api(`/api/history/statistics?${statisticsQueryParams(requestedSeasonId)}`),
         requestedSeasonId === "all"
           ? Promise.resolve(null)
-          : api("/api/history/statistics?seasonId=all").catch(() => null)
-      ]).then(([data, allTimeData]) => ({ data, allTimeData, requestedSeasonId }));
+          : api(`/api/history/statistics?${statisticsQueryParams("all")}`).catch(() => null)
+      ]).then(([data, allTimeData]) => ({ data, allTimeData, requestedSeasonId, requestedFilters }));
     })
-    .then(({ data, allTimeData, requestedSeasonId }) => {
-      if (requestedSeasonId !== statisticsSeasonId) {
+    .then(({ data, allTimeData, requestedSeasonId, requestedFilters }) => {
+      if (requestedSeasonId !== statisticsSeasonId || requestedFilters !== statisticsFilterKey()) {
         playerStatisticsLoading = false;
         return ensurePlayerStatistics(true);
       }
@@ -1401,7 +1424,7 @@ function ensurePlayerStatistics(force = false) {
 function ensureTablePlayerStatistics() {
   if (playerStatisticsLoaded || tablePlayerStatisticsLoaded || tablePlayerStatisticsLoading) return;
   tablePlayerStatisticsLoading = true;
-  api("/api/history/statistics?seasonId=all")
+  api(`/api/history/statistics?seasonId=all&gameMode=${encodeURIComponent(state?.gameMode || "pvp")}`)
     .then((data) => {
       playerStatistics = new Map((data.players || []).map((row) => [row.profile_id, {
         games: Number(row.games_played) || 0,
@@ -1869,7 +1892,7 @@ async function useGameItem(itemId) {
     if (itemId === "restart-card") activeDialog = null;
     ensureShopState(true);
     const successText = state?.notice?.text || (itemId === "restart-card" ? "重开卡已生效，牌局已经重新发牌。" : "对局道具已生效。");
-    setMessage(freeUse ? `${successText} 本局含 AI，不消耗卡片。` : successText, false);
+    setMessage(freeUse ? `${successText} 本局为测试机器人局，不消耗卡片。` : successText, false);
   } catch (error) {
     setMessage(error.message, true);
   } finally {
@@ -1970,6 +1993,84 @@ async function randomizeSeats() {
       body: JSON.stringify({ playerId: session.playerId, token: session.token })
     });
     setMessage("玩家座位已重新随机。");
+  } catch (error) {
+    setMessage(error.message, true);
+  }
+}
+
+async function setGameMode(mode) {
+  if (!session) return;
+  try {
+    await roomAction(`/api/rooms/${session.roomId}/game-mode`, {
+      method: "POST",
+      body: JSON.stringify({ playerId: session.playerId, token: session.token, mode })
+    });
+    setMessage(`已切换为${state.gameModeName || mode.toUpperCase()}。`);
+  } catch (error) {
+    setMessage(error.message, true);
+  }
+}
+
+async function setPlayMode(mode) {
+  if (!session) return;
+  try {
+    await roomAction(`/api/rooms/${session.roomId}/play-mode`, {
+      method: "POST",
+      body: JSON.stringify({ playerId: session.playerId, token: session.token, mode })
+    });
+    setMessage(`已切换为${state.playModeName || (mode === "team" ? "战队模式" : "乱斗模式")}。`);
+  } catch (error) {
+    setMessage(error.message, true);
+  }
+}
+
+async function setPveHumanCount(count) {
+  if (!session) return;
+  try {
+    await roomAction(`/api/rooms/${session.roomId}/pve-human-count`, {
+      method: "POST",
+      body: JSON.stringify({ playerId: session.playerId, token: session.token, count })
+    });
+    setMessage(`PVE 已调整为 ${count}v${count}。`);
+  } catch (error) {
+    setMessage(error.message, true);
+  }
+}
+
+async function selectLobbyTeam(team) {
+  if (!session) return;
+  try {
+    await roomAction(`/api/rooms/${session.roomId}/team`, {
+      method: "POST",
+      body: JSON.stringify({ playerId: session.playerId, token: session.token, team })
+    });
+    setMessage(`已加入${team === "a" ? "红队" : "蓝队"}。`);
+  } catch (error) {
+    setMessage(error.message, true);
+  }
+}
+
+async function randomizeTeams() {
+  if (!session) return;
+  try {
+    await roomAction(`/api/rooms/${session.roomId}/random-teams`, {
+      method: "POST",
+      body: JSON.stringify({ playerId: session.playerId, token: session.token })
+    });
+    setMessage("两队人员已重新随机。");
+  } catch (error) {
+    setMessage(error.message, true);
+  }
+}
+
+async function setAutoRandomTeams(enabled) {
+  if (!session) return;
+  try {
+    await roomAction(`/api/rooms/${session.roomId}/auto-random-teams`, {
+      method: "POST",
+      body: JSON.stringify({ playerId: session.playerId, token: session.token, enabled })
+    });
+    setMessage(enabled ? "每局结束后将自动随机分队。" : "后续牌局将保持固定队伍。");
   } catch (error) {
     setMessage(error.message, true);
   }
@@ -2432,9 +2533,7 @@ function canStart() {
     && state?.viewer?.host
     && state.status === "lobby"
     && state.stage === "lobby"
-    && state.players.length >= state.minPlayers
-    && state.players.length <= state.maxPlayers
-    && state.players.every((player) => player.ready);
+    && Boolean(state.canStart);
 }
 
 function isViewer(playerId) {
@@ -3226,6 +3325,47 @@ function renderReadyControls({ waitingNextRound = false } = {}) {
   return `<button type="button" class="${ready ? "secondary" : ""}" data-action="${ready ? "ready-off" : "ready-on"}">${escapeHtml(label)}</button>`;
 }
 
+function renderGameModeControls() {
+  const gameMode = state.gameMode === "pve" ? "pve" : "pvp";
+  const playMode = state.playMode === "team" ? "team" : "brawl";
+  return `
+    <span class="dogleg-count-control game-mode-control">
+      <span class="meta">对战</span>
+      <span class="segmented">
+        <button type="button" data-action="game-mode" data-mode="pvp" class="${gameMode === "pvp" ? "" : "secondary"}" ${gameMode === "pvp" ? "disabled" : ""}>PVP</button>
+        <button type="button" data-action="game-mode" data-mode="pve" class="${gameMode === "pve" ? "" : "secondary"}" ${gameMode === "pve" ? "disabled" : ""}>PVE</button>
+      </span>
+    </span>
+    ${gameMode === "pvp" ? `
+      <span class="dogleg-count-control game-mode-control">
+        <span class="meta">玩法</span>
+        <span class="segmented">
+          <button type="button" data-action="play-mode" data-mode="brawl" class="${playMode === "brawl" ? "" : "secondary"}" ${playMode === "brawl" ? "disabled" : ""}>乱斗</button>
+          <button type="button" data-action="play-mode" data-mode="team" class="${playMode === "team" ? "" : "secondary"}" ${playMode === "team" ? "disabled" : ""}>战队</button>
+        </span>
+      </span>
+    ` : `
+      <span class="dogleg-count-control game-mode-control">
+        <span class="meta">真人队</span>
+        <span class="segmented">
+          ${[2, 3, 4].map((count) => `<button type="button" data-action="pve-human-count" data-count="${count}" class="${Number(state.pveHumanCount) === count ? "" : "secondary"}" ${Number(state.pveHumanCount) === count ? "disabled" : ""}>${count}v${count}</button>`).join("")}
+        </span>
+      </span>
+    `}
+  `;
+}
+
+function renderTeamLobbyControls() {
+  if (state.gameMode !== "pvp" || state.playMode !== "team") return "";
+  return `
+    <button type="button" class="secondary" data-action="random-teams">随机分队</button>
+    <label class="team-random-toggle">
+      <input type="checkbox" data-action="auto-random-teams" ${state.autoRandomTeams ? "checked" : ""}>
+      <span>每局结束自动随机</span>
+    </label>
+  `;
+}
+
 function renderOpeningBidPercentControl() {
   const options = [10, 20, 30, 40];
   const current = options.includes(Number(state.openingBidPercent)) ? Number(state.openingBidPercent) : 40;
@@ -3514,10 +3654,12 @@ function renderJoinableRoom(room) {
         <div class="tags">
           <span class="tag ${joinable ? "good" : "accent"}">${escapeHtml(room.statusLabel || (joinable ? "可加入" : "进行中"))}</span>
           <span class="tag accent">${escapeHtml(room.playerCount)}/${escapeHtml(room.maxPlayers)} 人</span>
+          <span class="tag accent">${escapeHtml(room.gameModeName || "PVP")} · ${escapeHtml(room.playModeName || "乱斗模式")}</span>
+          ${room.gameMode === "pve" ? `<span class="tag">真人 ${escapeHtml(room.humanPlayerCount || 0)}/${escapeHtml(room.humanTarget || 2)}</span>` : ""}
           ${room.status === "lobby" ? `<span class="tag good">准备 ${escapeHtml(room.readyCount)}/${escapeHtml(room.playerCount)}</span>` : ""}
           <span class="tag">房主 ${escapeHtml(room.hostName || "未知")}</span>
-          <span class="tag">起叫 ${escapeHtml(room.openingBidPercent || 40)}%</span>
-          <span class="tag">${escapeHtml(room.bankerScoreModeName || "庄家承余")}</span>
+          ${room.playMode !== "team" ? `<span class="tag">起叫 ${escapeHtml(room.openingBidPercent || 40)}%</span>` : ""}
+          ${room.playMode !== "team" ? `<span class="tag">${escapeHtml(room.bankerScoreModeName || "庄家承余")}</span>` : ""}
           ${room.phase ? `<span class="tag">${escapeHtml(room.phase)}</span>` : ""}
           <span class="tag">${escapeHtml(fmtTime(room.createdAt))}</span>
         </div>
@@ -3573,11 +3715,12 @@ function renderHomeStatistics() {
   const appearances = rows.reduce((sum, row) => sum + (Number(row.games_played) || 0), 0);
   const recordedState = historyStatus?.enabled ? "记录中" : "未开启";
   const selectedSeason = statisticsSeasons.find((season) => String(season.season_id) === statisticsSeasonId) || null;
-  const rankingTitle = selectedSeason ? `${selectedSeason.name}数据榜` : "历史数据总榜";
+  const modeLabel = statisticsGameMode === "pve" ? "PVE" : "PVP";
+  const rankingTitle = selectedSeason ? `${selectedSeason.name} · ${modeLabel} 数据榜` : `${modeLabel} 历史数据总榜`;
   const currentColumn = statisticsColumns().find((column) => column.key === statisticsSortKey) || statisticsColumns()[0];
   const body = playerStatisticsLoading && !playerStatisticsLoaded
     ? `<div class="empty">正在加载数据...</div>`
-    : rows.length ? renderStatisticsTable(rows) : `<div class="empty">暂无已记录的全真人牌局。记录开启后，结算数据会自动出现在这里。</div>`;
+    : rows.length ? renderStatisticsTable(rows) : `<div class="empty">暂无符合当前模式、玩法和人数筛选的已记录牌局。</div>`;
   return `
     <section class="panel stack statistics-panel">
       <div class="section-head">
@@ -3586,6 +3729,25 @@ function renderHomeStatistics() {
           <div class="meta">列顺序保持固定；点击任意参数名称即可排行，再次点击切换升序或降序。</div>
         </div>
         <div class="statistics-header-tools">
+          <label>模式
+            <select data-action="select-statistics-game-mode">
+              <option value="pvp" ${statisticsGameMode === "pvp" ? "selected" : ""}>PVP</option>
+              <option value="pve" ${statisticsGameMode === "pve" ? "selected" : ""}>PVE</option>
+            </select>
+          </label>
+          ${statisticsGameMode === "pvp" ? `<label>玩法
+            <select data-action="select-statistics-play-mode">
+              <option value="all" ${statisticsPlayMode === "all" ? "selected" : ""}>全部玩法</option>
+              <option value="brawl" ${statisticsPlayMode === "brawl" ? "selected" : ""}>乱斗模式</option>
+              <option value="team" ${statisticsPlayMode === "team" ? "selected" : ""}>战队模式</option>
+            </select>
+          </label>` : ""}
+          <label>人数
+            <select data-action="select-statistics-player-count">
+              <option value="all" ${statisticsPlayerCount === "all" ? "selected" : ""}>全部人数</option>
+              ${statisticsPlayerCountOptions().map((count) => `<option value="${count}" ${statisticsPlayerCount === String(count) ? "selected" : ""}>${count} 人</option>`).join("")}
+            </select>
+          </label>
           <label>统计范围
             <select data-action="select-statistics-season">
               <option value="all" ${statisticsSeasonId === "all" ? "selected" : ""}>历史总榜</option>
@@ -3608,6 +3770,12 @@ function renderHomeStatistics() {
       ${body}
     </section>
   `;
+}
+
+function statisticsPlayerCountOptions() {
+  if (statisticsGameMode === "pve") return [4, 6, 8];
+  if (statisticsPlayMode === "brawl") return [5, 6, 7, 8, 9];
+  return [4, 5, 6, 7, 8, 9];
 }
 
 function statisticNumber(value) {
@@ -3678,6 +3846,11 @@ function statisticsColumns() {
     false,
     `按${label}积分排行（红五×2 + 方五×1）`
   );
+  const allyRole = statisticsGameMode === "pvp" && statisticsPlayMode === "brawl"
+    ? { key: "dogleg", label: "狗腿" }
+    : statisticsGameMode === "pvp" && statisticsPlayMode === "all"
+      ? { key: "ally", label: "友方" }
+      : { key: "teammate", label: "庄家队友" };
   return [
     column("total_score", "总积分", "综合", (row) => statisticNumber(row.total_score), (value) => statisticSigned(value), true),
     column("games_played", "场次", "综合", (row) => statisticNumber(row.games_played)),
@@ -3688,9 +3861,9 @@ function statisticsColumns() {
     roleColumn("banker_games", "庄家场次", "庄家", "banker_games"),
     roleColumn("banker_score", "庄家积分", "庄家", "banker_score", (value) => statisticSigned(value), true),
     column("banker_win_rate", "庄家胜率", "庄家", (row) => statisticRate(row.banker_wins, row.banker_games), statisticPercent),
-    roleColumn("dogleg_games", "狗腿场次", "狗腿", "dogleg_games"),
-    roleColumn("dogleg_score", "狗腿积分", "狗腿", "dogleg_score", (value) => statisticSigned(value), true),
-    column("dogleg_win_rate", "狗腿胜率", "狗腿", (row) => statisticRate(row.dogleg_wins, row.dogleg_games), statisticPercent),
+    roleColumn(`${allyRole.key}_games`, `${allyRole.label}场次`, allyRole.label, `${allyRole.key}_games`),
+    roleColumn(`${allyRole.key}_score`, `${allyRole.label}积分`, allyRole.label, `${allyRole.key}_score`, (value) => statisticSigned(value), true),
+    column(`${allyRole.key}_win_rate`, `${allyRole.label}胜率`, allyRole.label, (row) => statisticRate(row[`${allyRole.key}_wins`], row[`${allyRole.key}_games`]), statisticPercent),
     roleColumn("idle_games", "闲家场次", "闲家", "idle_games"),
     roleColumn("idle_score", "闲家积分", "闲家", "idle_score", (value) => statisticSigned(value), true),
     column("idle_win_rate", "闲家胜率", "闲家", (row) => statisticRate(row.idle_wins, row.idle_games), statisticPercent),
@@ -3780,7 +3953,7 @@ function renderStatisticsTable(rows) {
 }
 
 function statisticsPlayerDetailKey(accountId) {
-  return `${statisticsSeasonId}:${accountId}`;
+  return `${statisticsSeasonId}:${statisticsFilterKey()}:${accountId}`;
 }
 
 function showPlayerStatistics(accountId) {
@@ -3799,7 +3972,7 @@ function showPlayerStatistics(accountId) {
   }
   statisticsPlayerDetailLoadingId = detailKey;
   render();
-  api(`/api/history/players/${encodeURIComponent(accountId)}?seasonId=${encodeURIComponent(statisticsSeasonId)}`)
+  api(`/api/history/players/${encodeURIComponent(accountId)}?${statisticsQueryParams()}`)
     .then((detail) => {
       statisticsPlayerDetails.set(detailKey, detail);
     })
@@ -3813,7 +3986,7 @@ function showPlayerStatistics(accountId) {
 }
 
 function playerGameHistoryKey(accountId, date = statisticsGameDate) {
-  return `${statisticsSeasonId}:${accountId}:${date || "all"}`;
+  return `${statisticsSeasonId}:${statisticsFilterKey()}:${accountId}:${date || "all"}`;
 }
 
 function playerGameDateRange(dateText) {
@@ -3832,8 +4005,11 @@ function ensurePlayerGameHistory(accountId, force = false) {
   statisticsPlayerGamesLoadingKey = key;
   const params = new URLSearchParams({
     seasonId: statisticsSeasonId,
+    gameMode: statisticsGameMode,
     limit: "100"
   });
+  if (statisticsPlayMode !== "all") params.set("playMode", statisticsPlayMode);
+  if (statisticsPlayerCount !== "all") params.set("playerCount", statisticsPlayerCount);
   const range = playerGameDateRange(statisticsGameDate);
   if (range) {
     params.set("from", range.from);
@@ -4012,7 +4188,7 @@ function renderPlayerGameHistorySection(accountId) {
               <article class="statistics-game-row">
                 <div class="statistics-game-time">
                   <strong>${escapeHtml(fmtDateTime(game.finished_at))}</strong>
-                  <span>房间 ${escapeHtml(game.room_code || "-")} · ${escapeHtml(game.call_mode_name || "")}</span>
+                  <span>房间 ${escapeHtml(game.room_code || "-")} · ${escapeHtml(game.game_mode === "pve" ? "PVE" : "PVP")} · ${escapeHtml(game.play_mode === "team" ? "战队模式" : "乱斗模式")}</span>
                 </div>
                 <div class="statistics-game-result">
                   <span class="tag ${game.won ? "good" : ""}">${game.won ? "胜" : "负"}</span>
@@ -4051,6 +4227,11 @@ function renderPlayerStatisticsDetail(baseRow) {
   const wonTrickCards = statisticNumber(row.won_trick_cards);
   const totalHandCards = statisticNumber(row.total_hand_cards);
   const selectedSeason = statisticsSeasons.find((season) => String(season.season_id) === statisticsSeasonId) || null;
+  const allyRole = statisticsGameMode === "pvp" && statisticsPlayMode === "brawl"
+    ? { key: "dogleg", label: "狗腿" }
+    : statisticsGameMode === "pvp" && statisticsPlayMode === "all"
+      ? { key: "ally", label: "友方" }
+      : { key: "teammate", label: "庄家队友" };
   const titleItems = [
     ["MVP", "mvp_count"], ["辅", "support_count"], ["躺", "couch_count"], ["坑", "pit_count"],
     ["僵", "stiff_count"], ["僵中僵", "stiffest_count"], ["雷", "thunder_count"], ["精", "precision_count"],
@@ -4062,7 +4243,7 @@ function renderPlayerStatisticsDetail(baseRow) {
       <section class="statistics-detail-hero">
         <div class="statistics-detail-identity">
           ${avatarHtml(row.latest_name || "玩家", row.latest_avatar_url || "", "large", row.avatar_frame || "")}
-          <div><span>${escapeHtml(selectedSeason?.name || "历史总榜")}第 ${rank || "-"} 名</span><h2>${escapeHtml(row.latest_name || "玩家")}</h2><small>@${escapeHtml(row.username || "player")} · ${games} 场全真人牌局</small></div>
+          <div><span>${escapeHtml(selectedSeason?.name || "历史总榜")}第 ${rank || "-"} 名</span><h2>${escapeHtml(row.latest_name || "玩家")}</h2><small>@${escapeHtml(row.username || "player")} · ${games} 场 · 仅统计真人玩家</small></div>
         </div>
         <div class="statistics-headline"><span>总积分</span><strong class="${statisticNumber(row.total_score) > 0 ? "positive" : statisticNumber(row.total_score) < 0 ? "negative" : ""}">${statisticSigned(row.total_score)}</strong><small>场均 ${statisticSigned(row.average_score)}</small></div>
         <div class="statistics-headline"><span>胜率</span><strong>${statisticPercent(row.win_rate)}</strong><small>${statisticNumber(row.wins)} 胜 / ${statisticNumber(row.losses)} 负</small></div>
@@ -4076,7 +4257,7 @@ function renderPlayerStatisticsDetail(baseRow) {
           </section>
           <section class="statistics-detail-section">
             <header><h3>身份表现</h3><span>积分、场次与胜率独立计算</span></header>
-            <div class="statistics-role-table-wrap"><table class="statistics-role-table"><thead><tr><th>身份</th><th>场次</th><th>胜场</th><th>胜率</th><th>积分</th><th>场均</th></tr></thead><tbody>${statisticsRoleRow(row, "banker", "庄家")}${statisticsRoleRow(row, "dogleg", "狗腿")}${statisticsRoleRow(row, "idle", "闲家")}</tbody></table></div>
+            <div class="statistics-role-table-wrap"><table class="statistics-role-table"><thead><tr><th>身份</th><th>场次</th><th>胜场</th><th>胜率</th><th>积分</th><th>场均</th></tr></thead><tbody>${statisticsRoleRow(row, "banker", "庄家")}${statisticsRoleRow(row, allyRole.key, allyRole.label)}${statisticsRoleRow(row, "idle", "闲家")}</tbody></table></div>
           </section>
         </div>
         <div>
@@ -4517,7 +4698,7 @@ function renderDailyGameTasks() {
   const claimedCount = tasks.filter((task) => task.claimed).length;
   return `
     <section class="panel daily-game-task-section">
-      <div class="section-head"><div><span class="eyebrow">DAILY QUESTS</span><h2>每日任务</h2><p>每天北京时间06:00刷新；进度仅统计自然完成的有效真人牌局，奖励需在刷新前领取。</p></div><div class="daily-game-task-total"><small>今日领取</small><b>${escapeHtml(claimedCount)} / ${escapeHtml(tasks.length)}</b></div></div>
+      <div class="section-head"><div><span class="eyebrow">DAILY QUESTS</span><h2>每日任务</h2><p>每天北京时间06:00刷新；进度统计自然完成的有效 PVP 与正式 PVE，奖励需在刷新前领取。</p></div><div class="daily-game-task-total"><small>今日领取</small><b>${escapeHtml(claimedCount)} / ${escapeHtml(tasks.length)}</b></div></div>
       <div class="daily-game-task-grid">${tasks.map(renderDailyGameTask).join("")}</div>
     </section>
   `;
@@ -5061,7 +5242,7 @@ function renderShopPage() {
         </section>
       ` : ""}
       <section class="panel stack shop-catalog">
-        <div class="section-head"><div><h2>对局道具</h2><div class="meta">每次购买增加 1 张；真人局正常消耗，含 AI 的牌局可免费使用。</div></div><span class="tag">${consumables.length} 种</span></div>
+        <div class="section-head"><div><h2>对局道具</h2><div class="meta">每次购买增加 1 张；PVP 真人局与 PVE 挑战正常消耗，仅测试机器人局可免费使用。</div></div><span class="tag">${consumables.length} 种</span></div>
         <div class="shop-product-grid consumables">${consumables.map(renderShopProduct).join("") || `<div class="empty">暂无上架道具。</div>`}</div>
       </section>
     `}
@@ -5657,12 +5838,13 @@ function renderRoom() {
   const spectating = isSpectating();
   const waitingNextRound = viewerEnteredNextRound();
   const inLobbyView = state.status === "lobby";
+  const configuringLobby = state.stage === "lobby";
   const gameInProgress = state.status === "dealt";
   const showTable = state.stage !== "lobby" && !waitingNextRound;
   selectedCardIds = new Set([...selectedCardIds].filter((cardId) => state.hand.some((card) => card.id === cardId)));
   maybeAutoOpenActionDialog();
-  const waitingText = state.players.length < state.minPlayers
-    ? `还差 ${state.minPlayers - state.players.length} 人才能开始`
+  const waitingText = state.startRequirement
+    ? state.startRequirement
     : state.players.every((player) => player.ready)
       ? "所有玩家已准备，房主可以开始"
       : "人数已满足，等待所有玩家准备";
@@ -5678,12 +5860,14 @@ function renderRoom() {
             </div>
             <div class="tags">
               <span class="tag accent">${state.players.length}/${state.maxPlayers} 人</span>
+              <span class="tag accent">${escapeHtml(state.gameModeName || "PVP")} · ${escapeHtml(state.playModeName || "乱斗模式")}</span>
               ${spectating ? `<span class="tag good">观战 · ${escapeHtml(state.spectator?.targetPlayerName || state.viewer?.name || "玩家")}</span>` : ""}
               <span class="tag">${escapeHtml(waitingNextRound ? "等待其他玩家进入下一局" : state.phase)}</span>
-              ${inLobbyView ? `<span class="tag">起叫 ${escapeHtml(state.openingBidPercent || 40)}%</span>` : ""}
-              ${inLobbyView ? `<span class="tag">${escapeHtml(state.bankerScoreModeName || "庄家承余")}</span>` : ""}
-              ${inLobbyView ? `<span class="tag">狗腿模式：${escapeHtml(state.doglegModeName || state.setup?.doglegModeName || "传统狗腿")}</span>` : ""}
-              ${inLobbyView ? `<span class="tag">狗腿数：${escapeHtml(state.setup?.doglegNeeded ?? 0)} 个</span>` : ""}
+              ${inLobbyView && state.playMode !== "team" ? `<span class="tag">起叫 ${escapeHtml(state.openingBidPercent || 40)}%</span>` : ""}
+              ${inLobbyView && state.playMode !== "team" ? `<span class="tag">${escapeHtml(state.bankerScoreModeName || "庄家承余")}</span>` : ""}
+              ${inLobbyView && state.playMode !== "team" ? `<span class="tag">狗腿模式：${escapeHtml(state.doglegModeName || state.setup?.doglegModeName || "传统狗腿")}</span>` : ""}
+              ${inLobbyView && state.playMode !== "team" ? `<span class="tag">狗腿数：${escapeHtml(state.setup?.doglegNeeded ?? 0)} 个</span>` : ""}
+              ${inLobbyView && state.playMode === "team" ? `<span class="tag">红队 ${state.teamCounts?.a || 0} · 蓝队 ${state.teamCounts?.b || 0}</span>` : ""}
               ${inLobbyView ? `<span class="tag good">${escapeHtml(readyStatusText())}</span>` : ""}
             </div>
           </div>
@@ -5696,13 +5880,15 @@ function renderRoom() {
               ${state.status === "dealt" || state.events.length ? `<button type="button" class="secondary" data-action="open-history">牌局记录 ${state.trickHistory.length} 轮</button>` : ""}
               ${state.canViewKitty ? `<button type="button" class="secondary" data-action="open-kitty">查看底牌</button>` : ""}
               ${spectating ? "" : `
-                ${state.viewer.host && state.status === "lobby" ? renderOpeningBidPercentControl() : ""}
-                ${state.viewer.host && state.status === "lobby" ? renderBankerScoreModeControl() : ""}
-                ${state.viewer.host && state.status === "lobby" ? renderDoglegModeControl() : ""}
-                ${state.viewer.host && state.status === "lobby" ? renderDoglegCountControl() : ""}
+                ${state.viewer.host && configuringLobby ? renderGameModeControls() : ""}
+                ${state.viewer.host && configuringLobby && state.playMode !== "team" ? renderOpeningBidPercentControl() : ""}
+                ${state.viewer.host && configuringLobby && state.playMode !== "team" ? renderBankerScoreModeControl() : ""}
+                ${state.viewer.host && configuringLobby && state.playMode !== "team" ? renderDoglegModeControl() : ""}
+                ${state.viewer.host && configuringLobby && state.playMode !== "team" ? renderDoglegCountControl() : ""}
                 ${inLobbyView ? renderReadyControls({ waitingNextRound }) : ""}
-                ${state.viewer.host && state.status === "lobby" ? `<button type="button" class="secondary" data-action="add-robot" ${state.players.length >= state.maxPlayers ? "disabled" : ""}>添加机器人</button>` : ""}
-                ${state.viewer.host && state.status === "lobby" ? `<button type="button" class="secondary" data-action="random-seats" ${state.players.length < 2 ? "disabled" : ""}>随机座位</button>` : ""}
+                ${state.viewer.host && configuringLobby ? renderTeamLobbyControls() : ""}
+                ${state.viewer.host && configuringLobby && state.gameMode === "pvp" && state.playMode === "brawl" ? `<button type="button" class="secondary" data-action="add-robot" ${state.players.length >= state.maxPlayers ? "disabled" : ""}>添加机器人</button>` : ""}
+                ${state.viewer.host && configuringLobby && state.playMode === "brawl" ? `<button type="button" class="secondary" data-action="random-seats" ${state.players.length < 2 ? "disabled" : ""}>随机座位</button>` : ""}
                 ${state.viewer.host && state.status === "lobby" ? `<button type="button" data-action="start" ${canStart() ? "" : "disabled"}>开始并发牌</button>` : ""}
                 ${state.viewer.host && gameInProgress ? `<button type="button" class="secondary" data-action="reset">重开房间</button>` : ""}
                 ${state.viewer.host ? `<button type="button" class="secondary danger" data-action="dissolve-room">解散房间</button>` : ""}
@@ -5710,7 +5896,7 @@ function renderRoom() {
               `}
             </div>
             ${spectating ? `<div class="spectator-notice">只读观战中：你看到的是 ${escapeHtml(state.spectator?.targetPlayerName || state.viewer?.name || "该玩家")} 的完整视角，无法操作任何牌。</div>` : ""}
-            ${inLobbyView && !spectating ? `<div class="meta">${escapeHtml(waitingNextRound ? `你已准备下一局，等待其他玩家确认。${readyStatusText()}` : `${waitingText}。${readyStatusText()}。当前支持 5-9 人。`)}</div>` : ""}
+            ${inLobbyView && !spectating ? `<div class="meta">${escapeHtml(waitingNextRound ? `你已准备下一局，等待其他玩家确认。${readyStatusText()}` : `${waitingText}。${readyStatusText()}。${state.gameMode === "pve" ? "支持 2-4 名真人对战等量电脑" : state.playMode === "team" ? "支持 2v2 至 5v4" : "乱斗支持 5-9 人"}。`)}</div>` : ""}
           </div>
         </section>
 
@@ -6147,7 +6333,7 @@ function renderGameItemsDialog() {
     <div class="modal-backdrop">
       <section class="modal-card game-items-modal" role="dialog" aria-modal="true" aria-label="使用对局道具">
         <div class="section-head">
-          <div><h2>${stageType === RESTART_CARD_STAGE ? "重开卡阶段" : "其他卡牌阶段"}</h2><div class="meta">${state.gameItems?.freeUse ? "本局含 AI，使用后不消耗卡片；" : ""}每位玩家每局每种卡牌限用一次，可使用多种。</div></div>
+          <div><h2>${stageType === RESTART_CARD_STAGE ? "重开卡阶段" : "其他卡牌阶段"}</h2><div class="meta">${state.gameItems?.freeUse ? "本局为测试机器人局，使用后不消耗卡片；" : ""}每位玩家每局每种卡牌限用一次，可使用多种。</div></div>
           <button type="button" class="secondary compact-button" data-action="close-dialog">关闭</button>
         </div>
         ${colorfulFryOrderText() ? `<div class="colorful-order">缤纷卡顺序（大 → 小）：<strong>${escapeHtml(colorfulFryOrderText())}</strong></div>` : ""}
@@ -6239,6 +6425,28 @@ function renderSpectatorsDialog() {
 }
 
 function renderLobbyPlayersPanel() {
+  const fixedTeams = state.playMode === "team";
+  if (fixedTeams) {
+    const teamLabel = (team) => state.gameMode === "pve"
+      ? (team === "a" ? "玩家队" : "电脑队")
+      : (team === "a" ? "红队" : "蓝队");
+    return `
+      <section class="panel">
+        <div class="section-head">
+          <div><h2>战队</h2><div class="meta">队伍身份公开；开局后系统自动穿插排座</div></div>
+          <span class="tag">${state.players.length}/${state.maxPlayers}</span>
+        </div>
+        <div class="team-lobby-grid">
+          ${["a", "b"].map((team) => `
+            <div class="team-lobby-column team-${team}">
+              <header><strong>${teamLabel(team)}</strong><span>${state.players.filter((player) => player.squad === team).length} 人</span></header>
+              <div class="players lobby-players">${state.players.filter((player) => player.squad === team).map(renderPlayer).join("") || `<div class="empty">等待玩家加入</div>`}</div>
+            </div>
+          `).join("")}
+        </div>
+      </section>
+    `;
+  }
   return `
     <section class="panel">
       <div class="section-head">
@@ -6343,7 +6551,9 @@ function renderDiamondReward(reward) {
   if (reward.status === "ineligible") {
     const ineligibleTitle = reward.reason === "spectator"
       ? "观战身份不参与本局钻石结算"
-      : "含机器人、未登录或重复账号席位的牌局不发钻石";
+      : reward.reason === "robot"
+        ? "电脑不参与钻石结算"
+        : "当前牌局或账号不符合钻石奖励条件";
     return `<span class="result-diamond muted" title="${escapeHtml(ineligibleTitle)}">💎 不发放</span>`;
   }
   if (reward.status === "awarded") {
@@ -6365,7 +6575,9 @@ function renderViewerDiamondSummary(result) {
   if (reward.status === "ineligible") {
     return reward.reason === "spectator"
       ? `<div class="diamond-reward-summary muted"><strong>观战不获得钻石</strong><span>观战用户只查看牌局，不参与本局奖励结算。</span></div>`
-      : `<div class="diamond-reward-summary muted"><strong>本局不发钻石</strong><span>只有全部席位均为已登录真人账号时才会发放。</span></div>`;
+      : reward.reason === "robot"
+        ? `<div class="diamond-reward-summary muted"><strong>电脑不获得钻石</strong><span>PVE 仅向符合条件的真人玩家发放奖励。</span></div>`
+        : `<div class="diamond-reward-summary muted"><strong>本局不发钻石</strong><span>当前牌局或账号不符合钻石奖励条件。</span></div>`;
   }
   const amount = reward.status === "awarded"
     ? reward.awardedAmount ?? reward.totalAmount ?? 0
@@ -6411,10 +6623,11 @@ function renderResultPanel() {
           </div>
         </div>
         <div class="tags">
+          <span class="tag accent">${escapeHtml(result.gameModeName || (result.gameMode === "pve" ? "PVE" : "PVP"))} · ${escapeHtml(result.playModeName || (result.playMode === "team" ? "战队模式" : "乱斗模式"))}</span>
           <span class="tag accent">牌局胜方：${escapeHtml(result.winnerTeamName)}</span>
           <span class="tag good">闲家 ${result.idleScore}/${result.threshold} 分</span>
           ${result.bankerBidScore ? `<span class="tag">叫分 ${escapeHtml(result.bankerBidScore)} / 总分 ${escapeHtml(result.totalGamePoints)}</span>` : ""}
-          <span class="tag">庄腿积分：${escapeHtml(result.bankerScoreModeName || "庄队均摊（旧规则）")}</span>
+          <span class="tag">${result.playMode === "team" ? "庄队积分" : "庄腿积分"}：${escapeHtml(result.bankerScoreModeName || "庄队均摊（旧规则）")}</span>
           <span class="tag">${state.trickHistory.length} 轮</span>
         </div>
         <div class="result-grid">
@@ -6435,6 +6648,7 @@ function renderResultPanel() {
             <div class="meta">身份积分</div>
             <strong>闲家 ${signedScore(result.idleEachScoreText, result.idleEachScore)} / 庄家 ${signedScore(result.bankerScoreText, result.bankerScore ?? result.bankerEachScore)}</strong>
             ${(result.playerResults || []).some((player) => player.role === "狗腿") ? `<span>狗腿每人 ${signedScore(result.doglegEachScoreText, result.doglegEachScore ?? result.bankerEachScore)}</span>` : ""}
+            ${(result.playerResults || []).some((player) => player.role === "庄家队友") ? `<span>庄家队友每人 ${signedScore(result.teammateEachScoreText, result.teammateEachScore ?? result.bankerEachScore)}</span>` : ""}
           </div>
         </div>
         <div class="result-score-note ${scoreDirectionReversed ? "warning" : ""}">
@@ -6620,6 +6834,10 @@ function renderPlayedFiveStats() {
 function idleTargetScore() {
   if (!state) return "";
   if (state.stage === "finished" && state.result) return Number(state.result.threshold) || 0;
+  if (state.playMode === "team") {
+    const equalTeams = Number(state.teamCounts?.a || 0) === Number(state.teamCounts?.b || 0);
+    return Math.round(state.players.length * 100 * (equalTeams ? 0.4 : 0.5));
+  }
   if (state.callMode === "score" && state.setup?.scoreBid?.currentScore) {
     return state.players.length * 100 - state.setup.scoreBid.currentScore;
   }
@@ -6646,6 +6864,9 @@ function renderGameInfoTags() {
 }
 
 function renderDoglegTableTag() {
+  if (state.playMode === "team") {
+    return `<span class="tag table-dogleg-tag fixed-team" title="本局队伍身份从开局起全部公开">战队公开 <i>${state.teamCounts?.a || 0}v${state.teamCounts?.b || 0}</i></span>`;
+  }
   const setup = state.setup || {};
   const names = setup.doglegPlayerNames || [];
   const configuredCount = Number(setup.doglegNeeded) || 0;
@@ -7086,8 +7307,8 @@ function orientPlaysForViewer(plays) {
 
 function roleMark(role, playerId = "") {
   if (!role) return "";
-  const text = role === "狗腿" ? "狗腿" : role === "庄家" || role === "主" ? "庄家" : "闲";
-  const tone = role === "狗腿" ? "dogleg" : role === "庄家" || role === "主" ? "accent" : "idle";
+  const text = role === "狗腿" ? "狗腿" : role === "庄家队友" ? "队友" : role === "庄家" || role === "主" ? "庄家" : "闲";
+  const tone = role === "狗腿" || role === "庄家队友" ? "dogleg" : role === "庄家" || role === "主" ? "accent" : "idle";
   const reveal = role === "狗腿" && doglegRevealEffects.some((effect) =>
     effect.playerId === playerId && effect.roleChanged && effect.until > Date.now()
   );
@@ -7120,7 +7341,7 @@ function renderDoglegMarks(playerId) {
 
 function roleClass(role) {
   if (role === "狗腿") return "banker-team dogleg-team";
-  if (role === "庄家" || role === "狗腿" || role === "主") return "banker-team";
+  if (role === "庄家" || role === "庄家队友" || role === "狗腿" || role === "主") return "banker-team";
   if (role === "闲家") return "idle-team";
   return "";
 }
@@ -7271,7 +7492,7 @@ function renderPlayerHistoryMini(roomPlayerId, { overlay = false } = {}) {
   const statistics = player.profileId ? playerStatistics.get(player.profileId) : null;
   if (!statistics) return `<div class="${className} unavailable">暂无历史</div>`;
   return `
-    <div class="${className}" title="仅统计全真人牌局">
+    <div class="${className}" title="仅统计真人玩家数据">
       <span><i>${overlay ? "局" : "总局"}</i><b>${statistics.games}</b></span>
       <span><i>${overlay ? "分" : "积分"}</i><b class="${statistics.score > 0 ? "positive" : statistics.score < 0 ? "negative" : ""}">${signedScore(null, statistics.score)}</b></span>
     </div>
@@ -7590,6 +7811,7 @@ function renderStoredGameSettlement(game) {
   const idlePlayers = players.filter((player) => player.team === "idle");
   const banker = bankerPlayers.find((player) => player.role === "庄家") || bankerPlayers[0] || null;
   const doglegs = bankerPlayers.filter((player) => player.role === "狗腿");
+  const teammates = bankerPlayers.filter((player) => player.role === "庄家队友");
   const bottomWinner = players.find((player) => player.roomPlayerId === game.bottom_winner_room_player_id);
   const scoreModeName = result.bankerScoreModeName
     || (game.setup_data?.bankerScoreMode === "banker-remainder" ? "庄家承余" : "庄队均摊（旧记录）");
@@ -7606,6 +7828,7 @@ function renderStoredGameSettlement(game) {
         </div>
         ${renderStoredGameViewTabs()}
         <div class="tags stored-settlement-tags">
+          <span class="tag accent">${escapeHtml(game.game_mode === "pve" ? "PVE" : "PVP")} · ${escapeHtml(game.play_mode === "team" ? "战队模式" : "乱斗模式")}</span>
           <span class="tag accent">牌局胜方：${escapeHtml(winnerTeamName)}</span>
           <span class="tag good">闲家 ${escapeHtml(game.idle_score || 0)}/${escapeHtml(game.threshold || 0)} 分</span>
           ${game.banker_bid_score ? `<span class="tag">叫分 ${escapeHtml(game.banker_bid_score)} / 总分 ${escapeHtml(game.total_game_points || 0)}</span>` : ""}
@@ -7623,6 +7846,7 @@ function renderStoredGameSettlement(game) {
             <div class="meta">身份积分</div>
             <strong>闲家 ${statisticSigned(idlePlayers[0]?.baseGameScore ?? idlePlayers[0]?.gameScore ?? result.idleEachScore ?? 0)} / 庄家 ${statisticSigned(banker?.baseGameScore ?? banker?.gameScore ?? result.bankerScore ?? result.bankerEachScore ?? 0)}</strong>
             ${doglegs.length ? `<span>狗腿每人 ${statisticSigned(doglegs[0]?.baseGameScore ?? doglegs[0]?.gameScore ?? result.doglegEachScore ?? result.bankerEachScore ?? 0)}</span>` : ""}
+            ${teammates.length ? `<span>庄家队友每人 ${statisticSigned(teammates[0]?.baseGameScore ?? teammates[0]?.gameScore ?? result.teammateEachScore ?? result.bankerEachScore ?? 0)}</span>` : ""}
           </div>
         </div>
         <div class="score-breakdown">
@@ -7699,7 +7923,7 @@ function renderPlayer(player) {
     || state.boardHeroSkills?.yokoyama?.currentPlayerId === player.id
     || (state.stage === "shen-biesan-skill" && (state.boardHeroSkills?.shenBiesan?.eligiblePlayerIds || []).includes(player.id));
   const isBankerAction = (state.stage === "burying" || state.stage === "dogleg") && state.setup?.bankerId === player.id;
-  const canKick = !isSpectating() && state.viewer?.host && !isMe && state.status === "lobby";
+  const canKick = !isSpectating() && state.viewer?.host && !isMe && state.status === "lobby" && !player.pveRobot;
   return `
     <div class="player ${roleClass(player.role)}" data-player-id="${escapeHtml(player.id)}">
       <div>
@@ -7707,7 +7931,8 @@ function renderPlayer(player) {
         ${renderBattleHeroMark(player.battleHeroSnapshot, true, player.id)}
         <div class="tags">
           ${player.host ? `<span class="tag accent">房主</span>` : ""}
-          ${player.test ? `<span class="tag">机器人</span>` : ""}
+          ${player.test ? `<span class="tag">${player.pveRobot ? "电脑" : "机器人"}</span>` : ""}
+          ${player.squad ? `<span class="tag team-tag team-${escapeHtml(player.squad)}">${state.gameMode === "pve" ? (player.squad === "a" ? "玩家队" : "电脑队") : (player.squad === "a" ? "红队" : "蓝队")}</span>` : ""}
           ${player.autoPlayEnabled ? `<span class="tag auto-play-mark">托管中</span>` : ""}
           ${state.status === "lobby" ? `<span class="tag ${player.ready ? "good" : ""}">${player.ready ? "已准备" : "未准备"}</span>` : ""}
           ${isTurn ? `<span class="tag good">出牌</span>` : ""}
@@ -7725,6 +7950,12 @@ function renderPlayer(player) {
       </div>
       <div class="player-side">
         <div class="meta">${state.status === "lobby" || isMe ? (player.cardCount ? `${player.cardCount} 张` : "") : ""}</div>
+        ${isMe && state.stage === "lobby" && state.gameMode === "pvp" && state.playMode === "team" ? `
+          <span class="segmented team-choice" aria-label="选择队伍">
+            <button type="button" data-action="select-team" data-team="a" class="${player.squad === "a" ? "" : "secondary"}" ${player.squad === "a" ? "disabled" : ""}>红队</button>
+            <button type="button" data-action="select-team" data-team="b" class="${player.squad === "b" ? "" : "secondary"}" ${player.squad === "b" ? "disabled" : ""}>蓝队</button>
+          </span>
+        ` : ""}
         ${canKick ? `<button type="button" class="secondary compact-button" data-action="kick-player">踢出</button>` : ""}
       </div>
     </div>
@@ -8234,7 +8465,8 @@ function clearSelectionFromPageClick(event) {
 }
 
 const mutatingActions = new Set([
-  "room-leave", "confirm-room-action", "opening-bid-percent", "banker-score-mode", "dogleg-mode", "dogleg-count",
+  "room-leave", "confirm-room-action", "game-mode", "play-mode", "pve-human-count", "select-team", "random-teams",
+  "opening-bid-percent", "banker-score-mode", "dogleg-mode", "dogleg-count",
   "add-robot", "random-seats", "start", "ready-on", "ready-off", "bid-selected",
   "bid-pass", "random-bid", "score-bid-start", "score-bid-10", "score-bid-20",
   "score-bid-30", "score-pass", "trump-suit-S", "trump-suit-H", "trump-suit-C",
@@ -8303,6 +8535,39 @@ document.addEventListener("change", (event) => {
     render();
     return;
   }
+  const autoRandomTarget = event.target.closest('[data-action="auto-random-teams"]');
+  if (autoRandomTarget) {
+    setAutoRandomTeams(autoRandomTarget.checked);
+    return;
+  }
+  const gameModeTarget = event.target.closest('[data-action="select-statistics-game-mode"]');
+  if (gameModeTarget) {
+    statisticsGameMode = gameModeTarget.value === "pve" ? "pve" : "pvp";
+    if (statisticsGameMode === "pve") statisticsPlayMode = "team";
+    else if (statisticsPlayMode === "team") statisticsPlayMode = "all";
+    if (!statisticsPlayerCountOptions().includes(Number(statisticsPlayerCount))) statisticsPlayerCount = "all";
+    resetStatisticsViewForFilters();
+    ensurePlayerStatistics(true);
+    render();
+    return;
+  }
+  const playModeTarget = event.target.closest('[data-action="select-statistics-play-mode"]');
+  if (playModeTarget) {
+    statisticsPlayMode = ["brawl", "team"].includes(playModeTarget.value) ? playModeTarget.value : "all";
+    if (!statisticsPlayerCountOptions().includes(Number(statisticsPlayerCount))) statisticsPlayerCount = "all";
+    resetStatisticsViewForFilters();
+    ensurePlayerStatistics(true);
+    render();
+    return;
+  }
+  const playerCountTarget = event.target.closest('[data-action="select-statistics-player-count"]');
+  if (playerCountTarget) {
+    statisticsPlayerCount = statisticsPlayerCountOptions().includes(Number(playerCountTarget.value)) ? playerCountTarget.value : "all";
+    resetStatisticsViewForFilters();
+    ensurePlayerStatistics(true);
+    render();
+    return;
+  }
   const target = event.target.closest('[data-action="select-statistics-season"]');
   if (!target) return;
   const nextSeasonId = target.value || "all";
@@ -8310,11 +8575,7 @@ document.addEventListener("change", (event) => {
   if (!valid || nextSeasonId === statisticsSeasonId) return;
   statisticsSeasonInitialized = true;
   statisticsSeasonId = nextSeasonId;
-  statisticsSelectedAccountId = "";
-  statisticsGameDate = "";
-  statisticsGameLogId = "";
-  playerStatisticsRows = [];
-  playerStatisticsLoaded = false;
+  resetStatisticsViewForFilters();
   ensurePlayerStatistics(true);
   render();
 });
@@ -8562,6 +8823,11 @@ document.addEventListener("click", (event) => {
     spectatePlayer(target?.dataset.roomId || "", target?.dataset.playerId || "");
   }
   if (action === "copy") copyShare();
+  if (action === "game-mode") setGameMode(event.target.closest("[data-mode]")?.dataset.mode || "pvp");
+  if (action === "play-mode") setPlayMode(event.target.closest("[data-mode]")?.dataset.mode || "brawl");
+  if (action === "pve-human-count") setPveHumanCount(Number(event.target.closest("[data-count]")?.dataset.count || 2));
+  if (action === "select-team") selectLobbyTeam(event.target.closest("[data-team]")?.dataset.team || "a");
+  if (action === "random-teams") randomizeTeams();
   if (action === "opening-bid-percent") {
     setOpeningBidPercent(Number(event.target.closest("[data-percent]")?.dataset.percent || 0));
   }

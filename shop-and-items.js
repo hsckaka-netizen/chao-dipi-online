@@ -179,7 +179,7 @@ export function gameItemAccess(room) {
     && new Set(accountIds).size === humanPlayers.length;
   return {
     eligible,
-    freeUse: eligible && players.some((player) => Boolean(player?.test))
+    freeUse: eligible && room?.gameMode !== "pve" && players.some((player) => Boolean(player?.test))
   };
 }
 

@@ -1,6 +1,6 @@
 export const HERO_HOME_RULES = Object.freeze({
   version: "2026-09-02-v4",
-  skillVersion: "2026-09-02-skill-v7",
+  skillVersion: "2026-09-08-skill-v8",
   boardSkillVersion: "2026-09-02-board-skill-v4",
   maxProductionHours: 6,
   singlePullPrice: 300,
@@ -401,6 +401,27 @@ function cardHasPoints(card) {
   return card?.type === "normal" && (card.rank === "5" || card.rank === "10" || card.rank === "K");
 }
 
+function cardPoints(card) {
+  if (card?.type !== "normal") return 0;
+  if (card.rank === "5") return 5;
+  if (card.rank === "10" || card.rank === "K") return 10;
+  return 0;
+}
+
+function finalTeamAssistPoints(playerId, playerResult, playerResults, trickHistory) {
+  const finalResults = Array.isArray(playerResults) ? playerResults : [];
+  const ownTeam = playerResult?.team;
+  const teamByPlayerId = new Map(finalResults
+    .filter((result) => result?.playerId && result?.team)
+    .map((result) => [result.playerId, result.team]));
+  if (!ownTeam || teamByPlayerId.get(playerId) !== ownTeam) return null;
+  return (Array.isArray(trickHistory) ? trickHistory : []).reduce((total, trick) => {
+    if (!trick?.winnerId || trick.winnerId === playerId || teamByPlayerId.get(trick.winnerId) !== ownTeam) return total;
+    const ownPlay = (trick.plays || []).find((play) => play?.playerId === playerId);
+    return total + (ownPlay?.cards || []).reduce((points, card) => points + cardPoints(card), 0);
+  }, 0);
+}
+
 function baseSkillResult(snapshot, matched, cap, amount, detail) {
   return {
     rulesVersion: HERO_HOME_RULES.skillVersion,
@@ -501,7 +522,10 @@ export function calculateHeroSkillReward({
   }
 
   if (snapshot.heroId === "yokoyama-yui") {
-    const assistPoints = Math.max(0, Number(playerResult.evaluation?.teammateAssistPoints) || 0);
+    const finalAssistPoints = finalTeamAssistPoints(playerId, playerResult, playerResults, history);
+    const assistPoints = Math.max(0, finalAssistPoints == null
+      ? Number(playerResult.evaluation?.teammateAssistPoints) || 0
+      : finalAssistPoints);
     const matched = Math.floor(assistPoints / 40);
     const diamondsPerAssist = YOKOYAMA_DIAMONDS_PER_ASSIST[stars - 1];
     return baseSkillResult(snapshot, matched, null, matched * diamondsPerAssist, `本局为友方贴出${assistPoints}分，每满40分奖励${diamondsPerAssist}钻，共触发${matched}次`);

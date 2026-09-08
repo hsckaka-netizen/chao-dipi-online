@@ -1,5 +1,5 @@
 export const DIAMOND_REWARD_RULES = Object.freeze({
-  version: "2026-08-24-v3",
+  version: "2026-09-08-v4",
   baseAmount: 100,
   winBonus: 0,
   titleBonusCap: 50,
@@ -70,9 +70,21 @@ export function diamondRewardDate(value) {
 
 export function isDiamondEligibleGame(room) {
   if (!room?.players?.length) return false;
-  const accountIds = room.players.map((player) => player.accountId).filter(Boolean);
-  return room.players.every((player) => !player.test && Boolean(player.accountId))
-    && new Set(accountIds).size === room.players.length;
+  const humans = room.players.filter((player) => !player.test);
+  const accountIds = humans.map((player) => player.accountId).filter(Boolean);
+  const humansEligible = humans.length > 0
+    && accountIds.length === humans.length
+    && new Set(accountIds).size === humans.length;
+  if (!humansEligible) return false;
+  if (room.gameMode === "pve") {
+    const robots = room.players.filter((player) => player.test && player.pveRobot);
+    return humans.length >= 2
+      && humans.length <= 4
+      && robots.length === humans.length
+      && room.players.length === humans.length + robots.length
+      && room.playMode === "team";
+  }
+  return room.players.every((player) => !player.test);
 }
 
 function spectatorAccountIds(room) {
@@ -87,6 +99,8 @@ function spectatorAccountIds(room) {
 export function isDiamondEligiblePlayer(room, player) {
   return isDiamondEligibleGame(room)
     && Boolean(player)
+    && !player.test
+    && Boolean(player.accountId)
     && !spectatorAccountIds(room).has(player.accountId);
 }
 
@@ -121,7 +135,7 @@ export function attachDiamondRewards(room) {
           reason: spectatorAccountIds(room).has(roomPlayer?.accountId)
             ? "spectator"
             : roomPlayer?.test
-              ? "robot-game"
+              ? "robot"
               : "login-required"
         };
   });

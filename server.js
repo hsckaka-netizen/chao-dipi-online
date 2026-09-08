@@ -144,13 +144,37 @@ import {
   buildAiPublicKnowledge
 } from "./ai-public-knowledge.js";
 import { createSeededRandom, shuffleWithRandom, stableAiSeed } from "./ai-random.js";
+import {
+  arrangeFixedTeamSeats,
+  assignBalancedTeams,
+  GAME_MODE_PVE,
+  GAME_MODE_PVP,
+  gameModeName,
+  humanPlayers,
+  idleTargetPercent,
+  isFixedTeamGame,
+  MAX_GAME_PLAYERS,
+  normalizeGameMode,
+  normalizedPveHumanCount,
+  normalizePlayMode,
+  oppositeTeam,
+  PLAY_MODE_BRAWL,
+  PLAY_MODE_TEAM,
+  playModeName,
+  pveRobotPlayers,
+  roomPlayerLimits,
+  TEAM_A,
+  TEAM_B,
+  teamCounts,
+  validateFixedTeams
+} from "./game-modes.js";
 
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
 const publicDir = join(__dirname, "public");
 const port = Number(process.env.PORT || 3000);
 
 const MIN_PLAYERS = 5;
-const MAX_PLAYERS = 9;
+const MAX_PLAYERS = MAX_GAME_PLAYERS;
 const HAND_SIZE = 53;
 const PLAYER_COUNT_REMOVAL_SUITS = new Map([
   [7, ["H"]],
@@ -417,11 +441,34 @@ function profilesList() {
 function roomStatusLabel(room) {
   if (room.status === "lobby") {
     if (room.stage === "finished") return "等待下一局";
-    if (room.players.length >= MAX_PLAYERS) return "已满";
+    if (!roomCanJoin(room)) return "已满";
     return "可加入";
   }
   if (room.status === "finished") return "已结束";
   return "进行中";
+}
+
+function roomCanJoin(room) {
+  if (room.status !== "lobby") return false;
+  if (normalizeGameMode(room.gameMode) === GAME_MODE_PVE) {
+    return humanPlayers(room).length < normalizedPveHumanCount(room.pveHumanCount);
+  }
+  return room.players.length < roomPlayerLimits(room).maxPlayers;
+}
+
+function roomStartValidation(room) {
+  const limits = roomPlayerLimits(room);
+  if (room.players.length < limits.minPlayers || room.players.length > limits.maxPlayers) {
+    return { valid: false, error: limits.minPlayers === limits.maxPlayers
+      ? `需要 ${limits.minPlayers} 人才能开始`
+      : `需要 ${limits.minPlayers}-${limits.maxPlayers} 人才能开始` };
+  }
+  const teams = validateFixedTeams(room);
+  if (!teams.valid) return teams;
+  if (!allPlayersReady(room)) {
+    return { valid: false, error: `还有玩家未准备：${readyPlayerCount(room)}/${room.players.length}` };
+  }
+  return { valid: true, error: "" };
 }
 
 function defaultDoglegCount(playerCount) {
@@ -443,6 +490,11 @@ function clampDoglegCount(value, playerCount) {
 
 function syncLobbyDoglegCount(room) {
   if (room.status !== "lobby" && room.status !== "finished") return;
+  if (isFixedTeamGame(room)) {
+    room.doglegNeeded = 0;
+    room.doglegConfigured = false;
+    return;
+  }
   if (room.doglegConfigured) {
     room.doglegNeeded = clampDoglegCount(room.doglegNeeded, room.players.length);
   } else {
@@ -457,13 +509,19 @@ function joinableRoomsList() {
       roomId: room.id,
       status: room.status,
       stage: room.stage,
-      joinable: room.status === "lobby" && room.players.length < MAX_PLAYERS,
+      joinable: roomCanJoin(room),
       statusLabel: roomStatusLabel(room),
       hostName: playerName(room, room.hostId),
       playerCount: room.players.length,
+      humanPlayerCount: humanPlayers(room).length,
       readyCount: readyPlayerCount(room),
-      minPlayers: MIN_PLAYERS,
-      maxPlayers: MAX_PLAYERS,
+      minPlayers: roomPlayerLimits(room).minPlayers,
+      maxPlayers: roomPlayerLimits(room).maxPlayers,
+      humanTarget: roomPlayerLimits(room).humanTarget,
+      gameMode: normalizeGameMode(room.gameMode),
+      gameModeName: gameModeName(room.gameMode),
+      playMode: normalizePlayMode(room.playMode, room.gameMode),
+      playModeName: playModeName(room.playMode, room.gameMode),
       phase: room.phase,
       callMode: normalizedCallMode(room.callMode),
       callModeName: callModeName(room.callMode),
@@ -483,7 +541,10 @@ function joinableRoomsList() {
         avatarFrame: normalizeAvatarFrame(player.avatarFrame),
         cardSkin: normalizeCardSkin(player.cardSkin),
         host: player.host,
-        ready: Boolean(player.ready)
+        ready: Boolean(player.ready),
+        test: Boolean(player.test),
+        pveRobot: Boolean(player.pveRobot),
+        squad: player.squad || null
       }))
     }))
     .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
@@ -508,6 +569,8 @@ function createPlayer(profileOrName, host = false, test = false) {
     playEffect: normalizePlayEffect(profile?.playEffect),
     host,
     test,
+    pveRobot: false,
+    squad: null,
     connected: false,
     ready: Boolean(test),
     nextRoundEntered: Boolean(test),
@@ -535,6 +598,59 @@ function createAiTestPlayer(room, fallbackIndex) {
   player.cardSkin = normalizeCardSkin(profile?.cardSkin);
   player.playEffect = normalizePlayEffect(profile?.playEffect);
   return player;
+}
+
+function createPveRobot(room, fallbackIndex) {
+  const player = createAiTestPlayer(room, fallbackIndex);
+  player.pveRobot = true;
+  player.squad = TEAM_B;
+  return player;
+}
+
+function clearHumanReady(room) {
+  room.players.forEach((player) => {
+    if (!player.test) player.ready = false;
+  });
+}
+
+function syncPveLobbyPlayers(room) {
+  if (normalizeGameMode(room.gameMode) !== GAME_MODE_PVE || room.status !== "lobby") return;
+  const target = normalizedPveHumanCount(room.pveHumanCount);
+  room.pveHumanCount = target;
+  room.playMode = PLAY_MODE_TEAM;
+  room.players = room.players.filter((player) => !player.test || player.pveRobot);
+  room.players.forEach((player) => {
+    if (!player.test) player.squad = TEAM_A;
+  });
+  const robots = pveRobotPlayers(room);
+  if (robots.length > target) {
+    const removeIds = new Set(robots.slice(target).map((player) => player.id));
+    room.players = room.players.filter((player) => !removeIds.has(player.id));
+  }
+  while (pveRobotPlayers(room).length < target) {
+    room.players.push(createPveRobot(room, pveRobotPlayers(room).length + 1));
+  }
+  pveRobotPlayers(room).forEach((player) => {
+    player.squad = TEAM_B;
+    player.ready = true;
+  });
+  room.kittySize = room.players.length;
+  room.doglegNeeded = 0;
+  room.doglegConfigured = false;
+  room.bankerScoreMode = BANKER_SCORE_MODE_AVERAGE;
+}
+
+function assignLobbyTeamIfNeeded(room, player) {
+  if (!isFixedTeamGame(room)) {
+    player.squad = null;
+    return;
+  }
+  if (normalizeGameMode(room.gameMode) === GAME_MODE_PVE) {
+    player.squad = player.test ? TEAM_B : TEAM_A;
+    return;
+  }
+  const counts = teamCounts(room.players.filter((item) => item.id !== player.id));
+  player.squad = counts.a <= counts.b ? TEAM_A : TEAM_B;
 }
 
 function syncProfileToRooms(profile) {
@@ -963,6 +1079,15 @@ function beginScoreBidding(room) {
   addEvent(room, `${playerName(room, scoreBid.current.playerId)} 以 ${scoreBid.current.score} 分起叫抢庄`);
 }
 
+function beginBankerSelectionFlow(room) {
+  if (!isFixedTeamGame(room)) {
+    beginScoreBidding(room);
+    return;
+  }
+  addEvent(room, `${playerName(room, room.bankerId)} 随机成为庄家，其所在战队为庄队`);
+  beginYokoyamaSkillStage(room);
+}
+
 function completedGameItemPlayerIds(room) {
   return new Set(room.gameItems?.stage?.completedPlayerIds || []);
 }
@@ -1054,7 +1179,7 @@ function beginShenBiesanSkillStage(room) {
     resolving: false
   };
   if (!eligiblePlayerIds.length) {
-    beginScoreBidding(room);
+    beginBankerSelectionFlow(room);
     return false;
   }
   room.stage = "shen-biesan-skill";
@@ -1134,7 +1259,7 @@ async function resolveShenBiesanSkillStage(room) {
       addEvent(room, `${player.name} 发动玉面雷神失败：${error.message}`);
     }
   }
-  beginScoreBidding(room);
+  beginBankerSelectionFlow(room);
   return true;
 }
 
@@ -1276,6 +1401,13 @@ function deal(room, options = {}) {
   clearBoardHeroSkillTimer(room);
   clearRoomTaunts(room);
   room.events = [];
+  if (isFixedTeamGame(room)) {
+    const banker = randomPlayer(room);
+    room.bankerId = banker.id;
+    room.players = arrangeFixedTeamSeats(room.players, banker.id);
+  } else {
+    room.bankerId = null;
+  }
   const count = room.players.length;
   const preparedDeck = deckForPlayerCount(count);
   const deck = shuffle(preparedDeck.deck);
@@ -1299,14 +1431,13 @@ function deal(room, options = {}) {
   room.phase = "重开卡使用阶段";
   room.startedAt = now();
   room.kittySize = room.kitty.length;
-  room.bankerId = null;
   room.trumpSuit = null;
   room.doglegCard = null;
   room.doglegPlayerIds = [];
   room.dynamicDogleg = null;
   room.hiddenDogleg = null;
   room.randomOrderDogleg = null;
-  room.doglegNeeded = clampDoglegCount(room.doglegNeeded, count);
+  room.doglegNeeded = isFixedTeamGame(room) ? 0 : clampDoglegCount(room.doglegNeeded, count);
   room.result = null;
   room.setup = emptySetup();
   room.currentTrick = null;
@@ -1341,7 +1472,13 @@ function allPlayersEnteredNextRound(room) {
 
 function finalizeNextRoundLobby(room) {
   if (room.stage !== "finished" || !allPlayersEnteredNextRound(room)) return false;
-  resetRoomToLobby(room, { preserveReady: true });
+  const randomizeTeams = Boolean(
+    room.autoRandomTeams
+    && normalizeGameMode(room.gameMode) === GAME_MODE_PVP
+    && isFixedTeamGame(room)
+  );
+  resetRoomToLobby(room, { preserveReady: true, randomizeTeams });
+  if (randomizeTeams) addEvent(room, "系统已为新一局自动随机分队");
   addEvent(room, "所有玩家已确认下一局，等待房主开始");
   return true;
 }
@@ -1386,6 +1523,8 @@ function resetRoomToLobby(room, options = {}) {
   room.restartCardUsedPlayerIds = [];
   room.boardHeroSkillUseInFlight = false;
   room.events = [];
+  if (options.randomizeTeams) assignBalancedTeams(room.players);
+  if (normalizeGameMode(room.gameMode) === GAME_MODE_PVE) syncPveLobbyPlayers(room);
   room.players.forEach((player) => {
     player.hand = [];
     player.autoPlayEnabled = false;
@@ -1644,6 +1783,11 @@ function boardHeroSkillsSnapshot(room, viewer = null) {
 
 function playerRole(room, playerId, viewer = null) {
   if (room.bankerId === playerId) return "庄家";
+  if (isFixedTeamGame(room) && room.bankerId) {
+    const banker = playerById(room, room.bankerId);
+    const player = playerById(room, playerId);
+    return banker?.squad && player?.squad === banker.squad ? "庄家队友" : "闲家";
+  }
   if ((room.doglegPlayerIds || []).includes(playerId)) return "狗腿";
   if (normalizeDoglegMode(room.doglegMode) === DOGLEG_MODE_HIDDEN
     && viewer?.id === playerId
@@ -1766,12 +1910,25 @@ function roomSnapshot(room, viewer = null, options = {}) {
   const kittyViewerId = room.setup?.fry?.lastFryerId || null;
   const readyCount = readyPlayerCount(room);
   const allReady = allPlayersReady(room);
+  const limits = roomPlayerLimits(room);
+  const startValidation = roomStartValidation(room);
+  const fixedTeamCounts = teamCounts(room.players);
   return {
     snapshotVersion: room.snapshotVersion || 0,
     roomId: room.id,
     status: room.status,
     stage: room.stage,
     phase: room.phase,
+    gameMode: normalizeGameMode(room.gameMode),
+    gameModeName: gameModeName(room.gameMode),
+    playMode: normalizePlayMode(room.playMode, room.gameMode),
+    playModeName: playModeName(room.playMode, room.gameMode),
+    autoRandomTeams: Boolean(room.autoRandomTeams),
+    pveHumanCount: normalizedPveHumanCount(room.pveHumanCount),
+    humanPlayerCount: humanPlayers(room).length,
+    teamCounts: fixedTeamCounts,
+    canStart: startValidation.valid,
+    startRequirement: startValidation.error,
     callMode: normalizedCallMode(room.callMode),
     callModeName: callModeName(room.callMode),
     openingBidPercent: normalizedOpeningBidPercent(room.openingBidPercent),
@@ -1779,8 +1936,9 @@ function roomSnapshot(room, viewer = null, options = {}) {
     bankerScoreModeName: bankerScoreModeName(room.bankerScoreMode),
     doglegMode: normalizeDoglegMode(room.doglegMode),
     doglegModeName: doglegModeName(room.doglegMode),
-    minPlayers: MIN_PLAYERS,
-    maxPlayers: MAX_PLAYERS,
+    minPlayers: limits.minPlayers,
+    maxPlayers: limits.maxPlayers,
+    humanTarget: limits.humanTarget,
     handSize: HAND_SIZE,
     kittyCount: room.kitty.length,
     kittySize: room.kittySize || room.players.length,
@@ -1810,6 +1968,7 @@ function roomSnapshot(room, viewer = null, options = {}) {
       ready: Boolean(viewer.ready),
       nextRoundEntered: Boolean(viewer.nextRoundEntered),
       autoPlayEnabled: Boolean(viewer.autoPlayEnabled),
+      squad: viewer.squad || null,
       battleHeroSnapshot: viewer.battleHeroSnapshot || null
     } : null,
     players: room.players.map((player) => ({
@@ -1823,6 +1982,8 @@ function roomSnapshot(room, viewer = null, options = {}) {
       playEffect: normalizePlayEffect(player.playEffect),
       host: player.host,
       test: player.test,
+      pveRobot: Boolean(player.pveRobot),
+      squad: player.squad || null,
       role: playerRole(room, player.id, secretViewer),
       connected: player.connected,
       ready: Boolean(player.ready),
@@ -2204,6 +2365,12 @@ function revealRemainingHiddenDoglegs(room) {
 }
 
 function bankerTeamIds(room) {
+  if (isFixedTeamGame(room)) {
+    const banker = playerById(room, room.bankerId);
+    return banker?.squad
+      ? room.players.filter((player) => player.squad === banker.squad).map((player) => player.id)
+      : [room.bankerId].filter(Boolean);
+  }
   return [room.bankerId, ...actualDoglegPlayerIds(room)].filter(Boolean);
 }
 
@@ -2220,6 +2387,8 @@ function winThreshold(playerCount) {
 }
 
 function gameWinThreshold(room) {
+  const fixedPercent = idleTargetPercent(room);
+  if (fixedPercent) return Math.round(totalGamePoints(room) * fixedPercent / 100);
   if (normalizedCallMode(room.callMode) === CALL_MODE_SCORE) {
     const bidScore = room.setup?.scoreBid?.current?.score;
     if (Number.isFinite(bidScore) && bidScore > 0) return totalGamePoints(room) - bidScore;
@@ -2238,6 +2407,10 @@ function gameScoreText(value) {
 
 function teamName(team) {
   return team === "idle" ? "闲家" : "庄队";
+}
+
+function bottomSettlementDelta(room, bottomWinnerTeam) {
+  return bottomWinnerTeam === "idle" ? (isFixedTeamGame(room) ? 1 : 2) : -1;
 }
 
 function finishGame(room, completedTrick) {
@@ -2284,7 +2457,7 @@ function finishGame(room, completedTrick) {
   const scoreDiff = idleScore - threshold;
   const baseScore = idleScore >= threshold ? 2 : -2;
   const scoreStep = scoreDiff >= 0 ? Math.floor(scoreDiff / 40) : -Math.floor(Math.abs(scoreDiff) / 40);
-  const bottomDelta = bottomWinnerTeam === "idle" ? 2 : -1;
+  const bottomDelta = bottomSettlementDelta(room, bottomWinnerTeam);
 
   let bankerDraggedValue = 0;
   let idleDraggedValue = 0;
@@ -2309,7 +2482,7 @@ function finishGame(room, completedTrick) {
     idleEachScore,
     idleCount: idleIds.length,
     doglegCount: Math.max(0, bankerIds.length - 1),
-    mode: room.bankerScoreMode
+    mode: isFixedTeamGame(room) ? BANKER_SCORE_MODE_AVERAGE : room.bankerScoreMode
   });
   const bankerScore = bankerScores.bankerScore;
   const doglegEachScore = bankerScores.doglegEachScore;
@@ -2351,6 +2524,10 @@ function finishGame(room, completedTrick) {
   room.result = {
     finishedAt: now(),
     playerCount: room.players.length,
+    gameMode: normalizeGameMode(room.gameMode),
+    gameModeName: gameModeName(room.gameMode),
+    playMode: normalizePlayMode(room.playMode, room.gameMode),
+    playModeName: playModeName(room.playMode, room.gameMode),
     callMode: normalizedCallMode(room.callMode),
     callModeName: callModeName(room.callMode),
     bankerBidScore: room.setup?.scoreBid?.current?.score || null,
@@ -2399,10 +2576,12 @@ function finishGame(room, completedTrick) {
     bankerTeamTotal: bankerScores.bankerTeamTotal,
     bankerScore: roundGameScore(bankerScore),
     doglegEachScore: roundGameScore(doglegEachScore),
+    teammateEachScore: roundGameScore(doglegEachScore),
     bankerEachScore: roundGameScore(bankerScore),
     idleEachScoreText: gameScoreText(idleEachScore),
     bankerScoreText: gameScoreText(bankerScore),
     doglegEachScoreText: gameScoreText(doglegEachScore),
+    teammateEachScoreText: gameScoreText(doglegEachScore),
     bankerEachScoreText: gameScoreText(bankerScore),
     playerResults: room.players.map((player) => {
       const isBankerTeam = bankerIdSet.has(player.id);
@@ -2417,6 +2596,7 @@ function finishGame(room, completedTrick) {
         playerId: player.id,
         name: player.name,
         role,
+        squad: player.squad || null,
         team: isBankerTeam ? "banker" : "idle",
         teamName: isBankerTeam ? "庄队" : "闲家",
         trickScore: player.score || 0,
@@ -2468,7 +2648,7 @@ function finishGame(room, completedTrick) {
   attachDiamondRewards(room);
 
   const bankerSettlementText = bankerIds.length > 1
-    ? `庄家 ${room.result.bankerScoreText} 分，狗腿每人 ${room.result.doglegEachScoreText} 分`
+    ? `庄家 ${room.result.bankerScoreText} 分，${isFixedTeamGame(room) ? "庄家队友" : "狗腿"}每人 ${room.result.doglegEachScoreText} 分`
     : `庄家 ${room.result.bankerScoreText} 分`;
   addEvent(room, `本局结束：${teamName(winnerTeam)}牌局获胜，闲家 ${idleScore}/${threshold} 分，闲家每人 ${room.result.idleEachScoreText} 分，${bankerSettlementText}`);
 }
@@ -4642,12 +4822,21 @@ function cardIsHiddenDogleg(room, player, card) {
 }
 
 function aiOwnTeam(room, player) {
+  if (isFixedTeamGame(room)) {
+    const banker = playerById(room, room.bankerId);
+    return banker?.squad && player.squad === banker.squad ? "banker" : "idle";
+  }
   if (player.id === room.bankerId) return "banker";
   if (actualDoglegPlayerIds(room).includes(player.id)) return "banker";
   return "idle";
 }
 
 function aiVisibleTeam(room, perspectivePlayer, targetPlayerId) {
+  if (isFixedTeamGame(room)) {
+    const target = playerById(room, targetPlayerId);
+    const banker = playerById(room, room.bankerId);
+    return target?.squad && target.squad === banker?.squad ? "banker" : "idle";
+  }
   if (targetPlayerId === room.bankerId) return "banker";
   if ((room.doglegPlayerIds || []).includes(targetPlayerId)) return "banker";
   if (targetPlayerId === perspectivePlayer.id) return aiOwnTeam(room, perspectivePlayer);
@@ -6174,6 +6363,14 @@ function roomStateAck(room, extra = {}) {
   };
 }
 
+function historyFilterOptions(url) {
+  return {
+    gameMode: url.searchParams.get("gameMode"),
+    playMode: url.searchParams.get("playMode"),
+    playerCount: url.searchParams.get("playerCount")
+  };
+}
+
 async function handleApi(req, res, pathParts, url) {
   if (pathParts[1] === "auth") {
     if (req.method === "GET" && pathParts[2] === "status") {
@@ -6447,7 +6644,9 @@ async function handleApi(req, res, pathParts, url) {
       return writeJson(res, 200, { seasons: await listSeasons() });
     }
     if (pathParts[2] === "statistics") {
-      return writeJson(res, 200, { players: await listPlayerStatistics(url.searchParams.get("seasonId")) });
+      return writeJson(res, 200, {
+        players: await listPlayerStatistics(url.searchParams.get("seasonId"), historyFilterOptions(url))
+      });
     }
     if (pathParts[2] === "players" && pathParts[3]) {
       if (pathParts[4] === "games") {
@@ -6455,11 +6654,12 @@ async function handleApi(req, res, pathParts, url) {
           seasonId: url.searchParams.get("seasonId"),
           from: url.searchParams.get("from"),
           to: url.searchParams.get("to"),
-          limit: url.searchParams.get("limit")
+          limit: url.searchParams.get("limit"),
+          ...historyFilterOptions(url)
         });
         return writeJson(res, 200, { games });
       }
-      const detail = await getPlayerStatistics(pathParts[3], url.searchParams.get("seasonId"));
+      const detail = await getPlayerStatistics(pathParts[3], url.searchParams.get("seasonId"), historyFilterOptions(url));
       return detail
         ? writeJson(res, 200, detail)
         : writeJson(res, 404, { error: "暂无该玩家的牌局数据" });
@@ -6627,6 +6827,10 @@ async function handleApi(req, res, pathParts, url) {
       createdAt: now(),
       startedAt: null,
       gameRecordId: null,
+      gameMode: GAME_MODE_PVP,
+      playMode: PLAY_MODE_BRAWL,
+      autoRandomTeams: false,
+      pveHumanCount: 2,
       callMode: CALL_MODE_SCORE,
       openingBidPercent: DEFAULT_OPENING_BID_PERCENT,
       bankerScoreMode: DEFAULT_BANKER_SCORE_MODE,
@@ -6771,14 +6975,16 @@ async function handleApi(req, res, pathParts, url) {
         });
       }
       if (room.status !== "lobby") return writeJson(res, 409, { error: "牌局已经开始，暂不能加入" });
-      if (room.players.length >= MAX_PLAYERS) return writeJson(res, 409, { error: "房间已满" });
+      if (!roomCanJoin(room)) return writeJson(res, 409, { error: "房间已满" });
 
       const player = createPlayer(profile, false);
+      assignLobbyTeamIfNeeded(room, player);
       if (room.stage === "finished") {
         player.nextRoundEntered = true;
         player.ready = true;
       }
       room.players.push(player);
+      if (normalizeGameMode(room.gameMode) === GAME_MODE_PVE) syncPveLobbyPlayers(room);
       clearSpectatorIdentityForAccount(room, player.accountId);
       syncLobbyDoglegCount(room);
       addEvent(room, `${profile.name} 加入了房间`);
@@ -6804,6 +7010,7 @@ async function handleApi(req, res, pathParts, url) {
         return writeJson(res, 200, { ok: true, dissolved: true });
       }
       if (removed) addEvent(room, `${removed.name} 退出了房间`);
+      if (removed && rooms.has(room.id) && normalizeGameMode(room.gameMode) === GAME_MODE_PVE) syncPveLobbyPlayers(room);
       broadcast(room);
       return writeJson(res, 200, { ok: true });
     }
@@ -6831,6 +7038,137 @@ async function handleApi(req, res, pathParts, url) {
         return writeJson(res, 200, { ok: true, dissolved: true });
       }
       if (removed) addEvent(room, `房主将 ${removed.name} 移出了房间`);
+      if (removed && rooms.has(room.id) && normalizeGameMode(room.gameMode) === GAME_MODE_PVE) syncPveLobbyPlayers(room);
+      broadcast(room);
+      return writeJson(res, 200, roomStateAck(room));
+    }
+
+    if (req.method === "POST" && pathParts[3] === "game-mode") {
+      const body = await readJson(req);
+      const viewer = requirePlayer(res, room, body.playerId, body.token);
+      if (!viewer) return;
+      if (!viewer.host) return writeJson(res, 403, { error: "只有房主可以切换对战模式" });
+      if (room.status !== "lobby" || room.stage !== "lobby") return writeJson(res, 409, { error: "只有开局前可以切换对战模式" });
+      if (body.mode !== GAME_MODE_PVP && body.mode !== GAME_MODE_PVE) {
+        return writeJson(res, 400, { error: "对战模式只支持 PVP 或 PVE" });
+      }
+      if (room.gameMode === body.mode) return writeJson(res, 200, roomStateAck(room));
+      const humans = humanPlayers(room);
+      if (body.mode === GAME_MODE_PVE && humans.length > 4) {
+        return writeJson(res, 409, { error: "PVE 最多支持 4 名真人玩家，请先减少房间人数" });
+      }
+      if (body.mode === GAME_MODE_PVE) {
+        room.lastPvpPlayMode = normalizePlayMode(room.playMode, GAME_MODE_PVP);
+        room.players = humans;
+        room.gameMode = GAME_MODE_PVE;
+        room.playMode = PLAY_MODE_TEAM;
+        room.pveHumanCount = Math.max(2, humans.length);
+        syncPveLobbyPlayers(room);
+      } else {
+        room.players = humans;
+        room.gameMode = GAME_MODE_PVP;
+        room.playMode = normalizePlayMode(room.lastPvpPlayMode, GAME_MODE_PVP);
+        if (room.playMode === PLAY_MODE_TEAM) assignBalancedTeams(room.players);
+        else room.players.forEach((player) => { player.squad = null; });
+        syncLobbyDoglegCount(room);
+      }
+      clearHumanReady(room);
+      addEvent(room, `房主将对战模式切换为${gameModeName(room.gameMode)}`);
+      broadcast(room);
+      return writeJson(res, 200, roomStateAck(room));
+    }
+
+    if (req.method === "POST" && pathParts[3] === "play-mode") {
+      const body = await readJson(req);
+      const viewer = requirePlayer(res, room, body.playerId, body.token);
+      if (!viewer) return;
+      if (!viewer.host) return writeJson(res, 403, { error: "只有房主可以切换玩法" });
+      if (room.status !== "lobby" || room.stage !== "lobby") return writeJson(res, 409, { error: "只有开局前可以切换玩法" });
+      if (normalizeGameMode(room.gameMode) !== GAME_MODE_PVP) {
+        return writeJson(res, 409, { error: "PVE 固定使用战队模式" });
+      }
+      if (body.mode !== PLAY_MODE_BRAWL && body.mode !== PLAY_MODE_TEAM) {
+        return writeJson(res, 400, { error: "玩法只支持乱斗模式或战队模式" });
+      }
+      if (room.playMode !== body.mode) {
+        room.playMode = body.mode;
+        room.lastPvpPlayMode = body.mode;
+        if (body.mode === PLAY_MODE_TEAM) {
+          room.players = room.players.filter((player) => !player.test);
+          assignBalancedTeams(room.players);
+          room.bankerScoreMode = BANKER_SCORE_MODE_AVERAGE;
+        } else {
+          room.players.forEach((player) => { player.squad = null; });
+        }
+        syncLobbyDoglegCount(room);
+        clearHumanReady(room);
+        addEvent(room, `房主将玩法切换为${playModeName(room.playMode, room.gameMode)}`);
+      }
+      broadcast(room);
+      return writeJson(res, 200, roomStateAck(room));
+    }
+
+    if (req.method === "POST" && pathParts[3] === "pve-human-count") {
+      const body = await readJson(req);
+      const viewer = requirePlayer(res, room, body.playerId, body.token);
+      if (!viewer) return;
+      if (!viewer.host) return writeJson(res, 403, { error: "只有房主可以设置 PVE 人数" });
+      if (room.status !== "lobby" || room.stage !== "lobby" || normalizeGameMode(room.gameMode) !== GAME_MODE_PVE) {
+        return writeJson(res, 409, { error: "只有 PVE 开局前可以设置人数" });
+      }
+      const target = Number(body.count);
+      if (![2, 3, 4].includes(target)) return writeJson(res, 400, { error: "PVE 真人队人数只支持 2、3 或 4 人" });
+      if (target < humanPlayers(room).length) return writeJson(res, 409, { error: "当前真人玩家数量已超过所选人数" });
+      room.pveHumanCount = target;
+      syncPveLobbyPlayers(room);
+      clearHumanReady(room);
+      addEvent(room, `房主将 PVE 调整为 ${target}v${target}`);
+      broadcast(room);
+      return writeJson(res, 200, roomStateAck(room));
+    }
+
+    if (req.method === "POST" && pathParts[3] === "team") {
+      const body = await readJson(req);
+      const viewer = requirePlayer(res, room, body.playerId, body.token);
+      if (!viewer) return;
+      if (room.status !== "lobby" || room.stage !== "lobby" || normalizeGameMode(room.gameMode) !== GAME_MODE_PVP || !isFixedTeamGame(room)) {
+        return writeJson(res, 409, { error: "只有 PVP 战队模式开局前可以选择队伍" });
+      }
+      if (body.team !== TEAM_A && body.team !== TEAM_B) return writeJson(res, 400, { error: "请选择红队或蓝队" });
+      if (viewer.squad !== body.team) {
+        viewer.squad = body.team;
+        clearHumanReady(room);
+        addEvent(room, `${viewer.name} 加入${body.team === TEAM_A ? "红队" : "蓝队"}`);
+      }
+      broadcast(room);
+      return writeJson(res, 200, roomStateAck(room));
+    }
+
+    if (req.method === "POST" && pathParts[3] === "random-teams") {
+      const body = await readJson(req);
+      const viewer = requirePlayer(res, room, body.playerId, body.token);
+      if (!viewer) return;
+      if (!viewer.host) return writeJson(res, 403, { error: "只有房主可以随机分队" });
+      if (room.status !== "lobby" || room.stage !== "lobby" || normalizeGameMode(room.gameMode) !== GAME_MODE_PVP || !isFixedTeamGame(room)) {
+        return writeJson(res, 409, { error: "只有 PVP 战队模式开局前可以随机分队" });
+      }
+      assignBalancedTeams(room.players);
+      clearHumanReady(room);
+      addEvent(room, "房主重新随机了两队人员");
+      broadcast(room);
+      return writeJson(res, 200, roomStateAck(room));
+    }
+
+    if (req.method === "POST" && pathParts[3] === "auto-random-teams") {
+      const body = await readJson(req);
+      const viewer = requirePlayer(res, room, body.playerId, body.token);
+      if (!viewer) return;
+      if (!viewer.host) return writeJson(res, 403, { error: "只有房主可以设置自动随机分队" });
+      if (room.status !== "lobby" || room.stage !== "lobby" || normalizeGameMode(room.gameMode) !== GAME_MODE_PVP || !isFixedTeamGame(room)) {
+        return writeJson(res, 409, { error: "只有 PVP 战队模式开局前可以设置自动随机分队" });
+      }
+      room.autoRandomTeams = Boolean(body.enabled);
+      addEvent(room, `每局结束后${room.autoRandomTeams ? "自动随机分队" : "保持固定队伍"}`);
       broadcast(room);
       return writeJson(res, 200, roomStateAck(room));
     }
@@ -6853,6 +7191,7 @@ async function handleApi(req, res, pathParts, url) {
       if (!viewer) return;
       if (!viewer.host) return writeJson(res, 403, { error: "只有房主可以设置起始叫分" });
       if (room.status !== "lobby") return writeJson(res, 409, { error: "只有开局前可以设置起始叫分" });
+      if (isFixedTeamGame(room)) return writeJson(res, 409, { error: "战队模式不需要设置起始叫分" });
       const nextPercent = Number(body.percent);
       if (!OPENING_BID_PERCENTAGES.has(nextPercent)) {
         return writeJson(res, 400, { error: "起始叫分比例只能设置为 10%、20%、30% 或 40%" });
@@ -6871,6 +7210,7 @@ async function handleApi(req, res, pathParts, url) {
       if (!viewer) return;
       if (!viewer.host) return writeJson(res, 403, { error: "只有房主可以设置庄腿积分" });
       if (room.status !== "lobby") return writeJson(res, 409, { error: "只有开局前可以切换庄腿积分" });
+      if (isFixedTeamGame(room)) return writeJson(res, 409, { error: "战队模式固定由庄队均分积分" });
       if (body.mode !== BANKER_SCORE_MODE_REMAINDER && body.mode !== BANKER_SCORE_MODE_AVERAGE) {
         return writeJson(res, 400, { error: "庄腿积分只支持庄家承余或庄队均摊" });
       }
@@ -6888,6 +7228,7 @@ async function handleApi(req, res, pathParts, url) {
       if (!viewer) return;
       if (!viewer.host) return writeJson(res, 403, { error: "只有房主可以设置狗腿数量" });
       if (room.status !== "lobby") return writeJson(res, 409, { error: "只有开局前可以设置狗腿数量" });
+      if (isFixedTeamGame(room)) return writeJson(res, 409, { error: "战队模式不设置狗腿" });
       const nextCount = clampDoglegCount(body.count, room.players.length);
       room.doglegNeeded = nextCount;
       room.doglegConfigured = true;
@@ -6902,6 +7243,7 @@ async function handleApi(req, res, pathParts, url) {
       if (!viewer) return;
       if (!viewer.host) return writeJson(res, 403, { error: "只有房主可以设置狗腿机制" });
       if (room.status !== "lobby") return writeJson(res, 409, { error: "只有开局前可以切换狗腿机制" });
+      if (isFixedTeamGame(room)) return writeJson(res, 409, { error: "战队模式不设置狗腿机制" });
       if (body.mode !== DOGLEG_MODE_TRADITIONAL
         && body.mode !== DOGLEG_MODE_DYNAMIC
         && body.mode !== DOGLEG_MODE_HIDDEN
@@ -6920,6 +7262,7 @@ async function handleApi(req, res, pathParts, url) {
       if (!viewer) return;
       if (!viewer.host) return writeJson(res, 403, { error: "只有房主可以随机座位" });
       if (room.status !== "lobby") return writeJson(res, 409, { error: "只有开局前可以随机座位" });
+      if (isFixedTeamGame(room)) return writeJson(res, 409, { error: "战队模式会在开局时按队伍自动排座" });
       if (room.players.length < 2) return writeJson(res, 409, { error: "至少需要 2 名玩家才能随机座位" });
 
       const previousOrder = room.players.map((player) => player.id);
@@ -6939,6 +7282,9 @@ async function handleApi(req, res, pathParts, url) {
       if (!viewer) return;
       if (!viewer.host) return writeJson(res, 403, { error: "只有房主可以添加机器人" });
       if (room.status !== "lobby") return writeJson(res, 409, { error: "牌局已经开始，不能添加机器人" });
+      if (normalizeGameMode(room.gameMode) === GAME_MODE_PVE || isFixedTeamGame(room)) {
+        return writeJson(res, 409, { error: "当前模式由系统管理对战成员" });
+      }
       if (room.players.length >= MAX_PLAYERS) return writeJson(res, 409, { error: "房间已满" });
       const nextIndex = room.players.filter((player) => player.test).length + 1;
       const robot = createAiTestPlayer(room, nextIndex);
@@ -6955,6 +7301,9 @@ async function handleApi(req, res, pathParts, url) {
       if (!viewer) return;
       if (!viewer.host) return writeJson(res, 403, { error: "只有房主可以添加机器人" });
       if (room.status !== "lobby") return writeJson(res, 409, { error: "牌局已经开始，不能添加机器人" });
+      if (normalizeGameMode(room.gameMode) === GAME_MODE_PVE || isFixedTeamGame(room)) {
+        return writeJson(res, 409, { error: "当前模式由系统管理对战成员" });
+      }
 
       const targetCount = Math.max(MIN_PLAYERS, Math.min(MAX_PLAYERS, Number(body.targetCount) || MIN_PLAYERS));
       let added = 0;
@@ -6995,12 +7344,8 @@ async function handleApi(req, res, pathParts, url) {
       if (room.status !== "lobby" || room.stage !== "lobby") {
         return writeJson(res, 409, { error: room.stage === "finished" ? "还有玩家正在查看结算" : "牌局已经开始" });
       }
-      if (room.players.length < MIN_PLAYERS || room.players.length > MAX_PLAYERS) {
-        return writeJson(res, 400, { error: `需要 ${MIN_PLAYERS}-${MAX_PLAYERS} 人才能开始` });
-      }
-      if (!allPlayersReady(room)) {
-        return writeJson(res, 409, { error: `还有玩家未准备：${readyPlayerCount(room)}/${room.players.length}` });
-      }
+      const validation = roomStartValidation(room);
+      if (!validation.valid) return writeJson(res, 409, { error: validation.error });
 
       room.restartCardUsedPlayerIds = [];
       await lockBattleHeroesForDeal(room);
@@ -7398,6 +7743,14 @@ export const __aiPlayTesting = {
   legalAutoPlay,
   playCards,
   playSuit
+};
+
+export const __gameModeTesting = {
+  bankerTeamIds,
+  bottomSettlementDelta,
+  gameWinThreshold,
+  playerRole,
+  roomStartValidation
 };
 
 const executedFileUrl = process.argv[1] ? pathToFileURL(process.argv[1]).href : "";

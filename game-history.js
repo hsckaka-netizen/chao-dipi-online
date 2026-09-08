@@ -40,7 +40,7 @@ import {
 } from "./hero-home.js";
 
 const { Pool } = pg;
-const RULES_VERSION = "2026-08-14";
+const RULES_VERSION = "2026-09-08";
 const ADMIN_DIAMOND_GRANT_RULES_VERSION = "2026-07-29-admin-grant-v1";
 const MIGRATIONS = [
   {
@@ -171,6 +171,10 @@ const MIGRATIONS = [
   {
     version: 32,
     path: fileURLToPath(new URL("./db/migrations/032_ssr_skill_cooldowns.sql", import.meta.url))
+  },
+  {
+    version: 33,
+    path: fileURLToPath(new URL("./db/migrations/033_game_modes.sql", import.meta.url))
   }
 ];
 const HISTORY_ENABLED = String(process.env.GAME_HISTORY_ENABLED || "").toLowerCase() === "true";
@@ -186,7 +190,7 @@ const pendingRecords = new Map();
 const status = {
   configured: Boolean(DATABASE_URL),
   enabled: HISTORY_ENABLED,
-  recordPolicy: "logged-in-human-only-settlement",
+  recordPolicy: "eligible-pvp-and-pve-human-settlement",
   connected: false,
   migrationVersion: 0,
   profileStorageReady: false,
@@ -1655,13 +1659,15 @@ export function buildGameRecord(room) {
   });
 
   return {
-    recordFormatVersion: 2,
+    recordFormatVersion: 3,
     gameId: room.gameRecordId,
     roomCode: room.id,
     startedAt: room.startedAt,
     finishedAt: result.finishedAt,
     rulesVersion: RULES_VERSION,
     playerCount: Number(result.playerCount) || room.players.length,
+    gameMode: result.gameMode || room.gameMode || "pvp",
+    playMode: result.playMode || room.playMode || "brawl",
     callMode: result.callMode || room.callMode || "two",
     callModeName: result.callModeName || "",
     bankerBidScore: result.bankerBidScore ?? null,
@@ -1875,6 +1881,7 @@ async function saveGameRecord(record) {
     await client.query(
       `INSERT INTO cdp_games (
         game_id, room_code, started_at, finished_at, rules_version, player_count,
+        game_mode, play_mode,
         call_mode, call_mode_name, banker_bid_score, total_game_points, trump_suit,
         banker_room_player_id, banker_profile_id, dogleg_card, dogleg_profile_ids,
         threshold, idle_score, score_diff, winner_team, bottom_winner_room_player_id,
@@ -1882,14 +1889,16 @@ async function saveGameRecord(record) {
         removed_cards, setup_data, result_data, trick_history, board_hero_effects, record_format_version
       ) VALUES (
         $1, $2, $3, $4, $5, $6,
-        $7, $8, $9, $10, $11,
-        $12, $13, $14::jsonb, $15::jsonb,
-        $16, $17, $18, $19, $20,
-        $21, $22, $23, $24::jsonb,
-        $25::jsonb, $26::jsonb, $27::jsonb, $28::jsonb, $29::jsonb, $30
+        $7, $8,
+        $9, $10, $11, $12, $13,
+        $14, $15, $16::jsonb, $17::jsonb,
+        $18, $19, $20, $21, $22,
+        $23, $24, $25, $26::jsonb,
+        $27::jsonb, $28::jsonb, $29::jsonb, $30::jsonb, $31::jsonb, $32
       ) ON CONFLICT (game_id) DO NOTHING`,
       [
         record.gameId, record.roomCode, record.startedAt, record.finishedAt, record.rulesVersion, record.playerCount,
+        record.gameMode, record.playMode,
         record.callMode, record.callModeName, record.bankerBidScore, record.totalGamePoints, record.trumpSuit,
         record.bankerRoomPlayerId, record.bankerProfileId, JSON.stringify(record.doglegCard), JSON.stringify(record.doglegProfileIds),
         record.threshold, record.idleScore, record.scoreDiff, record.winnerTeam, record.bottomWinnerRoomPlayerId,
@@ -3521,6 +3530,7 @@ async function settleSeasonDiamondRewards(database, season) {
          JOIN cdp_games game ON game.game_id = player.game_id
          WHERE NOT player.is_ai
            AND player.account_id IS NOT NULL
+           AND game.game_mode = 'pvp'
            AND game.finished_at >= $1::timestamptz
            AND game.finished_at < $2::timestamptz
          GROUP BY player.account_id
@@ -3532,6 +3542,7 @@ async function settleSeasonDiamondRewards(database, season) {
          JOIN cdp_games game ON game.game_id = player.game_id
          WHERE NOT player.is_ai
            AND player.account_id IS NOT NULL
+           AND game.game_mode = 'pvp'
            AND game.finished_at >= $1::timestamptz
            AND game.finished_at < $2::timestamptz
          ORDER BY player.account_id, game.finished_at DESC, player.game_id DESC
@@ -3836,9 +3847,12 @@ const PERIOD_STATISTICS_SQL = `
     JOIN cdp_games game ON game.game_id = player.game_id
     WHERE NOT player.is_ai
       AND (player.account_id IS NOT NULL OR player.profile_id IS NOT NULL)
-      AND game.finished_at >= $1::timestamptz
+      AND ($1::timestamptz IS NULL OR game.finished_at >= $1::timestamptz)
       AND ($2::timestamptz IS NULL OR game.finished_at < $2::timestamptz)
       AND ($3::uuid IS NULL OR player.account_id = $3::uuid)
+      AND game.game_mode = $4
+      AND ($5::text IS NULL OR game.play_mode = $5)
+      AND ($6::smallint IS NULL OR game.player_count = $6)
   ),
   latest_identity AS (
     SELECT DISTINCT ON (player.identity_key)
@@ -3865,6 +3879,12 @@ const PERIOD_STATISTICS_SQL = `
       count(*) FILTER (WHERE player.role = '狗腿')::integer AS dogleg_games,
       count(*) FILTER (WHERE player.role = '狗腿' AND player.won)::integer AS dogleg_wins,
       coalesce(sum(player.game_score) FILTER (WHERE player.role = '狗腿'), 0)::numeric(12, 2) AS dogleg_score,
+      count(*) FILTER (WHERE player.role = '庄家队友')::integer AS teammate_games,
+      count(*) FILTER (WHERE player.role = '庄家队友' AND player.won)::integer AS teammate_wins,
+      coalesce(sum(player.game_score) FILTER (WHERE player.role = '庄家队友'), 0)::numeric(12, 2) AS teammate_score,
+      count(*) FILTER (WHERE player.role IN ('狗腿', '庄家队友'))::integer AS ally_games,
+      count(*) FILTER (WHERE player.role IN ('狗腿', '庄家队友') AND player.won)::integer AS ally_wins,
+      coalesce(sum(player.game_score) FILTER (WHERE player.role IN ('狗腿', '庄家队友')), 0)::numeric(12, 2) AS ally_score,
       count(*) FILTER (WHERE player.role = '闲家')::integer AS idle_games,
       count(*) FILTER (WHERE player.role = '闲家' AND player.won)::integer AS idle_wins,
       coalesce(sum(player.game_score) FILTER (WHERE player.role = '闲家'), 0)::numeric(12, 2) AS idle_score,
@@ -3936,6 +3956,12 @@ const PERIOD_STATISTICS_SQL = `
     base.dogleg_games,
     base.dogleg_wins,
     base.dogleg_score,
+    base.teammate_games,
+    base.teammate_wins,
+    base.teammate_score,
+    base.ally_games,
+    base.ally_wins,
+    base.ally_score,
     base.idle_games,
     base.idle_wins,
     base.idle_score,
@@ -3972,22 +3998,39 @@ const PERIOD_STATISTICS_SQL = `
   LEFT JOIN tag_totals tags ON tags.identity_key = base.identity_key
 `;
 
-export async function listPlayerStatistics(seasonId = null) {
+function normalizedStatisticsFilters(options = {}) {
+  const gameMode = options.gameMode === "pve" ? "pve" : "pvp";
+  const requestedPlayMode = options.playMode === "brawl" || options.playMode === "team" ? options.playMode : null;
+  const playMode = gameMode === "pve" ? "team" : requestedPlayMode;
+  const count = Number(options.playerCount);
+  const playerCount = Number.isInteger(count) && count >= 4 && count <= 9 ? count : null;
+  return { gameMode, playMode, playerCount };
+}
+
+function statisticsSqlArgs(period, accountId, options) {
+  const filters = normalizedStatisticsFilters(options);
+  return [
+    period?.starts_at || null,
+    period?.ends_at || null,
+    accountId || null,
+    filters.gameMode,
+    filters.playMode,
+    filters.playerCount
+  ];
+}
+
+export async function listPlayerStatistics(seasonId = null, options = {}) {
   const database = requirePool();
   const period = await seasonPeriod(database, seasonId);
-  const result = period
-    ? await database.query(
-      `${PERIOD_STATISTICS_SQL} ORDER BY total_score DESC, wins DESC, games_played DESC, latest_name ASC`,
-      [period.starts_at, period.ends_at, null]
-    )
-    : await database.query(`
-    SELECT * FROM cdp_player_statistics
-    ORDER BY total_score DESC, wins DESC, games_played DESC, latest_name ASC
-  `);
+  const result = await database.query(
+    `${PERIOD_STATISTICS_SQL} ORDER BY total_score DESC, wins DESC, games_played DESC, latest_name ASC`,
+    statisticsSqlArgs(period, null, options)
+  );
   return result.rows;
 }
 
-async function getPlayerRelationships(database, accountId, period) {
+async function getPlayerRelationships(database, accountId, period, options = {}) {
+  const filters = normalizedStatisticsFilters(options);
   const result = await database.query(
     `WITH target_games AS (
       SELECT
@@ -4000,6 +4043,9 @@ async function getPlayerRelationships(database, accountId, period) {
       WHERE target.account_id = $1::uuid
         AND ($2::timestamptz IS NULL OR game.finished_at >= $2::timestamptz)
         AND ($3::timestamptz IS NULL OR game.finished_at < $3::timestamptz)
+        AND game.game_mode = $4
+        AND ($5::text IS NULL OR game.play_mode = $5)
+        AND ($6::smallint IS NULL OR game.player_count = $6)
     ), paired_games AS (
       SELECT
         coalesce(other.account_id::text, 'profile:' || other.profile_id) AS identity_key,
@@ -4049,7 +4095,7 @@ async function getPlayerRelationships(database, accountId, period) {
     LEFT JOIN cdp_accounts account ON account.account_id = latest.account_id
     LEFT JOIN cdp_player_profiles profile ON profile.profile_id = latest.profile_id
     ORDER BY totals.same_team DESC, totals.games_played DESC, totals.own_score DESC, latest.name_snapshot ASC`,
-    [accountId, period?.starts_at || null, period?.ends_at || null]
+    [accountId, period?.starts_at || null, period?.ends_at || null, filters.gameMode, filters.playMode, filters.playerCount]
   );
   return {
     bonds: result.rows.filter((row) => row.same_team),
@@ -4057,15 +4103,11 @@ async function getPlayerRelationships(database, accountId, period) {
   };
 }
 
-export async function getPlayerStatistics(accountId, seasonId = null) {
+export async function getPlayerStatistics(accountId, seasonId = null, options = {}) {
   const database = requirePool();
   const period = await seasonPeriod(database, seasonId);
-  const statisticsResult = period
-    ? await database.query(PERIOD_STATISTICS_SQL, [period.starts_at, period.ends_at, accountId])
-    : await database.query(
-      "SELECT * FROM cdp_player_statistics WHERE account_id = $1::uuid",
-      [accountId]
-    );
+  const filters = normalizedStatisticsFilters(options);
+  const statisticsResult = await database.query(PERIOD_STATISTICS_SQL, statisticsSqlArgs(period, accountId, filters));
   const player = statisticsResult.rows[0] || null;
   if (!player) return null;
   const [trendResult, relationships] = await Promise.all([
@@ -4084,6 +4126,9 @@ export async function getPlayerStatistics(accountId, seasonId = null) {
         WHERE player.account_id = $1::uuid
           AND ($2::timestamptz IS NULL OR game.finished_at >= $2::timestamptz)
           AND ($3::timestamptz IS NULL OR game.finished_at < $3::timestamptz)
+          AND game.game_mode = $4
+          AND ($5::text IS NULL OR game.play_mode = $5)
+          AND ($6::smallint IS NULL OR game.player_count = $6)
       ), recent_games AS (
         SELECT * FROM scored_games
         ORDER BY finished_at DESC, game_id DESC
@@ -4092,9 +4137,9 @@ export async function getPlayerStatistics(accountId, seasonId = null) {
       SELECT game_id, finished_at, game_score, running_score
       FROM recent_games
       ORDER BY finished_at, game_id`,
-      [accountId, period?.starts_at || null, period?.ends_at || null]
+      [accountId, period?.starts_at || null, period?.ends_at || null, filters.gameMode, filters.playMode, filters.playerCount]
     ),
-    getPlayerRelationships(database, accountId, period)
+    getPlayerRelationships(database, accountId, period, filters)
   ]);
   return { player, trend: trendResult.rows, relationships };
 }
@@ -4123,6 +4168,7 @@ function intersectHistoryPeriod(period, from, to) {
 export async function listPlayerGames(accountId, options = {}) {
   const database = requirePool();
   const period = await seasonPeriod(database, options.seasonId);
+  const filters = normalizedStatisticsFilters(options);
   const range = intersectHistoryPeriod(
     period,
     historyTimestamp(options.from, "开始时间"),
@@ -4133,7 +4179,7 @@ export async function listPlayerGames(accountId, options = {}) {
   const result = await database.query(
     `SELECT
       game.game_id, game.room_code, game.started_at, game.finished_at,
-      game.player_count, game.call_mode_name, game.trump_suit,
+      game.player_count, game.game_mode, game.play_mode, game.call_mode_name, game.trump_suit,
       game.threshold, game.idle_score, game.winner_team,
       target.role, target.team, target.won, target.trick_score, target.game_score,
       coalesce((
@@ -4142,6 +4188,7 @@ export async function listPlayerGames(accountId, options = {}) {
           'profileId', participant.profile_id,
           'name', participant.name_snapshot,
           'avatarUrl', participant.avatar_url_snapshot,
+          'isAi', participant.is_ai,
           'role', participant.role,
           'team', participant.team,
           'won', participant.won,
@@ -4156,9 +4203,12 @@ export async function listPlayerGames(accountId, options = {}) {
     WHERE target.account_id = $1::uuid
       AND ($2::timestamptz IS NULL OR game.finished_at >= $2::timestamptz)
       AND ($3::timestamptz IS NULL OR game.finished_at < $3::timestamptz)
+      AND game.game_mode = $4
+      AND ($5::text IS NULL OR game.play_mode = $5)
+      AND ($6::smallint IS NULL OR game.player_count = $6)
     ORDER BY game.finished_at DESC, game.game_id DESC
-    LIMIT $4`,
-    [accountId, range.from, range.to, safeLimit]
+    LIMIT $7`,
+    [accountId, range.from, range.to, filters.gameMode, filters.playMode, filters.playerCount, safeLimit]
   );
   return result.rows;
 }
@@ -4233,7 +4283,7 @@ export async function getGameHistory(gameId) {
   const result = await requirePool().query(
     `SELECT
       game.game_id, game.room_code, game.started_at, game.finished_at,
-      game.player_count, game.call_mode, game.call_mode_name,
+      game.player_count, game.game_mode, game.play_mode, game.call_mode, game.call_mode_name,
       game.banker_bid_score, game.total_game_points, game.trump_suit,
       game.banker_room_player_id, game.dogleg_card,
       game.threshold, game.idle_score, game.score_diff, game.winner_team,
@@ -4247,6 +4297,7 @@ export async function getGameHistory(gameId) {
         'name', player.name_snapshot,
         'avatarUrl', player.avatar_url_snapshot,
         'seatIndex', player.seat_index,
+        'isAi', player.is_ai,
         'role', player.role,
         'team', player.team,
         'won', player.won,
@@ -4284,12 +4335,13 @@ export async function listRecentGames(limit = 30) {
   const result = await requirePool().query(
     `SELECT
       game.game_id, game.room_code, game.started_at, game.finished_at,
-      game.rules_version, game.player_count, game.call_mode_name,
+      game.rules_version, game.player_count, game.game_mode, game.play_mode, game.call_mode_name,
       game.trump_suit, game.threshold, game.idle_score, game.winner_team,
       coalesce(jsonb_agg(jsonb_build_object(
         'profileId', player.profile_id,
         'name', player.name_snapshot,
         'avatarUrl', player.avatar_url_snapshot,
+        'isAi', player.is_ai,
         'role', player.role,
         'team', player.team,
         'won', player.won,

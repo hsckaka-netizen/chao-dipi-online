@@ -130,6 +130,13 @@ test("game items allow AI games without charging inventory", () => {
     ]
   }), { eligible: true, freeUse: true });
   assert.deepEqual(gameItemAccess({
+    gameMode: "pve",
+    players: [
+      { accountId: "account-a", test: false },
+      { accountId: null, test: true, pveRobot: true }
+    ]
+  }), { eligible: true, freeUse: false });
+  assert.deepEqual(gameItemAccess({
     players: [
       { accountId: null, test: false },
       { accountId: null, test: true }
@@ -224,7 +231,7 @@ test("server and browser expose the shop, self-equipped cosmetics, and game-item
   assert.match(serverSource, /announceRoomNotice\(room, noticeText\)/);
   assert.doesNotMatch(serverSource, /本局已经有缤纷卡生效/);
   assert.match(serverSource, /\{ freeUse: access\.freeUse \}/);
-  assert.match(appSource, /本局含 AI，不消耗卡片/);
+  assert.match(appSource, /本局为测试机器人局，不消耗卡片/);
   assert.match(serverSource, /refundOrphanedGameItemUses/);
   assert.match(serverSource, /updateShopProducts\(body\.products, admin\.id\)/);
   assert.match(serverSource, /pathParts\[2\] === "cosmetics" && pathParts\[3\] === "grants"/);

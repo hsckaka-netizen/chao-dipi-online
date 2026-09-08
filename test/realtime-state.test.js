@@ -95,6 +95,91 @@ test("web server starts even when the history database URL is invalid", async (t
   assert.equal(response.status, 200);
 });
 
+test("team PVP and official PVE start with public fixed teams and no score bidding", async (t) => {
+  const server = await startServer();
+  t.after(() => server.child.kill());
+
+  const teamHost = await jsonRequest(`${server.baseUrl}/api/rooms`, {
+    method: "POST",
+    body: JSON.stringify({ profileId: "player-benlei" })
+  });
+  const teamRoomUrl = `${server.baseUrl}/api/rooms/${teamHost.roomId}`;
+  const teamPlayers = [teamHost];
+  await jsonRequest(`${teamRoomUrl}/play-mode`, {
+    method: "POST",
+    body: JSON.stringify({ playerId: teamHost.playerId, token: teamHost.token, mode: "team" })
+  });
+  for (const profileId of ["player-biesan", "player-denghuang", "player-jiangzha"]) {
+    teamPlayers.push(await jsonRequest(`${teamRoomUrl}/join`, {
+      method: "POST",
+      body: JSON.stringify({ profileId })
+    }));
+  }
+  await jsonRequest(`${teamRoomUrl}/auto-random-teams`, {
+    method: "POST",
+    body: JSON.stringify({ playerId: teamHost.playerId, token: teamHost.token, enabled: true })
+  });
+  for (const player of teamPlayers) {
+    await jsonRequest(`${teamRoomUrl}/ready`, {
+      method: "POST",
+      body: JSON.stringify({ playerId: player.playerId, token: player.token, ready: true })
+    });
+  }
+  await jsonRequest(`${teamRoomUrl}/start`, {
+    method: "POST",
+    body: JSON.stringify({ playerId: teamHost.playerId, token: teamHost.token })
+  });
+  const teamStarted = await jsonRequest(`${teamRoomUrl}/state?${new URLSearchParams({
+    playerId: teamHost.playerId,
+    token: teamHost.token
+  })}`);
+  assert.equal(teamStarted.gameMode, "pvp");
+  assert.equal(teamStarted.playMode, "team");
+  assert.equal(teamStarted.autoRandomTeams, true);
+  assert.notEqual(teamStarted.stage, "score-bidding");
+  assert.ok(teamStarted.setup.bankerId);
+  assert.deepEqual(teamStarted.teamCounts, { a: 2, b: 2 });
+  assert.equal(teamStarted.players.filter((player) => player.role === "庄家").length, 1);
+  assert.equal(teamStarted.players.filter((player) => player.role === "庄家队友").length, 1);
+  assert.ok(teamStarted.players.every((player, index, players) => player.squad !== players[(index + 1) % players.length].squad));
+
+  const pveHost = await jsonRequest(`${server.baseUrl}/api/rooms`, {
+    method: "POST",
+    body: JSON.stringify({ profileId: "player-xiaoxu" })
+  });
+  const pveRoomUrl = `${server.baseUrl}/api/rooms/${pveHost.roomId}`;
+  await jsonRequest(`${pveRoomUrl}/game-mode`, {
+    method: "POST",
+    body: JSON.stringify({ playerId: pveHost.playerId, token: pveHost.token, mode: "pve" })
+  });
+  const pveGuest = await jsonRequest(`${pveRoomUrl}/join`, {
+    method: "POST",
+    body: JSON.stringify({ profileId: "player-jiangmen" })
+  });
+  for (const player of [pveHost, pveGuest]) {
+    await jsonRequest(`${pveRoomUrl}/ready`, {
+      method: "POST",
+      body: JSON.stringify({ playerId: player.playerId, token: player.token, ready: true })
+    });
+  }
+  await jsonRequest(`${pveRoomUrl}/start`, {
+    method: "POST",
+    body: JSON.stringify({ playerId: pveHost.playerId, token: pveHost.token })
+  });
+  const pveStarted = await jsonRequest(`${pveRoomUrl}/state?${new URLSearchParams({
+    playerId: pveHost.playerId,
+    token: pveHost.token
+  })}`);
+  assert.equal(pveStarted.gameMode, "pve");
+  assert.equal(pveStarted.playMode, "team");
+  assert.equal(pveStarted.humanPlayerCount, 2);
+  assert.equal(pveStarted.players.filter((player) => player.pveRobot).length, 2);
+  assert.equal(pveStarted.players.filter((player) => !player.test && player.squad === "a").length, 2);
+  assert.equal(pveStarted.players.filter((player) => player.pveRobot && player.squad === "b").length, 2);
+  assert.notEqual(pveStarted.stage, "score-bidding");
+  assert.ok(pveStarted.setup.bankerId);
+});
+
 test("host configures the opening bid from 10% to 40% before a score-bidding game", async (t) => {
   const server = await startServer();
   t.after(() => server.child.kill());
