@@ -22,6 +22,8 @@ test("lobby exposes PVP brawl, team, PVE, team assignment, and rematch controls"
   assert.match(appSource, /data-action="random-teams"/);
   assert.match(appSource, /data-action="auto-random-teams"/);
   assert.match(appSource, /data-action="select-team"/);
+  assert.match(appSource, /PVE 未获胜，本局不发钻石/);
+  assert.match(appSource, /获胜收益为同等 PVP 奖励的 50%/);
   assert.match(stylesSource, /\.team-lobby-grid/);
   assert.match(serverSource, /pathParts\[3\] === "game-mode"/);
   assert.match(serverSource, /pathParts\[3\] === "play-mode"/);

@@ -6556,6 +6556,9 @@ function renderDiamondReward(reward) {
         : "当前牌局或账号不符合钻石奖励条件";
     return `<span class="result-diamond muted" title="${escapeHtml(ineligibleTitle)}">💎 不发放</span>`;
   }
+  if (reward.winRequired && !reward.won) {
+    return `<span class="result-diamond muted" title="PVE 仅在真人队获胜时发放钻石">💎 未获胜不发放</span>`;
+  }
   if (reward.status === "awarded") {
     return `<span class="result-diamond awarded" title="${escapeHtml(title)}">💎 +${escapeHtml(reward.awardedAmount ?? reward.totalAmount ?? 0)}</span>`;
   }
@@ -6578,6 +6581,9 @@ function renderViewerDiamondSummary(result) {
       : reward.reason === "robot"
         ? `<div class="diamond-reward-summary muted"><strong>电脑不获得钻石</strong><span>PVE 仅向符合条件的真人玩家发放奖励。</span></div>`
         : `<div class="diamond-reward-summary muted"><strong>本局不发钻石</strong><span>当前牌局或账号不符合钻石奖励条件。</span></div>`;
+  }
+  if (reward.winRequired && !reward.won) {
+    return `<div class="diamond-reward-summary muted"><strong>PVE 未获胜，本局不发钻石</strong><span>PVE 仅在真人队获胜时发放，获胜收益为同等 PVP 奖励的 50%。</span></div>`;
   }
   const amount = reward.status === "awarded"
     ? reward.awardedAmount ?? reward.totalAmount ?? 0

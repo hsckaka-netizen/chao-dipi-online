@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 
 import pg from "pg";
 import {
-  calculateDiamondReward,
+  calculateGameDiamondReward,
   diamondRewardDate,
   DIAMOND_REWARD_RULES,
   isDiamondEligibleGame
@@ -1648,7 +1648,10 @@ export function buildGameRecord(room) {
       battleHeroSnapshot: jsonValue(roomPlayer?.battleHeroSnapshot, null),
       heroSkillReward: jsonValue(playerResult.heroSkillReward, null),
       diamondReward: jsonValue(
-        playerResult.diamondReward || calculateDiamondReward({
+        playerResult.diamondReward || calculateGameDiamondReward({
+          gameMode: result.gameMode || room.gameMode,
+          team: playerResult.team,
+          winnerTeam: result.winnerTeam,
           gameScore: baseGameScore,
           tags,
           heroSkillReward: playerResult.heroSkillReward
@@ -1752,7 +1755,10 @@ async function saveDiamondRewards(client, record) {
       continue;
     }
 
-    const reward = player.diamondReward || calculateDiamondReward({
+    const reward = player.diamondReward || calculateGameDiamondReward({
+      gameMode: record.gameMode,
+      team: player.team,
+      winnerTeam: record.winnerTeam,
       gameScore: player.baseGameScore,
       tags: player.tags,
       heroSkillReward: player.heroSkillReward

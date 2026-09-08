@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import {
   attachDiamondRewards,
   calculateDiamondReward,
+  calculateGameDiamondReward,
   diamondRewardDate,
   DIAMOND_REWARD_RULES,
   isDiamondEligibleGame,
@@ -113,19 +114,50 @@ test("official PVE rewards logged-in humans but never computer players", () => {
       { id: "r2", accountId: null, test: true, pveRobot: true }
     ],
     result: {
+      winnerTeam: "banker",
       playerResults: [
-        { playerId: "h1", gameScore: 2, evaluationTags: [] },
-        { playerId: "h2", gameScore: 2, evaluationTags: [] },
-        { playerId: "r1", gameScore: -2, evaluationTags: [] },
-        { playerId: "r2", gameScore: -2, evaluationTags: [] }
+        { playerId: "h1", team: "banker", gameScore: 2, evaluationTags: [{ code: "mvp", label: "MVP" }], heroSkillReward: { amount: 5 } },
+        { playerId: "h2", team: "banker", gameScore: 2, evaluationTags: [] },
+        { playerId: "r1", team: "idle", gameScore: -2, evaluationTags: [] },
+        { playerId: "r2", team: "idle", gameScore: -2, evaluationTags: [] }
       ]
     }
   };
   assert.equal(isDiamondEligibleGame(room), true);
   attachDiamondRewards(room);
   assert.equal(room.result.playerResults[0].diamondReward.status, "pending");
+  assert.equal(room.result.playerResults[0].diamondReward.baseAmount, 50);
+  assert.equal(room.result.playerResults[0].diamondReward.titleBonus, 15);
+  assert.equal(room.result.playerResults[0].diamondReward.heroBonus, 2);
+  assert.equal(room.result.playerResults[0].diamondReward.totalAmount, 67);
   assert.equal(room.result.playerResults[2].diamondReward.status, "ineligible");
   assert.equal(room.result.playerResults[2].diamondReward.reason, "robot");
+
+  room.result.winnerTeam = "idle";
+  attachDiamondRewards(room);
+  assert.equal(room.result.playerResults[0].diamondReward.status, "pending");
+  assert.equal(room.result.playerResults[0].diamondReward.totalAmount, 0);
+  assert.equal(room.result.playerResults[0].diamondReward.noRewardReason, "pve-loss");
+});
+
+test("PVE reward uses the team result while PVP keeps the full reward", () => {
+  const pveWinner = calculateGameDiamondReward({
+    gameMode: "pve",
+    team: "banker",
+    winnerTeam: "banker",
+    gameScore: -1,
+    tags: [{ code: "support", label: "辅" }]
+  });
+  const pvpPlayer = calculateGameDiamondReward({
+    gameMode: "pvp",
+    team: "banker",
+    winnerTeam: "banker",
+    gameScore: -1,
+    tags: [{ code: "support", label: "辅" }]
+  });
+  assert.equal(pveWinner.won, true);
+  assert.equal(pveWinner.totalAmount, 60);
+  assert.equal(pvpPlayer.totalAmount, 120);
 });
 
 test("win bonuses remain disabled after item-adjusted score changes", () => {
