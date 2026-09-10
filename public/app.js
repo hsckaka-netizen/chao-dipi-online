@@ -153,6 +153,15 @@ let authState = {
 let diamondWallet = null;
 let diamondWalletLoading = false;
 let diamondWalletAccountId = "";
+let energyState = null;
+let energyStateLoading = false;
+let energyStateAccountId = "";
+let energyPurchaseInFlight = false;
+let achievementState = null;
+let achievementStateLoading = false;
+let achievementStateAccountId = "";
+let achievementClaimInFlight = "";
+let titleEquipInFlight = false;
 let shopState = null;
 let shopStateLoading = false;
 let shopStateAccountId = "";
@@ -295,6 +304,8 @@ function applyState(nextState, options = {}) {
   }
   if (previousState?.status === "dealt" && nextState.stage === "lobby") {
     resetDiamondWallet();
+    resetEnergyState();
+    resetAchievementState();
     resetShopState();
     resetHeroHomeState();
   }
@@ -737,6 +748,21 @@ function resetDiamondWallet() {
   diamondWalletAccountId = "";
 }
 
+function resetEnergyState() {
+  energyState = null;
+  energyStateLoading = false;
+  energyStateAccountId = "";
+  energyPurchaseInFlight = false;
+}
+
+function resetAchievementState() {
+  achievementState = null;
+  achievementStateLoading = false;
+  achievementStateAccountId = "";
+  achievementClaimInFlight = "";
+  titleEquipInFlight = false;
+}
+
 function resetShopState() {
   shopState = null;
   shopStateLoading = false;
@@ -809,6 +835,63 @@ function ensureDiamondWallet(force = false) {
       if (authState.account?.id !== account.id) return;
       diamondWalletLoading = false;
       diamondWallet = { unavailable: true };
+      render();
+    });
+}
+
+function ensureEnergyState(force = false) {
+  const account = authState.account;
+  if (!account || account.role !== "player") {
+    if (energyStateAccountId) resetEnergyState();
+    return;
+  }
+  if (energyStateAccountId !== account.id) {
+    resetEnergyState();
+    energyStateAccountId = account.id;
+  }
+  if (energyStateLoading || (!force && energyState)) return;
+  energyStateLoading = true;
+  api("/api/energy/me")
+    .then((data) => {
+      if (authState.account?.id !== account.id) return;
+      energyState = data;
+      energyStateLoading = false;
+      if (diamondWallet && Number.isFinite(Number(data.balance))) diamondWallet.balance = Number(data.balance);
+      render();
+    })
+    .catch((error) => {
+      if (authState.account?.id !== account.id) return;
+      energyStateLoading = false;
+      energyState = { unavailable: true };
+      if (homeView === "achievements") setMessage(error.message || "体力暂不可用", true);
+      render();
+    });
+}
+
+function ensureAchievementState(force = false) {
+  const account = authState.account;
+  if (!account || account.role !== "player") {
+    if (achievementStateAccountId) resetAchievementState();
+    return;
+  }
+  if (achievementStateAccountId !== account.id) {
+    resetAchievementState();
+    achievementStateAccountId = account.id;
+  }
+  if (achievementStateLoading || (!force && achievementState)) return;
+  achievementStateLoading = true;
+  api("/api/achievements/me")
+    .then((data) => {
+      if (authState.account?.id !== account.id) return;
+      achievementState = data;
+      achievementStateLoading = false;
+      render();
+    })
+    .catch((error) => {
+      if (authState.account?.id !== account.id) return;
+      achievementStateLoading = false;
+      achievementState = { unavailable: true, achievements: [], ownedTitles: [] };
+      if (homeView === "achievements") setMessage(error.message || "成就暂不可用", true);
       render();
     });
 }
@@ -908,6 +991,8 @@ async function loginAccount(event) {
     authState.account = data.account;
     authState.loaded = true;
     resetDiamondWallet();
+    resetEnergyState();
+    resetAchievementState();
     resetShopState();
     resetHeroHomeState();
     homeView = data.account?.role === "admin" ? "admin" : "rooms";
@@ -930,6 +1015,8 @@ async function logoutAccount() {
   }
   authState.account = null;
   resetDiamondWallet();
+  resetEnergyState();
+  resetAchievementState();
   resetShopState();
   resetHeroHomeState();
   adminData = null;
@@ -1736,6 +1823,72 @@ async function purchaseShopItem(productId) {
   }
 }
 
+async function purchaseEnergy() {
+  if (energyPurchaseInFlight || energyState?.unavailable) return;
+  const diamondCost = Number(energyState?.purchaseDiamondCost) || 200;
+  const energyAmount = Number(energyState?.purchaseAmount) || 6;
+  if (!window.confirm(`花费 ${diamondCost} 钻石购买 ${energyAmount} 点体力？`)) return;
+  energyPurchaseInFlight = true;
+  render();
+  try {
+    const data = await api("/api/energy/purchase", {
+      method: "POST",
+      body: JSON.stringify({ requestId: requestId() })
+    });
+    energyState = data;
+    if (diamondWallet) diamondWallet.balance = data.balance;
+    setMessage(`已购买 ${energyAmount} 点体力。`, false);
+  } catch (error) {
+    setMessage(error.message, true);
+  } finally {
+    energyPurchaseInFlight = false;
+    render();
+  }
+}
+
+async function claimAchievementReward(achievementId) {
+  if (!achievementId || achievementClaimInFlight) return;
+  achievementClaimInFlight = achievementId;
+  render();
+  try {
+    const data = await api("/api/achievements/claim", {
+      method: "POST",
+      body: JSON.stringify({ achievementId, requestId: requestId() })
+    });
+    achievementState = data.state;
+    if (diamondWallet) diamondWallet.balance = data.balanceAfter;
+    const rewards = [];
+    if (data.rewardDiamonds) rewards.push(`${data.rewardDiamonds} 钻石`);
+    if (data.rewardTitle?.name) rewards.push(`称号「${data.rewardTitle.name}」`);
+    setMessage(`成就奖励已领取${rewards.length ? `：${rewards.join("、")}` : "。"}`, false);
+  } catch (error) {
+    setMessage(error.message, true);
+  } finally {
+    achievementClaimInFlight = "";
+    render();
+  }
+}
+
+async function equipOwnedTitle(titleId) {
+  if (titleEquipInFlight || titleId === (achievementState?.equippedTitleId || "")) return;
+  titleEquipInFlight = true;
+  render();
+  try {
+    const data = await api("/api/achievements/title", {
+      method: "PATCH",
+      body: JSON.stringify({ titleId })
+    });
+    achievementState = data.state;
+    authState.account = data.account;
+    setMessage(titleId ? "称号已装备，会显示在名字前。" : "已取消装备称号。", false);
+  } catch (error) {
+    setMessage(error.message, true);
+  } finally {
+    titleEquipInFlight = false;
+    render();
+  }
+}
+
 async function equipAvatarFrame(avatarFrame) {
   const profile = authState.account?.profile;
   if (!profile || avatarFrameEquipInFlight || profile.avatarFrame === avatarFrame) return;
@@ -1966,7 +2119,15 @@ async function startGame() {
       method: "POST",
       body: JSON.stringify({ playerId: session.playerId, token: session.token })
     });
-    setMessage("已发牌。每个玩家现在只会看到自己的手牌。");
+    if (state?.gameMode === "pve") {
+      ensureEnergyState(true);
+      const viewer = viewerPlayer();
+      setMessage(viewer?.pveEnergyEligible === false
+        ? "已发牌。你的体力不足或暂不可用，本局不发钻石且不计每日任务。"
+        : "已发牌，本次 PVE 开局已消耗 6 点体力。");
+    } else {
+      setMessage("已发牌。每个玩家现在只会看到自己的手牌。");
+    }
   } catch (error) {
     setMessage(error.message, true);
   }
@@ -3491,6 +3652,7 @@ function renderShell(content) {
   const account = authState.account;
   const gameView = Boolean(state && state.stage !== "lobby");
   ensureDiamondWallet();
+  ensureEnergyState();
   const accountLabel = account?.profile?.name || account?.username || "";
   const canLeaveCurrentRoom = Boolean(session && !session.spectator && state?.status === "lobby");
   const preservedScroll = new Map(
@@ -3512,10 +3674,12 @@ function renderShell(content) {
           ${account ? `
             <span class="account-chip">
               ${account.profile ? avatarHtml(account.profile.name, account.profile.avatarUrl, "small", account.profile.avatarFrame) : `<span class="avatar small">管</span>`}
+              ${renderEquippedTitle(account.profile?.equippedTitle)}
               <span>${escapeHtml(accountLabel)}</span>
               ${account.role === "admin" ? `<b>管理员</b>` : ""}
             </span>
             ${account.role === "player" ? `<span class="diamond-balance" title="当前钻石余额">💎 ${diamondWallet?.unavailable ? "暂不可用" : diamondWallet ? escapeHtml(diamondWallet.balance) : "…"}</span>` : ""}
+            ${account.role === "player" ? `<span class="energy-balance" title="PVE 每次开局消耗 6 点体力">⚡ ${energyState?.unavailable ? "暂不可用" : energyState ? `${escapeHtml(energyState.energy)}/${escapeHtml(energyState.maximum)}` : "…"}</span>` : ""}
             ${!session ? `<button class="secondary compact-button" data-action="${account.role === "admin" ? "show-admin" : "show-account"}">${account.role === "admin" ? "管理后台" : "我的资料"}</button>` : ""}
             ${!session ? `<button class="secondary compact-button" data-action="logout-account">退出登录</button>` : ""}
           ` : `<button class="secondary compact-button" data-action="show-login">玩家登录</button>`}
@@ -3549,6 +3713,7 @@ function renderHome() {
   if (homeView === "hero-home") return renderHeroHomePage();
   if (homeView === "hero-catalog") return renderHeroCatalogPage();
   if (homeView === "hero-gacha") return renderHeroGachaPage();
+  if (homeView === "achievements") return renderAchievementPage();
   renderShell(`
     <section class="home-toolbar">
       <div class="segmented home-tabs" role="tablist" aria-label="首页模块">
@@ -3557,6 +3722,7 @@ function renderHome() {
         ${authState.account?.role === "player" ? `<button type="button" class="secondary" data-action="show-hero-home">英雄家园</button>` : ""}
         ${authState.account?.role === "player" ? `<button type="button" class="secondary" data-action="show-shop">钻石商城</button>` : ""}
         ${authState.account?.role === "player" ? `<button type="button" class="secondary" data-action="show-inventory">背包</button>` : ""}
+        ${authState.account?.role === "player" ? `<button type="button" class="secondary" data-action="show-achievements">成就</button>` : ""}
       </div>
       ${homeView === "rooms" ? `
         <div class="home-room-actions">
@@ -3571,6 +3737,123 @@ function renderHome() {
     `}
     ${homeJoinOpen ? renderHomeJoinDialog() : ""}
   `);
+}
+
+function energyRecoveryText(energy) {
+  if (!energy || energy.unavailable) return "体力服务暂不可用";
+  if (!energy.nextRecoveryAt) return "体力已满";
+  const remaining = Math.max(0, new Date(energy.nextRecoveryAt).getTime() - Date.now());
+  const minutes = Math.max(1, Math.ceil(remaining / 60_000));
+  return `${minutes} 分钟后恢复 1 点`;
+}
+
+function renderAchievementReward(achievement) {
+  const rewards = [];
+  if (achievement.rewardDiamonds) rewards.push(`💎 ${achievement.rewardDiamonds}`);
+  if (achievement.title?.name) rewards.push(`称号「${achievement.title.name}」`);
+  return rewards.join(" · ") || "纪念成就";
+}
+
+function renderAchievementCard(achievement) {
+  const progress = Math.min(achievement.target, Number(achievement.progress) || 0);
+  const progressPercent = achievement.target ? Math.min(100, Math.round(progress * 100 / achievement.target)) : 0;
+  const status = achievement.claimed ? "claimed" : achievement.completed ? "claimable" : "locked";
+  return `
+    <article class="achievement-card ${status}">
+      <div class="achievement-card-head">
+        <div><span>${escapeHtml(achievement.description)}</span><h3>${escapeHtml(achievement.name)}</h3></div>
+        <b>${escapeHtml(progress)} / ${escapeHtml(achievement.target)}</b>
+      </div>
+      <div class="achievement-progress" aria-label="完成进度 ${progressPercent}%"><i style="width:${progressPercent}%"></i></div>
+      <div class="achievement-card-foot">
+        <span>${escapeHtml(renderAchievementReward(achievement))}</span>
+        ${achievement.claimed
+          ? `<span class="tag good">已领取</span>`
+          : achievement.completed
+            ? `<button type="button" data-action="claim-achievement" data-achievement-id="${escapeHtml(achievement.id)}" ${achievementClaimInFlight ? "disabled" : ""}>${achievementClaimInFlight === achievement.id ? "领取中…" : "领取"}</button>`
+            : `<span class="tag">进行中</span>`}
+      </div>
+    </article>
+  `;
+}
+
+function renderAchievementPage() {
+  ensureAchievementState();
+  ensureEnergyState();
+  const account = authState.account;
+  if (!account || account.role !== "player") {
+    homeView = "rooms";
+    return renderHome();
+  }
+  if (!achievementState || achievementStateLoading || !energyState || energyStateLoading) {
+    return renderShell(`<section class="panel"><div class="empty">正在读取体力与成就…</div></section>`);
+  }
+  if (achievementState.unavailable) {
+    return renderShell(`<section class="panel"><div class="empty">成就暂不可用，请稍后重试。</div></section>`);
+  }
+  const categories = achievementState.categories || [];
+  const achievements = achievementState.achievements || [];
+  const ownedTitles = achievementState.ownedTitles || [];
+  return renderShell(`
+    <section class="home-toolbar">
+      <div><span class="eyebrow">CAREER</span><h2>成就与称号</h2></div>
+      <button type="button" class="secondary compact-button" data-action="show-rooms">返回房间</button>
+    </section>
+    <section class="achievement-overview-grid">
+      <article class="panel energy-panel">
+        <div class="section-head"><div><span class="eyebrow">PVE ENERGY</span><h2>体力</h2></div><strong>⚡ ${energyState.unavailable ? "—" : `${escapeHtml(energyState.energy)} / ${escapeHtml(energyState.maximum)}`}</strong></div>
+        <p>PVE 每次开局消耗 ${escapeHtml(energyState.pveStartCost || 6)} 点；体力不足仍可参战，但本局不发钻石、也不计每日任务。重开不返还已消耗体力。</p>
+        <div class="energy-actions">
+          <span>${escapeHtml(energyRecoveryText(energyState))}</span>
+          <button type="button" data-action="purchase-energy" ${energyState.unavailable || !energyState.canPurchase || energyPurchaseInFlight ? "disabled" : ""}>${energyPurchaseInFlight ? "购买中…" : `💎 ${escapeHtml(energyState.purchaseDiamondCost || 200)} 购买 ${escapeHtml(energyState.purchaseAmount || 6)} 点`}</button>
+        </div>
+        ${!energyState.unavailable && !energyState.canPurchase ? `<small>体力超过 ${escapeHtml((energyState.maximum || 24) - (energyState.purchaseAmount || 6))} 点时不可购买，避免超过上限。</small>` : ""}
+      </article>
+      <article class="panel achievement-summary-panel">
+        <span class="eyebrow">PROGRESS</span>
+        <h2>${escapeHtml(achievementState.claimedCount || 0)} / ${escapeHtml(achievementState.totalCount || achievements.length)}</h2>
+        <p>已领取成就</p>
+        <strong>${achievementState.claimableCount ? `${escapeHtml(achievementState.claimableCount)} 项奖励待领取` : "继续完成生涯目标"}</strong>
+      </article>
+    </section>
+    <section class="panel title-equipment-panel">
+      <div class="section-head"><div><h2>装备称号</h2><p>称号会以独立标签显示在名字前，长昵称会自动省略，不会挤乱牌桌。</p></div><span class="tag">已拥有 ${escapeHtml(ownedTitles.length)}</span></div>
+      <div class="title-choice-list">
+        <button type="button" class="title-choice ${achievementState.equippedTitleId ? "secondary" : "active"}" data-action="equip-title" data-title-id="" ${titleEquipInFlight ? "disabled" : ""}>不装备</button>
+        ${ownedTitles.map((title) => `<button type="button" class="title-choice ${achievementState.equippedTitleId === title.id ? "active" : "secondary"}" data-action="equip-title" data-title-id="${escapeHtml(title.id)}" ${titleEquipInFlight ? "disabled" : ""}>${renderEquippedTitle(title)}</button>`).join("")}
+      </div>
+      ${ownedTitles.length ? "" : `<div class="empty">领取带称号奖励的成就后，可在这里自由装备。</div>`}
+    </section>
+    <div class="achievement-category-list">
+      ${categories.map((category) => `
+        <section class="panel achievement-category">
+          <div class="section-head"><h2>${escapeHtml(category.name)}</h2><span class="tag">${achievements.filter((item) => item.category === category.id && item.claimed).length} / ${achievements.filter((item) => item.category === category.id).length}</span></div>
+          <div class="achievement-grid">${achievements.filter((item) => item.category === category.id).map(renderAchievementCard).join("")}</div>
+        </section>
+      `).join("")}
+    </div>
+  `);
+}
+
+function renderPveEnergyNotice() {
+  if (state?.gameMode !== "pve" || isSpectating()) return "";
+  ensureEnergyState();
+  const unavailable = energyState?.unavailable;
+  const current = unavailable ? null : Number(energyState?.energy);
+  const cost = Number(energyState?.pveStartCost) || 6;
+  const insufficient = Number.isFinite(current) && current < cost;
+  const title = insufficient ? "体力不足，仍可参战" : unavailable ? "体力暂时无法确认" : "PVE 开局体力";
+  const detail = insufficient || unavailable
+    ? "本局将不发放钻石，也不计入每日任务。"
+    : `开局后消耗 ${cost} 点，重开不返还。${energyRecoveryText(energyState)}。`;
+  return `
+    <div class="pve-energy-notice ${insufficient || unavailable ? "warning" : ""}">
+      <span class="pve-energy-icon">⚡</span>
+      <span><strong>${escapeHtml(title)}</strong><small>${escapeHtml(detail)}</small></span>
+      <b>${unavailable ? "—" : energyState ? `${escapeHtml(energyState.energy)}/${escapeHtml(energyState.maximum)}` : "读取中"}</b>
+      ${energyState && !unavailable && energyState.canPurchase ? `<button type="button" class="secondary compact-button" data-action="purchase-energy" ${energyPurchaseInFlight ? "disabled" : ""}>${energyPurchaseInFlight ? "购买中…" : "购买体力"}</button>` : ""}
+    </div>
+  `;
 }
 
 function renderHomeJoinDialog() {
@@ -3677,12 +3960,14 @@ function renderJoinableRoom(room) {
             title="${ownSeat ? "返回自己的牌桌席位" : `以${escapeHtml(player.name)}的视角观战`}"
           >
             ${avatarHtml(player.name, player.avatarUrl, "normal", player.avatarFrame)}
+            ${renderEquippedTitle(player.equippedTitle)}
             <span class="joinable-room-player-name">${escapeHtml(player.name)}</span>
             <span class="spectate-player-label">${ownSeat ? "返回" : authState.account ? "观战" : "登录后观战"}</span>
           </button>
         ` : `
           <span class="joinable-room-player ${player.ready ? "ready" : ""} ${ownSeat ? "own-seat" : ""}">
             ${avatarHtml(player.name, player.avatarUrl, "normal", player.avatarFrame)}
+            ${renderEquippedTitle(player.equippedTitle)}
             <span class="joinable-room-player-name">${escapeHtml(player.name)}</span>
           </span>
         `;
@@ -3760,7 +4045,7 @@ function renderHomeStatistics() {
       <div class="statistics-summary statistics-summary-wide">
         <div class="statistics-current-leader">
           ${rows[0] ? avatarHtml(rows[0].latest_name || "玩家", rows[0].latest_avatar_url || "", "normal", rows[0].avatar_frame || "") : ""}
-          <span><i>当前排名第一</i><b>${escapeHtml(rows[0]?.latest_name || "暂无")}</b><em>${rows[0] ? escapeHtml(currentColumn.format(currentColumn.value(rows[0]), rows[0])) : "-"}</em></span>
+          <span><i>当前排名第一</i><b>${renderEquippedTitle(rows[0]?.equipped_title)}${escapeHtml(rows[0]?.latest_name || "暂无")}</b><em>${rows[0] ? escapeHtml(currentColumn.format(currentColumn.value(rows[0]), rows[0])) : "-"}</em></span>
         </div>
         <div><span>上榜玩家</span><strong>${rows.length}</strong></div>
         <div><span>参赛人次</span><strong>${appearances}</strong></div>
@@ -3928,11 +4213,13 @@ function renderStatisticsTable(rows) {
                 ${row.account_id ? `
                   <button type="button" class="statistics-player-button" data-action="show-player-statistics" data-account-id="${escapeHtml(row.account_id)}" title="${escapeHtml(row.latest_name || "玩家")} · @${escapeHtml(row.username || "player")}">
                     ${avatarHtml(row.latest_name || "玩家", row.latest_avatar_url || "", "small", row.avatar_frame || "")}
+                    ${renderEquippedTitle(row.equipped_title)}
                     <b>${escapeHtml(row.latest_name || "玩家")}</b>
                   </button>
                 ` : `
                   <span class="statistics-player">
                     ${avatarHtml(row.latest_name || "玩家", row.latest_avatar_url || "", "small", row.avatar_frame || "")}
+                    ${renderEquippedTitle(row.equipped_title)}
                     <b>${escapeHtml(row.latest_name || "玩家")}</b>
                   </span>
                 `}
@@ -4141,6 +4428,7 @@ function renderPlayerRelationshipBoard(type, rows = [], loading = false) {
               const score = statisticNumber(relationship.own_score);
               const identity = `
                 ${avatarHtml(relationship.latest_name || "玩家", relationship.latest_avatar_url || "", "small", relationship.avatar_frame || "")}
+                ${renderEquippedTitle(relationship.equipped_title)}
                 <b>${escapeHtml(relationship.latest_name || "玩家")}</b>
               `;
               return `
@@ -4243,7 +4531,7 @@ function renderPlayerStatisticsDetail(baseRow) {
       <section class="statistics-detail-hero">
         <div class="statistics-detail-identity">
           ${avatarHtml(row.latest_name || "玩家", row.latest_avatar_url || "", "large", row.avatar_frame || "")}
-          <div><span>${escapeHtml(selectedSeason?.name || "历史总榜")}第 ${rank || "-"} 名</span><h2>${escapeHtml(row.latest_name || "玩家")}</h2><small>@${escapeHtml(row.username || "player")} · ${games} 场 · 仅统计真人玩家</small></div>
+          <div><span>${escapeHtml(selectedSeason?.name || "历史总榜")}第 ${rank || "-"} 名</span><h2>${renderEquippedTitle(row.equipped_title)}${escapeHtml(row.latest_name || "玩家")}</h2><small>@${escapeHtml(row.username || "player")} · ${games} 场 · 仅统计真人玩家</small></div>
         </div>
         <div class="statistics-headline"><span>总积分</span><strong class="${statisticNumber(row.total_score) > 0 ? "positive" : statisticNumber(row.total_score) < 0 ? "negative" : ""}">${statisticSigned(row.total_score)}</strong><small>场均 ${statisticSigned(row.average_score)}</small></div>
         <div class="statistics-headline"><span>胜率</span><strong>${statisticPercent(row.win_rate)}</strong><small>${statisticNumber(row.wins)} 胜 / ${statisticNumber(row.losses)} 负</small></div>
@@ -4437,10 +4725,9 @@ function renderBattleHeroMark(snapshot, compact = false, playerId = "") {
   if (!snapshot) return "";
   const imageKey = `battle:${playerId || "unknown"}:${snapshot.heroId || snapshot.name}:${compact ? "compact" : "full"}`;
   return `
-    <button type="button" class="battle-hero-mark ${compact ? "compact" : ""}" style="--hero-color:${escapeHtml(snapshot.color || "#527b70")}" title="${escapeHtml(`${snapshot.name} · ${snapshot.skillName} · ${snapshot.stars}星 · 点击查看详情`)}" aria-label="${escapeHtml(`查看${snapshot.name}英雄图片和技能`)}" data-action="open-battle-hero-preview" data-player-id="${escapeHtml(playerId)}">
+    <button type="button" class="battle-hero-mark ${compact ? "compact" : ""}" style="--hero-color:${escapeHtml(snapshot.color || "#527b70")}" title="${escapeHtml(`${snapshot.name} · ${snapshot.skillName} · 点击查看详情`)}" aria-label="${escapeHtml(`查看${snapshot.name}英雄图片和技能`)}" data-action="open-battle-hero-preview" data-player-id="${escapeHtml(playerId)}">
       ${heroCardArtwork(snapshot, "battle-hero-art", imageKey, "thumb") || `<b>${escapeHtml(snapshot.shortName || snapshot.name?.slice(0, 1) || "英")}</b>`}
       <span>${escapeHtml(snapshot.name)}</span>
-      <i>${"★".repeat(Math.max(1, Math.min(5, Number(snapshot.stars) || 1)))}</i>
     </button>
   `;
 }
@@ -5900,6 +6187,7 @@ function renderRoom() {
           </div>
         </section>
 
+        ${!showTable ? renderPveEnergyNotice() : ""}
         ${!showTable ? renderLobbyPlayersPanel() : ""}
         ${showTable ? renderRoomManagementActions() : ""}
         ${showTable ? renderPlayTable() : ""}
@@ -6295,7 +6583,7 @@ function renderRoomActionConfirmDialog() {
   const resetting = pendingRoomAction === "reset";
   const title = resetting ? "确认重开房间？" : "确认解散房间？";
   const description = resetting
-    ? "当前牌局会立即作废，本局已使用的对局道具、英雄技能钻石和 CD 变化会返还，所有玩家回到房间等待状态。"
+    ? "当前牌局会立即作废，本局已使用的对局道具、英雄技能钻石和 CD 变化会返还；PVE 已消耗的体力不返还。所有玩家回到房间等待状态。"
     : "房间会立即解散，所有玩家和观战者都会离开，之后无法返回本房间。";
   return `
     <div class="modal-backdrop">
@@ -6553,6 +6841,10 @@ function renderDiamondReward(reward) {
       ? "观战身份不参与本局钻石结算"
       : reward.reason === "robot"
         ? "电脑不参与钻石结算"
+        : reward.reason === "insufficient-energy"
+          ? "开局时体力不足，本局不发钻石且不计每日任务"
+          : reward.reason === "energy-unavailable"
+            ? "开局时体力服务不可用，本局不发钻石且不计每日任务"
         : "当前牌局或账号不符合钻石奖励条件";
     return `<span class="result-diamond muted" title="${escapeHtml(ineligibleTitle)}">💎 不发放</span>`;
   }
@@ -6580,6 +6872,8 @@ function renderViewerDiamondSummary(result) {
       ? `<div class="diamond-reward-summary muted"><strong>观战不获得钻石</strong><span>观战用户只查看牌局，不参与本局奖励结算。</span></div>`
       : reward.reason === "robot"
         ? `<div class="diamond-reward-summary muted"><strong>电脑不获得钻石</strong><span>PVE 仅向符合条件的真人玩家发放奖励。</span></div>`
+        : reward.reason === "insufficient-energy" || reward.reason === "energy-unavailable"
+          ? `<div class="diamond-reward-summary muted"><strong>体力不足，本局不发钻石</strong><span>本局仍可正常完成，但不获得钻石、也不计入每日任务。</span></div>`
         : `<div class="diamond-reward-summary muted"><strong>本局不发钻石</strong><span>当前牌局或账号不符合钻石奖励条件。</span></div>`;
   }
   if (reward.winRequired && !reward.won) {
@@ -6685,9 +6979,11 @@ function renderResultPanel() {
           ${result.playerResults.map((player) => {
             const wonGame = player.team === result.winnerTeam;
             const scoreStatus = resultScoreStatus(player.gameScore);
+            const roomPlayer = state.players.find((item) => item.id === player.playerId);
             return `
             <div class="result-row ${scoreStatus.className}">
               <strong class="result-player-name">
+                ${renderEquippedTitle(roomPlayer?.equippedTitle)}
                 <span>${escapeHtml(player.name)}</span>
                 ${renderEvaluationTags(player.evaluationTags)}
                 <span class="result-outcome">${scoreStatus.label}</span>
@@ -7178,14 +7474,14 @@ function renderSeatHand(action, play, trick, index, options = {}) {
           <div class="seat-hand-profile-copy">
             ${renderBattleHeroMark(play.battleHeroSnapshot || roomPlayer.battleHeroSnapshot, true, play.playerId)}
             <div class="seat-hand-player-line">
-              <strong><span class="seat-hand-name">${escapeHtml(play.playerName)}</span>${roleMark(play.role, play.playerId)}${renderAutoPlayMark(roomPlayer)}</strong>
+              <strong>${renderEquippedTitle(play.equippedTitle || roomPlayer.equippedTitle)}<span class="seat-hand-name">${escapeHtml(play.playerName)}</span>${roleMark(play.role, play.playerId)}${renderAutoPlayMark(roomPlayer)}</strong>
               <span class="seat-status ${escapeHtml(statusTone)}">${escapeHtml(statusText)}</span>
             </div>
           </div>
         </aside>
         <div class="seat-hand-main">
           <div class="seat-hand-head">
-            ${renderCompactPlayerStats(play, { handCount: state.hand.length })}
+            ${renderCompactPlayerStats(play)}
             ${renderHandControls(action)}
           </div>
           ${renderThrowDraft()}
@@ -7422,7 +7718,13 @@ function viewerCardSkin() {
   return cardSkinForPlayer(state?.viewer?.id);
 }
 
-function playerIdentity(name, role, avatarUrl = "", suffix = "", playerId = "", avatarFrame = "") {
+function renderEquippedTitle(title) {
+  return title?.name
+    ? `<span class="equipped-title" title="已装备称号">${escapeHtml(title.name)}</span>`
+    : "";
+}
+
+function playerIdentity(name, role, avatarUrl = "", suffix = "", playerId = "", avatarFrame = "", equippedTitle = null) {
   return `
     <span class="player-identity">
       ${avatarHtml(name, avatarUrl, "small", avatarFrame)}
@@ -7430,6 +7732,7 @@ function playerIdentity(name, role, avatarUrl = "", suffix = "", playerId = "", 
       ${renderLuckyMark(playerId)}
       ${renderWarGodMark(playerId)}
       ${roleMark(role, playerId)}
+      ${renderEquippedTitle(equippedTitle)}
       <span class="name-text">${escapeHtml(`${name}${suffix}`)}</span>
     </span>
   `;
@@ -7437,7 +7740,7 @@ function playerIdentity(name, role, avatarUrl = "", suffix = "", playerId = "", 
 
 function playerNameWithRole(play) {
   const player = state?.players?.find((item) => item.id === play.playerId);
-  return playerIdentity(play.playerName, play.role, play.avatarUrl, "", play.playerId, play.avatarFrame || player?.avatarFrame);
+  return playerIdentity(play.playerName, play.role, play.avatarUrl, "", play.playerId, play.avatarFrame || player?.avatarFrame, play.equippedTitle || player?.equippedTitle);
 }
 
 function tablePlayerIdentity(play) {
@@ -7454,6 +7757,7 @@ function tablePlayerIdentity(play) {
         ${renderPlayerHistoryMini(play.playerId, { overlay: true })}
       </span>
       ${roleMark(play.role, play.playerId)}
+      ${renderEquippedTitle(play.equippedTitle || player?.equippedTitle)}
       <span class="name-text">${escapeHtml(play.playerName)}</span>
       ${renderBattleHeroMark(play.battleHeroSnapshot || player?.battleHeroSnapshot, true, play.playerId)}
     </span>
@@ -7479,6 +7783,7 @@ function renderTablePlayerSummary(play, statusText, statusTone) {
       </span>
       <span class="trick-player-summary">
         <span class="trick-player-line">
+          ${renderEquippedTitle(play.equippedTitle || player?.equippedTitle)}
           <strong class="trick-player-display-name">${escapeHtml(play.playerName)}</strong>
           ${renderBattleHeroMark(play.battleHeroSnapshot || player?.battleHeroSnapshot, true, play.playerId)}
           ${renderAutoPlayMark(player || play)}
@@ -7505,17 +7810,16 @@ function renderPlayerHistoryMini(roomPlayerId, { overlay = false } = {}) {
   `;
 }
 
-function renderCompactPlayerStats(play, { handCount = null } = {}) {
+function renderCompactPlayerStats(play) {
   const draggedRedFives = Number(play.draggedRedFives) || 0;
   const draggedDiamondFives = Number(play.draggedDiamondFives) || 0;
   const throwFailures = Number(play.throwFailures) || 0;
   return `
-    <div class="trick-player-stats ${handCount === null ? "" : "with-hand-count"}" aria-label="${escapeHtml(`${play.playerName || "玩家"}本局表现`)}">
+    <div class="trick-player-stats" aria-label="${escapeHtml(`${play.playerName || "玩家"}本局表现`)}">
       <span class="player-stat-score" title="本局获得牌分"><i>牌</i><b>${play.score || 0}</b></span>
       ${draggedRedFives ? `<span class="player-stat-red" title="被拖红五"><i>红</i><b>${draggedRedFives}</b></span>` : ""}
       ${draggedDiamondFives ? `<span class="player-stat-diamond" title="被拖方五"><i>方</i><b>${draggedDiamondFives}</b></span>` : ""}
       ${throwFailures ? `<span class="player-stat-throw" title="甩牌失败"><i>甩</i><b>${throwFailures}</b></span>` : ""}
-      ${handCount === null ? "" : `<span class="player-stat-hand" title="当前手牌"><i>手</i><b>${handCount}</b></span>`}
     </div>
   `;
 }
@@ -7933,7 +8237,7 @@ function renderPlayer(player) {
   return `
     <div class="player ${roleClass(player.role)}" data-player-id="${escapeHtml(player.id)}">
       <div>
-        <strong class="player-name-line">${playerIdentity(player.name, player.role, player.avatarUrl, isMe ? "（我）" : "", player.id, player.avatarFrame)}</strong>
+        <strong class="player-name-line">${playerIdentity(player.name, player.role, player.avatarUrl, isMe ? "（我）" : "", player.id, player.avatarFrame, player.equippedTitle)}</strong>
         ${renderBattleHeroMark(player.battleHeroSnapshot, true, player.id)}
         <div class="tags">
           ${player.host ? `<span class="tag accent">房主</span>` : ""}
@@ -7955,7 +8259,6 @@ function renderPlayer(player) {
         ` : ""}
       </div>
       <div class="player-side">
-        <div class="meta">${state.status === "lobby" || isMe ? (player.cardCount ? `${player.cardCount} 张` : "") : ""}</div>
         ${isMe && state.stage === "lobby" && state.gameMode === "pvp" && state.playMode === "team" ? `
           <span class="segmented team-choice" aria-label="选择队伍">
             <button type="button" data-action="select-team" data-team="a" class="${player.squad === "a" ? "" : "secondary"}" ${player.squad === "a" ? "disabled" : ""}>红队</button>
@@ -8481,6 +8784,7 @@ const mutatingActions = new Set([
   "send-taunt", "delete-taunt", "kick-player", "buy-shop-product", "equip-avatar-frame", "use-game-item",
   "complete-item-stage", "collect-home", "assign-home-unit", "select-battle-hero",
   "pull-hero-gacha", "upgrade-hero-unit", "upgrade-home-region", "dispatch-hero-task", "collect-hero-task", "claim-daily-task",
+  "purchase-energy", "claim-achievement", "equip-title",
   "shen-biesan-activate", "shen-biesan-pass", "yokoyama-activate", "yokoyama-pass", "shen-jiangwen-activate"
 ]);
 
@@ -8647,6 +8951,11 @@ document.addEventListener("click", (event) => {
     homeJoinOpen = false;
     render();
   }
+  if (action === "show-achievements") {
+    homeView = "achievements";
+    homeJoinOpen = false;
+    render();
+  }
   if (action === "show-hero-home") {
     homeView = "hero-home";
     homeJoinOpen = false;
@@ -8705,6 +9014,13 @@ document.addEventListener("click", (event) => {
   if (action === "logout-account") logoutAccount();
   if (action === "buy-shop-product") {
     purchaseShopItem(event.target.closest("[data-product-id]")?.dataset.productId || "");
+  }
+  if (action === "purchase-energy") purchaseEnergy();
+  if (action === "claim-achievement") {
+    claimAchievementReward(event.target.closest("[data-achievement-id]")?.dataset.achievementId || "");
+  }
+  if (action === "equip-title") {
+    equipOwnedTitle(event.target.closest("[data-title-id]")?.dataset.titleId || "");
   }
   if (action === "equip-avatar-frame") {
     equipAvatarFrame(event.target.closest("[data-avatar-frame]")?.dataset.avatarFrame || "");

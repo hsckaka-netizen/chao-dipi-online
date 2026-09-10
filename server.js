@@ -81,9 +81,11 @@ import { versionedAssetUrl } from "./public/asset-versions.js";
 import { createStatePatch } from "./public/state-patch.js";
 import { applyShenBiesanCardRules, suitTractorOrderValue } from "./public/replacement-rank-rules.js";
 import { calculateHeroSkillReward, HERO_HOME_RULES } from "./hero-home.js";
+import { ACHIEVEMENT_TITLE_BY_ID } from "./achievements.js";
 import {
   assignHomeUnit,
   chargeBoardHeroSkill,
+  claimAchievement,
   claimDailyTask,
   collectHomeProduction,
   gameHistoryStatus,
@@ -93,6 +95,8 @@ import {
   createUploadedAvatarFrameProduct,
   dispatchHeroTask,
   grantDiamondsByAdmin,
+  getAchievementState,
+  getEnergyState,
   getPlayerShopState,
   getBattleHeroSnapshots,
   getDiamondWallet,
@@ -111,6 +115,7 @@ import {
   queueGameRecord,
   grantCosmeticEntitlement,
   purchaseShopProduct,
+  purchasePlayerEnergy,
   pullHeroGacha,
   recordStoredAccountLogin,
   refundOrphanedGameItemUses,
@@ -125,6 +130,8 @@ import {
   saveStoredTauntPreset,
   saveStoredPlayerProfile,
   selectBattleHero,
+  consumePveStartEnergy,
+  equipAchievementTitle,
   updateShopProduct,
   updateShopProducts,
   updateStoredAccount,
@@ -335,7 +342,12 @@ function addEvent(room, text) {
   room.events = [{ id: id(6), at: now(), text }, ...room.events].slice(0, MAX_GAME_EVENTS);
 }
 
+function equippedTitleForPlayer(player) {
+  return ACHIEVEMENT_TITLE_BY_ID.get(player?.equippedTitleId || "") || null;
+}
+
 function publicProfile(profile) {
+  const equippedTitle = equippedTitleForPlayer(profile);
   return {
     id: profile.id,
     name: profile.name,
@@ -344,6 +356,7 @@ function publicProfile(profile) {
     avatarFrame: normalizeAvatarFrame(profile.avatarFrame),
     cardSkin: normalizeCardSkin(profile.cardSkin),
     playEffect: normalizePlayEffect(profile.playEffect),
+    equippedTitle,
     builtIn: Boolean(profile.builtIn),
     updatedAt: profile.updatedAt
   };
@@ -540,6 +553,7 @@ function joinableRoomsList() {
         avatarUrl: player.avatarUrl || "",
         avatarFrame: normalizeAvatarFrame(player.avatarFrame),
         cardSkin: normalizeCardSkin(player.cardSkin),
+        equippedTitle: equippedTitleForPlayer(player),
         host: player.host,
         ready: Boolean(player.ready),
         test: Boolean(player.test),
@@ -567,6 +581,7 @@ function createPlayer(profileOrName, host = false, test = false) {
     avatarFrame: normalizeAvatarFrame(profile?.avatarFrame),
     cardSkin: normalizeCardSkin(profile?.cardSkin),
     playEffect: normalizePlayEffect(profile?.playEffect),
+    equippedTitleId: profile?.equippedTitleId || "",
     host,
     test,
     pveRobot: false,
@@ -579,6 +594,10 @@ function createPlayer(profileOrName, host = false, test = false) {
     draggedRedFives: 0,
     draggedDiamondFives: 0,
     throwFailures: 0,
+    pveEnergyEligible: true,
+    pveEnergySpent: 0,
+    pveEnergyAfter: null,
+    pveEnergyReason: null,
     hand: []
   };
 }
@@ -663,6 +682,7 @@ function syncProfileToRooms(profile) {
       player.avatarFrame = normalizeAvatarFrame(profile.avatarFrame);
       player.cardSkin = normalizeCardSkin(profile.cardSkin);
       player.playEffect = normalizePlayEffect(profile.playEffect);
+      player.equippedTitleId = profile.equippedTitleId || "";
       changed = true;
     });
     if (changed) broadcast(room);
@@ -692,6 +712,7 @@ async function initializePersistence() {
       avatarFrame: "",
       cardSkin: "",
       playEffect: "",
+      equippedTitleId: "",
       builtIn: false,
       updatedAt: stored.updatedAt || now()
     };
@@ -704,6 +725,7 @@ async function initializePersistence() {
     profile.avatarFrame = normalizeAvatarFrame(stored.avatarFrame);
     profile.cardSkin = normalizeCardSkin(stored.cardSkin);
     profile.playEffect = normalizePlayEffect(stored.playEffect);
+    profile.equippedTitleId = stored.equippedTitleId || "";
     profile.updatedAt = stored.updatedAt || profile.updatedAt;
     playerProfiles.set(profile.id, profile);
     syncProfileToRooms(profile);
@@ -1392,6 +1414,36 @@ async function lockBattleHeroesForDeal(room) {
   }
 }
 
+async function preparePveEnergyForDeal(room, startId) {
+  room.energyStartId = normalizeGameMode(room.gameMode) === GAME_MODE_PVE ? startId : null;
+  room.players.forEach((player) => {
+    player.pveEnergyEligible = true;
+    player.pveEnergySpent = 0;
+    player.pveEnergyAfter = null;
+    player.pveEnergyReason = null;
+  });
+  if (normalizeGameMode(room.gameMode) !== GAME_MODE_PVE) return;
+  const humans = humanPlayers(room).filter((player) => player.accountId);
+  try {
+    const outcomes = await consumePveStartEnergy(humans.map((player) => player.accountId), startId);
+    humans.forEach((player) => {
+      const outcome = outcomes[player.accountId];
+      player.pveEnergyEligible = Boolean(outcome?.eligible);
+      player.pveEnergySpent = Number(outcome?.energySpent) || 0;
+      player.pveEnergyAfter = Number.isFinite(outcome?.energy) ? Number(outcome.energy) : null;
+      player.pveEnergyReason = outcome?.reason || null;
+    });
+  } catch (error) {
+    console.error("[energy] PVE start check unavailable; game continues without rewards", error.message);
+    humans.forEach((player) => {
+      player.pveEnergyEligible = false;
+      player.pveEnergySpent = 0;
+      player.pveEnergyAfter = null;
+      player.pveEnergyReason = "energy-unavailable";
+    });
+  }
+}
+
 function deal(room, options = {}) {
   clearAiSetupTimer(room);
   clearAiPlayTimer(room);
@@ -1498,6 +1550,7 @@ function resetRoomToLobby(room, options = {}) {
   room.phase = "等待玩家加入";
   room.startedAt = null;
   room.gameRecordId = null;
+  room.energyStartId = null;
   room.kitty = [];
   room.removedCards = [];
   room.kittySize = room.players.length;
@@ -1532,6 +1585,10 @@ function resetRoomToLobby(room, options = {}) {
     player.draggedRedFives = 0;
     player.draggedDiamondFives = 0;
     player.throwFailures = 0;
+    player.pveEnergyEligible = true;
+    player.pveEnergySpent = 0;
+    player.pveEnergyAfter = null;
+    player.pveEnergyReason = null;
     player.ready = player.test || player.id === readyPlayerId || (options.preserveReady && previousReady.get(player.id));
     player.nextRoundEntered = false;
   });
@@ -1826,6 +1883,7 @@ function trickSnapshot(room, trick, viewer = null) {
         playEffect: normalizePlayEffect(player.playEffect),
         autoPlayEnabled: Boolean(player.autoPlayEnabled),
         battleHeroSnapshot: player.battleHeroSnapshot || null,
+        equippedTitle: equippedTitleForPlayer(player),
         role: playerRole(room, player.id, viewer),
         doglegMarkCount: dynamicDoglegMarkCount(room.dynamicDogleg, player.id),
         played: Boolean(play),
@@ -1921,6 +1979,7 @@ function roomSnapshot(room, viewer = null, options = {}) {
     phase: room.phase,
     gameMode: normalizeGameMode(room.gameMode),
     gameModeName: gameModeName(room.gameMode),
+    energyStartId: room.energyStartId || null,
     playMode: normalizePlayMode(room.playMode, room.gameMode),
     playModeName: playModeName(room.playMode, room.gameMode),
     autoRandomTeams: Boolean(room.autoRandomTeams),
@@ -1969,7 +2028,12 @@ function roomSnapshot(room, viewer = null, options = {}) {
       nextRoundEntered: Boolean(viewer.nextRoundEntered),
       autoPlayEnabled: Boolean(viewer.autoPlayEnabled),
       squad: viewer.squad || null,
-      battleHeroSnapshot: viewer.battleHeroSnapshot || null
+      battleHeroSnapshot: viewer.battleHeroSnapshot || null,
+      equippedTitle: equippedTitleForPlayer(viewer),
+      pveEnergyEligible: viewer.pveEnergyEligible !== false,
+      pveEnergySpent: Number(viewer.pveEnergySpent) || 0,
+      pveEnergyAfter: Number.isFinite(viewer.pveEnergyAfter) ? viewer.pveEnergyAfter : null,
+      pveEnergyReason: viewer.pveEnergyReason || null
     } : null,
     players: room.players.map((player) => ({
       id: player.id,
@@ -1990,6 +2054,8 @@ function roomSnapshot(room, viewer = null, options = {}) {
       nextRoundEntered: Boolean(player.nextRoundEntered),
       autoPlayEnabled: Boolean(player.autoPlayEnabled),
       battleHeroSnapshot: player.battleHeroSnapshot || null,
+      equippedTitle: equippedTitleForPlayer(player),
+      pveEnergyEligible: player.pveEnergyEligible !== false,
       score: player.score || 0,
       doglegMarkCount: dynamicDoglegMarkCount(room.dynamicDogleg, player.id),
       draggedRedFives: player.draggedRedFives || 0,
@@ -2526,6 +2592,7 @@ function finishGame(room, completedTrick) {
     playerCount: room.players.length,
     gameMode: normalizeGameMode(room.gameMode),
     gameModeName: gameModeName(room.gameMode),
+    energyStartId: room.energyStartId || null,
     playMode: normalizePlayMode(room.playMode, room.gameMode),
     playModeName: playModeName(room.playMode, room.gameMode),
     callMode: normalizedCallMode(room.callMode),
@@ -2603,6 +2670,9 @@ function finishGame(room, completedTrick) {
         draggedRedFives: player.draggedRedFives || 0,
         draggedDiamondFives: player.draggedDiamondFives || 0,
         throwFailures: player.throwFailures || 0,
+        pveEnergyEligible: player.pveEnergyEligible !== false,
+        pveEnergySpent: Number(player.pveEnergySpent) || 0,
+        pveEnergyReason: player.pveEnergyReason || null,
         gameScore: roundGameScore(roleScore),
         gameScoreText: gameScoreText(roleScore),
         evaluation,
@@ -6731,6 +6801,50 @@ async function handleApi(req, res, pathParts, url) {
     return writeJson(res, 200, await getDiamondWallet(account.id, url.searchParams.get("limit")));
   }
 
+  if (pathParts[1] === "energy") {
+    const account = requireAccount(res, req);
+    if (!account) return;
+    if (account.role !== "player") return writeJson(res, 403, { error: "管理员账号没有玩家体力" });
+    if (req.method === "GET" && pathParts[2] === "me") {
+      return writeJson(res, 200, await getEnergyState(account.id));
+    }
+    if (req.method === "POST" && pathParts[2] === "purchase") {
+      const body = await readJson(req);
+      return writeJson(res, 200, await purchasePlayerEnergy(account.id, body.requestId));
+    }
+    return writeJson(res, 404, { error: "体力接口不存在" });
+  }
+
+  if (pathParts[1] === "achievements") {
+    const account = requireAccount(res, req);
+    if (!account) return;
+    if (account.role !== "player" || !account.profileId) {
+      return writeJson(res, 403, { error: "管理员账号没有玩家成就" });
+    }
+    if (req.method === "GET" && pathParts[2] === "me") {
+      return writeJson(res, 200, await getAchievementState(account.id));
+    }
+    if (req.method === "POST" && pathParts[2] === "claim") {
+      const body = await readJson(req);
+      return writeJson(res, 200, await claimAchievement(account.id, body.achievementId, body.requestId));
+    }
+    if (req.method === "PATCH" && pathParts[2] === "title") {
+      const body = await readJson(req);
+      const saved = await equipAchievementTitle(account.id, account.profileId, body.titleId);
+      const profile = profileForId(account.profileId);
+      if (!profile) return writeJson(res, 404, { error: "账号绑定的玩家不存在" });
+      profile.equippedTitleId = saved.equippedTitleId;
+      profile.updatedAt = saved.updatedAt;
+      playerProfiles.set(profile.id, profile);
+      syncProfileToRooms(profile);
+      return writeJson(res, 200, {
+        account: publicAccount(account),
+        state: await getAchievementState(account.id)
+      });
+    }
+    return writeJson(res, 404, { error: "成就接口不存在" });
+  }
+
   if (pathParts[1] === "avatar-frames" && pathParts.length === 2 && req.method === "GET") {
     const products = await listShopProducts();
     return writeJson(res, 200, { products: products.filter((product) => product.productType === "avatar_frame") });
@@ -6827,6 +6941,7 @@ async function handleApi(req, res, pathParts, url) {
       createdAt: now(),
       startedAt: null,
       gameRecordId: null,
+      energyStartId: null,
       gameMode: GAME_MODE_PVP,
       playMode: PLAY_MODE_BRAWL,
       autoRandomTeams: false,
@@ -6890,6 +7005,10 @@ async function handleApi(req, res, pathParts, url) {
   if (pathParts[1] === "rooms" && pathParts[2]) {
     const room = getRoom(res, pathParts[2]);
     if (!room) return;
+
+    if (req.method === "POST" && room.startInFlight && pathParts[3] !== "start") {
+      return writeJson(res, 409, { error: "牌局正在开始，请稍后操作" });
+    }
 
     if (req.method === "GET" && pathParts[3] === "state") {
       const spectatorId = url.searchParams.get("spectatorId");
@@ -7341,19 +7460,32 @@ async function handleApi(req, res, pathParts, url) {
       const viewer = playerFor(room, body.playerId, body.token);
       if (!viewer) return writeJson(res, 401, { error: "玩家身份已失效" });
       if (!viewer.host) return writeJson(res, 403, { error: "只有房主可以开始" });
+      if (room.startInFlight) return writeJson(res, 409, { error: "牌局正在开始，请勿重复操作" });
       if (room.status !== "lobby" || room.stage !== "lobby") {
         return writeJson(res, 409, { error: room.stage === "finished" ? "还有玩家正在查看结算" : "牌局已经开始" });
       }
       const validation = roomStartValidation(room);
       if (!validation.valid) return writeJson(res, 409, { error: validation.error });
 
-      room.restartCardUsedPlayerIds = [];
-      await lockBattleHeroesForDeal(room);
-      deal(room);
-      room.gameRecordId = randomUUID();
-      addEvent(room, `房主开始牌局：${room.players.length} 人，每人 ${HAND_SIZE} 张，底牌 ${room.kitty.length} 张`);
-      broadcastAndContinueAutomation(room);
-      return writeJson(res, 200, roomStateAck(room));
+      room.startInFlight = true;
+      try {
+        room.restartCardUsedPlayerIds = [];
+        const nextGameRecordId = randomUUID();
+        const energyStartId = randomUUID();
+        await preparePveEnergyForDeal(room, energyStartId);
+        await lockBattleHeroesForDeal(room);
+        deal(room);
+        room.gameRecordId = nextGameRecordId;
+        addEvent(room, `房主开始牌局：${room.players.length} 人，每人 ${HAND_SIZE} 张，底牌 ${room.kitty.length} 张`);
+        const ineligiblePlayers = humanPlayers(room).filter((player) => player.pveEnergyEligible === false);
+        if (normalizeGameMode(room.gameMode) === GAME_MODE_PVE && ineligiblePlayers.length) {
+          addEvent(room, `${ineligiblePlayers.map((player) => player.name).join("、")}体力不足或暂不可用，本局不获得钻石且不计每日任务`);
+        }
+        broadcastAndContinueAutomation(room);
+        return writeJson(res, 200, roomStateAck(room));
+      } finally {
+        room.startInFlight = false;
+      }
     }
 
     if (req.method === "POST" && pathParts[3] === "item-stage-complete") {

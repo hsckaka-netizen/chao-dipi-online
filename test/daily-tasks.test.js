@@ -63,6 +63,7 @@ test("daily task persistence, claim endpoint, and UI are server-authoritative", 
   assert.match(historySource, /game\.banker_room_player_id = player\.room_player_id/);
   assert.match(historySource, /game\.bottom_winner_room_player_id = player\.room_player_id/);
   assert.match(historySource, /coalesce\(sum\(player\.trick_score\), 0\)/);
+  assert.match(historySource, /game\.game_mode <> 'pve' OR player\.pve_energy_eligible/);
   assert.match(historySource, /lifetime_earned = lifetime_earned \+ \$2/);
   assert.match(historySource, /building_materials = building_materials \+ \$2/);
   assert.match(historySource, /'daily_task_reward'/);

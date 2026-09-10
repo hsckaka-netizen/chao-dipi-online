@@ -154,6 +154,7 @@ export function isDiamondEligiblePlayer(room, player) {
     && Boolean(player)
     && !player.test
     && Boolean(player.accountId)
+    && (room.gameMode !== "pve" || player.pveEnergyEligible !== false)
     && !spectatorAccountIds(room).has(player.accountId);
 }
 
@@ -192,6 +193,8 @@ export function attachDiamondRewards(room) {
             ? "spectator"
             : roomPlayer?.test
               ? "robot"
+              : room.gameMode === "pve" && roomPlayer?.pveEnergyEligible === false
+                ? roomPlayer.pveEnergyReason || "insufficient-energy"
               : "login-required"
         };
   });

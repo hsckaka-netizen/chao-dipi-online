@@ -19,7 +19,7 @@
 | 技术结构、部署、缓存、数据边界 | `docs/architecture.md` |
 | 发牌、叫庄、炒底、牌型、出牌、结算、称号、机器人 | `docs/gameplay-rules.md` |
 | 房间、观战、牌桌 UI、移动端、头像框、牌面边框、特效 | `docs/room-and-ui.md` |
-| 账号、历史、排行榜、个人主页、赛季 | `docs/accounts-data-and-statistics.md` |
+| 账号、历史、排行榜、个人主页、赛季、成就、可装备称号 | `docs/accounts-data-and-statistics.md` |
 | 钻石奖励 | `docs/diamond-system-requirement-analysis.md` |
 | 钻石商城、皮肤拥有权、商品管理、对局道具 | `docs/shop-and-consumable-items-requirement-analysis.md` |
 | 英雄卡、抽卡、养成方案（未来能力） | `docs/card-system-requirement-analysis.md` |

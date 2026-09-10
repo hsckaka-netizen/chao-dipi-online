@@ -19,6 +19,19 @@ import { annotateForcedProtectedFives } from "./dragged-five-attribution.js";
 import { calculateSeasonReward, SEASON_REWARD_RULES } from "./season-rewards.js";
 import { CONSUMABLE_ITEMS, SHOP_RULES_VERSION, shopProductIdFromPath } from "./shop-and-items.js";
 import {
+  ACHIEVEMENT_BY_ID,
+  ACHIEVEMENT_RULES,
+  ACHIEVEMENT_TITLE_BY_ID,
+  buildAchievementState,
+  calculateStreaks
+} from "./achievements.js";
+import {
+  consumePveStartEnergy as calculatePveStartEnergy,
+  ENERGY_RULES,
+  purchaseEnergy as calculateEnergyPurchase,
+  recoverEnergy
+} from "./energy.js";
+import {
   beijingHeroRefreshKey,
   createHeroTaskDefinition,
   createHeroTaskRequirements,
@@ -40,7 +53,7 @@ import {
 } from "./hero-home.js";
 
 const { Pool } = pg;
-const RULES_VERSION = "2026-09-08";
+const RULES_VERSION = "2026-09-10";
 const ADMIN_DIAMOND_GRANT_RULES_VERSION = "2026-07-29-admin-grant-v1";
 const MIGRATIONS = [
   {
@@ -175,6 +188,10 @@ const MIGRATIONS = [
   {
     version: 33,
     path: fileURLToPath(new URL("./db/migrations/033_game_modes.sql", import.meta.url))
+  },
+  {
+    version: 34,
+    path: fileURLToPath(new URL("./db/migrations/034_energy_and_achievements.sql", import.meta.url))
   }
 ];
 const HISTORY_ENABLED = String(process.env.GAME_HISTORY_ENABLED || "").toLowerCase() === "true";
@@ -330,7 +347,7 @@ export async function loadStoredPlayerProfiles() {
     const result = await pool.query(`
       SELECT
         profile_id, account_id, display_name, avatar_url, avatar_version,
-        avatar_frame, card_skin, play_effect, avatar_updated_at, updated_at
+        avatar_frame, card_skin, play_effect, equipped_title, avatar_updated_at, updated_at
       FROM cdp_player_profiles
       ORDER BY profile_id
     `);
@@ -346,6 +363,7 @@ export async function loadStoredPlayerProfiles() {
       avatarFrame: row.avatar_frame || "",
       cardSkin: row.card_skin || "",
       playEffect: row.play_effect || "",
+      equippedTitleId: row.equipped_title || "",
       avatarUpdatedAt: row.avatar_updated_at ? new Date(row.avatar_updated_at).toISOString() : null,
       updatedAt: row.updated_at ? new Date(row.updated_at).toISOString() : null
     }));
@@ -362,8 +380,8 @@ export async function saveStoredPlayerProfile(profile) {
     const result = await pool.query(
       `INSERT INTO cdp_player_profiles (
         profile_id, account_id, display_name, avatar_url, avatar_version,
-        avatar_frame, card_skin, play_effect, avatar_updated_at, updated_at
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+        avatar_frame, card_skin, play_effect, equipped_title, avatar_updated_at, updated_at
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
       ON CONFLICT (profile_id) DO UPDATE SET
         account_id = excluded.account_id,
         display_name = excluded.display_name,
@@ -372,6 +390,7 @@ export async function saveStoredPlayerProfile(profile) {
         avatar_frame = excluded.avatar_frame,
         card_skin = excluded.card_skin,
         play_effect = excluded.play_effect,
+        equipped_title = excluded.equipped_title,
         avatar_updated_at = excluded.avatar_updated_at,
         updated_at = excluded.updated_at
       RETURNING updated_at`,
@@ -384,6 +403,7 @@ export async function saveStoredPlayerProfile(profile) {
         profile.avatarFrame || "",
         profile.cardSkin || "",
         profile.playEffect || "",
+        profile.equippedTitleId || "",
         profile.avatarUpdatedAt || null,
         profile.updatedAt || new Date().toISOString()
       ]
@@ -445,8 +465,8 @@ export async function createStoredAccount(account, profile = null) {
       await client.query(
         `INSERT INTO cdp_player_profiles (
           profile_id, account_id, display_name, avatar_url, avatar_version,
-          avatar_frame, card_skin, play_effect, avatar_updated_at, updated_at
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+          avatar_frame, card_skin, play_effect, equipped_title, avatar_updated_at, updated_at
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
         ON CONFLICT (profile_id) DO UPDATE SET
           account_id = excluded.account_id,
           display_name = excluded.display_name,
@@ -455,6 +475,7 @@ export async function createStoredAccount(account, profile = null) {
           avatar_frame = excluded.avatar_frame,
           card_skin = excluded.card_skin,
           play_effect = excluded.play_effect,
+          equipped_title = excluded.equipped_title,
           avatar_updated_at = excluded.avatar_updated_at,
           updated_at = excluded.updated_at`,
         [
@@ -466,6 +487,7 @@ export async function createStoredAccount(account, profile = null) {
           profile.avatarFrame || "",
           profile.cardSkin || "",
           profile.playEffect || "",
+          profile.equippedTitleId || "",
           profile.avatarUpdatedAt || null,
           profile.updatedAt || new Date().toISOString()
         ]
@@ -1643,6 +1665,7 @@ export function buildGameRecord(room) {
       draggedRedFives: Number(playerResult.draggedRedFives) || 0,
       draggedDiamondFives: Number(playerResult.draggedDiamondFives) || 0,
       throwFailures: Number(playerResult.throwFailures) || 0,
+      pveEnergyEligible: roomPlayer?.pveEnergyEligible !== false,
       evaluation: jsonValue(playerResult.evaluation, {}),
       tags,
       battleHeroSnapshot: jsonValue(roomPlayer?.battleHeroSnapshot, null),
@@ -1662,7 +1685,7 @@ export function buildGameRecord(room) {
   });
 
   return {
-    recordFormatVersion: 3,
+    recordFormatVersion: 4,
     gameId: room.gameRecordId,
     roomCode: room.id,
     startedAt: room.startedAt,
@@ -1670,6 +1693,7 @@ export function buildGameRecord(room) {
     rulesVersion: RULES_VERSION,
     playerCount: Number(result.playerCount) || room.players.length,
     gameMode: result.gameMode || room.gameMode || "pvp",
+    energyStartId: result.energyStartId || room.energyStartId || null,
     playMode: result.playMode || room.playMode || "brawl",
     callMode: result.callMode || room.callMode || "two",
     callModeName: result.callModeName || "",
@@ -1846,7 +1870,9 @@ async function settleBoardHeroCooldown(client, record) {
   const uses = Array.isArray(record.boardHeroEffects?.uses) ? record.boardHeroEffects.uses : [];
   for (const player of record.players) {
     const unitId = player.battleHeroSnapshot?.heroId;
-    if (!player.accountId || player.diamondReward?.status === "ineligible" || !["shen-biesan", "shen-jiangwen"].includes(unitId)) continue;
+    const rewardIneligibleForNonEnergyReason = player.diamondReward?.status === "ineligible"
+      && !["insufficient-energy", "energy-unavailable"].includes(player.diamondReward?.reason);
+    if (!player.accountId || rewardIneligibleForNonEnergyReason || !["shen-biesan", "shen-jiangwen"].includes(unitId)) continue;
     const existing = await client.query(
       `SELECT game_id FROM cdp_hero_cooldown_settlements
        WHERE game_id = $1::uuid AND account_id = $2::uuid AND unit_id = $3`,
@@ -1892,7 +1918,8 @@ async function saveGameRecord(record) {
         banker_room_player_id, banker_profile_id, dogleg_card, dogleg_profile_ids,
         threshold, idle_score, score_diff, winner_team, bottom_winner_room_player_id,
         bottom_winner_profile_id, bottom_winner_team, bottom_points, bottom_cards,
-        removed_cards, setup_data, result_data, trick_history, board_hero_effects, record_format_version
+        removed_cards, setup_data, result_data, trick_history, board_hero_effects,
+        energy_start_id, record_format_version
       ) VALUES (
         $1, $2, $3, $4, $5, $6,
         $7, $8,
@@ -1900,7 +1927,8 @@ async function saveGameRecord(record) {
         $14, $15, $16::jsonb, $17::jsonb,
         $18, $19, $20, $21, $22,
         $23, $24, $25, $26::jsonb,
-        $27::jsonb, $28::jsonb, $29::jsonb, $30::jsonb, $31::jsonb, $32
+        $27::jsonb, $28::jsonb, $29::jsonb, $30::jsonb, $31::jsonb,
+        $32::uuid, $33
       ) ON CONFLICT (game_id) DO NOTHING`,
       [
         record.gameId, record.roomCode, record.startedAt, record.finishedAt, record.rulesVersion, record.playerCount,
@@ -1910,7 +1938,7 @@ async function saveGameRecord(record) {
         record.threshold, record.idleScore, record.scoreDiff, record.winnerTeam, record.bottomWinnerRoomPlayerId,
         record.bottomWinnerProfileId, record.bottomWinnerTeam, record.bottomPoints, JSON.stringify(record.bottomCards),
         JSON.stringify(record.removedCards), JSON.stringify(record.setup), JSON.stringify(record.result), JSON.stringify(record.trickHistory),
-        JSON.stringify(record.boardHeroEffects || {}), record.recordFormatVersion
+        JSON.stringify(record.boardHeroEffects || {}), record.energyStartId, record.recordFormatVersion
       ]
     );
 
@@ -1921,7 +1949,7 @@ async function saveGameRecord(record) {
           name_snapshot, avatar_url_snapshot, role, team, won, trick_score,
           game_score, base_game_score, item_self_delta, item_opponent_delta,
           item_score_delta, dragged_red_fives, dragged_diamond_fives, throw_failures,
-          evaluation_data, battle_hero_snapshot, hero_skill_reward
+          evaluation_data, battle_hero_snapshot, hero_skill_reward, pve_energy_eligible
         )
         SELECT
           $1::uuid, player.room_player_id, player.profile_id, player.account_id,
@@ -1929,7 +1957,8 @@ async function saveGameRecord(record) {
           player.role, player.team, player.won, player.trick_score, player.game_score,
           player.base_game_score, player.item_self_delta, player.item_opponent_delta,
           player.item_score_delta, player.dragged_red_fives, player.dragged_diamond_fives, player.throw_failures,
-          player.evaluation_data, player.battle_hero_snapshot, player.hero_skill_reward
+          player.evaluation_data, player.battle_hero_snapshot, player.hero_skill_reward,
+          player.pve_energy_eligible
         FROM jsonb_to_recordset($2::jsonb) AS player(
           room_player_id text, profile_id text, account_id uuid, seat_index smallint,
           is_ai boolean, name_snapshot text, avatar_url_snapshot text, role text,
@@ -1938,7 +1967,7 @@ async function saveGameRecord(record) {
           item_score_delta numeric,
           dragged_red_fives integer, dragged_diamond_fives integer,
           throw_failures integer, evaluation_data jsonb,
-          battle_hero_snapshot jsonb, hero_skill_reward jsonb
+          battle_hero_snapshot jsonb, hero_skill_reward jsonb, pve_energy_eligible boolean
         )
         WHERE true
         ON CONFLICT (game_id, room_player_id) DO NOTHING`,
@@ -1964,7 +1993,8 @@ async function saveGameRecord(record) {
           throw_failures: player.throwFailures,
           evaluation_data: player.evaluation,
           battle_hero_snapshot: player.battleHeroSnapshot,
-          hero_skill_reward: player.heroSkillReward
+          hero_skill_reward: player.heroSkillReward,
+          pve_energy_eligible: player.pveEnergyEligible
         })))]
       );
     }
@@ -2089,6 +2119,30 @@ function requirePool() {
   return pool;
 }
 
+async function connectPoolWithTimeout(database, timeoutMs = 1500) {
+  let timedOut = false;
+  let timer = null;
+  const acquisition = database.connect().then((client) => {
+    if (timedOut) {
+      client.release();
+      throw commerceError("体力服务连接超时", 503);
+    }
+    return client;
+  });
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => {
+      timedOut = true;
+      reject(commerceError("体力服务连接超时", 503));
+    }, timeoutMs);
+    timer.unref?.();
+  });
+  try {
+    return await Promise.race([acquisition, timeout]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function ensureHeroAccount(client, accountId) {
   await client.query(
     `INSERT INTO cdp_hero_profiles (account_id)
@@ -2120,7 +2174,8 @@ async function dailyTaskStateFromClient(client, accountId, at = new Date()) {
        JOIN cdp_games game ON game.game_id = player.game_id
        WHERE player.account_id = $1::uuid
          AND game.finished_at >= $2::timestamptz
-         AND game.finished_at < $3::timestamptz`,
+         AND game.finished_at < $3::timestamptz
+         AND (game.game_mode <> 'pve' OR player.pve_energy_eligible)`,
       [accountId, emptyState.startAt, emptyState.nextRefreshAt]
     ),
     client.query(
@@ -3492,6 +3547,443 @@ export async function getDiamondWallet(accountId, limit = 20) {
   };
 }
 
+function publicEnergyState(state, balance = null) {
+  return {
+    rulesVersion: ENERGY_RULES.version,
+    energy: state.energy,
+    maximum: ENERGY_RULES.maximum,
+    pveStartCost: ENERGY_RULES.pveStartCost,
+    purchaseAmount: ENERGY_RULES.purchaseAmount,
+    purchaseDiamondCost: ENERGY_RULES.purchaseDiamondCost,
+    nextRecoveryAt: state.nextRecoveryAt,
+    canPurchase: state.canPurchase,
+    balance: balance == null ? null : Number(balance)
+  };
+}
+
+async function lockedEnergyState(client, accountId, at = new Date()) {
+  await client.query(
+    `INSERT INTO cdp_player_energy (account_id)
+     VALUES ($1::uuid)
+     ON CONFLICT (account_id) DO NOTHING`,
+    [accountId]
+  );
+  const result = await client.query(
+    `SELECT energy, refreshed_at
+     FROM cdp_player_energy
+     WHERE account_id = $1::uuid
+     FOR UPDATE`,
+    [accountId]
+  );
+  const row = result.rows[0] || {};
+  const recovered = recoverEnergy({ energy: row.energy, refreshedAt: row.refreshed_at }, at);
+  if (recovered.recovered > 0 || new Date(row.refreshed_at).getTime() !== new Date(recovered.refreshedAt).getTime()) {
+    await client.query(
+      `UPDATE cdp_player_energy
+       SET energy = $2, refreshed_at = $3::timestamptz, updated_at = now()
+       WHERE account_id = $1::uuid`,
+      [accountId, recovered.energy, recovered.refreshedAt]
+    );
+  }
+  return recovered;
+}
+
+export async function getEnergyState(accountId) {
+  const database = requirePool();
+  const client = await database.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query(
+      `INSERT INTO cdp_diamond_wallets (account_id)
+       VALUES ($1::uuid)
+       ON CONFLICT (account_id) DO NOTHING`,
+      [accountId]
+    );
+    const state = await lockedEnergyState(client, accountId);
+    const wallet = await client.query(
+      `SELECT balance FROM cdp_diamond_wallets WHERE account_id = $1::uuid`,
+      [accountId]
+    );
+    await client.query("COMMIT");
+    return publicEnergyState(state, wallet.rows[0]?.balance || 0);
+  } catch (error) {
+    await client.query("ROLLBACK");
+    rememberError(error);
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+export async function consumePveStartEnergy(accountIds = [], startId) {
+  const uniqueIds = [...new Set(accountIds.filter(Boolean).map(String))];
+  if (!uniqueIds.length) return {};
+  const database = requirePool();
+  const client = await connectPoolWithTimeout(database);
+  const at = new Date();
+  try {
+    await client.query("BEGIN");
+    await client.query("SET LOCAL lock_timeout = '1500ms'");
+    await client.query("SET LOCAL statement_timeout = '3000ms'");
+    const outcomes = {};
+    for (const accountId of uniqueIds) {
+      const existing = await client.query(
+        `SELECT energy_before, energy_spent, energy_after, reward_eligible, reason
+         FROM cdp_pve_energy_uses
+         WHERE start_id = $1::uuid AND account_id = $2::uuid`,
+        [startId, accountId]
+      );
+      if (existing.rows[0]) {
+        const row = existing.rows[0];
+        outcomes[accountId] = {
+          energyBefore: Number(row.energy_before),
+          energySpent: Number(row.energy_spent),
+          energy: Number(row.energy_after),
+          eligible: Boolean(row.reward_eligible),
+          reason: row.reason || null
+        };
+        continue;
+      }
+      const current = await lockedEnergyState(client, accountId, at);
+      const consumed = calculatePveStartEnergy(current, at);
+      await client.query(
+        `UPDATE cdp_player_energy
+         SET energy = $2, refreshed_at = $3::timestamptz, updated_at = now()
+         WHERE account_id = $1::uuid`,
+        [accountId, consumed.energy, consumed.refreshedAt]
+      );
+      await client.query(
+        `INSERT INTO cdp_pve_energy_uses (
+          start_id, account_id, energy_before, energy_spent,
+          energy_after, reward_eligible, reason
+        ) VALUES ($1::uuid, $2::uuid, $3, $4, $5, $6, $7)`,
+        [
+          startId,
+          accountId,
+          consumed.energyBefore,
+          consumed.energySpent,
+          consumed.energy,
+          consumed.eligible,
+          consumed.reason
+        ]
+      );
+      outcomes[accountId] = consumed;
+    }
+    await client.query("COMMIT");
+    return outcomes;
+  } catch (error) {
+    await client.query("ROLLBACK");
+    rememberError(error);
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+export async function purchasePlayerEnergy(accountId, requestIdValue) {
+  const requestId = normalizedRequestId(requestIdValue);
+  const idempotencyKey = `energy_purchase:${accountId}:${requestId}`;
+  const database = requirePool();
+  const client = await database.connect();
+  const at = new Date();
+  try {
+    await client.query("BEGIN");
+    await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [idempotencyKey]);
+    await client.query(
+      `INSERT INTO cdp_diamond_wallets (account_id)
+       VALUES ($1::uuid)
+       ON CONFLICT (account_id) DO NOTHING`,
+      [accountId]
+    );
+    const lockedWallet = await client.query(
+      `SELECT balance FROM cdp_diamond_wallets
+       WHERE account_id = $1::uuid FOR UPDATE`,
+      [accountId]
+    );
+    const current = await lockedEnergyState(client, accountId, at);
+    const existing = await client.query(
+      `SELECT balance_after, detail
+       FROM cdp_diamond_ledger
+       WHERE idempotency_key = $1`,
+      [idempotencyKey]
+    );
+    if (existing.rows[0]) {
+      await client.query("COMMIT");
+      return {
+        repeated: true,
+        ...publicEnergyState(current, lockedWallet.rows[0]?.balance || 0)
+      };
+    }
+    const purchased = calculateEnergyPurchase(current, at);
+    if (!purchased.purchased) throw commerceError("当前体力超过 18 点，购买会超过 24 点上限", 409);
+    const wallet = await client.query(
+      `UPDATE cdp_diamond_wallets
+       SET balance = balance - $2, updated_at = now()
+       WHERE account_id = $1::uuid AND balance >= $2
+       RETURNING balance`,
+      [accountId, ENERGY_RULES.purchaseDiamondCost]
+    );
+    if (!wallet.rows[0]) throw commerceError("钻石余额不足", 409);
+    await client.query(
+      `UPDATE cdp_player_energy
+       SET energy = $2, refreshed_at = $3::timestamptz, updated_at = now()
+       WHERE account_id = $1::uuid`,
+      [accountId, purchased.energy, purchased.refreshedAt]
+    );
+    const balanceAfter = Number(wallet.rows[0].balance) || 0;
+    await client.query(
+      `INSERT INTO cdp_diamond_ledger (
+        account_id, amount, balance_after, reason,
+        rules_version, idempotency_key, detail
+      ) VALUES ($1::uuid, $2, $3, 'energy_purchase', $4, $5, $6::jsonb)`,
+      [
+        accountId,
+        -ENERGY_RULES.purchaseDiamondCost,
+        balanceAfter,
+        ENERGY_RULES.version,
+        idempotencyKey,
+        JSON.stringify({ requestId, energyBefore: current.energy, energyAfter: purchased.energy })
+      ]
+    );
+    await client.query("COMMIT");
+    return {
+      repeated: false,
+      ...publicEnergyState(purchased, balanceAfter)
+    };
+  } catch (error) {
+    await client.query("ROLLBACK");
+    rememberError(error);
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+async function achievementMetricsFromClient(client, accountId) {
+  const [gamesResult, tagResult] = await Promise.all([
+    client.query(
+      `SELECT
+         player.won,
+         player.role,
+         game.game_mode,
+         game.bottom_winner_room_player_id = player.room_player_id AS bottom_win,
+         coalesce(nullif(player.evaluation_data ->> 'enemyDraggedRedFives', '')::integer, 0) AS enemy_red_fives
+       FROM cdp_game_players player
+       JOIN cdp_games game ON game.game_id = player.game_id
+       WHERE player.account_id = $1::uuid AND NOT player.is_ai
+       ORDER BY game.finished_at, game.game_id`,
+      [accountId]
+    ),
+    client.query(
+      `SELECT
+         count(*)::bigint AS evaluation_title_count,
+         count(DISTINCT tag.tag_code)::bigint AS distinct_evaluation_titles,
+         count(*) FILTER (WHERE tag.tag_code = 'mvp')::bigint AS mvp_count,
+         count(*) FILTER (WHERE tag.tag_code = 'support')::bigint AS support_count
+       FROM cdp_game_tags tag
+       JOIN cdp_game_players player
+         ON player.game_id = tag.game_id AND player.room_player_id = tag.room_player_id
+       WHERE player.account_id = $1::uuid AND NOT player.is_ai`,
+      [accountId]
+    )
+  ]);
+  const games = gamesResult.rows;
+  const tags = tagResult.rows[0] || {};
+  return {
+    gamesPlayed: games.length,
+    wins: games.filter((game) => game.won).length,
+    ...calculateStreaks(games.map((game) => Boolean(game.won))),
+    bankerGames: games.filter((game) => game.role === "庄家").length,
+    pveWins: games.filter((game) => game.game_mode === "pve" && game.won).length,
+    bottomWins: games.filter((game) => game.bottom_win).length,
+    maxEnemyRedFives: Math.max(0, ...games.map((game) => Number(game.enemy_red_fives) || 0)),
+    evaluationTitleCount: Number(tags.evaluation_title_count) || 0,
+    distinctEvaluationTitles: Number(tags.distinct_evaluation_titles) || 0,
+    mvpCount: Number(tags.mvp_count) || 0,
+    supportCount: Number(tags.support_count) || 0
+  };
+}
+
+async function achievementStateFromClient(client, accountId) {
+  const [metrics, claimsResult, profileResult] = await Promise.all([
+    achievementMetricsFromClient(client, accountId),
+    client.query(
+      `SELECT achievement_id, claimed_at
+       FROM cdp_achievement_claims
+       WHERE account_id = $1::uuid
+       ORDER BY claimed_at, achievement_id`,
+      [accountId]
+    ),
+    client.query(
+      `SELECT equipped_title
+       FROM cdp_player_profiles
+       WHERE account_id = $1::uuid`,
+      [accountId]
+    )
+  ]);
+  return buildAchievementState(
+    metrics,
+    claimsResult.rows.map((row) => ({
+      achievementId: row.achievement_id,
+      claimedAt: row.claimed_at ? new Date(row.claimed_at).toISOString() : null
+    })),
+    profileResult.rows[0]?.equipped_title || ""
+  );
+}
+
+export async function getAchievementState(accountId) {
+  return achievementStateFromClient(requirePool(), accountId);
+}
+
+export async function claimAchievement(accountId, achievementIdValue, requestIdValue) {
+  const achievementId = String(achievementIdValue || "");
+  const definition = ACHIEVEMENT_BY_ID.get(achievementId);
+  if (!definition) throw commerceError("成就不存在", 404);
+  const requestId = normalizedRequestId(requestIdValue);
+  const database = requirePool();
+  const client = await database.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [`achievement:${accountId}:${achievementId}`]);
+    await client.query(
+      `INSERT INTO cdp_diamond_wallets (account_id)
+       VALUES ($1::uuid)
+       ON CONFLICT (account_id) DO NOTHING`,
+      [accountId]
+    );
+    const lockedWallet = await client.query(
+      `SELECT balance FROM cdp_diamond_wallets
+       WHERE account_id = $1::uuid FOR UPDATE`,
+      [accountId]
+    );
+    const existing = await client.query(
+      `SELECT reward_diamonds, balance_after
+       FROM cdp_achievement_claims
+       WHERE account_id = $1::uuid AND achievement_id = $2`,
+      [accountId, achievementId]
+    );
+    if (existing.rows[0]) {
+      const state = await achievementStateFromClient(client, accountId);
+      await client.query("COMMIT");
+      return {
+        repeated: true,
+        achievementId,
+        rewardDiamonds: Number(existing.rows[0].reward_diamonds) || 0,
+        balanceAfter: Number(lockedWallet.rows[0]?.balance) || 0,
+        state
+      };
+    }
+    const metrics = await achievementMetricsFromClient(client, accountId);
+    const progress = Math.max(0, Math.trunc(Number(metrics[definition.metric]) || 0));
+    if (progress < definition.target) throw commerceError("成就尚未完成", 409);
+    let balanceAfter = 0;
+    if (definition.rewardDiamonds > 0) {
+      const wallet = await client.query(
+        `UPDATE cdp_diamond_wallets
+         SET balance = balance + $2,
+             lifetime_earned = lifetime_earned + $2,
+             updated_at = now()
+         WHERE account_id = $1::uuid
+         RETURNING balance`,
+        [accountId, definition.rewardDiamonds]
+      );
+      balanceAfter = Number(wallet.rows[0]?.balance) || 0;
+      await client.query(
+        `INSERT INTO cdp_diamond_ledger (
+          account_id, amount, balance_after, reason,
+          rules_version, idempotency_key, detail
+        ) VALUES ($1::uuid, $2, $3, 'achievement', $4, $5, $6::jsonb)`,
+        [
+          accountId,
+          definition.rewardDiamonds,
+          balanceAfter,
+          ACHIEVEMENT_RULES.version,
+          `achievement:${accountId}:${achievementId}`,
+          JSON.stringify({ achievementId, requestId, title: definition.title || null })
+        ]
+      );
+    } else {
+      const wallet = await client.query(
+        `SELECT balance FROM cdp_diamond_wallets WHERE account_id = $1::uuid`,
+        [accountId]
+      );
+      balanceAfter = Number(wallet.rows[0]?.balance) || 0;
+    }
+    await client.query(
+      `INSERT INTO cdp_achievement_claims (
+        account_id, achievement_id, rules_version, progress_value,
+        target_value, reward_diamonds, reward_title_id, reward_title_name,
+        balance_after, request_id
+      ) VALUES ($1::uuid, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+      [
+        accountId,
+        achievementId,
+        ACHIEVEMENT_RULES.version,
+        progress,
+        definition.target,
+        definition.rewardDiamonds,
+        definition.title?.id || null,
+        definition.title?.name || null,
+        balanceAfter,
+        requestId
+      ]
+    );
+    const state = await achievementStateFromClient(client, accountId);
+    await client.query("COMMIT");
+    return {
+      repeated: false,
+      achievementId,
+      rewardDiamonds: definition.rewardDiamonds,
+      rewardTitle: definition.title || null,
+      balanceAfter,
+      state
+    };
+  } catch (error) {
+    await client.query("ROLLBACK");
+    rememberError(error);
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+export async function equipAchievementTitle(accountId, profileId, titleIdValue) {
+  const titleId = String(titleIdValue || "");
+  const database = requirePool();
+  const client = await database.connect();
+  try {
+    await client.query("BEGIN");
+    if (titleId) {
+      const owned = await client.query(
+        `SELECT 1
+         FROM cdp_achievement_claims
+         WHERE account_id = $1::uuid AND reward_title_id = $2`,
+        [accountId, titleId]
+      );
+      if (!owned.rows[0]) throw commerceError("只能装备已经领取的称号", 403);
+    }
+    const result = await client.query(
+      `UPDATE cdp_player_profiles
+       SET equipped_title = $3, updated_at = now()
+       WHERE profile_id = $1 AND account_id = $2::uuid
+       RETURNING updated_at`,
+      [profileId, accountId, titleId]
+    );
+    if (!result.rows[0]) throw commerceError("玩家资料不存在", 404);
+    await client.query("COMMIT");
+    return {
+      equippedTitleId: titleId,
+      updatedAt: result.rows[0].updated_at ? new Date(result.rows[0].updated_at).toISOString() : null
+    };
+  } catch (error) {
+    await client.query("ROLLBACK");
+    rememberError(error);
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
 async function settleSeasonDiamondRewards(database, season) {
   const client = await database.connect();
   try {
@@ -3949,6 +4441,7 @@ const PERIOD_STATISTICS_SQL = `
     latest.name_snapshot AS latest_name,
     latest.avatar_url_snapshot AS latest_avatar_url,
     profile.avatar_frame,
+    profile.equipped_title,
     base.games_played,
     base.wins,
     base.losses,
@@ -4025,6 +4518,14 @@ function statisticsSqlArgs(period, accountId, options) {
   ];
 }
 
+function decorateEquippedTitle(row) {
+  if (!row) return row;
+  return {
+    ...row,
+    equipped_title: ACHIEVEMENT_TITLE_BY_ID.get(row.equipped_title || "") || null
+  };
+}
+
 export async function listPlayerStatistics(seasonId = null, options = {}) {
   const database = requirePool();
   const period = await seasonPeriod(database, seasonId);
@@ -4032,7 +4533,7 @@ export async function listPlayerStatistics(seasonId = null, options = {}) {
     `${PERIOD_STATISTICS_SQL} ORDER BY total_score DESC, wins DESC, games_played DESC, latest_name ASC`,
     statisticsSqlArgs(period, null, options)
   );
-  return result.rows;
+  return result.rows.map(decorateEquippedTitle);
 }
 
 async function getPlayerRelationships(database, accountId, period, options = {}) {
@@ -4093,6 +4594,7 @@ async function getPlayerRelationships(database, accountId, period, options = {})
       latest.name_snapshot AS latest_name,
       latest.avatar_url_snapshot AS latest_avatar_url,
       profile.avatar_frame,
+      profile.equipped_title,
       totals.same_team,
       totals.games_played,
       totals.own_score
@@ -4104,8 +4606,8 @@ async function getPlayerRelationships(database, accountId, period, options = {})
     [accountId, period?.starts_at || null, period?.ends_at || null, filters.gameMode, filters.playMode, filters.playerCount]
   );
   return {
-    bonds: result.rows.filter((row) => row.same_team),
-    opponents: result.rows.filter((row) => !row.same_team)
+    bonds: result.rows.filter((row) => row.same_team).map(decorateEquippedTitle),
+    opponents: result.rows.filter((row) => !row.same_team).map(decorateEquippedTitle)
   };
 }
 
@@ -4114,7 +4616,7 @@ export async function getPlayerStatistics(accountId, seasonId = null, options = 
   const period = await seasonPeriod(database, seasonId);
   const filters = normalizedStatisticsFilters(options);
   const statisticsResult = await database.query(PERIOD_STATISTICS_SQL, statisticsSqlArgs(period, accountId, filters));
-  const player = statisticsResult.rows[0] || null;
+  const player = decorateEquippedTitle(statisticsResult.rows[0] || null);
   if (!player) return null;
   const [trendResult, relationships] = await Promise.all([
     database.query(

@@ -8672,3 +8672,301 @@ button.auto-play-toggle.active {
     width: 100%;
   }
 }
+
+/* PVE 体力与生涯成就 */
+.energy-balance {
+  min-height: 34px;
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid #82b9a3;
+  border-radius: 999px;
+  background: #eef9f4;
+  color: #19664f;
+  padding: 6px 10px;
+  font-size: 13px;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.equipped-title {
+  flex: 0 0 auto;
+  max-width: 72px;
+  overflow: hidden;
+  border: 1px solid rgba(177, 117, 31, 0.32);
+  border-radius: 4px;
+  background: linear-gradient(135deg, #fff7d9, #f4e2ae);
+  color: #75490f;
+  padding: 2px 5px;
+  font-size: 9px;
+  font-weight: 900;
+  line-height: 1.15;
+  letter-spacing: 0.02em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+
+.account-chip .equipped-title,
+.statistics-detail-hero h2 .equipped-title,
+.statistics-current-leader b .equipped-title {
+  margin-inline-end: 5px;
+}
+
+.joinable-room-player {
+  max-width: 190px;
+}
+
+.joinable-room-player .equipped-title {
+  max-width: 58px;
+}
+
+.trick-player-line .equipped-title,
+.table-player-identity .equipped-title {
+  max-width: 58px;
+}
+
+.pve-energy-notice {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid #9ccab7;
+  border-radius: 12px;
+  background: linear-gradient(135deg, #f1faf6, #e4f4ed);
+  padding: 11px 13px;
+  color: #205e4b;
+}
+
+.pve-energy-notice.warning {
+  border-color: #e2ba75;
+  background: linear-gradient(135deg, #fffaf0, #fff2d8);
+  color: #744c14;
+}
+
+.pve-energy-icon {
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.78);
+  font-size: 19px;
+}
+
+.pve-energy-notice > span:nth-child(2) {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.pve-energy-notice small {
+  color: currentColor;
+  font-size: 11px;
+  line-height: 1.45;
+  opacity: 0.78;
+}
+
+.pve-energy-notice > b {
+  font-size: 17px;
+  white-space: nowrap;
+}
+
+.achievement-overview-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(220px, 0.72fr);
+  gap: 14px;
+}
+
+.energy-panel,
+.achievement-summary-panel,
+.title-equipment-panel,
+.achievement-category {
+  min-width: 0;
+}
+
+.energy-panel p,
+.achievement-summary-panel p,
+.title-equipment-panel p {
+  margin: 4px 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.energy-panel .section-head > strong {
+  color: #176e55;
+  font-size: 24px;
+}
+
+.energy-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.energy-actions > span,
+.energy-panel > small {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.achievement-summary-panel {
+  display: grid;
+  align-content: center;
+  justify-items: start;
+  background: linear-gradient(145deg, #fff9e8, #f7e8bb);
+}
+
+.achievement-summary-panel h2 {
+  margin: 4px 0 0;
+  color: #795014;
+  font-size: 34px;
+}
+
+.achievement-summary-panel strong {
+  margin-top: 10px;
+  color: #97671e;
+  font-size: 13px;
+}
+
+.title-choice-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.title-choice {
+  min-height: 34px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.title-choice.active {
+  border-color: #9b6b20;
+  background: #8a5a16;
+  color: #fff;
+}
+
+.title-choice.active .equipped-title {
+  border-color: rgba(255, 255, 255, 0.4);
+}
+
+.achievement-category-list {
+  display: grid;
+  gap: 14px;
+}
+
+.achievement-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.achievement-card {
+  min-width: 0;
+  display: grid;
+  gap: 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fbfcfb;
+  padding: 12px;
+}
+
+.achievement-card.claimable {
+  border-color: #d4ae5c;
+  background: #fffbec;
+  box-shadow: inset 3px 0 #d0a33c;
+}
+
+.achievement-card.claimed {
+  border-color: #bfddcf;
+  background: #f3faf6;
+}
+
+.achievement-card-head,
+.achievement-card-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.achievement-card-head > div {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.achievement-card-head h3 {
+  margin: 0;
+  font-size: 15px;
+}
+
+.achievement-card-head span,
+.achievement-card-foot > span {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.achievement-card-head > b {
+  flex: 0 0 auto;
+  color: var(--primary);
+  font-size: 12px;
+}
+
+.achievement-progress {
+  height: 7px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #e7ede9;
+}
+
+.achievement-progress i {
+  height: 100%;
+  display: block;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #25896d, #d4a23e);
+}
+
+.achievement-card-foot > span:first-child {
+  min-width: 0;
+  color: #79551e;
+  font-weight: 800;
+}
+
+@media (max-width: 800px) {
+  .achievement-overview-grid,
+  .achievement-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 620px) {
+  .pve-energy-notice {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+  }
+
+  .pve-energy-notice button {
+    grid-column: 1 / -1;
+    width: 100%;
+  }
+
+  .energy-actions,
+  .achievement-card-foot {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .energy-actions button,
+  .achievement-card-foot button {
+    width: 100%;
+  }
+
+  .topbar-actions .account-chip {
+    max-width: min(100%, 260px);
+  }
+}

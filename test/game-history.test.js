@@ -159,7 +159,7 @@ test("settled game is converted to an immutable history record", () => {
   assert.equal(record.players[2].tags[0].code, "mvp");
   assert.equal(record.players[3].profileId, null);
   assert.equal(record.players[3].isAi, true);
-  assert.equal(record.recordFormatVersion, 3);
+  assert.equal(record.recordFormatVersion, 4);
   assert.equal(record.gameMode, "pvp");
   assert.equal(record.playMode, "brawl");
   assert.equal(record.doglegCard, "1-C-A");

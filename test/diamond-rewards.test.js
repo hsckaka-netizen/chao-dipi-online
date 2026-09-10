@@ -140,6 +140,37 @@ test("official PVE rewards logged-in humans but never computer players", () => {
   assert.equal(room.result.playerResults[0].diamondReward.noRewardReason, "pve-loss");
 });
 
+test("an insufficient-energy PVE player can finish but receives no diamonds", () => {
+  const room = {
+    gameMode: "pve",
+    playMode: "team",
+    players: [
+      { id: "h1", accountId: "account-a", test: false, pveEnergyEligible: false, pveEnergyReason: "insufficient-energy" },
+      { id: "h2", accountId: "account-b", test: false, pveEnergyEligible: true },
+      { id: "r1", accountId: null, test: true, pveRobot: true },
+      { id: "r2", accountId: null, test: true, pveRobot: true }
+    ],
+    result: {
+      winnerTeam: "banker",
+      playerResults: [
+        { playerId: "h1", team: "banker", gameScore: 2, evaluationTags: [{ code: "mvp", label: "MVP" }] },
+        { playerId: "h2", team: "banker", gameScore: 2, evaluationTags: [] },
+        { playerId: "r1", team: "idle", gameScore: -2, evaluationTags: [] },
+        { playerId: "r2", team: "idle", gameScore: -2, evaluationTags: [] }
+      ]
+    }
+  };
+
+  assert.equal(isDiamondEligibleGame(room), true);
+  assert.equal(isDiamondEligiblePlayer(room, room.players[0]), false);
+  assert.equal(isDiamondEligiblePlayer(room, room.players[1]), true);
+  attachDiamondRewards(room);
+  assert.equal(room.result.playerResults[0].diamondReward.status, "ineligible");
+  assert.equal(room.result.playerResults[0].diamondReward.reason, "insufficient-energy");
+  assert.equal(room.result.playerResults[0].diamondReward.totalAmount, 0);
+  assert.equal(room.result.playerResults[1].diamondReward.status, "pending");
+});
+
 test("PVE reward uses the team result while PVP keeps the full reward", () => {
   const pveWinner = calculateGameDiamondReward({
     gameMode: "pve",
