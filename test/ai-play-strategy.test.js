@@ -7,10 +7,13 @@ import { __aiPlayTesting } from "../server.js";
 const {
   AI_STRATEGY_FIXED_TEAM,
   AI_STRATEGY_HEURISTIC,
+  AI_STRATEGY_PVE_TEAM,
   AI_STRATEGY_SAFE_FIVE,
   aiDecisionContext,
+  aiPveTrumpLeadMemoryAdjustment,
   aiSampleHiddenHands,
   aiSafeThrowPlans,
+  aiTeamFiveExposure,
   createDeck,
   legalAutoPlay
 } = __aiPlayTesting;
@@ -21,15 +24,25 @@ function cardById(deck, id) {
   return card;
 }
 
-function player(id, hand = [], score = 0) {
-  return { id, name: id, hand, score, test: true };
+function player(id, hand = [], score = 0, squad = null) {
+  return { id, name: id, hand, score, squad, test: true };
 }
 
-function baseRoom({ players, currentTrick, trickHistory = [], bankerId = "banker", doglegPlayerIds = [] }) {
+function baseRoom({
+  players,
+  currentTrick,
+  trickHistory = [],
+  bankerId = "banker",
+  doglegPlayerIds = [],
+  gameMode = "pvp",
+  playMode = "brawl"
+}) {
   return {
     id: "ai-test-room",
     status: "dealt",
     stage: "playing",
+    gameMode,
+    playMode,
     players,
     currentTrick,
     trickHistory,
@@ -47,6 +60,10 @@ function baseRoom({ players, currentTrick, trickHistory = [], bankerId = "banker
     hiddenDogleg: null,
     randomOrderDogleg: null
   };
+}
+
+function pveRoom(options) {
+  return baseRoom({ ...options, gameMode: "pve", playMode: "team", doglegPlayerIds: [] });
 }
 
 test("robot decisions do not change when only the hidden banker hand changes", () => {
@@ -226,4 +243,125 @@ test("one-trick sampling falls back to the fair heuristic in nontraditional dogl
   const baseline = legalAutoPlay(room, robot, { strategy: AI_STRATEGY_HEURISTIC });
   assert.equal(decision.strategy, AI_STRATEGY_HEURISTIC);
   assert.deepEqual(decision.cards.map((card) => card.id), baseline.cards.map((card) => card.id));
+});
+
+test("PVE keeps monte-carlo-v4 by default and exposes the new fixed-team strategy for evaluation", () => {
+  const deck = createDeck(4);
+  const robot = player("robot", [cardById(deck, "1-C-4")], 0, "A");
+  const players = [
+    robot,
+    player("opponent-1", [cardById(deck, "2-D-6")], 0, "B"),
+    player("ally", [cardById(deck, "3-C-7")], 0, "A"),
+    player("opponent-2", [cardById(deck, "4-D-8")], 0, "B")
+  ];
+  const room = pveRoom({
+    players,
+    bankerId: "robot",
+    currentTrick: { number: 1, leaderId: "robot", plays: [] }
+  });
+  const ordinaryRoom = baseRoom({
+    players,
+    bankerId: "robot",
+    currentTrick: { number: 1, leaderId: "robot", plays: [] }
+  });
+
+  assert.equal(legalAutoPlay(room, robot).strategy, AI_STRATEGY_SAFE_FIVE);
+  assert.equal(legalAutoPlay(room, robot, { strategy: AI_STRATEGY_PVE_TEAM }).strategy, AI_STRATEGY_PVE_TEAM);
+  assert.equal(legalAutoPlay(ordinaryRoom, robot).strategy, AI_STRATEGY_SAFE_FIVE);
+});
+
+test("PVE robot keeps scattered trump control and sheds a weak side pair when void", () => {
+  const deck = createDeck(4);
+  const leader = player("opponent-1", [], 0, "B");
+  const robot = player("robot", [
+    cardById(deck, "1-C-A"),
+    cardById(deck, "2-C-A"),
+    cardById(deck, "1-S-4"),
+    cardById(deck, "2-S-6"),
+    cardById(deck, "1-H-5"),
+    cardById(deck, "1-D-5")
+  ], 0, "A");
+  const players = [leader, robot, player("ally", [], 0, "A"), player("opponent-2", [], 0, "B")];
+  const room = pveRoom({
+    players,
+    bankerId: "robot",
+    currentTrick: {
+      number: 8,
+      leaderId: leader.id,
+      plays: [{
+        playerId: leader.id,
+        cards: [cardById(deck, "1-H-9"), cardById(deck, "2-H-9")]
+      }]
+    }
+  });
+
+  const decision = legalAutoPlay(room, robot);
+  assert.deepEqual(new Set(decision.cards.map((card) => card.id)), new Set(["1-C-A", "2-C-A"]));
+});
+
+test("PVE robot feeds safe points when its teammate is guaranteed to keep the trick", () => {
+  const deck = createDeck(4);
+  const leader = player("ally", [], 0, "A");
+  const robot = player("robot", [
+    cardById(deck, "1-C-K"),
+    cardById(deck, "1-D-9"),
+    cardById(deck, "1-D-5")
+  ], 0, "A");
+  const players = [leader, player("opponent-1", [], 0, "B"), player("opponent-2", [], 0, "B"), robot];
+  const room = pveRoom({
+    players,
+    bankerId: "ally",
+    currentTrick: {
+      number: 16,
+      leaderId: leader.id,
+      plays: [
+        { playerId: leader.id, cards: [cardById(deck, "1-H-A")] },
+        { playerId: "opponent-1", cards: [cardById(deck, "2-H-K")] },
+        { playerId: "opponent-2", cards: [cardById(deck, "3-H-Q")] }
+      ]
+    }
+  });
+
+  const decision = legalAutoPlay(room, robot);
+  assert.deepEqual(decision.cards.map((card) => card.id), ["1-C-K"]);
+});
+
+test("fixed-team five memory counts every publicly played five, including losing plays", () => {
+  const deck = createDeck(4);
+  const robot = player("robot", [cardById(deck, "1-C-4")], 0, "A");
+  const players = [
+    robot,
+    player("opponent-1", [], 0, "B"),
+    player("ally", [cardById(deck, "1-C-6")], 0, "A"),
+    player("opponent-2", [], 0, "B")
+  ];
+  const room = pveRoom({
+    players,
+    bankerId: "robot",
+    currentTrick: { number: 2, leaderId: "robot", plays: [] },
+    trickHistory: [{
+      number: 1,
+      leaderId: "ally",
+      winnerId: "ally",
+      points: 15,
+      plays: [
+        { playerId: "ally", cards: [cardById(deck, "1-H-5")] },
+        { playerId: "opponent-1", cards: [cardById(deck, "2-H-5")] },
+        { playerId: "opponent-2", cards: [cardById(deck, "3-H-5")] },
+        { playerId: "robot", cards: [cardById(deck, "1-D-5")] }
+      ]
+    }]
+  });
+
+  const exposure = aiTeamFiveExposure(room, aiDecisionContext(room, robot));
+  assert.equal(exposure.allyRedCount, 1);
+  assert.equal(exposure.opponentRedCount, 2);
+  assert.equal(exposure.allyDiamondCount, 1);
+  assert.equal(exposure.opponentDiamondCount, 0);
+  assert.ok(aiPveTrumpLeadMemoryAdjustment(
+    room,
+    robot,
+    [cardById(deck, "1-S-4")],
+    aiDecisionContext(room, robot)
+  ) < 0);
 });

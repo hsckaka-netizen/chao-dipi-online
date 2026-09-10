@@ -2,11 +2,21 @@ import { performance } from "node:perf_hooks";
 
 import { DEFAULT_BANKER_SCORE_MODE } from "./banker-score-mode.js";
 import { createSeededRandom, shuffleWithRandom, stableAiSeed } from "./ai-random.js";
+import {
+  GAME_MODE_PVE,
+  GAME_MODE_PVP,
+  isFixedTeamGame,
+  PLAY_MODE_BRAWL,
+  PLAY_MODE_TEAM,
+  TEAM_A,
+  TEAM_B
+} from "./game-modes.js";
 import { __aiPlayTesting } from "./server.js";
 
 const {
   AI_STRATEGY_HEURISTIC,
   AI_STRATEGY_MONTE_CARLO,
+  AI_STRATEGY_PVE_TEAM,
   AI_STRATEGY_SAFE_FIVE,
   deckForPlayerCount,
   expectedPlayerId,
@@ -34,7 +44,7 @@ function deterministicBenchmarkDeck(playerCount, random) {
   return { deck: shuffleWithRandom(deck, random), removedCards };
 }
 
-function benchmarkPlayer(index, hand, host = false) {
+function benchmarkPlayer(index, hand, host = false, squad = null) {
   return {
     id: `seat-${index}`,
     name: `机器人${index + 1}`,
@@ -49,6 +59,7 @@ function benchmarkPlayer(index, hand, host = false) {
     nextRoundEntered: true,
     autoPlayEnabled: false,
     connected: true,
+    squad,
     battleHeroSnapshot: null,
     avatarUrl: "",
     avatarFrame: "",
@@ -62,21 +73,28 @@ export function createAiBenchmarkRoom({
   playerCount = 5,
   bankerSeat = 0,
   doglegSeat = 1,
-  trumpSuit = "S"
+  trumpSuit = "S",
+  pve = false
 } = {}) {
-  if (!Number.isInteger(playerCount) || playerCount < 5 || playerCount > 9) {
-    throw new Error("AI benchmark playerCount must be an integer from 5 to 9");
+  const validPlayerCount = pve
+    ? [4, 6, 8].includes(playerCount)
+    : Number.isInteger(playerCount) && playerCount >= 5 && playerCount <= 9;
+  if (!validPlayerCount) {
+    throw new Error(pve
+      ? "PVE AI benchmark playerCount must be 4, 6, or 8"
+      : "AI benchmark playerCount must be an integer from 5 to 9");
   }
-  if (bankerSeat === doglegSeat) throw new Error("AI benchmark banker and dogleg seats must differ");
+  if (!pve && bankerSeat === doglegSeat) throw new Error("AI benchmark banker and dogleg seats must differ");
   const random = createSeededRandom(seed);
   const prepared = deterministicBenchmarkDeck(playerCount, random);
   const players = Array.from({ length: playerCount }, (_, index) => benchmarkPlayer(
     index,
     prepared.deck.slice(index * HAND_SIZE, (index + 1) * HAND_SIZE),
-    index === 0
+    index === 0,
+    pve ? (index % 2 === 0 ? TEAM_A : TEAM_B) : null
   ));
   const banker = players[bankerSeat];
-  const dogleg = players[doglegSeat];
+  const dogleg = pve ? null : players[doglegSeat];
   const kitty = prepared.deck.slice(playerCount * HAND_SIZE);
   const startedAt = new Date(0).toISOString();
 
@@ -88,6 +106,9 @@ export function createAiBenchmarkRoom({
     createdAt: startedAt,
     startedAt,
     gameRecordId: null,
+    gameMode: pve ? GAME_MODE_PVE : GAME_MODE_PVP,
+    playMode: pve ? PLAY_MODE_TEAM : PLAY_MODE_BRAWL,
+    pveHumanCount: pve ? playerCount / 2 : null,
     callMode: "score",
     openingBidPercent: 40,
     bankerScoreMode: DEFAULT_BANKER_SCORE_MODE,
@@ -100,11 +121,11 @@ export function createAiBenchmarkRoom({
     trumpSuit,
     doglegMode: "traditional",
     doglegCard: null,
-    doglegPlayerIds: [dogleg.id],
+    doglegPlayerIds: dogleg ? [dogleg.id] : [],
     dynamicDogleg: null,
     hiddenDogleg: null,
     randomOrderDogleg: null,
-    doglegNeeded: 1,
+    doglegNeeded: pve ? 0 : 1,
     doglegConfigured: true,
     result: null,
     setup: {
@@ -172,6 +193,11 @@ export function createAiBenchmarkRoom({
 }
 
 function teamForPlayer(room, playerId) {
+  if (isFixedTeamGame(room)) {
+    const player = room.players.find((target) => target.id === playerId);
+    const banker = room.players.find((target) => target.id === room.bankerId);
+    return player?.squad && player.squad === banker?.squad ? "banker" : "idle";
+  }
   return playerId === room.bankerId || room.doglegPlayerIds.includes(playerId) ? "banker" : "idle";
 }
 
@@ -231,10 +257,11 @@ export function runAiBenchmarkGame({
   trumpSuit = "S",
   candidateTeam = "banker",
   baselineStrategy = AI_STRATEGY_MONTE_CARLO,
-  candidateStrategy = AI_STRATEGY_SAFE_FIVE,
+  pve = false,
+  candidateStrategy = pve ? AI_STRATEGY_PVE_TEAM : AI_STRATEGY_SAFE_FIVE,
   candidateOptions = {}
 } = {}) {
-  const room = createAiBenchmarkRoom({ seed, playerCount, bankerSeat, doglegSeat, trumpSuit });
+  const room = createAiBenchmarkRoom({ seed, playerCount, bankerSeat, doglegSeat, trumpSuit, pve });
   const strategyByPlayerId = new Map(room.players.map((player) => [
     player.id,
     teamForPlayer(room, player.id) === candidateTeam ? candidateStrategy : baselineStrategy
@@ -326,6 +353,7 @@ export function runAiBenchmarkGame({
     bankerSeat,
     doglegSeat,
     trumpSuit,
+    pve,
     candidateTeam,
     baselineStrategy,
     candidateStrategy,
@@ -398,6 +426,7 @@ export function mergePairedAiBenchmarkResults(results, { seed = "parallel" } = {
     deals,
     games,
     playerCount: first.playerCount,
+    pve: first.pve,
     baselineStrategy: first.baselineStrategy,
     candidateStrategy: first.candidateStrategy,
     candidateOptions: first.candidateOptions,
@@ -414,6 +443,7 @@ export function mergePairedAiBenchmarkResults(results, { seed = "parallel" } = {
       0
     ) / Math.max(1, games), 2),
     candidateCardPointWins: results.reduce((total, result) => total + result.candidateCardPointWins, 0),
+    candidateBottomWins: results.reduce((total, result) => total + (result.candidateBottomWins || 0), 0),
     strategyStats: {
       [first.baselineStrategy]: mergeStrategySummaries(results, first.baselineStrategy),
       [first.candidateStrategy]: mergeStrategySummaries(results, first.candidateStrategy)
@@ -427,7 +457,8 @@ export function runPairedAiBenchmark({
   seed = "20260901",
   playerCount = 5,
   baselineStrategy = AI_STRATEGY_MONTE_CARLO,
-  candidateStrategy = AI_STRATEGY_SAFE_FIVE,
+  pve = false,
+  candidateStrategy = pve ? AI_STRATEGY_PVE_TEAM : AI_STRATEGY_SAFE_FIVE,
   candidateOptions = {}
 } = {}) {
   const normalizedDeals = Math.max(1, Math.floor(Number(deals) || 1));
@@ -447,6 +478,7 @@ export function runPairedAiBenchmark({
       candidateTeam: "banker",
       baselineStrategy,
       candidateStrategy,
+      pve,
       candidateOptions
     }));
     games.push(runAiBenchmarkGame({
@@ -458,6 +490,7 @@ export function runPairedAiBenchmark({
       candidateTeam: "idle",
       baselineStrategy,
       candidateStrategy,
+      pve,
       candidateOptions
     }));
   }
@@ -471,6 +504,7 @@ export function runPairedAiBenchmark({
     deals: normalizedDeals,
     games: games.length,
     playerCount,
+    pve,
     baselineStrategy,
     candidateStrategy,
     candidateOptions,
@@ -487,6 +521,7 @@ export function runPairedAiBenchmark({
       2
     ),
     candidateCardPointWins: games.filter((game) => game.cardPointWinnerTeam === game.candidateTeam).length,
+    candidateBottomWins: games.filter((game) => game.bottomWinnerTeam === game.candidateTeam).length,
     strategyStats: {
       [baselineStrategy]: mergeStrategyStats(games, baselineStrategy),
       [candidateStrategy]: mergeStrategyStats(games, candidateStrategy)
@@ -499,7 +534,8 @@ export function runPairedAiBenchmark({
       candidateWon: game.candidateWon,
       candidateDraw: game.candidateDraw,
       candidateScoreMargin: game.candidateScoreMargin,
-      candidateCardPointMargin: game.candidateCardPointMargin
+      candidateCardPointMargin: game.candidateCardPointMargin,
+      bottomWinnerTeam: game.bottomWinnerTeam
     }))
   };
 }

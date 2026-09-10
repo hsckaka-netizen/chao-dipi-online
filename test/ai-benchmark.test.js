@@ -35,3 +35,23 @@ test("AI benchmark completes a legal full game and reports both strategy costs",
   assert.ok(result.strategyStats["monte-carlo-v4"].decisions > 0);
   assert.ok(result.strategyStats["monte-carlo-v4"].decisionDiagnostics.overrides >= 0);
 });
+
+test("AI benchmark can replay a four-player PVE fixed-team game", () => {
+  const room = createAiBenchmarkRoom({ seed: "pve-fixed-team", playerCount: 4, bankerSeat: 1, pve: true });
+  assert.equal(room.gameMode, "pve");
+  assert.equal(room.playMode, "team");
+  assert.deepEqual(room.players.map((player) => player.squad), ["a", "b", "a", "b"]);
+  assert.deepEqual(room.doglegPlayerIds, []);
+
+  const result = runAiBenchmarkGame({
+    seed: "pve-complete-game",
+    playerCount: 4,
+    bankerSeat: 1,
+    trumpSuit: "D",
+    candidateTeam: "idle",
+    pve: true
+  });
+  assert.equal(result.pve, true);
+  assert.ok(result.strategyStats["pve-team-v1"].decisions > 0);
+  assert.ok(["banker", "idle"].includes(result.bottomWinnerTeam));
+});
