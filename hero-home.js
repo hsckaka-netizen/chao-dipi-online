@@ -1,5 +1,5 @@
 export const HERO_HOME_RULES = Object.freeze({
-  version: "2026-09-02-v4",
+  version: "2026-09-10-v5",
   skillVersion: "2026-09-08-skill-v8",
   boardSkillVersion: "2026-09-02-board-skill-v4",
   maxProductionHours: 6,
@@ -32,6 +32,7 @@ export const HERO_HOME_RULES = Object.freeze({
   productionBonusPerLevel: 0.005,
   maxHoursPerTenLevels: 0.5,
   extraSlotUnlockLevel: 100,
+  extraSlotProductionEfficiency: 0.5,
   boardSkillCooldowns: Object.freeze([5, 4, 3, 2, 1]),
   boardSkillResetCostPerRound: 500,
   yokoyamaUsesPerGame: Object.freeze([1, 1, 2, 2, 3])
@@ -187,21 +188,32 @@ export function boardHeroSkillState(stars = 1, cooldownValue = 0, unitId = "shen
 
 export function previewHomeRegion(region = {}, at = new Date()) {
   const unit = HOME_UNIT_BY_ID.get(String(region.unitId || region.unit_id || "")) || null;
+  const extraUnit = HOME_UNIT_BY_ID.get(String(region.extraUnitId || region.extra_unit_id || "")) || null;
   const stars = normalizedStars(region.stars);
+  const extraStars = normalizedStars(region.extraStars ?? region.extra_stars);
   const storedValue = Math.max(0, Number(region.productionValue ?? region.production_value) || 0);
   const storedSeconds = Math.max(0, Number(region.productionSeconds ?? region.production_seconds) || 0);
   const level = normalizedRegionLevel(region.level ?? region.region_level);
+  const extraSlotUnlocked = level >= HERO_HOME_RULES.extraSlotUnlockLevel;
+  const productiveExtraUnit = extraSlotUnlocked ? extraUnit : null;
   const settledAt = new Date(region.settledAt || region.settled_at || at);
   const nowAt = new Date(at);
-  const elapsedSeconds = unit && !Number.isNaN(settledAt.getTime()) && !Number.isNaN(nowAt.getTime())
+  const hasProduction = Boolean(unit || productiveExtraUnit);
+  const elapsedSeconds = hasProduction && !Number.isNaN(settledAt.getTime()) && !Number.isNaN(nowAt.getTime())
     ? Math.max(0, Math.floor((nowAt.getTime() - settledAt.getTime()) / 1000))
     : 0;
   const maxHours = homeRegionMaxHours(level);
   const maxSeconds = maxHours * 3600;
-  const newlyProducedSeconds = unit ? Math.min(elapsedSeconds, Math.max(0, maxSeconds - storedSeconds)) : 0;
+  const newlyProducedSeconds = hasProduction ? Math.min(elapsedSeconds, Math.max(0, maxSeconds - storedSeconds)) : 0;
   const productionSeconds = Math.min(maxSeconds, storedSeconds + newlyProducedSeconds);
-  const baseRatePerHour = unit ? unitProductionRate(unit.id, stars) : 0;
+  const primaryBaseRatePerHour = unit ? unitProductionRate(unit.id, stars) : 0;
+  const extraBaseRatePerHour = productiveExtraUnit
+    ? unitProductionRate(productiveExtraUnit.id, extraStars) * HERO_HOME_RULES.extraSlotProductionEfficiency
+    : 0;
+  const baseRatePerHour = primaryBaseRatePerHour + extraBaseRatePerHour;
   const productionMultiplier = 1 + level * HERO_HOME_RULES.productionBonusPerLevel;
+  const primaryRatePerHour = primaryBaseRatePerHour * productionMultiplier;
+  const extraRatePerHour = extraBaseRatePerHour * productionMultiplier;
   const ratePerHour = baseRatePerHour * productionMultiplier;
   const productionValue = storedValue + newlyProducedSeconds / 3600 * ratePerHour;
   const collectableDiamonds = Math.max(0, Math.floor(productionValue + 1e-9));
@@ -210,19 +222,26 @@ export function previewHomeRegion(region = {}, at = new Date()) {
     unitId: unit?.id || null,
     unit: unit ? publicHomeUnit(unit.id) : null,
     stars: unit ? stars : null,
+    extraUnitId: productiveExtraUnit?.id || null,
+    extraUnit: productiveExtraUnit ? publicHomeUnit(productiveExtraUnit.id) : null,
+    extraStars: productiveExtraUnit ? extraStars : null,
     level,
     upgradeCost: regionUpgradeCost(level),
     productionMultiplier,
+    primaryBaseRatePerHour,
+    primaryRatePerHour,
+    extraBaseRatePerHour,
+    extraRatePerHour,
     baseRatePerHour,
     ratePerHour,
     maxProductionHours: maxHours,
-    extraSlotUnlocked: level >= HERO_HOME_RULES.extraSlotUnlockLevel,
+    extraSlotUnlocked,
     productionSeconds,
     productionHours: productionSeconds / 3600,
     productionValue,
     collectableDiamonds,
     fractionalValue: productionValue - collectableDiamonds,
-    isFull: Boolean(unit && productionSeconds >= maxSeconds),
+    isFull: Boolean(hasProduction && productionSeconds >= maxSeconds),
     settledAt: Number.isNaN(nowAt.getTime()) ? new Date().toISOString() : nowAt.toISOString()
   };
 }

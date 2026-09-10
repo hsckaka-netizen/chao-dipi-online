@@ -4795,6 +4795,8 @@ function renderHomeRegionCard(region) {
     ? Math.max(0, productionMultiplier - 1) * 100
     : Math.max(0, Number(region.level) || 0) * Number(heroHomeState?.rules?.productionBonusPerLevel || 0) * 100;
   const ratePerHour = formatHeroProductionNumber(region.ratePerHour);
+  const primaryRatePerHour = formatHeroProductionNumber(region.primaryRatePerHour);
+  const extraRatePerHour = formatHeroProductionNumber(region.extraRatePerHour);
   const progress = Math.max(0, Math.min(100, Number(region.productionHours || 0) / maxProductionHours * 100));
   const battle = placed?.type === "hero" && heroHomeState?.battleUnitId === placed.id;
   const extraBattle = extraPlaced?.type === "hero" && heroHomeState?.battleUnitId === extraPlaced.id;
@@ -4802,7 +4804,7 @@ function renderHomeRegionCard(region) {
     <article class="home-region-card region-${escapeHtml(region.id)}">
       <header>
         <span class="home-region-icon" aria-hidden="true">${escapeHtml(region.icon || "◇")}</span>
-        <div><h3>${escapeHtml(region.name)} · Lv.${escapeHtml(region.level || 0)}</h3><span>产出 +${escapeHtml(formatHeroProductionNumber(productionBonusPercent, 1))}% · 最多累计${escapeHtml(maxProductionHours)}小时</span></div>
+        <div><h3>${escapeHtml(region.name)} · Lv.${escapeHtml(region.level || 0)}</h3><span>产出 +${escapeHtml(formatHeroProductionNumber(productionBonusPercent, 1))}% · 总计 ${escapeHtml(ratePerHour)} 钻/小时 · 最多累计${escapeHtml(maxProductionHours)}小时</span></div>
         ${battle ? `<span class="tag good">出战中</span>` : ""}
       </header>
       <div class="home-region-worker ${placed ? "occupied" : "empty"} ${placed?.cardImage ? "hero-card-worker" : ""}">
@@ -4814,7 +4816,7 @@ function renderHomeRegionCard(region) {
           <div class="home-region-card-copy">
             <strong>${escapeHtml(placed.name)}</strong>
             ${heroStars(placed.stars)}
-            <span class="meta">每小时 ${escapeHtml(ratePerHour)} 钻石</span>
+            <span class="meta">主栏每小时 ${escapeHtml(primaryRatePerHour)} 钻石</span>
             <div class="home-region-skill">
               <b>${escapeHtml(placed.skillName)}</b>
               <p>${escapeHtml(placed.skillDescription)}</p>
@@ -4824,8 +4826,8 @@ function renderHomeRegionCard(region) {
           ${heroUnitBadge(placed, "large")}
           <div>
             <strong>${escapeHtml(placed?.name || "尚未派驻")}</strong>
-            ${placed ? heroStars(placed.stars) : `<span class="meta">空槽不产出钻石</span>`}
-            ${placed ? `<span class="meta">每小时 ${escapeHtml(ratePerHour)} 钻石</span>` : ""}
+            ${placed ? heroStars(placed.stars) : `<span class="meta">主栏空置</span>`}
+            ${placed ? `<span class="meta">主栏每小时 ${escapeHtml(primaryRatePerHour)} 钻石</span>` : ""}
           </div>
         `}
       </div>
@@ -4849,11 +4851,11 @@ function renderHomeRegionCard(region) {
           ${placed ? `<button type="button" class="secondary home-unit-choice" data-action="assign-home-unit" data-slot="primary" data-region-id="${escapeHtml(region.id)}" data-unit-id="" ${heroActionInFlight ? "disabled" : ""}><span class="hero-unit-badge tiny empty">空</span><span>移除</span></button>` : ""}
         </div>
       </div>
-      ${region.extraSlotUnlocked ? `<div class="home-assignment-list"><span class="meta">100级附加英雄栏位（不产出）</span><div>${candidates.filter((unit) => unit.type === "hero").map((unit) => {
+      ${region.extraSlotUnlocked ? `<div class="home-assignment-list"><span class="meta">100级附加英雄栏位（50%效率产出）</span><div>${candidates.filter((unit) => unit.type === "hero").map((unit) => {
         const active = extraPlaced?.id === unit.id;
         const unavailable = assignedIds.has(unit.id) && !active;
         return `<button type="button" class="home-unit-choice ${active ? "active" : "secondary"}" data-action="assign-home-unit" data-slot="extra" data-region-id="${escapeHtml(region.id)}" data-unit-id="${escapeHtml(unit.id)}" ${active || unavailable || heroActionInFlight ? "disabled" : ""}>${heroUnitBadge(unit, "tiny")}<span>${escapeHtml(unit.name)}</span></button>`;
-      }).join("")}${extraPlaced ? `<button type="button" class="secondary home-unit-choice" data-action="assign-home-unit" data-slot="extra" data-region-id="${escapeHtml(region.id)}" data-unit-id="" ${heroActionInFlight ? "disabled" : ""}><span class="hero-unit-badge tiny empty">空</span><span>移除</span></button>` : ""}</div>${extraPlaced ? `<div class="home-region-actions"><span>${escapeHtml(extraPlaced.name)} ${heroStars(extraPlaced.stars)}</span><button type="button" class="secondary" data-action="select-battle-hero" data-unit-id="${escapeHtml(extraPlaced.id)}" ${extraBattle || heroActionInFlight ? "disabled" : ""}>${extraBattle ? "已出战" : "设为出战"}</button></div>` : ""}</div>` : ""}
+      }).join("")}${extraPlaced ? `<button type="button" class="secondary home-unit-choice" data-action="assign-home-unit" data-slot="extra" data-region-id="${escapeHtml(region.id)}" data-unit-id="" ${heroActionInFlight ? "disabled" : ""}><span class="hero-unit-badge tiny empty">空</span><span>移除</span></button>` : ""}</div>${extraPlaced ? `<div class="home-region-actions"><span>${escapeHtml(extraPlaced.name)} ${heroStars(extraPlaced.stars)} · 每小时 ${escapeHtml(extraRatePerHour)} 钻石</span><button type="button" class="secondary" data-action="select-battle-hero" data-unit-id="${escapeHtml(extraPlaced.id)}" ${extraBattle || heroActionInFlight ? "disabled" : ""}>${extraBattle ? "已出战" : "设为出战"}</button></div>` : ""}</div>` : ""}
     </article>
   `;
 }

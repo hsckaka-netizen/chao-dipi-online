@@ -164,6 +164,9 @@ test("home UI renders full hero cards and a large skill preview", async () => {
   assert.match(appSource, /rules\.minionProduction/);
   assert.match(appSource, /region\.productionMultiplier/);
   assert.match(appSource, /formatHeroProductionNumber\(region\.ratePerHour\)/);
+  assert.match(appSource, /formatHeroProductionNumber\(region\.extraRatePerHour\)/);
+  assert.match(appSource, /100级附加英雄栏位（50%效率产出）/);
+  assert.doesNotMatch(appSource, /100级附加英雄栏位（不产出）/);
   assert.doesNotMatch(appSource, /SR每小时24\/32\/40\/48\/56/);
   assert.doesNotMatch(appSource, /区域每级再增加1%/);
   assert.match(styleSource, /\.home-hero-card-art[\s\S]*aspect-ratio:\s*707\s*\/\s*1000/);
@@ -563,6 +566,36 @@ test("region levels increase output every level and unlock capacity on milestone
   assert.equal(preview.extraSlotUnlocked, false);
 });
 
+test("the level 100 extra hero slot produces at 50 percent efficiency", () => {
+  const preview = previewHomeRegion({
+    regionId: "stage",
+    unitId: "yokoyama-yui",
+    stars: 5,
+    extraUnitId: "watanabe-mayu",
+    extraStars: 5,
+    level: 100,
+    settledAt: "2026-09-10T00:00:00.000Z"
+  }, "2026-09-10T01:00:00.000Z");
+
+  assert.equal(HERO_HOME_RULES.extraSlotProductionEfficiency, 0.5);
+  assert.equal(preview.primaryRatePerHour, 120);
+  assert.equal(preview.extraRatePerHour, 34.5);
+  assert.equal(preview.ratePerHour, 154.5);
+  assert.equal(preview.productionValue, 154.5);
+
+  const extraOnly = previewHomeRegion({
+    regionId: "stage",
+    extraUnitId: "maeda-atsuko",
+    extraStars: 1,
+    level: 100,
+    settledAt: "2026-09-10T00:00:00.000Z"
+  }, "2026-09-10T01:00:00.000Z");
+  assert.equal(extraOnly.primaryRatePerHour, 0);
+  assert.equal(extraOnly.extraRatePerHour, 12);
+  assert.equal(extraOnly.productionValue, 12);
+  assert.equal(extraOnly.productionHours, 1);
+});
+
 test("daily hero task slots never refill after a task starts or is collected", () => {
   assert.deepEqual(missingDailyHeroTaskSlots([]), [1, 2, 3]);
   assert.deepEqual(missingDailyHeroTaskSlots([
@@ -749,6 +782,16 @@ test("hero migration stores home, gacha, snapshots, and hero bonus", async () =>
   assert.match(productionRewardMigration, /ARRAY\[16, 22, 28, 34, 40\]/);
   assert.match(productionRewardMigration, /unit_id NOT IN \('boka-youth', 'brick-worker', 'trainee'\)/);
   assert.match(gameHistorySource, /030_hero_production_reward_curve\.sql/);
+
+  const extraSlotProductionMigration = await readFile(
+    fileURLToPath(new URL("../db/migrations/035_extra_home_slot_production.sql", import.meta.url)),
+    "utf8"
+  );
+  assert.match(extraSlotProductionMigration, /home_production_before_extra_slot/);
+  assert.match(extraSlotProductionMigration, /ARRAY\[30, 40, 50, 60, 80\]/);
+  assert.match(extraSlotProductionMigration, /settled_at = CURRENT_TIMESTAMP/);
+  assert.match(gameHistorySource, /035_extra_home_slot_production\.sql/);
+  assert.match(gameHistorySource, /unit_id = \$2 OR extra_unit_id = \$2/);
 
   const cooldownMigration = await readFile(
     fileURLToPath(new URL("../db/migrations/032_ssr_skill_cooldowns.sql", import.meta.url)),

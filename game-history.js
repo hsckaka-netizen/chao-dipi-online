@@ -192,6 +192,10 @@ const MIGRATIONS = [
   {
     version: 34,
     path: fileURLToPath(new URL("./db/migrations/034_energy_and_achievements.sql", import.meta.url))
+  },
+  {
+    version: 35,
+    path: fileURLToPath(new URL("./db/migrations/035_extra_home_slot_production.sql", import.meta.url))
   }
 ];
 const HISTORY_ENABLED = String(process.env.GAME_HISTORY_ENABLED || "").toLowerCase() === "true";
@@ -2326,10 +2330,13 @@ async function heroHomeStateFromClient(client, accountId) {
     ),
     client.query(
       `SELECT region.region_id, region.unit_id, region.extra_unit_id, region.level,
-              region.production_value, region.production_seconds, region.settled_at, unit.stars
+              region.production_value, region.production_seconds, region.settled_at,
+              unit.stars, extra_unit.stars AS extra_stars
        FROM cdp_home_regions region
        LEFT JOIN cdp_hero_units unit
          ON unit.account_id = region.account_id AND unit.unit_id = region.unit_id
+       LEFT JOIN cdp_hero_units extra_unit
+         ON extra_unit.account_id = region.account_id AND extra_unit.unit_id = region.extra_unit_id
        WHERE region.account_id = $1::uuid
        ORDER BY CASE region.region_id WHEN 'boka' THEN 1 WHEN 'brick' THEN 2 ELSE 3 END`,
       [accountId]
@@ -2345,6 +2352,8 @@ async function heroHomeStateFromClient(client, accountId) {
       regionId: row.region_id,
       unitId: row.unit_id,
       stars: row.stars,
+      extraUnitId: row.extra_unit_id,
+      extraStars: row.extra_stars,
       level: row.level,
       productionValue: row.production_value,
       productionSeconds: row.production_seconds,
@@ -2537,11 +2546,14 @@ export async function claimDailyTask(accountId, taskIdValue, requestIdValue) {
 
 async function settleHomeRegion(client, accountId, regionId) {
   const result = await client.query(
-    `SELECT region.region_id, region.unit_id, region.level, region.production_value,
-            region.production_seconds, region.settled_at, unit.stars
+    `SELECT region.region_id, region.unit_id, region.extra_unit_id, region.level,
+            region.production_value, region.production_seconds, region.settled_at,
+            unit.stars, extra_unit.stars AS extra_stars
      FROM cdp_home_regions region
      LEFT JOIN cdp_hero_units unit
        ON unit.account_id = region.account_id AND unit.unit_id = region.unit_id
+     LEFT JOIN cdp_hero_units extra_unit
+       ON extra_unit.account_id = region.account_id AND extra_unit.unit_id = region.extra_unit_id
      WHERE region.account_id = $1::uuid AND region.region_id = $2
      FOR UPDATE OF region`,
     [accountId, regionId]
@@ -2552,6 +2564,8 @@ async function settleHomeRegion(client, accountId, regionId) {
     regionId: row.region_id,
     unitId: row.unit_id,
     stars: row.stars,
+    extraUnitId: row.extra_unit_id,
+    extraStars: row.extra_stars,
     level: row.level,
     productionValue: row.production_value,
     productionSeconds: row.production_seconds,
@@ -2683,11 +2697,11 @@ export async function assignHomeUnit(accountId, regionIdValue, unitIdValue, requ
       if (assigned.rows[0] && !alreadyInTarget) throw commerceError("这个角色已经安排在其他栏位", 409);
     }
     const previousUnitId = slot === "primary" ? regionState.rows[0].unit_id : regionState.rows[0].extra_unit_id;
-    const preview = slot === "primary" ? await settleHomeRegion(client, accountId, regionId) : null;
+    const preview = await settleHomeRegion(client, accountId, regionId);
     const balanceAfter = await creditHomeProduction(
       client,
       accountId,
-      preview?.collectableDiamonds || 0,
+      preview.collectableDiamonds,
       requestId,
       { reason: "reassign", regionId, slot, previousUnitId }
     );
@@ -2702,9 +2716,10 @@ export async function assignHomeUnit(accountId, regionIdValue, unitIdValue, requ
     } else {
       await client.query(
         `UPDATE cdp_home_regions
-         SET extra_unit_id = $3, updated_at = now()
+         SET extra_unit_id = $3, production_value = $4, production_seconds = 0,
+             settled_at = now(), updated_at = now()
          WHERE account_id = $1::uuid AND region_id = $2`,
-        [accountId, regionId, unitId]
+        [accountId, regionId, unitId, preview.fractionalValue]
       );
     }
     if (previousUnitId && previousUnitId !== unitId) {
@@ -2717,7 +2732,7 @@ export async function assignHomeUnit(accountId, regionIdValue, unitIdValue, requ
     }
     const state = await heroHomeStateFromClient(client, accountId);
     await client.query("COMMIT");
-    return { autoCollectedAmount: preview?.collectableDiamonds || 0, balanceAfter, state };
+    return { autoCollectedAmount: preview.collectableDiamonds, balanceAfter, state };
   } catch (error) {
     await client.query("ROLLBACK");
     rememberError(error);
@@ -3411,7 +3426,7 @@ export async function upgradeHeroUnit(accountId, unitIdValue, requestIdValue) {
     if (!cost) throw commerceError("角色已经达到5星", 409);
     const placed = await client.query(
       `SELECT region_id FROM cdp_home_regions
-       WHERE account_id = $1::uuid AND unit_id = $2`,
+       WHERE account_id = $1::uuid AND (unit_id = $2 OR extra_unit_id = $2)`,
       [accountId, unitId]
     );
     if (placed.rows[0]) await settleHomeRegion(client, accountId, placed.rows[0].region_id);
