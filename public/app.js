@@ -2123,7 +2123,7 @@ async function startGame() {
       ensureEnergyState(true);
       const viewer = viewerPlayer();
       setMessage(viewer?.pveEnergyEligible === false
-        ? "已发牌。你的体力不足或暂不可用，本局不发钻石且不计每日任务。"
+        ? "已发牌。你的体力不足或暂不可用，本局不发钻石且不计每日任务和 PVE 成就。"
         : "已发牌，本次 PVE 开局已消耗 6 点体力。");
     } else {
       setMessage("已发牌。每个玩家现在只会看到自己的手牌。");
@@ -3802,7 +3802,7 @@ function renderAchievementPage() {
     <section class="achievement-overview-grid">
       <article class="panel energy-panel">
         <div class="section-head"><div><span class="eyebrow">PVE ENERGY</span><h2>体力</h2></div><strong>⚡ ${energyState.unavailable ? "—" : `${escapeHtml(energyState.energy)} / ${escapeHtml(energyState.maximum)}`}</strong></div>
-        <p>PVE 每次开局消耗 ${escapeHtml(energyState.pveStartCost || 6)} 点；体力不足仍可参战，但本局不发钻石、也不计每日任务。重开不返还已消耗体力。</p>
+        <p>PVE 每次开局消耗 ${escapeHtml(energyState.pveStartCost || 6)} 点；体力不足仍可参战，但本局不发钻石、也不计每日任务和 PVE 成就。重开不返还已消耗体力。</p>
         <div class="energy-actions">
           <span>${escapeHtml(energyRecoveryText(energyState))}</span>
           <button type="button" data-action="purchase-energy" ${energyState.unavailable || !energyState.canPurchase || energyPurchaseInFlight ? "disabled" : ""}>${energyPurchaseInFlight ? "购买中…" : `💎 ${escapeHtml(energyState.purchaseDiamondCost || 200)} 购买 ${escapeHtml(energyState.purchaseAmount || 6)} 点`}</button>
@@ -3844,7 +3844,7 @@ function renderPveEnergyNotice() {
   const insufficient = Number.isFinite(current) && current < cost;
   const title = insufficient ? "体力不足，仍可参战" : unavailable ? "体力暂时无法确认" : "PVE 开局体力";
   const detail = insufficient || unavailable
-    ? "本局将不发放钻石，也不计入每日任务。"
+    ? "本局将不发放钻石，也不计入每日任务和 PVE 成就。"
     : `开局后消耗 ${cost} 点，重开不返还。${energyRecoveryText(energyState)}。`;
   return `
     <div class="pve-energy-notice ${insufficient || unavailable ? "warning" : ""}">
@@ -6842,9 +6842,9 @@ function renderDiamondReward(reward) {
       : reward.reason === "robot"
         ? "电脑不参与钻石结算"
         : reward.reason === "insufficient-energy"
-          ? "开局时体力不足，本局不发钻石且不计每日任务"
+          ? "开局时体力不足，本局不发钻石且不计每日任务和 PVE 成就"
           : reward.reason === "energy-unavailable"
-            ? "开局时体力服务不可用，本局不发钻石且不计每日任务"
+            ? "开局时体力服务不可用，本局不发钻石且不计每日任务和 PVE 成就"
         : "当前牌局或账号不符合钻石奖励条件";
     return `<span class="result-diamond muted" title="${escapeHtml(ineligibleTitle)}">💎 不发放</span>`;
   }
@@ -6873,7 +6873,7 @@ function renderViewerDiamondSummary(result) {
       : reward.reason === "robot"
         ? `<div class="diamond-reward-summary muted"><strong>电脑不获得钻石</strong><span>PVE 仅向符合条件的真人玩家发放奖励。</span></div>`
         : reward.reason === "insufficient-energy" || reward.reason === "energy-unavailable"
-          ? `<div class="diamond-reward-summary muted"><strong>体力不足，本局不发钻石</strong><span>本局仍可正常完成，但不获得钻石、也不计入每日任务。</span></div>`
+          ? `<div class="diamond-reward-summary muted"><strong>体力不足，本局不发钻石</strong><span>本局仍可正常完成，但不获得钻石、也不计入每日任务和 PVE 成就。</span></div>`
         : `<div class="diamond-reward-summary muted"><strong>本局不发钻石</strong><span>当前牌局或账号不符合钻石奖励条件。</span></div>`;
   }
   if (reward.winRequired && !reward.won) {

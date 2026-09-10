@@ -7479,7 +7479,7 @@ async function handleApi(req, res, pathParts, url) {
         addEvent(room, `房主开始牌局：${room.players.length} 人，每人 ${HAND_SIZE} 张，底牌 ${room.kitty.length} 张`);
         const ineligiblePlayers = humanPlayers(room).filter((player) => player.pveEnergyEligible === false);
         if (normalizeGameMode(room.gameMode) === GAME_MODE_PVE && ineligiblePlayers.length) {
-          addEvent(room, `${ineligiblePlayers.map((player) => player.name).join("、")}体力不足或暂不可用，本局不获得钻石且不计每日任务`);
+          addEvent(room, `${ineligiblePlayers.map((player) => player.name).join("、")}体力不足或暂不可用，本局不获得钻石且不计每日任务和 PVE 成就`);
         }
         broadcastAndContinueAutomation(room);
         return writeJson(res, 200, roomStateAck(room));

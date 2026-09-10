@@ -22,8 +22,8 @@ import {
   ACHIEVEMENT_BY_ID,
   ACHIEVEMENT_RULES,
   ACHIEVEMENT_TITLE_BY_ID,
-  buildAchievementState,
-  calculateStreaks
+  buildModeAchievementMetrics,
+  buildAchievementState
 } from "./achievements.js";
 import {
   consumePveStartEnergy as calculatePveStartEnergy,
@@ -3763,44 +3763,54 @@ async function achievementMetricsFromClient(client, accountId) {
   const [gamesResult, tagResult] = await Promise.all([
     client.query(
       `SELECT
+         game.game_id,
          player.won,
          player.role,
+         player.room_player_id,
          game.game_mode,
          game.bottom_winner_room_player_id = player.room_player_id AS bottom_win,
-         coalesce(nullif(player.evaluation_data ->> 'enemyDraggedRedFives', '')::integer, 0) AS enemy_red_fives
+         player.dragged_red_fives,
+         player.trick_score,
+         coalesce(nullif(player.evaluation_data ->> 'enemyDraggedRedFives', '')::integer, 0) AS enemy_red_fives,
+         coalesce((
+           SELECT max(jsonb_array_length(coalesce(play.action -> 'cards', '[]'::jsonb)))::integer
+           FROM jsonb_array_elements(coalesce(game.trick_history, '[]'::jsonb)) AS trick(action)
+           CROSS JOIN LATERAL jsonb_array_elements(coalesce(trick.action -> 'plays', '[]'::jsonb)) AS play(action)
+           WHERE trick.action ->> 'leaderId' = player.room_player_id
+             AND play.action ->> 'playerId' = player.room_player_id
+         ), 0) AS max_lead_play_cards,
+         coalesce((
+           SELECT count(*)::integer
+           FROM jsonb_array_elements(coalesce(game.setup_data #> '{fry,history}', '[]'::jsonb)) AS fry(action)
+           WHERE fry.action ->> 'playerId' = player.room_player_id
+         ), 0) AS fry_actions
        FROM cdp_game_players player
        JOIN cdp_games game ON game.game_id = player.game_id
        WHERE player.account_id = $1::uuid AND NOT player.is_ai
+         AND (game.game_mode <> 'pve' OR player.pve_energy_eligible)
        ORDER BY game.finished_at, game.game_id`,
       [accountId]
     ),
     client.query(
       `SELECT
-         count(*)::bigint AS evaluation_title_count,
-         count(DISTINCT tag.tag_code)::bigint AS distinct_evaluation_titles,
-         count(*) FILTER (WHERE tag.tag_code = 'mvp')::bigint AS mvp_count,
-         count(*) FILTER (WHERE tag.tag_code = 'support')::bigint AS support_count
+         tag.game_id,
+         game.game_mode,
+         tag.tag_code
        FROM cdp_game_tags tag
        JOIN cdp_game_players player
          ON player.game_id = tag.game_id AND player.room_player_id = tag.room_player_id
-       WHERE player.account_id = $1::uuid AND NOT player.is_ai`,
+       JOIN cdp_games game ON game.game_id = tag.game_id
+       WHERE player.account_id = $1::uuid AND NOT player.is_ai
+         AND (game.game_mode <> 'pve' OR player.pve_energy_eligible)
+       ORDER BY game.finished_at, game.game_id, tag.tag_code`,
       [accountId]
     )
   ]);
   const games = gamesResult.rows;
-  const tags = tagResult.rows[0] || {};
+  const tags = tagResult.rows;
   return {
-    gamesPlayed: games.length,
-    wins: games.filter((game) => game.won).length,
-    ...calculateStreaks(games.map((game) => Boolean(game.won))),
-    bankerGames: games.filter((game) => game.role === "庄家").length,
-    pveWins: games.filter((game) => game.game_mode === "pve" && game.won).length,
-    bottomWins: games.filter((game) => game.bottom_win).length,
-    maxEnemyRedFives: Math.max(0, ...games.map((game) => Number(game.enemy_red_fives) || 0)),
-    evaluationTitleCount: Number(tags.evaluation_title_count) || 0,
-    distinctEvaluationTitles: Number(tags.distinct_evaluation_titles) || 0,
-    mvpCount: Number(tags.mvp_count) || 0,
-    supportCount: Number(tags.support_count) || 0
+    ...buildModeAchievementMetrics(games, tags, "pvp"),
+    ...buildModeAchievementMetrics(games, tags, "pve")
   };
 }
 
