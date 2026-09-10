@@ -10,6 +10,7 @@
 - 核心牌局规则由服务端判断；统计、账号、历史和奖励属于旁路能力，不得阻塞牌局主流程。
 - 线上地址：<https://chao-dipi-online.onrender.com/>。
 - `main` 推送后由 Render 自动部署。
+- 发布不依赖长对话保存状态：每批创建新的短发布任务，GitHub 认证使用同一本地主机的凭据存储；详见 `docs/development-workflow.md`。
 
 ## 按需求读取
 

@@ -34,7 +34,8 @@ Options:
 
 Safety:
   Run this only when the current dirty worktree contains exactly one intended
-  release batch. The script stages all current changes after confirmation.`);
+  release batch. The script accepts main or a codex/release-* branch and stages
+  all current changes after confirmation.`);
 }
 
 function parseArgs(argv) {
@@ -108,6 +109,19 @@ function changedFiles() {
     .filter(Boolean);
 }
 
+function assertReleaseBranch(branch) {
+  if (branch === "main" || branch.startsWith("codex/release-")) return;
+  throw new Error(`Release script must run on main or codex/release-*, current branch: ${branch}`);
+}
+
+function assertOriginMainAncestor() {
+  const originMain = run("git", ["rev-parse", "origin/main"], { capture: true });
+  const base = run("git", ["merge-base", "HEAD", "origin/main"], { capture: true });
+  if (originMain !== base) {
+    throw new Error("origin/main is not an ancestor of HEAD. Rebuild the release branch from current origin/main.");
+  }
+}
+
 async function confirm(question) {
   const rl = createInterface({ input, output });
   try {
@@ -167,10 +181,13 @@ async function main() {
     return;
   }
 
-  const root = run("git", ["rev-parse", "--show-toplevel"], { capture: true });
+  run("git", ["rev-parse", "--show-toplevel"], { capture: true });
   const branch = run("git", ["branch", "--show-current"], { capture: true });
-  if (!root.endsWith("tools/chao-dipi-online")) throw new Error(`Unexpected repo root: ${root}`);
-  if (branch !== "main") throw new Error(`Release script must run on main, current branch: ${branch}`);
+  const packageMetadata = JSON.parse(readFileSync("package.json", "utf8"));
+  if (packageMetadata.name !== "chao-dipi-online") {
+    throw new Error(`Unexpected package: ${packageMetadata.name || "unknown"}`);
+  }
+  assertReleaseBranch(branch);
 
   if (options.verifyOnly) {
     await verifyProduction(options);
@@ -178,11 +195,7 @@ async function main() {
   }
 
   if (options.fetch) run("git", ["fetch", "origin", "main"]);
-  const originMain = run("git", ["rev-parse", "origin/main"], { capture: true });
-  const base = run("git", ["merge-base", "HEAD", "origin/main"], { capture: true });
-  if (originMain !== base) {
-    throw new Error("origin/main is not an ancestor of HEAD. Pull/rebase manually before release.");
-  }
+  assertOriginMainAncestor();
 
   const files = changedFiles();
   if (files.length > 0) {
@@ -219,7 +232,11 @@ async function main() {
     return;
   }
 
-  run("git", ["push", "origin", "main"]);
+  if (options.fetch) {
+    run("git", ["fetch", "origin", "main"]);
+    assertOriginMainAncestor();
+  }
+  run("git", ["push", "origin", "HEAD:main"]);
   if (options.verify) await verifyProduction(options);
   else console.log("--no-verify set. Stop after push.");
 }
