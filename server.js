@@ -1739,6 +1739,12 @@ function setupSnapshot(room, viewer = null) {
           lastBid: publicBid(room, fry.lastBid),
           pendingBid: publicBid(room, fry.pendingBid),
           history: (fry.history || []).map((bid) => publicBid(room, bid)),
+          passHistory: (fry.passHistory || []).map((pass) => ({
+            playerId: pass.playerId,
+            againstCount: pass.againstCount,
+            againstSuit: pass.againstSuit,
+            at: pass.at
+          })),
           passesSinceLast: fry.passesSinceLast,
           deadlineAt: fry.deadlineAt || null,
           passIds: [...(fry.passIds || [])]
@@ -3206,6 +3212,7 @@ function startFrying(room) {
     lastBid: room.setup.bid,
     pendingBid: null,
     history: [],
+    passHistory: [],
     passesSinceLast: 0,
     deadlineAt: new Date(Date.now() + FRY_SECONDS * 1000).toISOString(),
     passIds: []
@@ -3381,6 +3388,13 @@ function passFry(room, player, options = {}) {
   fry.passesSinceLast += 1;
   if (!fry.passIds) fry.passIds = [];
   if (!fry.passIds.includes(player.id)) fry.passIds.push(player.id);
+  if (!fry.passHistory) fry.passHistory = [];
+  fry.passHistory.push({
+    playerId: player.id,
+    againstCount: Number(fry.lastBid?.count) || 0,
+    againstSuit: fry.lastBid?.suit || null,
+    at: now()
+  });
   addEvent(room, options.automatic ? `${player.name} 炒底倒计时结束，自动不炒` : `${player.name} 选择不炒底`);
   if (fry.passesSinceLast >= room.players.length - 1) {
     finishFrying(room);
@@ -3745,14 +3759,28 @@ function setupBottomControlScore(room, player, trumpSuit) {
   return control + topControls * 12 + mainCount * 1.5;
 }
 
+function fixedTeamBankerSide(room, player) {
+  if (!isFixedTeamGame(room)) return player.id === room.bankerId;
+  const banker = playerById(room, room.bankerId);
+  return Boolean(banker?.squad && player.squad && banker.squad === player.squad);
+}
+
 function setupIdleProbability(room, player) {
+  if (isFixedTeamGame(room)) return fixedTeamBankerSide(room, player) ? 0 : 1;
   if (player.id === room.bankerId) return 0;
   const nonBankers = Math.max(1, room.players.length - 1);
   return Math.max(0, (nonBankers - (room.doglegNeeded || 0)) / nonBankers);
 }
 
+function setupBottomHoldConfidence(room, player, trumpSuit) {
+  const control = setupBottomControlScore(room, player, trumpSuit);
+  if (!isFixedTeamGame(room)) return shouldAimForBottom(room, player, trumpSuit) ? 0.68 : 0.32;
+  return clampNumber(0.5 + (control - 530) / 240, 0.08, 0.92);
+}
+
 function shouldAimForBottom(room, player, trumpSuit) {
   const bottomControl = setupBottomControlScore(room, player, trumpSuit);
+  if (isFixedTeamGame(room)) return clampNumber(0.5 + (bottomControl - 530) / 240, 0.08, 0.92) >= 0.62;
   if (player.id === room.bankerId) return bottomControl >= 155;
   return setupIdleProbability(room, player) >= 0.6 && bottomControl >= 125;
 }
@@ -3833,13 +3861,148 @@ function bestAutoBid(room, player, currentBid, options = {}) {
   return best.score >= threshold ? best : null;
 }
 
+function binomialProbabilityAtLeast(trials, probability, minimum) {
+  if (minimum <= 0) return 1;
+  if (trials < minimum || probability <= 0) return 0;
+  if (probability >= 1) return 1;
+  let total = 0;
+  for (let successes = minimum; successes <= trials; successes += 1) {
+    let combinations = 1;
+    for (let index = 1; index <= successes; index += 1) {
+      combinations = combinations * (trials - successes + index) / index;
+    }
+    total += combinations * probability ** successes * (1 - probability) ** (trials - successes);
+  }
+  return clampNumber(total, 0, 1);
+}
+
+function setupKnownBidCounts(room, owner, suit) {
+  const known = new Map();
+  [room.setup?.bid, ...(room.setup?.fry?.history || []), room.setup?.fry?.pendingBid]
+    .filter((bid) => bid?.playerId && bid.suit === suit && playerById(room, bid.playerId))
+    .forEach((bid) => {
+      const visibleCards = Array.isArray(bid.cards) && bid.cards.length
+        ? bid.cards.filter((card) => bid.playerId === owner.id || !owner.hand.some((item) => item.id === card.id)).length
+        : Number(bid.count) || 0;
+      known.set(bid.playerId, Math.max(known.get(bid.playerId) || 0, visibleCards));
+    });
+  return known;
+}
+
+function setupFryPassFactor(room, target, currentBid, strength) {
+  const currentValue = (Number(currentBid?.count) || 0) * 10 + (strength.get(currentBid?.suit) ?? -1);
+  const latestTargetBidTime = [room.setup?.bid, ...(room.setup?.fry?.history || [])]
+    .filter((bid) => bid?.playerId === target.id)
+    .reduce((latest, bid) => Math.max(latest, new Date(bid.at || 0).getTime()), Number.NEGATIVE_INFINITY);
+  const passedComparableBid = (room.setup?.fry?.passHistory || []).some((pass) => {
+    if (pass.playerId !== target.id) return false;
+    if (new Date(pass.at || 0).getTime() < latestTargetBidTime) return false;
+    const passValue = (Number(pass.againstCount) || 0) * 10 + (strength.get(pass.againstSuit) ?? -1);
+    return passValue <= currentValue;
+  });
+  return passedComparableBid ? 0.12 : 1;
+}
+
+function setupPlayerFryForecast(room, owner, target, currentBid, strength) {
+  const otherPlayerCount = Math.max(1, room.players.length - 1);
+  const passFactor = setupFryPassFactor(room, target, currentBid, strength);
+  const suitChances = suits.map((suit) => {
+    const totalCopies = Math.max(0, room.players.length - (room.removedCards || []).filter((card) => {
+      return card.type === "normal" && card.suit === suit.id && gameRank(card) === "2";
+    }).length);
+    const ownerCount = twoCountForSuit(owner, suit.id);
+    const known = setupKnownBidCounts(room, owner, suit.id);
+    const targetKnown = known.get(target.id) || 0;
+    const knownOutsideOwner = [...known.entries()].reduce((total, [playerId, count]) => {
+      return playerId === owner.id ? total : total + count;
+    }, 0);
+    const unknownCopies = Math.max(0, totalCopies - ownerCount - knownOutsideOwner);
+    const required = currentBid?.direct
+      ? 2
+      : minimumBidCountToBeat(currentBid, suit.id, strength);
+    if (required > totalCopies) return { suit: suit.id, probability: 0 };
+    const missing = Math.max(0, required - targetKnown);
+    const holdingProbability = missing === 0
+      ? 0.98
+      : binomialProbabilityAtLeast(unknownCopies, 1 / otherPlayerCount, missing);
+    return {
+      suit: suit.id,
+      probability: clampNumber(holdingProbability * 0.72 * passFactor, 0, 0.96)
+    };
+  });
+  const canFryProbability = 1 - suitChances.reduce((remaining, item) => remaining * (1 - item.probability), 1);
+  const totalSuitWeight = suitChances.reduce((total, item) => total + item.probability, 0);
+  return {
+    playerId: target.id,
+    canFryProbability: clampNumber(canFryProbability, 0, 0.96),
+    suitProbabilities: Object.fromEntries(suitChances.map((item) => [
+      item.suit,
+      totalSuitWeight ? item.probability / totalSuitWeight : 0
+    ]))
+  };
+}
+
+function setupBottomTransferForecast(room, player) {
+  const currentBid = tentativeTrumpBid(room);
+  if (!isFixedTeamGame(room) || !currentBid) {
+    return {
+      retainedProbability: 1,
+      allyTakeProbability: 0,
+      opponentTakeProbability: 0,
+      suitProbabilities: Object.fromEntries(suits.map((suit) => [suit.id, 0])),
+      seats: []
+    };
+  }
+  const strength = room.gameItems?.frySuitOrder
+    ? frySuitStrength(room.gameItems.frySuitOrder)
+    : suitStrength;
+  const ordered = orderedPlayersFrom(room, player.id).slice(1);
+  let remainingProbability = 1;
+  let allyTakeProbability = 0;
+  let opponentTakeProbability = 0;
+  const suitProbabilities = Object.fromEntries(suits.map((suit) => [suit.id, 0]));
+  const seats = ordered.map((target) => {
+    const forecast = setupPlayerFryForecast(room, player, target, currentBid, strength);
+    const takeProbability = remainingProbability * forecast.canFryProbability;
+    const sameTeam = target.squad && player.squad && target.squad === player.squad;
+    if (sameTeam) allyTakeProbability += takeProbability;
+    else opponentTakeProbability += takeProbability;
+    suits.forEach((suit) => {
+      suitProbabilities[suit.id] += takeProbability * forecast.suitProbabilities[suit.id];
+    });
+    remainingProbability *= 1 - forecast.canFryProbability;
+    return { ...forecast, takeProbability, relation: sameTeam ? "ally" : "opponent" };
+  });
+  return {
+    retainedProbability: clampNumber(remainingProbability, 0, 1),
+    allyTakeProbability: clampNumber(allyTakeProbability, 0, 1),
+    opponentTakeProbability: clampNumber(opponentTakeProbability, 0, 1),
+    suitProbabilities,
+    seats
+  };
+}
+
 function buryContext(room, player) {
   const trumpSuit = aiTrumpSuit(room);
   const banker = player.id === room.bankerId;
-  const idleProbability = banker ? 0 : setupIdleProbability(room, player);
+  const fixedTeam = isFixedTeamGame(room);
+  const bankerSide = fixedTeam ? fixedTeamBankerSide(room, player) : banker;
+  const idleProbability = bankerSide ? 0 : setupIdleProbability(room, player);
   const aimForBottom = shouldAimForBottom(room, player, trumpSuit);
+  const bottomConfidence = setupBottomHoldConfidence(room, player, trumpSuit);
+  const transferForecast = fixedTeam ? setupBottomTransferForecast(room, player) : null;
   const trumpCertainty = tentativeTrumpCertainty(room);
-  return { trumpSuit, banker, idleProbability, aimForBottom, trumpCertainty };
+  return {
+    trumpSuit,
+    banker,
+    bankerSide,
+    fixedTeam,
+    idleProbability,
+    aimForBottom,
+    bottomConfidence,
+    transferForecast,
+    trumpCertainty
+  };
 }
 
 function sideBurySuit(card, trumpSuit) {
@@ -3862,7 +4025,17 @@ function autoBuryCardScore(room, player, card, context = buryContext(room, playe
     score -= (1 - (context.trumpCertainty ?? tentativeTrumpCertainty(room))) * 34;
   }
 
-  if (context.banker) {
+  if (context.fixedTeam) {
+    const confidence = context.bottomConfidence;
+    if (context.bankerSide) {
+      score -= points * (6 + (1 - confidence) * 9);
+      if (protectedFive) score -= card.suit === "D" ? 220 : 260;
+    } else {
+      score += points * ((confidence - 0.58) * 18);
+      if (protectedFive && card.suit === "D") score += (confidence - 0.72) * 180;
+      if (protectedFive && card.suit === "H") score += (confidence - 0.78) * 220;
+    }
+  } else if (context.banker) {
     score -= points * (context.aimForBottom ? 5 : 13);
     if (protectedFive) score -= card.suit === "D" ? 220 : 260;
   } else {
@@ -3900,7 +4073,9 @@ function buryVoidBonus(room, player, cards, context) {
       bonus += 8 + buried.length * 2;
       if (strongRemainder) bonus += 18 + remainingCards.length * 5;
     }
-    if (context.banker && buriedPoints) bonus -= buriedPoints * (remaining === 0 ? 0.8 : 2.2);
+    if ((context.fixedTeam ? context.bankerSide : context.banker) && buriedPoints) {
+      bonus -= buriedPoints * (remaining === 0 ? 0.8 : 2.2);
+    }
   });
   return bonus;
 }
@@ -3949,15 +4124,54 @@ function buryPatternBreakPenalty(room, player, cards, context) {
   return penalty;
 }
 
+function buryTransferGiftValue(cards, context) {
+  const forecast = context.transferForecast;
+  const takeProbability = (forecast?.allyTakeProbability || 0) + (forecast?.opponentTakeProbability || 0);
+  if (!takeProbability) return 0;
+  const expectedValue = suits.reduce((total, suit) => {
+    const suitProbability = forecast.suitProbabilities?.[suit.id] || 0;
+    if (!suitProbability) return total;
+    const value = cardsPoint(cards) * 1.4
+      + setupControlScore(cards, suit.id) * 0.8
+      + patternAssetScore(cards, suit.id) * 0.32
+      + protectedFiveCount(cards) * 34;
+    return total + suitProbability * value;
+  }, 0) / takeProbability;
+  return expectedValue * (
+    (forecast.allyTakeProbability || 0) * 0.48
+    - (forecast.opponentTakeProbability || 0) * 0.92
+  );
+}
+
 function buryComboScore(room, player, cards, context) {
   let score = cards.reduce((total, card) => total + autoBuryCardScore(room, player, card, context), 0);
   score += buryVoidBonus(room, player, cards, context);
   score -= buryPatternBreakPenalty(room, player, cards, context);
   const mainCount = cards.filter((card) => isMainPlayCard(card, context.trumpSuit)).length;
   if (!context.aimForBottom && mainCount >= Math.ceil(cards.length / 2)) score -= mainCount * 10;
-  if (context.aimForBottom && !context.banker) score += cardsPoint(cards) * 0.8 + protectedFiveCount(cards) * 12;
-  if (context.banker) score -= cardsPoint(cards) * (context.aimForBottom ? 1.2 : 2.6);
-  if (context.banker) score -= cards.filter(isProtectedFive).length * 120;
+  if (context.fixedTeam) {
+    const selectedIds = new Set(cards.map((card) => card.id));
+    const remainingPlayer = {
+      ...player,
+      hand: player.hand.filter((card) => !selectedIds.has(card.id))
+    };
+    const postConfidence = setupBottomHoldConfidence(room, remainingPlayer, context.trumpSuit);
+    const pointLoad = cardsPoint(cards);
+    const protectedLoad = protectedFiveCount(cards);
+    score += (postConfidence - context.bottomConfidence) * 90;
+    score += buryTransferGiftValue(cards, context);
+    if (context.bankerSide) {
+      score -= pointLoad * (1 - postConfidence) * 4;
+      score -= protectedLoad * 140;
+    } else {
+      score += pointLoad * (postConfidence - 0.58) * 4;
+      score += protectedLoad * (postConfidence - 0.75) * 100;
+    }
+  } else {
+    if (context.aimForBottom && !context.banker) score += cardsPoint(cards) * 0.8 + protectedFiveCount(cards) * 12;
+    if (context.banker) score -= cardsPoint(cards) * (context.aimForBottom ? 1.2 : 2.6);
+    if (context.banker) score -= cards.filter(isProtectedFive).length * 120;
+  }
   return score;
 }
 
@@ -6052,11 +6266,13 @@ function chooseMonteCarloAutoPlay(room, player, plans, context, options = {}) {
   );
   const candidates = plans.slice(0, candidateLimit);
   const worlds = aiSampleWorlds(room, player, context, sampleCount);
+  const simulationDepth = Math.max(1, Math.min(2, Number(options.fixedTeamDepth) || 1));
   if (candidates.length < 2 || !worlds.length) {
     return {
       ...plans[0],
       strategy: options.strategyName || AI_STRATEGY_MONTE_CARLO,
       sampleCount: worlds.length,
+      simulationDepth,
       overrodeHeuristic: false
     };
   }
@@ -6099,6 +6315,7 @@ function chooseMonteCarloAutoPlay(room, player, plans, context, options = {}) {
   return {
     ...selected,
     strategy: options.strategyName || AI_STRATEGY_MONTE_CARLO,
+    simulationDepth,
     overrodeHeuristic: selected !== heuristicBest,
     heuristicBestScore: heuristicBest.combinedScore,
     selectedScoreAdvantage: selected.combinedScore - heuristicBest.combinedScore
@@ -6137,12 +6354,16 @@ function legalAutoPlay(room, player, options = {}) {
     || normalizeDoglegMode(room.doglegMode) !== DOGLEG_MODE_TRADITIONAL
   ) return legalHeuristicAutoPlay(room, player, context);
   if (strategy === AI_STRATEGY_SAFE_FIVE) {
+    const pveBottomEndgame = normalizeGameMode(room.gameMode) === GAME_MODE_PVE
+      && player.hand.length <= 2;
     const { candidates, protectedFivePlans } = protectedFiveCandidatePlans(plans);
     return chooseMonteCarloAutoPlay(room, player, candidates, context, {
       ...options,
       fixedTeam: true,
       fixedFiveRun: true,
-      fixedTeamDepth: 1,
+      fixedBottomControl: pveBottomEndgame,
+      fixedTeamControl: pveBottomEndgame,
+      fixedTeamDepth: pveBottomEndgame ? 2 : 1,
       strategyName: AI_STRATEGY_SAFE_FIVE,
       candidateLimit: Number(options.candidateLimit)
         || Math.min(6, AI_MONTE_CARLO_CANDIDATES + protectedFivePlans.length),
@@ -7967,13 +8188,18 @@ export const __aiPlayTesting = {
   aiSafeThrowPlans,
   aiPveTrumpLeadMemoryAdjustment,
   aiTeamFiveExposure,
+  autoBuryCardIds,
+  bestTrumpSuitChoice,
   createDeck,
   deckForPlayerCount,
   expectedPlayerId,
   legalHeuristicAutoPlay,
   legalAutoPlay,
   playCards,
-  playSuit
+  playSuit,
+  setupBottomHoldConfidence,
+  setupBottomControlScore,
+  setupBottomTransferForecast
 };
 
 export const __gameModeTesting = {

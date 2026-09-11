@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { createSeededRandom } from "../ai-random.js";
+import { applyShenBiesanCardRules } from "../public/replacement-rank-rules.js";
 import { __aiPlayTesting } from "../server.js";
 
 const {
@@ -14,8 +15,11 @@ const {
   aiSampleHiddenHands,
   aiSafeThrowPlans,
   aiTeamFiveExposure,
+  autoBuryCardIds,
   createDeck,
-  legalAutoPlay
+  legalAutoPlay,
+  setupBottomHoldConfidence,
+  setupBottomTransferForecast
 } = __aiPlayTesting;
 
 function cardById(deck, id) {
@@ -364,4 +368,141 @@ test("fixed-team five memory counts every publicly played five, including losing
     [cardById(deck, "1-S-4")],
     aiDecisionContext(room, robot)
   ) < 0);
+});
+
+test("PVE banker teammates do not load points or protected fives into the bottom", () => {
+  const deck = createDeck(4);
+  const banker = player("banker", [], 0, "A");
+  const teammate = player("teammate", [
+    cardById(deck, "1-C-4"),
+    cardById(deck, "2-C-4"),
+    cardById(deck, "1-C-K"),
+    cardById(deck, "1-D-10"),
+    cardById(deck, "1-H-5"),
+    cardById(deck, "1-D-5")
+  ], 0, "A");
+  const room = pveRoom({
+    players: [banker, player("opponent-1", [], 0, "B"), teammate, player("opponent-2", [], 0, "B")],
+    bankerId: banker.id,
+    currentTrick: { number: 1, leaderId: banker.id, plays: [] }
+  });
+
+  const buried = new Set(autoBuryCardIds(teammate, 2, room));
+  assert.deepEqual(buried, new Set(["1-C-4", "2-C-4"]));
+});
+
+test("a weak PVE idle fryer keeps points in hand instead of gambling them on the bottom", () => {
+  const deck = createDeck(4);
+  const banker = player("banker", [], 0, "A");
+  const idle = player("idle", [
+    cardById(deck, "1-C-4"),
+    cardById(deck, "2-C-4"),
+    cardById(deck, "1-C-K"),
+    cardById(deck, "1-D-10"),
+    cardById(deck, "1-H-5"),
+    cardById(deck, "1-D-5")
+  ], 0, "B");
+  const room = pveRoom({
+    players: [banker, idle, player("ally", [], 0, "A"), player("opponent-2", [], 0, "B")],
+    bankerId: banker.id,
+    currentTrick: { number: 1, leaderId: banker.id, plays: [] }
+  });
+
+  assert.ok(setupBottomHoldConfidence(room, idle, room.trumpSuit) < 0.2);
+  const buried = new Set(autoBuryCardIds(idle, 2, room));
+  assert.deepEqual(buried, new Set(["1-C-4", "2-C-4"]));
+});
+
+test("PVE default strategy enables two-trick bottom lookahead only at the endgame", () => {
+  const deck = createDeck(4);
+  function decision(handIds) {
+    const robot = player("robot", handIds.map((id) => cardById(deck, id)), 0, "A");
+    const players = [
+      robot,
+      player("opponent-1", handIds.map((id, index) => cardById(deck, `${index + 1}-D-${id.split("-")[2]}`)), 0, "B"),
+      player("ally", handIds.map((id, index) => cardById(deck, `${index + 1}-H-${id.split("-")[2]}`)), 0, "A"),
+      player("opponent-2", handIds.map((id, index) => cardById(deck, `${index + 1}-S-${id.split("-")[2]}`)), 0, "B")
+    ];
+    const room = pveRoom({
+      players,
+      bankerId: robot.id,
+      currentTrick: { number: 20, leaderId: robot.id, plays: [] }
+    });
+    return legalAutoPlay(room, robot);
+  }
+
+  assert.equal(decision(["1-C-4", "2-C-6"]).simulationDepth, 2);
+  assert.equal(decision(["1-C-4", "2-C-6", "3-C-8"]).simulationDepth, 1);
+});
+
+test("PVE bottom transfer forecast uses suit order, held bid cards, seat teams, and prior passes", () => {
+  const deck = createDeck(4);
+  const owner = player("owner", deck.filter((card) => {
+    return card.type === "normal" && card.rank === "2" && card.suit === "S";
+  }), 0, "A");
+  const nextOpponent = player("next-opponent", [], 0, "B");
+  const downstreamAlly = player("downstream-ally", [], 0, "A");
+  const lastOpponent = player("last-opponent", [], 0, "B");
+  const room = pveRoom({
+    players: [owner, nextOpponent, downstreamAlly, lastOpponent],
+    bankerId: owner.id,
+    currentTrick: { number: 1, leaderId: owner.id, plays: [] }
+  });
+
+  function forecastFor(suit, passHistory = []) {
+    const bid = { actionId: `bid-${suit}`, playerId: owner.id, count: 2, suit, cards: [] };
+    room.setup.bid = bid;
+    room.setup.fry = {
+      lastBid: bid,
+      pendingBid: null,
+      history: [],
+      passHistory,
+      passIds: [],
+      passesSinceLast: 0
+    };
+    return setupBottomTransferForecast(room, owner);
+  }
+
+  const diamond = forecastFor("D");
+  const spade = forecastFor("S");
+  assert.ok(spade.retainedProbability > diamond.retainedProbability);
+  assert.ok(diamond.seats[0].canFryProbability > spade.seats[0].canFryProbability);
+  assert.equal(diamond.seats[0].relation, "opponent");
+  assert.equal(diamond.seats[1].relation, "ally");
+
+  const afterPass = forecastFor("D", [{
+    playerId: nextOpponent.id,
+    againstCount: 1,
+    againstSuit: "D",
+    at: new Date(0).toISOString()
+  }]);
+  assert.ok(afterPass.seats[0].canFryProbability < afterPass.seats[1].canFryProbability);
+  assert.ok(afterPass.seats[1].takeProbability > afterPass.seats[0].takeProbability);
+});
+
+test("神瘪三替代点数会作为比牌牌参与 PVE 翻底预测", () => {
+  const deck = createDeck(4);
+  const owner = player("owner", deck
+    .filter((card) => card.type === "normal" && card.rank === "6" && card.suit === "S")
+    .map((card) => applyShenBiesanCardRules({ ...card }, "6")), 0, "A");
+  const room = pveRoom({
+    players: [
+      owner,
+      player("next-opponent", [], 0, "B"),
+      player("downstream-ally", [], 0, "A"),
+      player("last-opponent", [], 0, "B")
+    ],
+    bankerId: owner.id,
+    currentTrick: { number: 1, leaderId: owner.id, plays: [] }
+  });
+  room.boardHeroEffects = { replacementRank: "6" };
+
+  function retainedProbability(suit) {
+    const bid = { actionId: `bid-${suit}`, playerId: owner.id, count: 2, suit, cards: [] };
+    room.setup.bid = bid;
+    room.setup.fry = { lastBid: bid, pendingBid: null, history: [], passHistory: [] };
+    return setupBottomTransferForecast(room, owner).retainedProbability;
+  }
+
+  assert.ok(retainedProbability("S") > retainedProbability("D"));
 });
