@@ -604,3 +604,22 @@ test("PVE uses another controlling route instead of the recorded small throw int
   const decision = legalAutoPlay(room, robot);
   assert.notEqual(__aiPlayTesting.playSuit(decision.cards[0], room.trumpSuit), "D");
 });
+
+test("PVE discards the whole weak pair instead of a strong single plus half the pair", () => {
+  const fixture = JSON.parse(readFileSync(new URL("./fixtures/pve-discard-keep-strong-single.json", import.meta.url), "utf8"));
+  const deck = createDeck(4);
+  function expand(play) {
+    return { playerId: play.playerId, cards: play.cardIds.map((id) => cardById(deck, id)), throwPlay: Boolean(play.throwComponents.length), throwComponents: play.throwComponents.map((component) => ({ ...component, cards: component.cardIds.map((id) => cardById(deck, id)) })) };
+  }
+  const players = fixture.players.map((entry) => player(entry.id, entry.handIds.map((id) => cardById(deck, id)), 0, entry.squad));
+  const trickHistory = fixture.trickHistory.map((trick) => ({ ...trick, plays: trick.plays.map(expand) }));
+  for (const trick of trickHistory) players.find((p) => p.id === trick.winnerId).score += trick.points;
+  const room = pveRoom({ players, bankerId: fixture.bankerId, trickHistory, currentTrick: { ...fixture.currentTrick, plays: fixture.currentTrick.plays.map(expand) } });
+  room.trumpSuit = fixture.trumpSuit;
+  const robot = players.find((p) => p.id === fixture.actorId);
+  const decision = legalAutoPlay(room, robot);
+  assert.equal(decision.cards.filter((card) => card.suit === "S" && card.rank === "6").length, 2);
+  assert.ok(!decision.cards.some((card) => card.joker === "small"));
+  assert.equal(decision.cards.filter((card) => card.suit === "D").length, 3, "all three remaining diamonds must still be followed");
+  assert.equal(decision.cards.length, 6);
+});

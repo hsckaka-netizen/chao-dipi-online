@@ -5424,6 +5424,18 @@ function cardsAssetCost(room, player, cards) {
   return cards.reduce((total, card) => total + cardAssetCost(room, player, card), 0);
 }
 
+function aiPveDiscardPlanCost(room, player, cards) {
+  const selected = new Set(cards.map((card) => card.id));
+  const remaining = player.hand.filter((card) => !selected.has(card.id));
+  const singleCost = cards.reduce((sum, card) => sum
+    + cardAssetCost(room, player, card) - cardShapeAssetCost(room, player, card), 0);
+  // A pair is lost whether we discard one copy or both. Charge the actual
+  // before/after shape loss once, instead of pricing each card in the old hand.
+  const shapeLoss = patternAssetScore(player.hand, room.trumpSuit)
+    - patternAssetScore(remaining, room.trumpSuit);
+  return singleCost + shapeLoss * 0.32;
+}
+
 function sortForDiscard(room, player, cards) {
   return [...cards].sort((a, b) => {
     return (isProtectedFive(a) ? 1 : 0) - (isProtectedFive(b) ? 1 : 0)
@@ -5823,6 +5835,11 @@ function legalFollowCandidates(room, player, info) {
         shortage
       );
     });
+    if (normalizeGameMode(room.gameMode) === GAME_MODE_PVE && shortage > 1) {
+      cardsByRank(others, room.trumpSuit)
+        .filter((group) => group.count >= 2 && group.count <= shortage)
+        .forEach((group) => addPreferredFillCandidate(candidates, base, group.cards, discardPool, shortage));
+    }
     if (sameSuit.length === 0 && info.suit !== "TRUMP") {
       const trumpCards = player.hand.filter((card) => playSuit(card, room.trumpSuit) === "TRUMP");
       exactPatternCandidates(trumpCards, info.pattern, room.trumpSuit).forEach((cards) => addCandidate(candidates, cards));
@@ -5927,7 +5944,9 @@ function followCandidateScore(room, player, cards, info, winning, context) {
   const voluntaryProtectedFives = aiVoluntaryProtectedFiveCount(room, player, cards, info);
   const { beats, comparison } = candidateBeatsCurrent(room, info, cards, winning);
   const endgame = player.hand.length <= info.count * 2 + 2;
-  const cost = cardsAssetCost(room, player, cards);
+  const cost = normalizeGameMode(room.gameMode) === GAME_MODE_PVE && cards.length > 1 && !beats
+    ? aiPveDiscardPlanCost(room, player, cards)
+    : cardsAssetCost(room, player, cards);
   const remainingIds = aiPlayersAfterCurrent(room, player).map((target) => target.id);
   const guaranteedTeamWin = Boolean(
     normalizeGameMode(room.gameMode) === GAME_MODE_PVE
@@ -8297,6 +8316,7 @@ export const __aiPlayTesting = {
   aiSampleHiddenHands,
   aiSafeThrowPlans,
   aiThrowResponseCandidates,
+  aiPveDiscardPlanCost,
   aiPveLeadControlAdjustment,
   legalFollowCandidates,
   leadInfo,

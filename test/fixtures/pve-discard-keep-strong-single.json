@@ -1,0 +1,775 @@
+{
+  "trumpSuit": "S",
+  "bankerId": "seat-0",
+  "actorId": "seat-1",
+  "currentTrick": {
+    "number": 14,
+    "leaderId": "seat-3",
+    "plays": [
+      {
+        "playerId": "seat-3",
+        "cardIds": [
+          "2-D-Q",
+          "4-D-Q",
+          "1-D-4",
+          "2-D-4",
+          "3-D-4",
+          "4-D-4"
+        ],
+        "throwComponents": [
+          {
+            "cardIds": [
+              "2-D-Q",
+              "4-D-Q"
+            ],
+            "pattern": {
+              "type": "multi",
+              "count": 2,
+              "ranks": [
+                "D:D:Q"
+              ],
+              "width": 2
+            },
+            "signature": "multi:2:1:2",
+            "count": 2
+          },
+          {
+            "cardIds": [
+              "1-D-4",
+              "2-D-4",
+              "3-D-4",
+              "4-D-4"
+            ],
+            "pattern": {
+              "type": "multi",
+              "count": 4,
+              "ranks": [
+                "D:D:4"
+              ],
+              "width": 4
+            },
+            "signature": "multi:4:1:4",
+            "count": 4
+          }
+        ]
+      },
+      {
+        "playerId": "seat-0",
+        "cardIds": [
+          "4-H-Q",
+          "4-C-J",
+          "2-C-7",
+          "4-D-9",
+          "4-D-7",
+          "4-D-3"
+        ],
+        "throwComponents": []
+      }
+    ]
+  },
+  "players": [
+    {
+      "id": "seat-0",
+      "squad": "a",
+      "handIds": [
+        "1-S-9",
+        "3-S-9",
+        "4-S-9",
+        "4-H-10",
+        "3-JOKER-BIG",
+        "1-JOKER-SMALL",
+        "1-JOKER-BIG"
+      ]
+    },
+    {
+      "id": "seat-1",
+      "squad": "b",
+      "handIds": [
+        "1-S-6",
+        "1-S-2",
+        "1-D-J",
+        "4-D-J",
+        "4-D-6",
+        "2-JOKER-SMALL",
+        "1-S-J",
+        "2-S-J",
+        "3-S-6",
+        "3-C-3",
+        "3-C-2",
+        "4-C-2",
+        "4-C-3"
+      ]
+    },
+    {
+      "id": "seat-2",
+      "squad": "a",
+      "handIds": [
+        "2-S-7",
+        "3-S-7",
+        "2-S-6",
+        "4-S-6",
+        "3-S-5",
+        "3-D-2",
+        "3-S-3",
+        "1-C-3",
+        "2-C-3",
+        "2-S-2",
+        "3-S-2",
+        "4-S-2",
+        "4-JOKER-SMALL"
+      ]
+    },
+    {
+      "id": "seat-3",
+      "squad": "b",
+      "handIds": [
+        "1-D-5",
+        "2-JOKER-BIG",
+        "4-JOKER-BIG",
+        "2-D-8",
+        "3-D-8",
+        "4-D-8",
+        "2-D-2"
+      ]
+    }
+  ],
+  "trickHistory": [
+    {
+      "number": 1,
+      "leaderId": "seat-0",
+      "winnerId": "seat-0",
+      "points": 100,
+      "plays": [
+        {
+          "playerId": "seat-0",
+          "cardIds": [
+            "2-C-A",
+            "2-C-K",
+            "4-C-K",
+            "1-C-Q",
+            "3-C-Q",
+            "1-C-J",
+            "2-C-J",
+            "1-C-10",
+            "3-C-10"
+          ],
+          "throwComponents": [
+            {
+              "cardIds": [
+                "2-C-A"
+              ],
+              "pattern": {
+                "type": "single",
+                "count": 1
+              },
+              "signature": "single:1:1:1",
+              "count": 1
+            },
+            {
+              "cardIds": [
+                "3-C-10",
+                "1-C-10",
+                "2-C-J",
+                "1-C-J",
+                "3-C-Q",
+                "1-C-Q",
+                "4-C-K",
+                "2-C-K"
+              ],
+              "pattern": {
+                "type": "tractor",
+                "count": 8,
+                "ranks": [
+                  "C:C:K",
+                  "C:C:Q",
+                  "C:C:J",
+                  "C:C:10"
+                ],
+                "width": 2,
+                "length": 4
+              },
+              "signature": "tractor:2:4:8",
+              "count": 8
+            }
+          ]
+        },
+        {
+          "playerId": "seat-1",
+          "cardIds": [
+            "1-C-K",
+            "3-C-K",
+            "3-C-J",
+            "4-C-10",
+            "2-C-8",
+            "3-C-8",
+            "4-C-8",
+            "3-C-5",
+            "4-C-5"
+          ],
+          "throwComponents": []
+        },
+        {
+          "playerId": "seat-2",
+          "cardIds": [
+            "4-C-Q",
+            "1-C-9",
+            "3-C-9",
+            "4-C-9",
+            "2-C-6",
+            "3-C-6",
+            "1-C-5",
+            "1-C-4",
+            "4-C-4"
+          ],
+          "throwComponents": []
+        },
+        {
+          "playerId": "seat-3",
+          "cardIds": [
+            "1-H-6",
+            "2-C-10",
+            "2-C-9",
+            "1-C-8",
+            "1-C-7",
+            "3-C-7",
+            "4-C-7",
+            "1-C-6",
+            "2-C-5"
+          ],
+          "throwComponents": []
+        }
+      ]
+    },
+    {
+      "number": 2,
+      "leaderId": "seat-0",
+      "winnerId": "seat-0",
+      "points": 0,
+      "plays": [
+        {
+          "playerId": "seat-0",
+          "cardIds": [
+            "3-H-A",
+            "4-H-A"
+          ],
+          "throwComponents": []
+        },
+        {
+          "playerId": "seat-1",
+          "cardIds": [
+            "2-H-8",
+            "3-H-7"
+          ],
+          "throwComponents": []
+        },
+        {
+          "playerId": "seat-2",
+          "cardIds": [
+            "4-H-J",
+            "3-H-6"
+          ],
+          "throwComponents": []
+        },
+        {
+          "playerId": "seat-3",
+          "cardIds": [
+            "1-H-4",
+            "3-H-4"
+          ],
+          "throwComponents": []
+        }
+      ]
+    },
+    {
+      "number": 3,
+      "leaderId": "seat-0",
+      "winnerId": "seat-0",
+      "points": 0,
+      "plays": [
+        {
+          "playerId": "seat-0",
+          "cardIds": [
+            "1-H-3",
+            "2-H-3",
+            "3-H-3",
+            "4-H-3"
+          ],
+          "throwComponents": []
+        },
+        {
+          "playerId": "seat-1",
+          "cardIds": [
+            "1-H-Q",
+            "3-H-Q",
+            "2-H-J",
+            "2-H-9"
+          ],
+          "throwComponents": []
+        },
+        {
+          "playerId": "seat-2",
+          "cardIds": [
+            "2-H-A",
+            "3-H-8",
+            "2-H-4",
+            "4-H-4"
+          ],
+          "throwComponents": []
+        },
+        {
+          "playerId": "seat-3",
+          "cardIds": [
+            "2-H-Q",
+            "3-H-J",
+            "1-H-7",
+            "2-H-7"
+          ],
+          "throwComponents": []
+        }
+      ]
+    },
+    {
+      "number": 4,
+      "leaderId": "seat-0",
+      "winnerId": "seat-0",
+      "points": 30,
+      "plays": [
+        {
+          "playerId": "seat-0",
+          "cardIds": [
+            "2-D-J",
+            "3-D-J",
+            "1-D-10",
+            "4-D-10"
+          ],
+          "throwComponents": []
+        },
+        {
+          "playerId": "seat-1",
+          "cardIds": [
+            "1-D-A",
+            "1-D-8",
+            "1-D-7",
+            "1-D-3"
+          ],
+          "throwComponents": []
+        },
+        {
+          "playerId": "seat-2",
+          "cardIds": [
+            "2-C-Q",
+            "2-D-A",
+            "4-D-A",
+            "2-D-K"
+          ],
+          "throwComponents": []
+        },
+        {
+          "playerId": "seat-3",
+          "cardIds": [
+            "1-D-9",
+            "2-D-7",
+            "2-D-3",
+            "3-D-3"
+          ],
+          "throwComponents": []
+        }
+      ]
+    },
+    {
+      "number": 5,
+      "leaderId": "seat-0",
+      "winnerId": "seat-0",
+      "points": 45,
+      "plays": [
+        {
+          "playerId": "seat-0",
+          "cardIds": [
+            "1-H-5",
+            "2-H-5",
+            "3-H-5"
+          ],
+          "throwComponents": []
+        },
+        {
+          "playerId": "seat-1",
+          "cardIds": [
+            "2-S-A",
+            "4-S-7",
+            "3-H-2"
+          ],
+          "throwComponents": []
+        },
+        {
+          "playerId": "seat-2",
+          "cardIds": [
+            "2-S-10",
+            "3-S-10",
+            "4-S-10"
+          ],
+          "throwComponents": []
+        },
+        {
+          "playerId": "seat-3",
+          "cardIds": [
+            "2-S-8",
+            "2-S-3",
+            "2-C-2"
+          ],
+          "throwComponents": []
+        }
+      ]
+    },
+    {
+      "number": 6,
+      "leaderId": "seat-0",
+      "winnerId": "seat-2",
+      "points": 10,
+      "plays": [
+        {
+          "playerId": "seat-0",
+          "cardIds": [
+            "1-S-8",
+            "4-S-8"
+          ],
+          "throwComponents": []
+        },
+        {
+          "playerId": "seat-1",
+          "cardIds": [
+            "1-S-3",
+            "4-S-3"
+          ],
+          "throwComponents": []
+        },
+        {
+          "playerId": "seat-2",
+          "cardIds": [
+            "2-D-5",
+            "3-D-5"
+          ],
+          "throwComponents": []
+        },
+        {
+          "playerId": "seat-3",
+          "cardIds": [
+            "3-S-J",
+            "4-S-J"
+          ],
+          "throwComponents": []
+        }
+      ]
+    },
+    {
+      "number": 7,
+      "leaderId": "seat-2",
+      "winnerId": "seat-2",
+      "points": 15,
+      "plays": [
+        {
+          "playerId": "seat-2",
+          "cardIds": [
+            "4-H-5"
+          ],
+          "throwComponents": []
+        },
+        {
+          "playerId": "seat-3",
+          "cardIds": [
+            "3-JOKER-SMALL"
+          ],
+          "throwComponents": []
+        },
+        {
+          "playerId": "seat-0",
+          "cardIds": [
+            "1-S-10"
+          ],
+          "throwComponents": []
+        },
+        {
+          "playerId": "seat-1",
+          "cardIds": [
+            "4-D-2"
+          ],
+          "throwComponents": []
+        }
+      ]
+    },
+    {
+      "number": 8,
+      "leaderId": "seat-2",
+      "winnerId": "seat-1",
+      "points": 45,
+      "plays": [
+        {
+          "playerId": "seat-2",
+          "cardIds": [
+            "1-S-4",
+            "2-S-4",
+            "3-S-4",
+            "4-S-4"
+          ],
+          "throwComponents": []
+        },
+        {
+          "playerId": "seat-3",
+          "cardIds": [
+            "2-S-Q",
+            "3-S-Q",
+            "4-S-Q",
+            "1-D-2"
+          ],
+          "throwComponents": []
+        },
+        {
+          "playerId": "seat-0",
+          "cardIds": [
+            "4-S-A",
+            "1-S-Q",
+            "1-S-7",
+            "1-S-5"
+          ],
+          "throwComponents": []
+        },
+        {
+          "playerId": "seat-1",
+          "cardIds": [
+            "1-S-K",
+            "2-S-K",
+            "3-S-K",
+            "4-S-K"
+          ],
+          "throwComponents": []
+        }
+      ]
+    },
+    {
+      "number": 9,
+      "leaderId": "seat-1",
+      "winnerId": "seat-1",
+      "points": 30,
+      "plays": [
+        {
+          "playerId": "seat-1",
+          "cardIds": [
+            "1-H-A",
+            "3-H-K"
+          ],
+          "throwComponents": [
+            {
+              "cardIds": [
+                "1-H-A"
+              ],
+              "pattern": {
+                "type": "single",
+                "count": 1
+              },
+              "signature": "single:1:1:1",
+              "count": 1
+            },
+            {
+              "cardIds": [
+                "3-H-K"
+              ],
+              "pattern": {
+                "type": "single",
+                "count": 1
+              },
+              "signature": "single:1:1:1",
+              "count": 1
+            }
+          ]
+        },
+        {
+          "playerId": "seat-2",
+          "cardIds": [
+            "1-H-8",
+            "4-H-8"
+          ],
+          "throwComponents": []
+        },
+        {
+          "playerId": "seat-3",
+          "cardIds": [
+            "1-H-K",
+            "2-H-K"
+          ],
+          "throwComponents": []
+        },
+        {
+          "playerId": "seat-0",
+          "cardIds": [
+            "4-H-9",
+            "4-H-7"
+          ],
+          "throwComponents": []
+        }
+      ]
+    },
+    {
+      "number": 10,
+      "leaderId": "seat-1",
+      "winnerId": "seat-1",
+      "points": 50,
+      "plays": [
+        {
+          "playerId": "seat-1",
+          "cardIds": [
+            "1-H-10",
+            "2-H-10",
+            "3-H-10"
+          ],
+          "throwComponents": []
+        },
+        {
+          "playerId": "seat-2",
+          "cardIds": [
+            "3-S-8",
+            "1-H-9",
+            "3-H-9"
+          ],
+          "throwComponents": []
+        },
+        {
+          "playerId": "seat-3",
+          "cardIds": [
+            "4-H-K",
+            "3-D-A",
+            "3-D-10"
+          ],
+          "throwComponents": []
+        },
+        {
+          "playerId": "seat-0",
+          "cardIds": [
+            "1-H-J",
+            "2-H-6",
+            "4-H-6"
+          ],
+          "throwComponents": []
+        }
+      ]
+    },
+    {
+      "number": 11,
+      "leaderId": "seat-1",
+      "winnerId": "seat-1",
+      "points": 10,
+      "plays": [
+        {
+          "playerId": "seat-1",
+          "cardIds": [
+            "4-D-5"
+          ],
+          "throwComponents": []
+        },
+        {
+          "playerId": "seat-2",
+          "cardIds": [
+            "2-S-9"
+          ],
+          "throwComponents": []
+        },
+        {
+          "playerId": "seat-3",
+          "cardIds": [
+            "4-S-5"
+          ],
+          "throwComponents": []
+        },
+        {
+          "playerId": "seat-0",
+          "cardIds": [
+            "1-C-2"
+          ],
+          "throwComponents": []
+        }
+      ]
+    },
+    {
+      "number": 12,
+      "leaderId": "seat-1",
+      "winnerId": "seat-2",
+      "points": 30,
+      "plays": [
+        {
+          "playerId": "seat-1",
+          "cardIds": [
+            "3-D-K",
+            "4-D-K"
+          ],
+          "throwComponents": []
+        },
+        {
+          "playerId": "seat-2",
+          "cardIds": [
+            "1-S-A",
+            "3-S-A"
+          ],
+          "throwComponents": []
+        },
+        {
+          "playerId": "seat-3",
+          "cardIds": [
+            "1-D-6",
+            "3-D-6"
+          ],
+          "throwComponents": []
+        },
+        {
+          "playerId": "seat-0",
+          "cardIds": [
+            "1-D-K",
+            "3-D-7"
+          ],
+          "throwComponents": []
+        }
+      ]
+    },
+    {
+      "number": 13,
+      "leaderId": "seat-2",
+      "winnerId": "seat-3",
+      "points": 15,
+      "plays": [
+        {
+          "playerId": "seat-2",
+          "cardIds": [
+            "1-C-A",
+            "3-C-A",
+            "4-C-A"
+          ],
+          "throwComponents": []
+        },
+        {
+          "playerId": "seat-3",
+          "cardIds": [
+            "1-H-2",
+            "2-H-2",
+            "4-H-2"
+          ],
+          "throwComponents": []
+        },
+        {
+          "playerId": "seat-0",
+          "cardIds": [
+            "4-C-6",
+            "2-C-4",
+            "3-C-4"
+          ],
+          "throwComponents": []
+        },
+        {
+          "playerId": "seat-1",
+          "cardIds": [
+            "2-S-5",
+            "2-D-10",
+            "2-D-6"
+          ],
+          "throwComponents": []
+        }
+      ]
+    }
+  ]
+}
