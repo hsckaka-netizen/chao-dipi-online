@@ -5694,6 +5694,93 @@ function doglegRevealValue(room, player, cards, context, { beats = false, points
   return value;
 }
 
+// Build complete responses to a throw (for example, a pair plus two singles).
+// Generic discard/strength sorts can miss every matching trump combination.
+function aiThrowResponseCandidates(room, player, cards, components) {
+  if (!components?.length) return [];
+  const ordered = [...components].sort((a, b) => b.count - a.count);
+  const plans = [];
+  const modes = ["strength", "feed", "economy"];
+  for (const mode of modes) {
+    let visits = 0;
+    const failed = new Set();
+    function find(index, remaining) {
+      if (index === ordered.length) return [];
+      if (++visits > 128) return null;
+      const key = `${index}:${cardIdsKey(remaining)}`;
+      if (failed.has(key)) return null;
+      const choices = exactPatternCandidates(remaining, ordered[index].pattern, room.trumpSuit);
+      function value(group) {
+        if (mode === "strength") return playPower(group, room.trumpSuit);
+        if (mode === "feed") return group.filter(isProtectedFive).length * 100 - cardsPoint(group) * 4;
+        return cardsAssetCost(room, player, group);
+      }
+      const ranked = choices.map((cards) => ({ cards, value: value(cards), power: playPower(cards, room.trumpSuit) }))
+        .sort((a, b) => a.value - b.value || a.power - b.power);
+      for (const { cards: choice } of ranked) {
+        const used = new Set(choice.map((card) => card.id));
+        const tail = find(index + 1, remaining.filter((card) => !used.has(card.id)));
+        if (tail) return [...choice, ...tail];
+      }
+      failed.add(key);
+      return null;
+    }
+    const response = find(0, cards);
+    if (response) addCandidate(plans, response);
+  }
+  return plans.map((plan) => plan.cards);
+}
+
+// Evaluate a side-suit lead against sampled, shape-matching trump responses.
+// Samples use only the acting robot's hand and public observations.
+function aiPveLeadControlAdjustment(room, player, cards, context, components = null) {
+  const route = playSuit(cards[0], room.trumpSuit);
+  if (normalizeGameMode(room.gameMode) !== GAME_MODE_PVE || route === "TRUMP") return 0;
+  const ordered = orderedPlayersFrom(room, player.id).slice(1);
+  if (!ordered.some((target) => aiKnowsPlayerVoid(context.knowledge, target.id, route))) return 0;
+  const info = { count: cards.length, suit: route, pattern: detectPlayPattern(cards, room.trumpSuit), throwComponents: components };
+  const worlds = context.pveLeadWorlds ||= aiSampleWorlds(room, player, context, 6);
+  if (!worlds.length) return 0;
+  let total = 0;
+  for (const world of worlds) {
+    let winnerId = player.id;
+    let winning = playComparisonAgainstLead(info, cards, room.trumpSuit);
+    let winningCost = 0;
+    for (const target of ordered) {
+      const hand = world.hands.get(target.id) || [];
+      if (hand.some((card) => playSuit(card, room.trumpSuit) === route)) continue;
+      const main = hand.filter((card) => playSuit(card, room.trumpSuit) === "TRUMP");
+      if (main.length < cards.length) continue;
+      const sampledPlayer = { ...target, hand };
+      const responses = components?.length
+        ? aiThrowResponseCandidates(room, sampledPlayer, main, components)
+        : exactPatternCandidates(main, info.pattern, room.trumpSuit);
+      const ownSide = context.teams.opponentProbability(target.id) === 0;
+      const winnerOwnSide = context.teams.opponentProbability(winnerId) === 0;
+      if (ownSide === winnerOwnSide) continue;
+      const replies = responses.map((response) => {
+        const comparison = playComparisonAgainstLead(info, response, room.trumpSuit);
+        // Running points or a five offsets the control cost of taking the lead.
+        const cost = cardsAssetCost(room, sampledPlayer, response) * 0.3
+          - cardsPoint(response) * 2.4
+          - response.reduce((sum, card) => sum + (isProtectedFive(card) ? (card.suit === "H" ? 60 : 35) : 0), 0);
+        return { comparison, cost };
+      }).filter((reply) => comparisonBeats(reply.comparison, winning));
+      replies.sort((a, b) => a.cost - b.cost);
+      if (!replies.length) continue;
+      winnerId = target.id;
+      winning = replies[0].comparison;
+      winningCost = replies[0].cost;
+    }
+    if (context.teams.opponentProbability(winnerId) > 0) {
+      total -= 95 + cardsPoint(cards) * 3 + clampNumber(-winningCost, -25, 65);
+    } else if (winnerId !== player.id) {
+      total += 25;
+    }
+  }
+  return total / worlds.length;
+}
+
 function legalFollowCandidates(room, player, info) {
   const candidates = [];
   const sameSuit = player.hand.filter((card) => playSuit(card, room.trumpSuit) === info.suit);
@@ -5742,6 +5829,18 @@ function legalFollowCandidates(room, player, info) {
     }
   }
 
+  if (normalizeGameMode(room.gameMode) === GAME_MODE_PVE && info.throwComponents?.length) {
+    const pools = [];
+    if (sameSuit.length >= info.count) pools.push(sameSuit);
+    if (!sameSuit.length && info.suit !== "TRUMP") {
+      pools.push(player.hand.filter((card) => playSuit(card, room.trumpSuit) === "TRUMP"));
+    }
+    pools.forEach((pool) => {
+      aiThrowResponseCandidates(room, player, pool, info.throwComponents)
+        .forEach((cards) => addCandidate(candidates, cards));
+    });
+  }
+
   return candidates
     .map((candidate) => candidate.cards)
     .filter((cards) => cards.length === info.count && !validatePlay(room, player, cards));
@@ -5770,6 +5869,7 @@ function leadCandidateScore(room, player, cards, context) {
   score += aiCreatedVoidBonus(room, player, cards);
   if (normalizeGameMode(room.gameMode) === GAME_MODE_PVE) {
     score += aiPveTrumpLeadMemoryAdjustment(room, player, cards, context);
+    score += aiPveLeadControlAdjustment(room, player, cards, context);
   }
   if (endgame) score += Math.max(0, 30 - power) + cards.length * 4;
   score -= cardsAssetCost(room, player, cards) * 0.12;
@@ -5779,7 +5879,17 @@ function leadCandidateScore(room, player, cards, context) {
 function throwLeadScore(room, player, plan, context) {
   const points = cardsPoint(plan.cards);
   const voluntaryProtectedFives = aiVoluntaryProtectedFiveCount(room, player, plan.cards);
+  const pveSideThrow = normalizeGameMode(room.gameMode) === GAME_MODE_PVE
+    && playSuit(plan.cards[0], room.trumpSuit) !== "TRUMP";
   let score = 150 + plan.cards.length * 11 + points * 2.2;
+  if (pveSideThrow) {
+    const parsed = throwComponentsFromExplicitGroups(plan.cards, plan.throwComponents, room.trumpSuit);
+    const controlAdjustment = aiPveLeadControlAdjustment(room, player, plan.cards, context, parsed.components);
+    score += controlAdjustment;
+    if (controlAdjustment < 0 && plan.cards.length <= 4) {
+      score -= Math.min(60, -controlAdjustment * 0.6);
+    }
+  }
   score += aiCreatedVoidBonus(room, player, plan.cards);
   score += doglegRevealValue(room, player, plan.cards, context, { pointsAtStake: points, leading: true });
   score -= voluntaryProtectedFives * 58;
@@ -8186,6 +8296,12 @@ export const __aiPlayTesting = {
   aiPublicKnowledge,
   aiSampleHiddenHands,
   aiSafeThrowPlans,
+  aiThrowResponseCandidates,
+  aiPveLeadControlAdjustment,
+  legalFollowCandidates,
+  leadInfo,
+  currentWinningState,
+  candidateBeatsCurrent,
   aiPveTrumpLeadMemoryAdjustment,
   aiTeamFiveExposure,
   autoBuryCardIds,

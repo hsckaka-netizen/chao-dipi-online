@@ -1,0 +1,441 @@
+{
+  "trumpSuit": "S",
+  "bankerId": "seat-0",
+  "leaderId": "seat-1",
+  "players": [
+    {
+      "id": "seat-0",
+      "squad": "a",
+      "handIds": [
+        "4-C-K",
+        "4-C-10",
+        "4-C-7",
+        "2-C-5",
+        "4-S-A",
+        "3-S-Q",
+        "1-S-J",
+        "4-D-2",
+        "2-S-K",
+        "4-S-5",
+        "1-S-2",
+        "2-C-3",
+        "3-C-2",
+        "4-C-2",
+        "4-S-6",
+        "3-JOKER-BIG",
+        "4-JOKER-BIG",
+        "1-S-7",
+        "2-S-7",
+        "3-S-7",
+        "4-S-7",
+        "2-C-8",
+        "3-C-8",
+        "4-JOKER-SMALL",
+        "1-JOKER-SMALL",
+        "3-JOKER-SMALL",
+        "2-C-7",
+        "2-S-6"
+      ]
+    },
+    {
+      "id": "seat-1",
+      "squad": "b",
+      "handIds": [
+        "3-D-K",
+        "4-D-J",
+        "4-C-9",
+        "4-C-8",
+        "2-S-A",
+        "2-S-J",
+        "3-S-8",
+        "3-C-3",
+        "2-S-3",
+        "3-S-3",
+        "1-C-2",
+        "2-JOKER-SMALL",
+        "1-S-K",
+        "2-C-2",
+        "4-D-7",
+        "2-C-J",
+        "4-D-9",
+        "4-H-Q",
+        "2-C-A",
+        "1-C-Q",
+        "4-C-Q",
+        "1-C-10",
+        "3-C-10",
+        "4-C-A",
+        "1-C-5",
+        "3-C-5",
+        "2-C-K",
+        "1-H-10"
+      ]
+    },
+    {
+      "id": "seat-2",
+      "squad": "a",
+      "handIds": [
+        "3-S-K",
+        "2-H-5",
+        "1-C-A",
+        "3-C-A",
+        "3-S-J",
+        "4-S-J",
+        "2-S-10",
+        "3-S-10",
+        "1-S-6",
+        "3-S-6",
+        "1-S-5",
+        "3-S-5",
+        "1-D-5",
+        "3-D-5",
+        "4-H-5",
+        "2-S-8",
+        "4-S-8",
+        "1-S-Q",
+        "1-S-9",
+        "2-H-2",
+        "3-D-2",
+        "1-C-J",
+        "3-C-J",
+        "4-S-2",
+        "1-S-3",
+        "1-JOKER-BIG",
+        "4-C-5",
+        "2-C-10"
+      ]
+    },
+    {
+      "id": "seat-3",
+      "squad": "b",
+      "handIds": [
+        "1-C-7",
+        "4-C-6",
+        "1-C-K",
+        "3-C-7",
+        "1-S-8",
+        "4-S-4",
+        "4-S-3",
+        "1-H-2",
+        "2-S-Q",
+        "4-S-Q",
+        "1-D-2",
+        "2-D-2",
+        "2-S-5",
+        "2-JOKER-BIG",
+        "1-C-3",
+        "1-S-10",
+        "4-S-10",
+        "3-H-A",
+        "1-H-5",
+        "3-C-K",
+        "4-C-3",
+        "1-H-8",
+        "2-H-8",
+        "3-H-8",
+        "2-H-10",
+        "4-H-10",
+        "1-H-K",
+        "3-H-K"
+      ]
+    }
+  ],
+  "trickHistory": [
+    {
+      "number": 1,
+      "leaderId": "seat-0",
+      "winnerId": "seat-0",
+      "points": 20,
+      "plays": [
+        {
+          "playerId": "seat-0",
+          "cardIds": [
+            "1-D-A",
+            "4-D-A"
+          ]
+        },
+        {
+          "playerId": "seat-1",
+          "cardIds": [
+            "2-D-6",
+            "4-D-3"
+          ]
+        },
+        {
+          "playerId": "seat-2",
+          "cardIds": [
+            "1-D-K",
+            "4-D-10"
+          ]
+        },
+        {
+          "playerId": "seat-3",
+          "cardIds": [
+            "3-D-8",
+            "4-D-8"
+          ]
+        }
+      ]
+    },
+    {
+      "number": 2,
+      "leaderId": "seat-0",
+      "winnerId": "seat-0",
+      "points": 10,
+      "plays": [
+        {
+          "playerId": "seat-0",
+          "cardIds": [
+            "4-H-A"
+          ]
+        },
+        {
+          "playerId": "seat-1",
+          "cardIds": [
+            "3-H-6"
+          ]
+        },
+        {
+          "playerId": "seat-2",
+          "cardIds": [
+            "2-H-K"
+          ]
+        },
+        {
+          "playerId": "seat-3",
+          "cardIds": [
+            "4-H-7"
+          ]
+        }
+      ]
+    },
+    {
+      "number": 3,
+      "leaderId": "seat-0",
+      "winnerId": "seat-0",
+      "points": 0,
+      "plays": [
+        {
+          "playerId": "seat-0",
+          "cardIds": [
+            "2-H-Q",
+            "3-H-Q",
+            "3-H-J",
+            "4-H-J"
+          ]
+        },
+        {
+          "playerId": "seat-1",
+          "cardIds": [
+            "1-H-Q",
+            "2-H-7",
+            "1-H-3",
+            "4-H-3"
+          ]
+        },
+        {
+          "playerId": "seat-2",
+          "cardIds": [
+            "1-H-J",
+            "2-H-9",
+            "2-H-4",
+            "3-H-3"
+          ]
+        },
+        {
+          "playerId": "seat-3",
+          "cardIds": [
+            "2-H-J",
+            "1-H-9",
+            "3-H-4",
+            "4-H-4"
+          ]
+        }
+      ]
+    },
+    {
+      "number": 4,
+      "leaderId": "seat-0",
+      "winnerId": "seat-3",
+      "points": 10,
+      "plays": [
+        {
+          "playerId": "seat-0",
+          "cardIds": [
+            "2-S-4",
+            "3-S-4"
+          ]
+        },
+        {
+          "playerId": "seat-1",
+          "cardIds": [
+            "2-S-9",
+            "3-S-9"
+          ]
+        },
+        {
+          "playerId": "seat-2",
+          "cardIds": [
+            "1-S-A",
+            "3-S-A"
+          ]
+        },
+        {
+          "playerId": "seat-3",
+          "cardIds": [
+            "2-D-5",
+            "4-D-5"
+          ]
+        }
+      ]
+    },
+    {
+      "number": 5,
+      "leaderId": "seat-3",
+      "winnerId": "seat-0",
+      "points": 20,
+      "plays": [
+        {
+          "playerId": "seat-3",
+          "cardIds": [
+            "2-D-K",
+            "4-D-K",
+            "2-D-Q",
+            "4-D-Q"
+          ]
+        },
+        {
+          "playerId": "seat-0",
+          "cardIds": [
+            "2-S-2",
+            "3-S-2",
+            "3-H-2",
+            "4-H-2"
+          ]
+        },
+        {
+          "playerId": "seat-1",
+          "cardIds": [
+            "1-D-7",
+            "2-D-7",
+            "2-D-4",
+            "4-D-4"
+          ]
+        },
+        {
+          "playerId": "seat-2",
+          "cardIds": [
+            "1-D-9",
+            "1-D-6",
+            "1-D-4",
+            "3-D-4"
+          ]
+        }
+      ]
+    },
+    {
+      "number": 6,
+      "leaderId": "seat-0",
+      "winnerId": "seat-1",
+      "points": 15,
+      "plays": [
+        {
+          "playerId": "seat-0",
+          "cardIds": [
+            "4-S-9"
+          ]
+        },
+        {
+          "playerId": "seat-1",
+          "cardIds": [
+            "3-H-5"
+          ]
+        },
+        {
+          "playerId": "seat-2",
+          "cardIds": [
+            "1-S-4"
+          ]
+        },
+        {
+          "playerId": "seat-3",
+          "cardIds": [
+            "4-S-K"
+          ]
+        }
+      ]
+    },
+    {
+      "number": 7,
+      "leaderId": "seat-1",
+      "winnerId": "seat-1",
+      "points": 50,
+      "plays": [
+        {
+          "playerId": "seat-1",
+          "cardIds": [
+            "3-D-A",
+            "1-D-Q",
+            "3-D-Q",
+            "1-D-J",
+            "3-D-J",
+            "2-D-10",
+            "3-D-10",
+            "2-D-9",
+            "3-D-9",
+            "1-D-8",
+            "2-D-8"
+          ]
+        },
+        {
+          "playerId": "seat-2",
+          "cardIds": [
+            "1-H-A",
+            "2-H-A",
+            "2-H-6",
+            "4-H-6",
+            "3-C-Q",
+            "1-C-9",
+            "1-C-8",
+            "3-C-6",
+            "2-D-A",
+            "3-D-6",
+            "4-D-6"
+          ]
+        },
+        {
+          "playerId": "seat-3",
+          "cardIds": [
+            "2-C-Q",
+            "4-C-J",
+            "3-C-9",
+            "2-C-6",
+            "1-C-4",
+            "2-C-4",
+            "1-D-10",
+            "3-D-7",
+            "1-D-3",
+            "2-D-3",
+            "3-D-3"
+          ]
+        },
+        {
+          "playerId": "seat-0",
+          "cardIds": [
+            "4-H-K",
+            "3-H-10",
+            "3-H-9",
+            "4-H-9",
+            "4-H-8",
+            "1-H-7",
+            "3-H-7",
+            "1-H-6",
+            "2-H-3",
+            "3-C-4",
+            "4-C-4"
+          ]
+        }
+      ]
+    }
+  ]
+}

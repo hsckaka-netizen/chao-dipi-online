@@ -1,4 +1,5 @@
 import test from "node:test";
+import { readFileSync } from "node:fs";
 import assert from "node:assert/strict";
 
 import { createSeededRandom } from "../ai-random.js";
@@ -505,4 +506,101 @@ test("神瘪三替代点数会作为比牌牌参与 PVE 翻底预测", () => {
   }
 
   assert.ok(retainedProbability("S") > retainedProbability("D"));
+});
+
+function reviewThrow(cards, sizes) {
+  let offset = 0;
+  return sizes.map((count) => {
+    const group = cards.slice(offset, offset += count);
+    return {
+      cards: group,
+      count,
+      pattern: count === 1 ? { type: "single", count } : { type: "multi", count, width: count },
+      signature: count === 1 ? "single:1:1:1" : `multi:${count}:1:${count}`
+    };
+  });
+}
+
+test("PVE follow candidates can ruff a pair plus singles or a triple plus a single", () => {
+  const deck = createDeck(4);
+  for (const fixture of [
+    { lead: ["1-D-K", "2-D-K", "1-D-9", "1-D-8"], sizes: [2, 1, 1], main: ["1-S-K", "1-S-Q", "2-S-Q", "1-S-4"] },
+    { lead: ["1-D-K", "1-D-J", "2-D-J", "3-D-J"], sizes: [1, 3], main: ["1-S-K", "2-S-K", "3-S-K", "1-S-J"] },
+    { lead: ["1-D-K", "2-D-K", "1-D-9", "2-D-9"], sizes: [2, 2], main: ["1-S-K", "2-S-K", "1-S-Q", "2-S-Q"] }
+  ]) {
+    const leadCards = fixture.lead.map((id) => cardById(deck, id));
+    const robot = player("robot", [...fixture.main, "1-C-A", "1-H-A"].map((id) => cardById(deck, id)), 0, "b");
+    const room = pveRoom({
+      players: [player("banker", [], 0, "a"), robot, player("ally", [], 0, "b"), player("opponent", [], 0, "a")],
+      currentTrick: { number: 4, leaderId: "banker", plays: [{ playerId: "banker", cards: leadCards, throwPlay: true, throwComponents: reviewThrow(leadCards, fixture.sizes) }] }
+    });
+    const info = __aiPlayTesting.leadInfo(room.currentTrick, room.trumpSuit);
+    const winning = __aiPlayTesting.currentWinningState(room);
+    const responses = __aiPlayTesting.legalFollowCandidates(room, robot, info);
+    assert.ok(responses.some((cards) => __aiPlayTesting.candidateBeatsCurrent(room, info, cards, winning).beats));
+    assert.ok(responses.every((cards) => new Set(cards.map((card) => card.id)).size === cards.length));
+    robot.hand.push(cardById(deck, "1-D-4"));
+    const mustFollow = __aiPlayTesting.legalFollowCandidates(room, robot, info);
+    assert.ok(mustFollow.every((cards) => cards.some((card) => card.id === "1-D-4")), "partial void still follows the remaining side card");
+  }
+});
+
+test("PVE lead control keeps long tractors when opponents cannot match their trump shape", () => {
+  const deck = createDeck(4);
+  const hand = ["1-C-A", "2-C-A", "1-C-K", "2-C-K", "1-C-Q", "2-C-Q", "1-C-J", "2-C-J"].map((id) => cardById(deck, id));
+  const robot = player("robot", hand, 0, "a");
+  const room = pveRoom({
+    bankerId: "robot",
+    players: [robot, player("enemy", [], 0, "b"), player("ally", [], 0, "a"), player("other", [], 0, "b")],
+    currentTrick: { number: 2, leaderId: "robot", plays: [] }
+  });
+  const context = aiDecisionContext(room, robot);
+  context.knowledge.voidRoutesByPlayerId.get("enemy").add("C");
+  const smallMain = ["1-S-K", "1-S-Q", "1-S-J", "1-S-10", "1-S-9", "1-S-8", "1-S-7", "1-S-6"].map((id) => cardById(deck, id));
+  context.pveLeadWorlds = [{ hands: new Map([["enemy", smallMain], ["ally", []], ["other", []]]) }];
+  assert.equal(__aiPlayTesting.aiPveLeadControlAdjustment(room, robot, hand, context), 0);
+  const smallThrow = [hand[0], hand[2]];
+  assert.ok(__aiPlayTesting.aiPveLeadControlAdjustment(room, robot, smallThrow, context, reviewThrow(smallThrow, [1, 1])) < 0);
+  context.pveLeadWorlds[0].hands.set("enemy", ["1-S-K", "2-S-K", "1-S-Q", "2-S-Q", "1-S-J", "2-S-J", "1-S-10", "2-S-10"].map((id) => cardById(deck, id)));
+  assert.ok(__aiPlayTesting.aiPveLeadControlAdjustment(room, robot, hand, context) < 0, "a matching long trump tractor remains a threat");
+});
+
+test("PVE transfer evaluation accounts for an opponent acting after the receiving teammate", () => {
+  const deck = createDeck(4);
+  const robot = player("robot", [cardById(deck, "1-C-A")], 0, "a");
+  const room = pveRoom({ bankerId: "robot", players: [robot, player("enemy", [], 0, "b"), player("ally", [], 0, "a"), player("last", [], 0, "b")], currentTrick: { number: 2, leaderId: "robot", plays: [] } });
+  const context = aiDecisionContext(room, robot);
+  context.knowledge.voidRoutesByPlayerId.get("ally").add("C");
+  context.pveLeadWorlds = [{ hands: new Map([["enemy", [cardById(deck, "1-S-4")]], ["ally", [cardById(deck, "1-D-5")]], ["last", []]]) }];
+  assert.ok(__aiPlayTesting.aiPveLeadControlAdjustment(room, robot, robot.hand, context) > 0);
+  context.pveLeadWorlds[0].hands.set("last", [cardById(deck, "1-H-5")]);
+  assert.ok(__aiPlayTesting.aiPveLeadControlAdjustment(room, robot, robot.hand, context) < 0);
+});
+
+test("PVE lead risk does not read real hidden hands or bottom cards", () => {
+  const deck = createDeck(4);
+  const robot = player("robot", ["1-C-A", "1-C-K"].map((id) => cardById(deck, id)), 0, "a");
+  const room = pveRoom({ bankerId: "robot", players: [robot, player("enemy", [cardById(deck, "1-H-5")], 0, "b"), player("ally", [cardById(deck, "1-D-5")], 0, "a"), player("last", [cardById(deck, "1-JOKER-BIG")], 0, "b")], currentTrick: { number: 2, leaderId: "robot", plays: [] }, trickHistory: [{ number: 1, leaderId: "robot", winnerId: "enemy", points: 0, plays: [{ playerId: "robot", cards: [cardById(deck, "1-C-4")] }, { playerId: "enemy", cards: [cardById(deck, "1-S-4")] }] }] });
+  function risk() { return __aiPlayTesting.aiPveLeadControlAdjustment(room, robot, robot.hand, aiDecisionContext(room, robot), reviewThrow(robot.hand, [1, 1])); }
+  const first = risk();
+  room.players[1].hand = [cardById(deck, "1-D-4")];
+  room.players[2].hand = [cardById(deck, "1-C-9")];
+  room.kitty = [cardById(deck, "2-H-5")];
+  assert.equal(risk(), first);
+  room.gameMode = "pvp";
+  assert.equal(risk(), 0);
+});
+
+
+test("PVE uses another controlling route instead of the recorded small throw into known voids", () => {
+  const fixture = JSON.parse(readFileSync(new URL("./fixtures/pve-known-void-small-throw.json", import.meta.url), "utf8"));
+  const deck = createDeck(4);
+  const players = fixture.players.map((entry) => player(entry.id, entry.handIds.map((id) => cardById(deck, id)), 0, entry.squad));
+  const trickHistory = fixture.trickHistory.map((trick) => ({ ...trick, plays: trick.plays.map((play) => ({ playerId: play.playerId, cards: play.cardIds.map((id) => cardById(deck, id)) })) }));
+  for (const trick of trickHistory) players.find((p) => p.id === trick.winnerId).score += trick.points;
+  const room = pveRoom({ players, bankerId: fixture.bankerId, trickHistory, currentTrick: { number: 8, leaderId: fixture.leaderId, plays: [] } });
+  room.trumpSuit = fixture.trumpSuit;
+  const robot = players.find((p) => p.id === fixture.leaderId);
+  const decision = legalAutoPlay(room, robot);
+  assert.notEqual(__aiPlayTesting.playSuit(decision.cards[0], room.trumpSuit), "D");
 });
