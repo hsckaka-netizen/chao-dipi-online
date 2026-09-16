@@ -414,7 +414,7 @@ test("a weak PVE idle fryer keeps points in hand instead of gambling them on the
   assert.deepEqual(buried, new Set(["1-C-4", "2-C-4"]));
 });
 
-test("PVE default strategy enables two-trick bottom lookahead only at the endgame", () => {
+test("PVE default strategy bounds small-hand lookahead and preserves the explicit baseline option", () => {
   const deck = createDeck(4);
   function decision(handIds) {
     const robot = player("robot", handIds.map((id) => cardById(deck, id)), 0, "A");
@@ -622,4 +622,137 @@ test("PVE discards the whole weak pair instead of a strong single plus half the 
   assert.ok(!decision.cards.some((card) => card.joker === "small"));
   assert.equal(decision.cards.filter((card) => card.suit === "D").length, 3, "all three remaining diamonds must still be followed");
   assert.equal(decision.cards.length, 6);
+});
+
+function opportunityRoom() {
+  const deck = createDeck(4);
+  const robot = player("robot", ["1-S-A", "1-S-K", "1-S-Q", "1-S-J", "1-S-9", "1-S-8", "1-S-7", "1-H-5", "1-C-8", "1-C-9", "1-D-8", "1-D-9"].map((id) => cardById(deck, id)), 0, "A");
+  const peers = [player("opponent-1", [], 0, "B"), player("ally", [], 0, "A"), player("opponent-2", [], 0, "B")];
+  const ownIds = new Set(robot.hand.map((card) => card.id));
+  const pool = deck.filter((card) => !ownIds.has(card.id));
+  peers.forEach((target, index) => { target.hand = pool.slice(index * 12, index * 12 + 12); });
+  return { deck, robot, room: pveRoom({ players: [robot, ...peers], bankerId: robot.id,
+    currentTrick: { number: 12, leaderId: robot.id, plays: [] } }) };
+}
+
+function losingTrumpHistory(deck) {
+  // An unmatched trump cannot beat this side pair; this is a discard, not a winning ruff.
+  return { number: 11, leaderId: "ally", winnerId: "ally", plays: [
+    { playerId: "ally", cards: [cardById(deck, "2-C-A"), cardById(deck, "3-C-A")] },
+    { playerId: "opponent-1", cards: [cardById(deck, "2-S-9"), cardById(deck, "2-S-8")] }
+  ] };
+}
+
+test("losing off-suit trump activates PVE opportunity planning above eight cards without asserting other voids", () => {
+  const { deck, room, robot } = opportunityRoom();
+  const before = __aiPlayTesting.aiPveOpportunityContext(room, robot, aiDecisionContext(room, robot));
+  assert.equal(before.active, false);
+  room.trickHistory = [losingTrumpHistory(deck)];
+  const context = aiDecisionContext(room, robot);
+  const signal = __aiPlayTesting.aiPveOpportunityContext(room, robot, context);
+  assert.equal(signal.active, true);
+  assert.equal(signal.suspectedAllTrump, true);
+  assert.ok(signal.beliefs.get("opponent-1") >= 0.7 && signal.beliefs.get("opponent-1") < 1);
+  assert.deepEqual([...context.knowledge.voidRoutesByPlayerId.get("opponent-1")], ["C"]);
+  const decision = legalAutoPlay(room, robot);
+  assert.equal(decision.opportunityPlanning, true);
+  assert.equal(decision.simulationDepth, 2);
+  assert.equal(legalAutoPlay(room, robot, { pveOpportunityPlanning: false }).opportunityPlanning, undefined);
+});
+
+test("winning ruffs and later side-card disclosures do not become hard all-trump assumptions", () => {
+  const { deck, room, robot } = opportunityRoom();
+  room.trickHistory = [{ number: 10, leaderId: "ally", winnerId: "opponent-1", plays: [
+    { playerId: "ally", cards: [cardById(deck, "2-C-A")] },
+    { playerId: "opponent-1", cards: [cardById(deck, "2-S-9")] }
+  ] }];
+  let signal = __aiPlayTesting.aiPveOpportunityContext(room, robot, aiDecisionContext(room, robot));
+  assert.equal(signal.suspectedAllTrump, false);
+  room.trickHistory.push(losingTrumpHistory(deck));
+  room.trickHistory.push({ number: 12, leaderId: "opponent-1", plays: [
+    { playerId: "opponent-1", cards: [cardById(deck, "2-D-A")] }
+  ] });
+  signal = __aiPlayTesting.aiPveOpportunityContext(room, robot, aiDecisionContext(room, robot));
+  assert.equal(signal.beliefs.get("opponent-1"), 0);
+});
+
+test("a shortage of trump triggers planning early, independent of actual hidden hands and kitty", () => {
+  const { deck, room, robot } = opportunityRoom();
+  robot.hand = deck.filter((card) => __aiPlayTesting.playSuit(card, "S") !== "TRUMP").slice(0, 16);
+  room.players.slice(1).forEach((target) => { target.hand = deck.slice(0, 16); });
+  const first = legalAutoPlay(room, robot);
+  assert.equal(first.opportunitySignals.shortTrump, true);
+  room.players.slice(1).forEach((target) => { target.hand = deck.slice(-16); });
+  Object.defineProperty(room, "kitty", { enumerable: false, get() { throw new Error("real hidden kitty read"); } });
+  const second = legalAutoPlay(room, robot);
+  assert.deepEqual(second.cards.map((card) => card.id), first.cards.map((card) => card.id));
+  assert.equal(second.selectedScoreAdvantage, first.selectedScoreAdvantage);
+});
+
+test("all-trump sampling is a mixture, retaining public voids and a possible side-card branch", () => {
+  const { deck, room, robot } = opportunityRoom();
+  room.trickHistory = [losingTrumpHistory(deck)];
+  const context = aiDecisionContext(room, robot);
+  context.pveOpportunity = __aiPlayTesting.aiPveOpportunityContext(room, robot, context);
+  const random = createSeededRandom("all-trump-mixture");
+  let allTrump = 0, sideCards = 0;
+  for (let i = 0; i < 80; i += 1) {
+    const world = aiSampleHiddenHands(room, robot, context, random);
+    assert.ok(world);
+    const hand = world.hands.get("opponent-1");
+    assert.equal(hand.length, 12);
+    assert.ok(hand.every((card) => __aiPlayTesting.playSuit(card, "S") !== "C"));
+    if (hand.every((card) => __aiPlayTesting.playSuit(card, "S") === "TRUMP")) allTrump += 1;
+    else sideCards += 1;
+  }
+  assert.ok(allTrump > 40 && sideCards > 0);
+});
+
+test("terminal opportunity value uses actual bottom points and doubled bottom five loss", () => {
+  const { deck, room, robot } = opportunityRoom();
+  room.players.forEach((target) => { target.hand = []; });
+  const context = aiDecisionContext(room, robot);
+  const outcome = { winnerId: "opponent-1", points: 0 };
+  const losses = { own: 0, ally: 0, opponent: 0 };
+  room.kitty = [];
+  const empty = __aiPlayTesting.aiPveForecastValue(room, context, outcome, losses);
+  room.kitty = [cardById(deck, "1-H-5"), cardById(deck, "1-C-K"), cardById(deck, "1-D-K"), cardById(deck, "1-H-K")];
+  const loaded = __aiPlayTesting.aiPveForecastValue(room, context, outcome, losses);
+  assert.ok(loaded < empty - 280, "losing a loaded bottom must cost more than losing an empty bottom");
+  assert.equal(__aiPlayTesting.aiPveForecastValue(room, context, { winnerId: "robot", points: 0 }, losses),
+    (() => { room.kitty = []; return __aiPlayTesting.aiPveForecastValue(room, context, { winnerId: "robot", points: 0 }, losses); })());
+});
+
+test("recorded nine-card all-trump hand considers keeping the top pair instead of spending it to run red five", () => {
+  const fixture = JSON.parse(readFileSync(new URL("./fixtures/pve-bottom-save-control.json", import.meta.url), "utf8"));
+  const deck = createDeck(4);
+  const players = fixture.players.map((entry) => player(entry.id,
+    entry.handIds ? entry.handIds.map((id) => cardById(deck, id)) : deck.slice(0, entry.handCount), entry.score, entry.squad));
+  const trickHistory = fixture.trickHistory.map((trick) => ({ ...trick, plays: trick.plays.map((play) => ({
+    playerId: play.playerId, cards: play.cardIds.map((id) => cardById(deck, id)),
+    throwPlay: Boolean(play.throwComponents),
+    throwComponents: play.throwComponents?.map((component) => ({ ...component, cards: component.cardIds.map((id) => cardById(deck, id)) }))
+  })) }));
+  const room = pveRoom({ players, bankerId: fixture.bankerId, trickHistory,
+    currentTrick: { number: 16, leaderId: fixture.actorId, plays: [] } });
+  room.trumpSuit = fixture.trumpSuit;
+  const robot = players.find((target) => target.id === fixture.actorId);
+  const old = legalAutoPlay(room, robot, { pveOpportunityPlanning: false });
+  assert.equal(old.cards.filter((card) => card.suit === "S" && card.rank === "3").length, 2);
+  assert.ok(old.cards.some((card) => card.suit === "H" && card.rank === "5"));
+  const revised = legalAutoPlay(room, robot);
+  assert.equal(revised.opportunitySignals.ownAllTrump, true);
+  assert.equal(revised.cards.filter((card) => card.suit === "S" && card.rank === "3").length, 0);
+});
+
+test("a weak all-trump hand runs its red five while it still has the lead", () => {
+  const deck = createDeck(4);
+  const robot = player("robot", ["1-H-5", "1-S-4", "1-S-6"].map((id) => cardById(deck, id)), 0, "A");
+  const room = pveRoom({ players: [robot,
+    player("opponent-1", ["2-S-A", "3-S-A", "4-S-A"].map((id) => cardById(deck, id)), 0, "B"),
+    player("ally", ["2-S-4", "2-S-6", "2-S-7"].map((id) => cardById(deck, id)), 0, "A"),
+    player("opponent-2", ["2-S-K", "3-S-K", "4-S-K"].map((id) => cardById(deck, id)), 0, "B")
+  ], bankerId: robot.id, currentTrick: { number: 20, leaderId: robot.id, plays: [] } });
+  const decision = legalAutoPlay(room, robot);
+  assert.deepEqual(decision.cards.map((card) => card.id), ["1-H-5"]);
 });
