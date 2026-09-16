@@ -6076,6 +6076,8 @@ function aiPveOpportunityContext(room, player, context) {
     else if (sideRoutes.every((route) => voids?.has(route))) beliefs.set(target.id, 1);
   }
   const ownTrumps = player.hand.filter((card) => playSuit(card, room.trumpSuit) === "TRUMP").length;
+  const ownFiveCount = player.hand.filter(isProtectedFive).length;
+  const fivePressure = ownFiveCount > 0 && ownTrumps - ownFiveCount <= 2;
   const unseenTrumps = context.unseenCards.filter((card) => playSuit(card, room.trumpSuit) === "TRUMP").length;
   const others = room.players.filter((target) => target.id !== player.id);
   const averageOtherCards = others.reduce((sum, target) => sum + target.hand.length, 0) / Math.max(1, others.length);
@@ -6084,21 +6086,23 @@ function aiPveOpportunityContext(room, player, context) {
   const shortTrump = ownTrumps + 2 <= averageOtherTrumps && ownTrumps < averageOtherTrumps * 0.7;
   const suspectedAllTrump = others.some((target) => target.hand.length && beliefs.get(target.id) >= 0.7);
   return {
-    active: ownAllTrump || shortTrump || suspectedAllTrump || player.hand.length <= 2,
-    ownAllTrump, shortTrump, suspectedAllTrump, beliefs, ownTrumps, averageOtherTrumps
+    active: ownAllTrump || shortTrump || suspectedAllTrump || fivePressure || player.hand.length <= 2,
+    ownAllTrump, shortTrump, suspectedAllTrump, fivePressure, beliefs, ownTrumps, averageOtherTrumps
   };
 }
 
 function aiPveOpportunityPlans(room, player, plans) {
   const selected = [];
   const add = (plan) => {
-    if (plan && !selected.some((other) => cardIdsKey(other.cards) === cardIdsKey(plan.cards))) selected.push(plan);
+    if (selected.length < 6 && plan && !selected.some((other) => cardIdsKey(other.cards) === cardIdsKey(plan.cards))) selected.push(plan);
   };
   plans.slice(0, 2).forEach(add);
-  const fivePlans = plans.filter((plan) => plan.cards.some(isProtectedFive));
-  add(fivePlans.sort((a, b) => cardsAssetCost(room, player, a.cards.filter((card) => !isProtectedFive(card)))
-    - cardsAssetCost(room, player, b.cards.filter((card) => !isProtectedFive(card)))
-    || a.cards.length - b.cards.length || b.score - a.score)[0]);
+  for (const suit of ["H", "D"]) {
+    const fivePlans = plans.filter((plan) => plan.cards.some((card) => isProtectedFive(card) && card.suit === suit));
+    add(fivePlans.sort((a, b) => cardsAssetCost(room, player, a.cards.filter((card) => !isProtectedFive(card)))
+      - cardsAssetCost(room, player, b.cards.filter((card) => !isProtectedFive(card)))
+      || a.cards.length - b.cards.length || b.score - a.score)[0]);
+  }
   // Retain an alternative that preserves control, even if immediate trick scoring ranked it low.
   const reserves = plans.map((plan) => {
     const ids = new Set(plan.cards.map((card) => card.id));
@@ -6108,7 +6112,7 @@ function aiPveOpportunityPlans(room, player, plans) {
   add(reserves.sort((a, b) => b.value - a.value || b.plan.score - a.plan.score)[0]?.plan);
   add(plans.find((plan) => playSuit(plan.cards[0], room.trumpSuit) !== "TRUMP"));
   plans.forEach(add);
-  return selected.slice(0, 5);
+  return selected;
 }
 
 // Called only on a sampled room, never on the actual hidden hands.
@@ -6189,11 +6193,17 @@ function aiPveOpportunitySimulation(room, player, plan, context, world) {
   const depth = player.hand.length <= 8 ? player.hand.length : 2;
   let outcome = null;
   let firstOwnFiveLoss = 0;
+  let firstAllyFiveLoss = 0;
+  let firstOpponentFiveLoss = 0;
   for (let step = 0; step < depth; step += 1) {
     outcome = aiSimulateNextTrick(simulated);
     if (!outcome) return null;
     const loss = aiSimulatedFiveLosses(simulated.currentTrick, outcome, player, context);
-    if (!step) firstOwnFiveLoss = loss.own;
+    if (!step) {
+      firstOwnFiveLoss = loss.own;
+      firstAllyFiveLoss = loss.ally;
+      firstOpponentFiveLoss = loss.opponent;
+    }
     for (const key of Object.keys(losses)) losses[key] += loss[key];
     if (simulated.players.every((target) => !target.hand.length) || step === depth - 1) break;
     aiAdvanceSimulatedTrick(simulated, outcome);
@@ -6202,6 +6212,8 @@ function aiPveOpportunitySimulation(room, player, plan, context, world) {
     value: aiPveForecastValue(simulated, context, outcome, losses),
     winnerId: outcome.winnerId,
     ownFiveLoss: firstOwnFiveLoss,
+    firstAllyFiveLoss,
+    firstOpponentFiveLoss,
     allyFiveLoss: losses.ally,
     opponentFiveLoss: losses.opponent
   };
@@ -6503,6 +6515,12 @@ function aiPveTrumpLeadMemoryAdjustment(room, player, cards, context) {
 function aiFixedTeamRolloutAdjustment(room, context, plan, simulations, options = {}) {
   if (!simulations.length) return 0;
   let score = 0;
+  if (options.pveFiveProtection && !room.currentTrick?.plays?.length
+    && plan.cards.length >= 2 && playSuit(plan.cards[0], room.trumpSuit) === "TRUMP") {
+    const netAllyLoss = simulations.reduce((sum, result) => sum
+      + (result.firstAllyFiveLoss || 0) - (result.firstOpponentFiveLoss || 0), 0) / simulations.length;
+    score -= Math.max(0, netAllyLoss) * 45;
+  }
   const plannedDiamondFives = plan.cards.filter((card) => isProtectedFive(card) && card.suit === "D").length;
   const plannedRedFives = plan.cards.filter((card) => isProtectedFive(card) && card.suit === "H").length;
   if (options.fixedFiveRun === true && (plannedDiamondFives || plannedRedFives)) {
@@ -6663,14 +6681,15 @@ function legalAutoPlay(room, player, options = {}) {
     if (opportunity?.active) {
       context.pveOpportunity = opportunity;
       const selected = chooseMonteCarloAutoPlay(room, player, aiPveOpportunityPlans(room, player, plans), context, {
-        ...options, pveOpportunity: true, fixedTeam: true, fixedFiveRun: true,
-        candidateLimit: 5, sampleCount: room.players.length >= 7 ? 3 : 4,
+        ...options, pveOpportunity: true, pveFiveProtection: true, fixedTeam: true, fixedFiveRun: true,
+        candidateLimit: 6, sampleCount: room.players.length >= 7 ? 3 : 4,
         rolloutWeight: 0.7, overrideMargin: 6, strategyName: AI_STRATEGY_SAFE_FIVE
       });
       return { ...selected, opportunityPlanning: true,
         simulationDepth: player.hand.length <= 8 ? player.hand.length : 2,
         opportunitySignals: { ownAllTrump: opportunity.ownAllTrump,
-          shortTrump: opportunity.shortTrump, suspectedAllTrump: opportunity.suspectedAllTrump } };
+          shortTrump: opportunity.shortTrump, suspectedAllTrump: opportunity.suspectedAllTrump,
+          fivePressure: opportunity.fivePressure } };
     }
     const pveBottomEndgame = normalizeGameMode(room.gameMode) === GAME_MODE_PVE
       && player.hand.length <= 2;
@@ -8510,6 +8529,8 @@ export const __aiPlayTesting = {
   aiPveOpportunityPlans,
   aiPveForecastValue,
   aiPveRemainingControl,
+  aiPveOpportunitySimulation,
+  aiFixedTeamRolloutAdjustment,
   aiPveLeadControlAdjustment,
   legalFollowCandidates,
   leadInfo,

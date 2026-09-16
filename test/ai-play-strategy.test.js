@@ -756,3 +756,50 @@ test("a weak all-trump hand runs its red five while it still has the lead", () =
   const decision = legalAutoPlay(room, robot);
   assert.deepEqual(decision.cards.map((card) => card.id), ["1-H-5"]);
 });
+
+test("PVE reserves separate red-five and diamond-five choices before candidate truncation", () => {
+  const { deck, room, robot } = opportunityRoom();
+  robot.hand.push(cardById(deck, "1-D-5"));
+  const ids = ["1-S-A", "1-S-K", "1-S-Q", "1-S-J", "1-C-8", "1-C-9", "1-H-5", "1-D-5"];
+  const plans = ids.map((id, i) => ({ cards: [cardById(deck, id)], score: 100 - i * 10, throwPlay: false }));
+  const selected = __aiPlayTesting.aiPveOpportunityPlans(room, robot, plans);
+  assert.ok(selected.some((plan) => plan.cards.some((card) => card.id === "1-H-5")));
+  assert.ok(selected.some((plan) => plan.cards.some((card) => card.id === "1-D-5")));
+  assert.ok(selected.length <= 6);
+});
+
+test("PVE plans for five pressure even with side cards and without a public all-trump signal", () => {
+  const { deck, room, robot } = opportunityRoom();
+  robot.hand = ["1-H-5", "1-S-4", "1-S-6", "1-C-A", "1-C-K", "1-C-Q", "1-C-J", "1-C-10", "1-C-9", "1-D-A", "1-D-K", "1-D-Q"].map((id) => cardById(deck, id));
+  room.players.slice(1).forEach((target) => { target.hand = target.hand.slice(0, 2); });
+  const signal = __aiPlayTesting.aiPveOpportunityContext(room, robot, aiDecisionContext(room, robot));
+  assert.equal(signal.suspectedAllTrump, false);
+  assert.equal(signal.ownAllTrump, false);
+  assert.equal(signal.shortTrump, false);
+  assert.equal(signal.fivePressure, true);
+  assert.equal(signal.active, true);
+});
+
+test("PVE trump leads account for first-trick teammate five loss rather than just winning the trick", () => {
+  const { deck, room, robot } = opportunityRoom();
+  const cards = (ids) => ids.map((id) => cardById(deck, id));
+  robot.hand = cards(["2-S-3", "3-S-3", "1-C-4", "1-C-6"]);
+  const world = { hiddenKitty: [], hands: new Map([
+    ["opponent-1", cards(["1-S-10", "2-S-10", "1-C-10", "1-C-J"])],
+    ["ally", cards(["1-H-5", "1-S-4", "1-C-8", "1-C-9"])],
+    ["opponent-2", cards(["1-S-9", "2-S-9", "1-C-A", "1-C-K"])]
+  ]) };
+  room.players.slice(1).forEach((target) => { target.hand = world.hands.get(target.id); });
+  const plan = { cards: robot.hand.slice(0, 2), score: 100 };
+  const context = aiDecisionContext(room, robot);
+  const first = __aiPlayTesting.aiPveOpportunitySimulation(room, robot, plan, context, world);
+  assert.equal(first.firstAllyFiveLoss, 2, "the teammate's forced red five is lost even though our top pair wins");
+  assert.equal(first.firstOpponentFiveLoss, 0);
+  const adjustment = (result) => __aiPlayTesting.aiFixedTeamRolloutAdjustment(room, context, plan,
+    [result], { pveFiveProtection: true });
+  assert.ok(adjustment(first) < 0);
+  world.hands.set("opponent-2", cards(["2-H-5", "2-S-9", "1-C-A", "1-C-K"]));
+  const tradeoff = __aiPlayTesting.aiPveOpportunitySimulation(room, robot, plan, context, world);
+  assert.equal(tradeoff.firstOpponentFiveLoss, 2);
+  assert.ok(adjustment(tradeoff) > adjustment(first), "dragging opposing fives must remain part of the tradeoff");
+});
