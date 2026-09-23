@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 
 import { __gameModeTesting } from "../server.js";
 import { allocateBankerTeamScores, BANKER_SCORE_MODE_AVERAGE } from "../banker-score-mode.js";
@@ -18,6 +19,12 @@ test("fixed teams become banker and idle teams from the random banker squad", ()
   assert.equal(__gameModeTesting.playerRole(room, "a1"), "庄家");
   assert.equal(__gameModeTesting.playerRole(room, "a2"), "庄家队友");
   assert.equal(__gameModeTesting.playerRole(room, "b1"), "闲家");
+});
+
+test("banker teammates keep their internal role but are displayed as legs", async () => {
+  const appSource = await readFile(new URL("../public/app.js", import.meta.url), "utf8");
+  assert.match(appSource, /role === "庄家队友" \? "腿" : role/);
+  assert.doesNotMatch(appSource, /role === "庄家队友" \? "队友"/);
 });
 
 test("team target is 40 percent for equal teams and 50 percent for unequal teams", () => {

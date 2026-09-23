@@ -793,6 +793,14 @@ test("hero migration stores home, gacha, snapshots, and hero bonus", async () =>
   assert.match(gameHistorySource, /035_extra_home_slot_production\.sql/);
   assert.match(gameHistorySource, /unit_id = \$2 OR extra_unit_id = \$2/);
 
+  const drawMigration = await readFile(
+    fileURLToPath(new URL("../db/migrations/036_draw_results.sql", import.meta.url)),
+    "utf8"
+  );
+  assert.match(drawMigration, /DROP NOT NULL/);
+  assert.match(drawMigration, /ALTER COLUMN won DROP NOT NULL/);
+  assert.match(gameHistorySource, /036_draw_results\.sql/);
+
   const cooldownMigration = await readFile(
     fileURLToPath(new URL("../db/migrations/032_ssr_skill_cooldowns.sql", import.meta.url)),
     "utf8"

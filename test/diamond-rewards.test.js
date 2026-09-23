@@ -191,6 +191,36 @@ test("PVE reward uses the team result while PVP keeps the full reward", () => {
   assert.equal(pvpPlayer.totalAmount, 120);
 });
 
+test("PVP dogleg-mode idle players receive fifty percent more diamonds", () => {
+  const idleReward = calculateGameDiamondReward({
+    gameMode: "pvp",
+    playMode: "brawl",
+    team: "idle",
+    gameScore: 2,
+    tags: [{ code: "mvp", label: "MVP" }],
+    heroSkillReward: { amount: 10, skillName: "测试技能" }
+  });
+  const bankerReward = calculateGameDiamondReward({
+    gameMode: "pvp",
+    playMode: "brawl",
+    team: "banker",
+    gameScore: -2,
+    tags: [{ code: "mvp", label: "MVP" }],
+    heroSkillReward: { amount: 10, skillName: "测试技能" }
+  });
+  const teamIdleReward = calculateGameDiamondReward({
+    gameMode: "pvp",
+    playMode: "team",
+    team: "idle",
+    gameScore: 2,
+    tags: [{ code: "mvp", label: "MVP" }]
+  });
+  assert.equal(idleReward.rewardRate, 1.5);
+  assert.equal(idleReward.totalAmount, 210);
+  assert.equal(bankerReward.totalAmount, 140);
+  assert.equal(teamIdleReward.totalAmount, 130);
+});
+
 test("win bonuses remain disabled after item-adjusted score changes", () => {
   const room = {
     players: [

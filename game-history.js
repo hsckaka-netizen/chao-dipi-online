@@ -40,6 +40,7 @@ import {
   freeHeroPullState,
   heroGachaCharge,
   HERO_HOME_RULES,
+  HERO_UNITS,
   HOME_REGIONS,
   HOME_REGION_BY_ID,
   HOME_UNIT_BY_ID,
@@ -196,6 +197,10 @@ const MIGRATIONS = [
   {
     version: 35,
     path: fileURLToPath(new URL("./db/migrations/035_extra_home_slot_production.sql", import.meta.url))
+  },
+  {
+    version: 36,
+    path: fileURLToPath(new URL("./db/migrations/036_draw_results.sql", import.meta.url))
   }
 ];
 const HISTORY_ENABLED = String(process.env.GAME_HISTORY_ENABLED || "").toLowerCase() === "true";
@@ -1659,7 +1664,7 @@ export function buildGameRecord(room) {
       avatarUrl: roomPlayer?.avatarUrl || "",
       role: playerResult.role || "",
       team: playerResult.team,
-      won: baseGameScore > 0,
+      won: baseGameScore > 0 ? true : baseGameScore < 0 ? false : null,
       trickScore: Number(playerResult.trickScore) || 0,
       gameScore,
       baseGameScore,
@@ -1677,6 +1682,7 @@ export function buildGameRecord(room) {
       diamondReward: jsonValue(
         playerResult.diamondReward || calculateGameDiamondReward({
           gameMode: result.gameMode || room.gameMode,
+          playMode: result.playMode || room.playMode,
           team: playerResult.team,
           winnerTeam: result.winnerTeam,
           gameScore: baseGameScore,
@@ -1785,6 +1791,7 @@ async function saveDiamondRewards(client, record) {
 
     const reward = player.diamondReward || calculateGameDiamondReward({
       gameMode: record.gameMode,
+      playMode: record.playMode,
       team: player.team,
       winnerTeam: record.winnerTeam,
       gameScore: player.baseGameScore,
@@ -3775,7 +3782,7 @@ export async function purchasePlayerEnergy(accountId, requestIdValue) {
 }
 
 async function achievementMetricsFromClient(client, accountId) {
-  const [gamesResult, tagResult] = await Promise.all([
+  const [gamesResult, tagResult, gachaResult, heroResult] = await Promise.all([
     client.query(
       `SELECT
          game.game_id,
@@ -3819,13 +3826,40 @@ async function achievementMetricsFromClient(client, accountId) {
          AND (game.game_mode <> 'pve' OR player.pve_energy_eligible)
        ORDER BY game.finished_at, game.game_id, tag.tag_code`,
       [accountId]
+    ),
+    client.query(
+      `SELECT
+         coalesce(sum(request.pull_count), 0)::integer AS total_pulls,
+         coalesce(sum((
+           SELECT count(*)
+           FROM jsonb_array_elements(coalesce(request.result_data -> 'results', '[]'::jsonb)) AS result(item)
+           WHERE result.item ->> 'type' = 'unit'
+             AND result.item #>> '{unit,rarity}' = 'ssr'
+         )), 0)::integer AS premium_pulls
+       FROM cdp_hero_gacha_requests request
+       WHERE request.account_id = $1::uuid`,
+      [accountId]
+    ),
+    client.query(
+      `SELECT
+         count(*) FILTER (WHERE unit_id = ANY($2::text[]))::integer AS unique_heroes,
+         count(*) FILTER (WHERE unit_id = ANY($2::text[]) AND stars >= 5)::integer AS five_star_heroes
+       FROM cdp_hero_units
+       WHERE account_id = $1::uuid`,
+      [accountId, HERO_UNITS.map((unit) => unit.id)]
     )
   ]);
   const games = gamesResult.rows;
   const tags = tagResult.rows;
+  const gacha = gachaResult.rows[0] || {};
+  const heroes = heroResult.rows[0] || {};
   return {
     ...buildModeAchievementMetrics(games, tags, "pvp"),
-    ...buildModeAchievementMetrics(games, tags, "pve")
+    ...buildModeAchievementMetrics(games, tags, "pve"),
+    heroTotalPulls: Number(gacha.total_pulls) || 0,
+    heroPremiumPulls: Number(gacha.premium_pulls) || 0,
+    heroUniqueHeroes: Number(heroes.unique_heroes) || 0,
+    heroFiveStarHeroes: Number(heroes.five_star_heroes) || 0
   };
 }
 
@@ -4392,7 +4426,7 @@ const PERIOD_STATISTICS_SQL = `
       player.identity_key,
       count(*)::integer AS games_played,
       count(*) FILTER (WHERE player.won)::integer AS wins,
-      count(*) FILTER (WHERE NOT player.won)::integer AS losses,
+      count(*) FILTER (WHERE player.won IS FALSE)::integer AS losses,
       coalesce(sum(player.game_score), 0)::numeric(12, 2) AS total_score,
       coalesce(avg(player.game_score), 0)::numeric(12, 2) AS average_score,
       coalesce(sum(player.trick_score), 0)::integer AS total_trick_score,

@@ -189,7 +189,7 @@ const PLAYER_COUNT_REMOVAL_SUITS = new Map([
   [9, ["H", "H", "D"]]
 ]);
 const CALL_MODE_SCORE = "score";
-const OPENING_BID_PERCENTAGES = new Set([10, 20, 30, 40]);
+const OPENING_BID_PERCENTAGES = new Set([10, 20, 30, 40, 50]);
 const DEFAULT_OPENING_BID_PERCENT = 40;
 const SCORE_BID_SECONDS = 20;
 const FRY_SECONDS = 20;
@@ -2479,7 +2479,7 @@ function gameScoreText(value) {
 }
 
 function teamName(team) {
-  return team === "idle" ? "闲家" : "庄队";
+  return team === "idle" ? "闲家" : team === "banker" ? "庄队" : "双方";
 }
 
 function bottomSettlementDelta(room, bottomWinnerTeam) {
@@ -2559,7 +2559,7 @@ function finishGame(room, completedTrick) {
   });
   const bankerScore = bankerScores.bankerScore;
   const doglegEachScore = bankerScores.doglegEachScore;
-  const winnerTeam = idleScore >= threshold ? "idle" : "banker";
+  const cardPointWinnerTeam = idleScore >= threshold ? "idle" : "banker";
   const evaluationWinnerTeam = finalScoreWinnerTeam(idleEachScore);
   const bottomWinningPlay = completedTrick.plays.find((play) => play.playerId === bottomWinnerId);
   const finalSideSuitBottomWinnerId = bottomWinningPlay?.cards?.length
@@ -2588,7 +2588,9 @@ function finishGame(room, completedTrick) {
 
   room.status = "lobby";
   room.stage = "finished";
-  room.phase = `本局结束：${teamName(winnerTeam)}获胜，等待下一局`;
+  room.phase = evaluationWinnerTeam
+    ? `本局结束：${teamName(evaluationWinnerTeam)}获胜，等待下一局`
+    : "本局结束：双方平局，等待下一局";
   room.currentTrick = null;
   room.players.forEach((player) => {
     player.ready = Boolean(player.test);
@@ -2622,8 +2624,10 @@ function finishGame(room, completedTrick) {
     threshold,
     idleScore,
     scoreDiff,
-    winnerTeam,
-    winnerTeamName: teamName(winnerTeam),
+    winnerTeam: evaluationWinnerTeam,
+    winnerTeamName: evaluationWinnerTeam ? teamName(evaluationWinnerTeam) : "平局",
+    cardPointWinnerTeam,
+    cardPointWinnerTeamName: teamName(cardPointWinnerTeam),
     evaluationWinnerTeam,
     evaluationWinnerTeamName: evaluationWinnerTeam ? teamName(evaluationWinnerTeam) : "平局",
     bottomWinnerId,
@@ -2725,9 +2729,11 @@ function finishGame(room, completedTrick) {
   attachDiamondRewards(room);
 
   const bankerSettlementText = bankerIds.length > 1
-    ? `庄家 ${room.result.bankerScoreText} 分，${isFixedTeamGame(room) ? "庄家队友" : "狗腿"}每人 ${room.result.doglegEachScoreText} 分`
+    ? `庄家 ${room.result.bankerScoreText} 分，腿每人 ${room.result.doglegEachScoreText} 分`
     : `庄家 ${room.result.bankerScoreText} 分`;
-  addEvent(room, `本局结束：${teamName(winnerTeam)}牌局获胜，闲家 ${idleScore}/${threshold} 分，闲家每人 ${room.result.idleEachScoreText} 分，${bankerSettlementText}`);
+  addEvent(room, evaluationWinnerTeam
+    ? `本局结束：${teamName(evaluationWinnerTeam)}获胜，闲家 ${idleScore}/${threshold} 牌分，闲家每人原始 ${room.result.idleEachScoreText} 分，${bankerSettlementText}`
+    : `本局结束：双方平局，闲家 ${idleScore}/${threshold} 牌分，闲家每人原始 0 分`);
 }
 
 function completeCurrentTrick(room) {
@@ -7967,7 +7973,7 @@ async function handleApi(req, res, pathParts, url) {
       if (isFixedTeamGame(room)) return writeJson(res, 409, { error: "战队模式不需要设置起始叫分" });
       const nextPercent = Number(body.percent);
       if (!OPENING_BID_PERCENTAGES.has(nextPercent)) {
-        return writeJson(res, 400, { error: "起始叫分比例只能设置为 10%、20%、30% 或 40%" });
+        return writeJson(res, 400, { error: "起始叫分比例只能设置为 10%、20%、30%、40% 或 50%" });
       }
       if (room.openingBidPercent !== nextPercent) {
         room.openingBidPercent = nextPercent;

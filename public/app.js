@@ -162,6 +162,7 @@ let achievementStateLoading = false;
 let achievementStateAccountId = "";
 let achievementClaimInFlight = "";
 let titleEquipInFlight = false;
+let achievementFilter = "all";
 let shopState = null;
 let shopStateLoading = false;
 let shopStateAccountId = "";
@@ -583,7 +584,8 @@ function transitionNotice(previousState, nextState) {
     const doglegText = doglegCount
       ? `，狗腿每人 ${signedScore(result.doglegEachScoreText ?? result.bankerEachScoreText, result.doglegEachScore ?? result.bankerEachScore)} 分`
       : "";
-    return `本局结束：${result.winnerTeamName || "胜方"}牌局获胜；闲家每人 ${signedScore(result.idleEachScoreText, result.idleEachScore)} 分，庄家 ${signedScore(result.bankerScoreText ?? result.bankerEachScoreText, result.bankerScore ?? result.bankerEachScore)} 分${doglegText}。`;
+    const outcome = result.winnerTeam ? `${result.winnerTeamName || "胜方"}获胜` : "双方平局";
+    return `本局结束：${outcome}；闲家每人 ${signedScore(result.idleEachScoreText, result.idleEachScore)} 分，庄家 ${signedScore(result.bankerScoreText ?? result.bankerEachScoreText, result.bankerScore ?? result.bankerEachScore)} 分${doglegText}。`;
   }
   return "";
 }
@@ -3528,7 +3530,7 @@ function renderTeamLobbyControls() {
 }
 
 function renderOpeningBidPercentControl() {
-  const options = [10, 20, 30, 40];
+  const options = [10, 20, 30, 40, 50];
   const current = options.includes(Number(state.openingBidPercent)) ? Number(state.openingBidPercent) : 40;
   return `
     <span class="dogleg-count-control">
@@ -3777,6 +3779,22 @@ function renderAchievementCard(achievement) {
   `;
 }
 
+function filteredAndSortedAchievements(achievements = []) {
+  const filtered = achievements.filter((achievement) => {
+    if (achievementFilter === "unfinished") return !achievement.completed;
+    if (achievementFilter === "claimable") return achievement.completed && !achievement.claimed;
+    if (achievementFilter === "completed") return achievement.claimed;
+    return true;
+  });
+  const statusRank = (achievement) => achievement.completed && !achievement.claimed ? 0 : !achievement.completed ? 1 : 2;
+  const progressRate = (achievement) => achievement.target ? (Number(achievement.progress) || 0) / achievement.target : 0;
+  return [...filtered].sort((left, right) =>
+    statusRank(left) - statusRank(right)
+    || progressRate(right) - progressRate(left)
+    || left.target - right.target
+  );
+}
+
 function renderAchievementPage() {
   ensureAchievementState();
   ensureEnergyState();
@@ -3793,7 +3811,14 @@ function renderAchievementPage() {
   }
   const categories = achievementState.categories || [];
   const achievements = achievementState.achievements || [];
+  const visibleAchievements = filteredAndSortedAchievements(achievements);
   const ownedTitles = achievementState.ownedTitles || [];
+  const filterOptions = [
+    { id: "all", label: "全部", count: achievements.length },
+    { id: "unfinished", label: "未完成", count: achievements.filter((item) => !item.completed).length },
+    { id: "claimable", label: "可领取", count: achievements.filter((item) => item.completed && !item.claimed).length },
+    { id: "completed", label: "已完成", count: achievements.filter((item) => item.claimed).length }
+  ];
   return renderShell(`
     <section class="home-toolbar">
       <div><span class="eyebrow">CAREER</span><h2>成就与称号</h2></div>
@@ -3824,13 +3849,19 @@ function renderAchievementPage() {
       </div>
       ${ownedTitles.length ? "" : `<div class="empty">领取带称号奖励的成就后，可在这里自由装备。</div>`}
     </section>
+    <section class="panel">
+      <div class="section-head"><div><h2>成就筛选</h2><p>默认优先显示可领取项目，其次按完成进度排序。</p></div></div>
+      <div class="segmented" aria-label="成就完成状态筛选">
+        ${filterOptions.map((option) => `<button type="button" class="${achievementFilter === option.id ? "" : "secondary"}" data-action="filter-achievements" data-filter="${option.id}">${option.label} ${option.count}</button>`).join("")}
+      </div>
+    </section>
     <div class="achievement-category-list">
-      ${categories.map((category) => `
+      ${categories.filter((category) => visibleAchievements.some((item) => item.category === category.id)).map((category) => `
         <section class="panel achievement-category">
           <div class="section-head"><h2>${escapeHtml(category.name)}</h2><span class="tag">${achievements.filter((item) => item.category === category.id && item.claimed).length} / ${achievements.filter((item) => item.category === category.id).length}</span></div>
-          <div class="achievement-grid">${achievements.filter((item) => item.category === category.id).map(renderAchievementCard).join("")}</div>
+          <div class="achievement-grid">${visibleAchievements.filter((item) => item.category === category.id).map(renderAchievementCard).join("")}</div>
         </section>
-      `).join("")}
+      `).join("") || `<section class="panel"><div class="empty">当前筛选下没有成就。</div></section>`}
     </div>
   `);
 }
@@ -4135,7 +4166,7 @@ function statisticsColumns() {
     ? { key: "dogleg", label: "狗腿" }
     : statisticsGameMode === "pvp" && statisticsPlayMode === "all"
       ? { key: "ally", label: "友方" }
-      : { key: "teammate", label: "庄家队友" };
+      : { key: "teammate", label: "腿" };
   return [
     column("total_score", "总积分", "综合", (row) => statisticNumber(row.total_score), (value) => statisticSigned(value), true),
     column("games_played", "场次", "综合", (row) => statisticNumber(row.games_played)),
@@ -4471,6 +4502,7 @@ function renderPlayerGameHistorySection(accountId) {
         <div class="statistics-game-list">
           ${games.map((game) => {
             const gameScore = statisticNumber(game.game_score);
+            const outcome = game.won === true ? "胜" : game.won === false ? "负" : "平";
             const teammates = (game.players || []).map((player) => player.name).filter(Boolean).join("、");
             return `
               <article class="statistics-game-row">
@@ -4479,8 +4511,8 @@ function renderPlayerGameHistorySection(accountId) {
                   <span>房间 ${escapeHtml(game.room_code || "-")} · ${escapeHtml(game.game_mode === "pve" ? "PVE" : "PVP")} · ${escapeHtml(game.play_mode === "team" ? "战队模式" : "乱斗模式")}</span>
                 </div>
                 <div class="statistics-game-result">
-                  <span class="tag ${game.won ? "good" : ""}">${game.won ? "胜" : "负"}</span>
-                  <strong>${escapeHtml(game.role || "")}</strong>
+                  <span class="tag ${game.won === true ? "good" : ""}">${outcome}</span>
+                  <strong>${escapeHtml(displayRoleName(game.role || ""))}</strong>
                   <b class="${gameScore > 0 ? "positive" : gameScore < 0 ? "negative" : ""}">${escapeHtml(statisticSigned(gameScore))}</b>
                   <small>牌分 ${escapeHtml(game.trick_score || 0)} · 闲家 ${escapeHtml(game.idle_score || 0)}/${escapeHtml(game.threshold || 0)}</small>
                 </div>
@@ -4519,7 +4551,7 @@ function renderPlayerStatisticsDetail(baseRow) {
     ? { key: "dogleg", label: "狗腿" }
     : statisticsGameMode === "pvp" && statisticsPlayMode === "all"
       ? { key: "ally", label: "友方" }
-      : { key: "teammate", label: "庄家队友" };
+      : { key: "teammate", label: "腿" };
   const titleItems = [
     ["MVP", "mvp_count"], ["辅", "support_count"], ["躺", "couch_count"], ["坑", "pit_count"],
     ["僵", "stiff_count"], ["僵中僵", "stiffest_count"], ["雷", "thunder_count"], ["精", "precision_count"],
@@ -6905,8 +6937,6 @@ function renderResultPanel() {
       </section>
     </div>
   `;
-  const winnerEachScore = result.winnerTeam === "idle" ? result.idleEachScore : result.bankerScore ?? result.bankerEachScore;
-  const scoreDirectionReversed = Number(winnerEachScore) < 0;
   const spectating = isSpectating();
   return `
     <div class="modal-backdrop">
@@ -6926,7 +6956,7 @@ function renderResultPanel() {
         </div>
         <div class="tags">
           <span class="tag accent">${escapeHtml(result.gameModeName || (result.gameMode === "pve" ? "PVE" : "PVP"))} · ${escapeHtml(result.playModeName || (result.playMode === "team" ? "战队模式" : "乱斗模式"))}</span>
-          <span class="tag accent">牌局胜方：${escapeHtml(result.winnerTeamName)}</span>
+          <span class="tag accent">${result.winnerTeam ? `牌局胜方：${escapeHtml(result.winnerTeamName)}` : "牌局结果：平局"}</span>
           <span class="tag good">闲家 ${result.idleScore}/${result.threshold} 分</span>
           ${result.bankerBidScore ? `<span class="tag">叫分 ${escapeHtml(result.bankerBidScore)} / 总分 ${escapeHtml(result.totalGamePoints)}</span>` : ""}
           <span class="tag">${result.playMode === "team" ? "庄队积分" : "庄腿积分"}：${escapeHtml(result.bankerScoreModeName || "庄队均摊（旧规则）")}</span>
@@ -6950,13 +6980,11 @@ function renderResultPanel() {
             <div class="meta">身份积分</div>
             <strong>闲家 ${signedScore(result.idleEachScoreText, result.idleEachScore)} / 庄家 ${signedScore(result.bankerScoreText, result.bankerScore ?? result.bankerEachScore)}</strong>
             ${(result.playerResults || []).some((player) => player.role === "狗腿") ? `<span>狗腿每人 ${signedScore(result.doglegEachScoreText, result.doglegEachScore ?? result.bankerEachScore)}</span>` : ""}
-            ${(result.playerResults || []).some((player) => player.role === "庄家队友") ? `<span>庄家队友每人 ${signedScore(result.teammateEachScoreText, result.teammateEachScore ?? result.bankerEachScore)}</span>` : ""}
+            ${(result.playerResults || []).some((player) => player.role === "庄家队友") ? `<span>腿每人 ${signedScore(result.teammateEachScoreText, result.teammateEachScore ?? result.bankerEachScore)}</span>` : ""}
           </div>
         </div>
-        <div class="result-score-note ${scoreDirectionReversed ? "warning" : ""}">
-          ${scoreDirectionReversed
-            ? "牌局胜负按闲家牌分判断；保底、拖五和甩牌调整后，牌局胜方本局仍可能成为积分扣分方。"
-            : "牌局胜负按闲家牌分判断；每人积分还包含保底、拖五和甩牌调整。"}
+        <div class="result-score-note">
+          胜负按牌分、上下台阶、保底、拖五和甩牌调整后的原始积分判断；原始积分为 0 时记为平局，不计胜负。
           ${result.itemAdjustments?.length ? " 战神卡调整单独计算，并已计入下方个人最终积分。" : ""}
         </div>
         <div class="score-breakdown">
@@ -6979,7 +7007,8 @@ function renderResultPanel() {
         </div>
         <div class="result-table">
           ${result.playerResults.map((player) => {
-            const wonGame = player.team === result.winnerTeam;
+            const baseGameScore = Number(player.baseGameScore ?? player.gameScore ?? 0);
+            const gameOutcome = baseGameScore > 0 ? "牌胜" : baseGameScore < 0 ? "牌负" : "牌平";
             const scoreStatus = resultScoreStatus(player.gameScore);
             const roomPlayer = state.players.find((item) => item.id === player.playerId);
             return `
@@ -6990,7 +7019,7 @@ function renderResultPanel() {
                 ${renderEvaluationTags(player.evaluationTags)}
                 <span class="result-outcome">${scoreStatus.label}</span>
               </strong>
-              <span>${escapeHtml(player.role || player.teamName)} · ${wonGame ? "牌胜" : "牌负"}</span>
+              <span>${escapeHtml(displayRoleName(player.role || player.teamName))} · ${gameOutcome}</span>
               <span>牌分 ${player.trickScore}</span>
               <span>红五 ${player.draggedRedFives}</span>
               <span>方五 ${player.draggedDiamondFives}</span>
@@ -7533,7 +7562,7 @@ function renderTrick(trick, current, options = {}) {
           <div class="table-corner-stats">${renderPlayedFiveStats()}</div>
           <div class="table-center ${setupTable ? "setup-center" : ""} ${finishedResult ? "result-center" : ""}">
             ${setupTable ? "" : `<strong>${finishedResult ? "本局结束" : heldResult ? `第 ${trick.number} 轮结果` : `第 ${trick.number} 轮`}</strong>`}
-            ${setupTable ? renderSetupCenter() : `<span>${escapeHtml(finishedResult ? `${state.result?.winnerTeamName || "胜方"}获胜` : titleMeta)}</span>`}
+            ${setupTable ? renderSetupCenter() : `<span>${escapeHtml(finishedResult ? (state.result?.winnerTeam ? `${state.result?.winnerTeamName || "胜方"}获胜` : "本局平局") : titleMeta)}</span>`}
             ${finishedResult ? `<button type="button" data-action="open-result">查看结算</button>` : ""}
           </div>
         ` : ""}
@@ -7611,12 +7640,16 @@ function orientPlaysForViewer(plays) {
 
 function roleMark(role, playerId = "") {
   if (!role) return "";
-  const text = role === "狗腿" ? "狗腿" : role === "庄家队友" ? "队友" : role === "庄家" || role === "主" ? "庄家" : "闲";
+  const text = role === "狗腿" ? "狗腿" : role === "庄家队友" ? "腿" : role === "庄家" || role === "主" ? "庄家" : "闲";
   const tone = role === "狗腿" || role === "庄家队友" ? "dogleg" : role === "庄家" || role === "主" ? "accent" : "idle";
   const reveal = role === "狗腿" && doglegRevealEffects.some((effect) =>
     effect.playerId === playerId && effect.roleChanged && effect.until > Date.now()
   );
-  return `<span class="role-mark ${tone} ${reveal ? "dogleg-role-reveal" : ""}" title="${escapeHtml(role)}">${escapeHtml(text)}</span>`;
+  return `<span class="role-mark ${tone} ${reveal ? "dogleg-role-reveal" : ""}" title="${escapeHtml(displayRoleName(role))}">${escapeHtml(text)}</span>`;
+}
+
+function displayRoleName(role) {
+  return role === "庄家队友" ? "腿" : role;
 }
 
 function doglegPawSvg() {
@@ -8042,7 +8075,7 @@ function renderHistoryTimelineEntry(entry, source) {
               <div class="history-entry-head">
                 <span class="history-play-order">第 ${play.order} 手</span>
                 <strong>${escapeHtml(play.playerName)}</strong>
-                ${play.role ? `<span class="history-role">${escapeHtml(play.role)}</span>` : ""}
+                ${play.role ? `<span class="history-role">${escapeHtml(displayRoleName(play.role))}</span>` : ""}
                 ${play.lead ? `<span class="tag lead">首家</span>` : ""}
                 ${play.winning ? `<span class="tag good">本轮最大${entry.points ? ` · ${entry.points}分` : ""}</span>` : ""}
                 ${play.throwPlay ? `<span class="tag accent">甩牌成功</span>` : ""}
@@ -8118,7 +8151,7 @@ function renderStoredGameSettlement(game) {
   const result = game.result_data || {};
   const players = game.players || [];
   const winnerTeam = result.winnerTeam || game.winner_team || "";
-  const winnerTeamName = result.winnerTeamName || (winnerTeam === "idle" ? "闲家" : "庄队");
+  const winnerTeamName = result.winnerTeamName || (winnerTeam === "idle" ? "闲家" : winnerTeam === "banker" ? "庄队" : "");
   const bankerPlayers = players.filter((player) => player.team === "banker");
   const idlePlayers = players.filter((player) => player.team === "idle");
   const banker = bankerPlayers.find((player) => player.role === "庄家") || bankerPlayers[0] || null;
@@ -8141,7 +8174,7 @@ function renderStoredGameSettlement(game) {
         ${renderStoredGameViewTabs()}
         <div class="tags stored-settlement-tags">
           <span class="tag accent">${escapeHtml(game.game_mode === "pve" ? "PVE" : "PVP")} · ${escapeHtml(game.play_mode === "team" ? "战队模式" : "乱斗模式")}</span>
-          <span class="tag accent">牌局胜方：${escapeHtml(winnerTeamName)}</span>
+          <span class="tag accent">${winnerTeam ? `牌局胜方：${escapeHtml(winnerTeamName)}` : "牌局结果：平局"}</span>
           <span class="tag good">闲家 ${escapeHtml(game.idle_score || 0)}/${escapeHtml(game.threshold || 0)} 分</span>
           ${game.banker_bid_score ? `<span class="tag">叫分 ${escapeHtml(game.banker_bid_score)} / 总分 ${escapeHtml(game.total_game_points || 0)}</span>` : ""}
           <span class="tag">庄腿积分：${escapeHtml(scoreModeName)}</span>
@@ -8158,7 +8191,7 @@ function renderStoredGameSettlement(game) {
             <div class="meta">身份积分</div>
             <strong>闲家 ${statisticSigned(idlePlayers[0]?.baseGameScore ?? idlePlayers[0]?.gameScore ?? result.idleEachScore ?? 0)} / 庄家 ${statisticSigned(banker?.baseGameScore ?? banker?.gameScore ?? result.bankerScore ?? result.bankerEachScore ?? 0)}</strong>
             ${doglegs.length ? `<span>狗腿每人 ${statisticSigned(doglegs[0]?.baseGameScore ?? doglegs[0]?.gameScore ?? result.doglegEachScore ?? result.bankerEachScore ?? 0)}</span>` : ""}
-            ${teammates.length ? `<span>庄家队友每人 ${statisticSigned(teammates[0]?.baseGameScore ?? teammates[0]?.gameScore ?? result.teammateEachScore ?? result.bankerEachScore ?? 0)}</span>` : ""}
+            ${teammates.length ? `<span>腿每人 ${statisticSigned(teammates[0]?.baseGameScore ?? teammates[0]?.gameScore ?? result.teammateEachScore ?? result.bankerEachScore ?? 0)}</span>` : ""}
           </div>
         </div>
         <div class="score-breakdown">
@@ -8177,6 +8210,7 @@ function renderStoredGameSettlement(game) {
         <div class="result-table stored-result-table">
           ${players.map((player) => {
             const gameScore = statisticNumber(player.gameScore);
+            const gameOutcome = player.won === true ? "牌胜" : player.won === false ? "牌负" : "牌平";
             const scoreStatus = resultScoreStatus(gameScore);
             return `
               <div class="result-row ${scoreStatus.className}">
@@ -8185,7 +8219,7 @@ function renderStoredGameSettlement(game) {
                   ${renderEvaluationTags(player.evaluation?.tags || [])}
                   <span class="result-outcome">${scoreStatus.label}</span>
                 </strong>
-                <span>${escapeHtml(player.role || (player.team === "idle" ? "闲家" : "庄队"))} · ${player.team === winnerTeam ? "牌胜" : "牌负"}</span>
+                <span>${escapeHtml(displayRoleName(player.role || (player.team === "idle" ? "闲家" : "庄队")))} · ${gameOutcome}</span>
                 <span>牌分 ${escapeHtml(player.trickScore || 0)}</span>
                 <span>红五 ${escapeHtml(player.draggedRedFives || 0)}</span>
                 <span>方五 ${escapeHtml(player.draggedDiamondFives || 0)}</span>
@@ -8956,6 +8990,11 @@ document.addEventListener("click", (event) => {
   if (action === "show-achievements") {
     homeView = "achievements";
     homeJoinOpen = false;
+    render();
+  }
+  if (action === "filter-achievements") {
+    const filter = event.target.closest("[data-filter]")?.dataset.filter || "all";
+    achievementFilter = new Set(["all", "unfinished", "claimable", "completed"]).has(filter) ? filter : "all";
     render();
   }
   if (action === "show-hero-home") {

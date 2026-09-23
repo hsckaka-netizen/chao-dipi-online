@@ -180,7 +180,7 @@ test("team PVP and official PVE start with public fixed teams and no score biddi
   assert.ok(pveStarted.setup.bankerId);
 });
 
-test("host configures the opening bid from 10% to 40% before a score-bidding game", async (t) => {
+test("host configures the opening bid from 10% to 50% before a score-bidding game", async (t) => {
   const server = await startServer();
   t.after(() => server.child.kill());
 
@@ -251,10 +251,10 @@ test("host configures the opening bid from 10% to 40% before a score-bidding gam
 
   await jsonRequest(`${roomUrl}/opening-bid-percent`, {
     method: "POST",
-    body: JSON.stringify({ ...credentials, percent: 20 })
+    body: JSON.stringify({ ...credentials, percent: 50 })
   });
   const configured = await jsonRequest(`${roomUrl}/state?${stateParams.toString()}`);
-  assert.equal(configured.openingBidPercent, 20);
+  assert.equal(configured.openingBidPercent, 50);
 
   const invalidResponse = await fetch(`${roomUrl}/opening-bid-percent`, {
     method: "POST",
@@ -262,7 +262,7 @@ test("host configures the opening bid from 10% to 40% before a score-bidding gam
     body: JSON.stringify({ ...credentials, percent: 15 })
   });
   assert.equal(invalidResponse.status, 400);
-  assert.match((await invalidResponse.json()).error, /10%、20%、30% 或 40%/);
+  assert.match((await invalidResponse.json()).error, /10%、20%、30%、40% 或 50%/);
 
   const removedModeResponse = await fetch(`${roomUrl}/call-mode`, {
     method: "POST",
@@ -286,11 +286,11 @@ test("host configures the opening bid from 10% to 40% before a score-bidding gam
   });
   const started = await jsonRequest(`${roomUrl}/state?${stateParams.toString()}`);
   assert.equal(started.stage, "score-bidding");
-  assert.equal(started.setup.openingBidPercent, 20);
+  assert.equal(started.setup.openingBidPercent, 50);
   assert.equal(started.setup.bankerScoreMode, "team-average");
   assert.equal(started.setup.doglegMode, "dynamic");
-  assert.equal(started.setup.scoreBid.minimum, 100);
-  assert.equal(started.setup.scoreBid.currentScore, 100);
+  assert.equal(started.setup.scoreBid.minimum, 250);
+  assert.equal(started.setup.scoreBid.currentScore, 250);
 
   const inGameSettingResponse = await fetch(`${roomUrl}/opening-bid-percent`, {
     method: "POST",

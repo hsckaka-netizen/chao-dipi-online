@@ -267,6 +267,18 @@ test("leaderboard wins follow final settlement score instead of card-score team"
   assert.equal(record.players[2].won, false);
 });
 
+test("zero original settlement score is saved as a draw without changing older records", () => {
+  const room = settledRoom();
+  room.result.winnerTeam = null;
+  room.result.playerResults.forEach((player) => {
+    player.baseGameScore = 0;
+    player.gameScore = 0;
+  });
+  const record = buildGameRecord(room);
+  assert.equal(record.winnerTeam, null);
+  assert.ok(record.players.every((player) => player.won === null));
+});
+
 test("history queue remains a no-op when the feature flag is disabled", () => {
   assert.equal(gameHistoryStatus().enabled, false);
   assert.equal(gameHistoryStatus().recordPolicy, "eligible-pvp-and-pve-human-settlement");

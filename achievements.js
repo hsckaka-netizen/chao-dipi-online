@@ -1,5 +1,5 @@
 export const ACHIEVEMENT_RULES = Object.freeze({
-  version: "2026-09-10-v2"
+  version: "2026-09-23-v3"
 });
 
 export const ACHIEVEMENT_CATEGORIES = Object.freeze([
@@ -10,7 +10,8 @@ export const ACHIEVEMENT_CATEGORIES = Object.freeze([
   { id: "pve-career", name: "PVE 征途" },
   { id: "pve-performance", name: "PVE 高光" },
   { id: "pve-special", name: "PVE 挑战" },
-  { id: "pve-collection", name: "PVE 收藏" }
+  { id: "pve-collection", name: "PVE 收藏" },
+  { id: "hero-growth", name: "英雄收藏" }
 ]);
 
 function achievementSeries(category, idPrefix, metric, rows) {
@@ -24,6 +25,15 @@ function achievementSeries(category, idPrefix, metric, rows) {
     rewardDiamonds,
     ...(title ? { title: { id: title[0], name: title[1] } } : {})
   }));
+}
+
+function milestoneAchievementSeries({ category, idPrefix, metric, name, description, unit = "", targets, rewards }) {
+  return achievementSeries(category, idPrefix, metric, targets.map((target, index) => [
+    target,
+    `${name} ${target}`,
+    `${description} ${target}${unit}`,
+    rewards[index] || rewards.at(-1) || 0
+  ]));
 }
 
 export const ACHIEVEMENTS = Object.freeze([
@@ -183,7 +193,56 @@ export const ACHIEVEMENTS = Object.freeze([
   ...achievementSeries("pve-collection", "pve-evaluation-distinct", "pveDistinctEvaluationTitles", [
     [8, "百变破阵者", "PVE 获得过 8 种不同牌局表现称号", 400],
     [13, "试炼全称号", "PVE 获得过全部 13 种牌局表现称号", 1000, ["pve-versatile", "全能破阵者"]]
-  ])
+  ]),
+
+  ...achievementSeries("hero-growth", "hero-pulls", "heroTotalPulls", [
+    [100, "百抽留念", "累计抽卡 100 次", 300, ["hero-hundred-pulls", "百抽玩家"]],
+    [500, "星河招募官", "累计抽卡 500 次", 800, ["hero-recruiter", "星河招募官"]],
+    [1000, "千抽典藏", "累计抽卡 1000 次", 1500, ["hero-thousand-pulls", "千抽典藏家"]],
+    [2000, "万象入册", "累计抽卡 2000 次", 2500],
+    [5000, "召集传说", "累计抽卡 5000 次", 5000, ["hero-gacha-legend", "召集传说"]],
+    [10000, "万抽名宿", "累计抽卡 10000 次", 8000, ["hero-ten-thousand-pulls", "万抽名宿"]],
+    [20000, "群星档案", "累计抽卡 20000 次", 12000],
+    [50000, "无尽召集", "累计抽卡 50000 次", 20000, ["hero-endless-gacha", "无尽召集者"]]
+  ]),
+  ...achievementSeries("hero-growth", "hero-premium-pulls", "heroPremiumPulls", [
+    [1, "金光初现", "累计抽到 1 张 SSR 英雄", 200],
+    [5, "高阶阵容", "累计抽到 5 张 SSR 英雄", 500],
+    [20, "高阶收藏家", "累计抽到 20 张 SSR 英雄", 1200, ["hero-premium-collector", "高阶收藏家"]],
+    [50, "群星汇聚", "累计抽到 50 张 SSR 英雄", 2500, ["hero-premium-master", "群星之主"]]
+  ]),
+  ...achievementSeries("hero-growth", "hero-unique", "heroUniqueHeroes", [
+    [3, "英雄小队", "拥有 3 名不同英雄", 200],
+    [6, "三区新秀", "拥有 6 名不同英雄", 500],
+    [9, "全英雄集结", "拥有全部 9 名英雄", 3000, ["hero-full-roster", "全英雄集结"]]
+  ]),
+  ...achievementSeries("hero-growth", "hero-five-star", "heroFiveStarHeroes", [
+    [1, "五星初成", "拥有 1 名五星英雄", 300],
+    [3, "五星三杰", "拥有 3 名五星英雄", 800],
+    [6, "五星军团", "拥有 6 名五星英雄", 1800, ["hero-five-star-six", "五星军团"]],
+    [9, "全员满星", "全部 9 名英雄达到五星", 6000, ["hero-all-five-star", "满星统帅"]]
+  ]),
+
+  ...milestoneAchievementSeries({ category: "pvp-career", idPrefix: "pvp-games-marathon", metric: "pvpGamesPlayed", name: "PVP征途", description: "累计完成 PVP", unit: " 局", targets: [3000, 5000, 10000, 20000], rewards: [2500, 4000, 7000, 12000] }),
+  ...milestoneAchievementSeries({ category: "pve-career", idPrefix: "pve-games-marathon", metric: "pveGamesPlayed", name: "PVE征途", description: "累计完成有效 PVE", unit: " 局", targets: [3000, 5000, 10000, 20000], rewards: [2500, 4000, 7000, 12000] }),
+  ...milestoneAchievementSeries({ category: "pvp-career", idPrefix: "pvp-wins-marathon", metric: "pvpWins", name: "PVP胜者", description: "累计赢得 PVP", unit: " 局", targets: [2000, 3000, 5000, 10000, 20000], rewards: [3000, 4500, 7000, 12000, 20000] }),
+  ...milestoneAchievementSeries({ category: "pve-career", idPrefix: "pve-wins-marathon", metric: "pveWins", name: "PVE胜者", description: "累计赢得有效 PVE", unit: " 局", targets: [2000, 3000, 5000, 10000, 20000], rewards: [3000, 4500, 7000, 12000, 20000] }),
+  ...milestoneAchievementSeries({ category: "pvp-career", idPrefix: "pvp-banker-marathon", metric: "pvpBankerGames", name: "PVP庄位", description: "PVP 累计坐庄", unit: " 局", targets: [1000, 2000, 5000, 10000], rewards: [2000, 3500, 7000, 12000] }),
+  ...milestoneAchievementSeries({ category: "pve-career", idPrefix: "pve-banker-marathon", metric: "pveBankerGames", name: "PVE庄位", description: "PVE 累计坐庄", unit: " 局", targets: [1000, 2000, 5000, 10000], rewards: [2000, 3500, 7000, 12000] }),
+  ...milestoneAchievementSeries({ category: "pvp-performance", idPrefix: "pvp-bottom-marathon", metric: "pvpBottomWins", name: "PVP镇底", description: "PVP 累计赢得最后一轮", unit: " 次", targets: [500, 1000, 2000, 5000], rewards: [1500, 2500, 4500, 9000] }),
+  ...milestoneAchievementSeries({ category: "pve-performance", idPrefix: "pve-bottom-marathon", metric: "pveBottomWins", name: "PVE镇底", description: "PVE 累计赢得最后一轮", unit: " 次", targets: [500, 1000, 2000, 5000], rewards: [1500, 2500, 4500, 9000] }),
+  ...milestoneAchievementSeries({ category: "pvp-performance", idPrefix: "pvp-score-marathon", metric: "pvpTotalTrickScore", name: "PVP牌分", description: "PVP 累计获得牌分", targets: [100000, 250000, 500000, 1000000, 2500000], rewards: [1500, 3000, 5000, 9000, 16000] }),
+  ...milestoneAchievementSeries({ category: "pve-performance", idPrefix: "pve-score-marathon", metric: "pveTotalTrickScore", name: "PVE牌分", description: "PVE 累计获得牌分", targets: [100000, 250000, 500000, 1000000, 2500000], rewards: [1500, 3000, 5000, 9000, 16000] }),
+  ...milestoneAchievementSeries({ category: "pvp-performance", idPrefix: "pvp-red-marathon", metric: "pvpTotalEnemyRedFives", name: "PVP红五猎手", description: "PVP 累计拖下对方红五", unit: " 张", targets: [500, 1000, 2000, 5000, 10000], rewards: [1500, 2500, 4500, 8000, 14000] }),
+  ...milestoneAchievementSeries({ category: "pve-performance", idPrefix: "pve-red-marathon", metric: "pveTotalEnemyRedFives", name: "PVE红五猎手", description: "PVE 累计拖下电脑方红五", unit: " 张", targets: [500, 1000, 2000, 5000, 10000], rewards: [1500, 2500, 4500, 8000, 14000] }),
+  ...milestoneAchievementSeries({ category: "pvp-performance", idPrefix: "pvp-mvp-marathon", metric: "pvpMvpCount", name: "PVP核心", description: "PVP 累计获得 MVP", unit: " 次", targets: [500, 1000, 2000, 5000], rewards: [1800, 3200, 6000, 12000] }),
+  ...milestoneAchievementSeries({ category: "pve-performance", idPrefix: "pve-mvp-marathon", metric: "pveMvpCount", name: "PVE核心", description: "PVE 累计获得 MVP", unit: " 次", targets: [500, 1000, 2000, 5000], rewards: [1800, 3200, 6000, 12000] }),
+  ...milestoneAchievementSeries({ category: "pvp-performance", idPrefix: "pvp-support-marathon", metric: "pvpSupportCount", name: "PVP助攻", description: "PVP 累计获得“辅”", unit: " 次", targets: [500, 1000, 2000, 5000], rewards: [1500, 2800, 5200, 10000] }),
+  ...milestoneAchievementSeries({ category: "pve-performance", idPrefix: "pve-support-marathon", metric: "pveSupportCount", name: "PVE助攻", description: "PVE 累计获得“辅”", unit: " 次", targets: [500, 1000, 2000, 5000], rewards: [1500, 2800, 5200, 10000] }),
+  ...milestoneAchievementSeries({ category: "pvp-performance", idPrefix: "pvp-fry-marathon", metric: "pvpTotalFryActions", name: "PVP炒底", description: "PVP 累计成功炒底", unit: " 次", targets: [1000, 2000, 5000, 10000], rewards: [1800, 3200, 6500, 12000] }),
+  ...milestoneAchievementSeries({ category: "pve-performance", idPrefix: "pve-fry-marathon", metric: "pveTotalFryActions", name: "PVE炒底", description: "PVE 累计成功炒底", unit: " 次", targets: [1000, 2000, 5000, 10000], rewards: [1800, 3200, 6500, 12000] }),
+  ...milestoneAchievementSeries({ category: "pvp-special", idPrefix: "pvp-single-score", metric: "pvpMaxTrickScore", name: "PVP单局牌分", description: "PVP 单局个人牌分达到", targets: [40, 80, 120, 160, 200, 300], rewards: [100, 200, 350, 550, 800, 1500] }),
+  ...milestoneAchievementSeries({ category: "pve-special", idPrefix: "pve-single-score", metric: "pveMaxTrickScore", name: "PVE单局牌分", description: "PVE 单局个人牌分达到", targets: [40, 80, 120, 160, 200, 300], rewards: [100, 200, 350, 550, 800, 1500] })
 ]);
 
 export const ACHIEVEMENT_BY_ID = new Map(ACHIEVEMENTS.map((item) => [item.id, item]));
@@ -197,14 +256,17 @@ export function calculateStreaks(results = []) {
   let maxWinStreak = 0;
   let maxLossStreak = 0;
   results.forEach((won) => {
-    if (won) {
+    if (won === true) {
       currentWin += 1;
       currentLoss = 0;
       maxWinStreak = Math.max(maxWinStreak, currentWin);
-    } else {
+    } else if (won === false) {
       currentLoss += 1;
       currentWin = 0;
       maxLossStreak = Math.max(maxLossStreak, currentLoss);
+    } else {
+      currentWin = 0;
+      currentLoss = 0;
     }
   });
   return { maxWinStreak, maxLossStreak };
@@ -227,7 +289,7 @@ export function fryActionCount(setupData = {}, roomPlayerId = "") {
 export function buildModeAchievementMetrics(games = [], tags = [], mode = "pvp") {
   const modeGames = games.filter((game) => game.game_mode === mode);
   const modeTags = tags.filter((tag) => tag.game_mode === mode);
-  const streaks = calculateStreaks(modeGames.map((game) => Boolean(game.won)));
+  const streaks = calculateStreaks(modeGames.map((game) => game.won == null ? null : Boolean(game.won)));
   const evaluationCountsByGame = new Map();
   modeTags.forEach((tag) => {
     evaluationCountsByGame.set(tag.game_id, (evaluationCountsByGame.get(tag.game_id) || 0) + 1);
@@ -243,6 +305,7 @@ export function buildModeAchievementMetrics(games = [], tags = [], mode = "pvp")
       (total, game) => total + (Number(game.trick_score) || 0),
       0
     ),
+    [`${mode}MaxTrickScore`]: Math.max(0, ...modeGames.map((game) => Number(game.trick_score) || 0)),
     [`${mode}TotalEnemyRedFives`]: modeGames.reduce(
       (total, game) => total + (Number(game.enemy_red_fives) || 0),
       0

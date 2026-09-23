@@ -14,17 +14,17 @@ import {
 } from "../achievements.js";
 
 test("career streaks track best winning and losing runs independently", () => {
-  assert.deepEqual(calculateStreaks([true, true, false, false, false, true, true, true, false]), {
+  assert.deepEqual(calculateStreaks([true, true, null, false, false, false, true, true, true, false]), {
     maxWinStreak: 3,
     maxLossStreak: 3
   });
 });
 
-test("achievement catalogue has separate long-term PVP and PVE goals", () => {
-  assert.equal(ACHIEVEMENTS.length, 100);
+test("achievement catalogue has separate long-term PVP, PVE, and hero growth goals", () => {
+  assert.equal(ACHIEVEMENTS.length, 209);
   assert.deepEqual(ACHIEVEMENT_CATEGORIES.map((category) => category.id), [
     "pvp-career", "pvp-performance", "pvp-special", "pvp-collection",
-    "pve-career", "pve-performance", "pve-special", "pve-collection"
+    "pve-career", "pve-performance", "pve-special", "pve-collection", "hero-growth"
   ]);
   assert.deepEqual(
     new Set(ACHIEVEMENTS.map((item) => item.category)),
@@ -40,7 +40,11 @@ test("achievement catalogue has separate long-term PVP and PVE goals", () => {
   assert.ok(ACHIEVEMENTS.some((item) => item.metric === "pveTotalFryActions" && item.target === 500));
   assert.ok(ACHIEVEMENTS.some((item) => item.metric === "pvpMaxLeadPlayCards" && item.target === 21));
   assert.ok(ACHIEVEMENTS.some((item) => item.metric === "pveMaxDraggedRedFives" && item.target === 5));
-  assert.ok(ACHIEVEMENTS.every((item) => item.metric.startsWith("pvp") || item.metric.startsWith("pve")));
+  assert.ok(ACHIEVEMENTS.every((item) => item.metric.startsWith("pvp") || item.metric.startsWith("pve") || item.metric.startsWith("hero")));
+  assert.ok(ACHIEVEMENTS.some((item) => item.metric === "heroTotalPulls" && item.target === 50000));
+  assert.ok(!ACHIEVEMENTS.some((item) => item.metric === "heroTenPullCount"));
+  assert.ok(ACHIEVEMENTS.some((item) => item.metric === "heroFiveStarHeroes" && item.target === 9));
+  assert.ok(ACHIEVEMENTS.some((item) => item.metric === "pvpMaxTrickScore" && item.target === 300));
   assert.ok(ACHIEVEMENT_TITLE_BY_ID.size >= 50);
   assert.equal(new Set(ACHIEVEMENTS.map((item) => item.id)).size, ACHIEVEMENTS.length);
   assert.equal(
@@ -129,6 +133,7 @@ test("PVP and PVE achievement metrics are calculated independently", () => {
     pvpBankerGames: 1,
     pvpBottomWins: 1,
     pvpTotalTrickScore: 20,
+    pvpMaxTrickScore: 20,
     pvpTotalEnemyRedFives: 7,
     pvpMaxEnemyRedFives: 5,
     pvpMaxDraggedRedFives: 5,
@@ -145,6 +150,7 @@ test("PVP and PVE achievement metrics are calculated independently", () => {
   const pve = buildModeAchievementMetrics(games, tags, "pve");
   assert.equal(pve.pveGamesPlayed, 1);
   assert.equal(pve.pveWins, 1);
+  assert.equal(pve.pveMaxTrickScore, 10);
   assert.equal(pve.pveTotalEnemyRedFives, 1);
   assert.equal(pve.pveMvpCount, 0);
   assert.equal(pve.pveSupportCount, 1);
@@ -168,4 +174,5 @@ test("achievement claims and title equipment are server-authoritative and idempo
   assert.match(serverSource, /pathParts\[1\] === "achievements"/);
   assert.match(appSource, /data-action="claim-achievement"/);
   assert.match(appSource, /data-action="equip-title"/);
+  assert.match(appSource, /data-action="filter-achievements"/);
 });

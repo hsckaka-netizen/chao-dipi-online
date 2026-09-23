@@ -1,9 +1,10 @@
 export const DIAMOND_REWARD_RULES = Object.freeze({
-  version: "2026-09-08-v5",
+  version: "2026-09-23-v6",
   baseAmount: 100,
   winBonus: 0,
   titleBonusCap: 50,
   pveRewardRate: 0.5,
+  pvpDoglegIdleRewardRate: 1.5,
   pveWinRequired: true,
   timezone: "Asia/Shanghai",
   titleBonuses: Object.freeze({
@@ -62,6 +63,7 @@ function scaledRewardAmount(amount, rate) {
 
 export function calculateGameDiamondReward({
   gameMode = "pvp",
+  playMode = "brawl",
   team = null,
   winnerTeam = null,
   gameScore = 0,
@@ -69,7 +71,35 @@ export function calculateGameDiamondReward({
   heroSkillReward = null
 } = {}) {
   const reward = calculateDiamondReward({ gameScore, tags, heroSkillReward });
-  if (gameMode !== "pve") return reward;
+  if (gameMode !== "pve") {
+    if (playMode !== "team" && team === "idle") {
+      const rate = DIAMOND_REWARD_RULES.pvpDoglegIdleRewardRate;
+      const titleRewards = reward.titleRewards.map((item) => ({
+        ...item,
+        amount: scaledRewardAmount(item.amount, rate)
+      }));
+      const titleBonusBeforeCap = titleRewards.reduce((sum, item) => sum + item.amount, 0);
+      const titleBonusCap = scaledRewardAmount(reward.titleBonusCap, rate);
+      const titleBonus = Math.min(titleBonusBeforeCap, titleBonusCap);
+      const baseAmount = scaledRewardAmount(reward.baseAmount, rate);
+      const winBonus = scaledRewardAmount(reward.winBonus, rate);
+      const heroBonus = scaledRewardAmount(reward.heroBonus, rate);
+      return {
+        ...reward,
+        baseAmount,
+        winBonus,
+        titleBonus,
+        titleBonusBeforeCap,
+        titleBonusCap,
+        titleRewards,
+        heroBonus,
+        heroSkillReward: reward.heroSkillReward ? { ...reward.heroSkillReward, amount: heroBonus } : null,
+        totalAmount: baseAmount + winBonus + titleBonus + heroBonus,
+        rewardRate: rate
+      };
+    }
+    return reward;
+  }
 
   const won = Boolean(team && winnerTeam && team === winnerTeam);
   const rate = won ? DIAMOND_REWARD_RULES.pveRewardRate : 0;
@@ -170,6 +200,7 @@ export function attachDiamondRewards(room) {
     const playerEligible = isDiamondEligiblePlayer(room, roomPlayer);
     const calculated = calculateGameDiamondReward({
       gameMode: room.gameMode,
+      playMode: room.playMode,
       team: playerResult.team,
       winnerTeam: room.result.winnerTeam,
       gameScore: playerResult.baseGameScore ?? playerResult.gameScore,
