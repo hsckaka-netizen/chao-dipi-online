@@ -1,7 +1,7 @@
 export const HERO_HOME_RULES = Object.freeze({
-  version: "2026-09-10-v5",
-  skillVersion: "2026-09-08-skill-v8",
-  boardSkillVersion: "2026-09-02-board-skill-v4",
+  version: "2026-09-24-v6",
+  skillVersion: "2026-09-24-skill-v9",
+  boardSkillVersion: "2026-09-24-board-skill-v5",
   maxProductionHours: 6,
   singlePullPrice: 300,
   tenPullPrice: 2700,
@@ -61,6 +61,11 @@ export const HOME_UNITS = Object.freeze([
     id: "shen-biesan", name: "神 · 瘪三", namePrefix: "神", baseName: "瘪三", shortName: "瘪", type: "hero", rarity: "ssr", gender: "male", regionId: "boka", color: "#9f742c",
     cardImage: "/assets/heroes/shen-biesan-card-v2.png",
     skillName: "玉面雷神", skillDescription: "被动：对方阵营每被拖1点红五/方五积分，1～5星分别额外获得5/7/9/12/15钻石。主动：叫庄前若本人没有同花色成对2，可随机一个持有点数替代2成为本局比牌；CD为5/4/3/2/1轮。"
+  }),
+  Object.freeze({
+    id: "shen-haohao", name: "神 · 浩浩", namePrefix: "神", baseName: "浩浩", shortName: "浩", type: "hero", rarity: "ssr", gender: "male", regionId: "boka", color: "#0a9b84",
+    cardImage: "/assets/heroes/shen-haohao-card-v1.png",
+    skillName: "聪明伶俐", skillDescription: "炒底开始前发动：本局按最终阵营免除所有拖队友红五/方五；每有1名最终友方角色未被拖五，1～5星分别额外获得5/7/9/12/15钻石；CD为5/4/3/2/1轮。"
   }),
   Object.freeze({ id: "boka-youth", name: "博卡青年", shortName: "博", type: "minion", rarity: "minion", gender: null, regionId: "boka", color: "#d6a936" }),
   Object.freeze({
@@ -124,6 +129,7 @@ const GELU_DIAMONDS_PER_TRIGGER = 32;
 const WATANABE_DIAMONDS_PER_TITLE = Object.freeze([55, 70, 85, 100, 115]);
 const SHEN_JIANGWEN_DIAMONDS_PER_FRY = Object.freeze([15, 20, 25, 30, 40]);
 const SHEN_BIESAN_DIAMONDS_PER_DRAG_POINT = Object.freeze([5, 7, 9, 12, 15]);
+const SHEN_HAOHAO_DIAMONDS_PER_PROTECTED_ALLY = Object.freeze([5, 7, 9, 12, 15]);
 const YOKOYAMA_DIAMONDS_PER_ASSIST = Object.freeze([15, 20, 25, 30, 40]);
 const DAY_MS = 24 * 3600 * 1000;
 const BEIJING_OFFSET_MS = 8 * 3600 * 1000;
@@ -540,6 +546,21 @@ export function calculateHeroSkillReward({
     return baseSkillResult(snapshot, dragPoints, null, dragPoints * diamondsPerPoint, `对方阵营被拖红五${redFives}张、方五${diamondFives}张${bottomExtra ? `，含保底翻倍追加${bottomExtra}点` : ""}，共${dragPoints}点被拖积分，每点奖励${diamondsPerPoint}钻`);
   }
 
+  if (snapshot.heroId === "shen-haohao") {
+    const activated = (Array.isArray(boardHeroUses) ? boardHeroUses : [])
+      .some((use) => use?.playerId === playerId && use?.heroId === "shen-haohao");
+    const allies = (Array.isArray(playerResults) ? playerResults : [])
+      .filter((result) => result?.team && result.team === playerResult.team);
+    const protectedAllies = activated
+      ? allies.filter((result) => (Number(result.draggedRedFives) || 0) + (Number(result.draggedDiamondFives) || 0) === 0)
+      : [];
+    const diamondsPerAlly = SHEN_HAOHAO_DIAMONDS_PER_PROTECTED_ALLY[stars - 1];
+    const detail = activated
+      ? `按最终阵营统计，${protectedAllies.length}/${allies.length}名友方角色未被拖五，每名奖励${diamondsPerAlly}钻`
+      : "本局未发动聪明伶俐";
+    return baseSkillResult(snapshot, protectedAllies.length, null, protectedAllies.length * diamondsPerAlly, detail);
+  }
+
   if (snapshot.heroId === "yokoyama-yui") {
     const finalAssistPoints = finalTeamAssistPoints(playerId, playerResult, playerResults, history);
     const assistPoints = Math.max(0, finalAssistPoints == null
@@ -547,7 +568,7 @@ export function calculateHeroSkillReward({
       : finalAssistPoints);
     const matched = Math.floor(assistPoints / 40);
     const diamondsPerAssist = YOKOYAMA_DIAMONDS_PER_ASSIST[stars - 1];
-    return baseSkillResult(snapshot, matched, null, matched * diamondsPerAssist, `本局为友方贴出${assistPoints}分，每满40分奖励${diamondsPerAssist}钻，共触发${matched}次`);
+    return baseSkillResult(snapshot, matched, null, matched * diamondsPerAssist, `按最终身份回看全局出牌记录，本局为友方贴出${assistPoints}分，每满40分奖励${diamondsPerAssist}钻，共触发${matched}次`);
   }
 
   return null;

@@ -1,6 +1,6 @@
 import { applyStatePatch } from "./state-patch.js?v=9330552c7e1e";
 import { detectNewDraggedFiveEffects, detectNewLargePlayEffects } from "./gameplay-effects.js?v=14791e626d30";
-import { ASSET_URLS, versionedAssetUrl } from "./asset-versions.js?v=509d418f590d";
+import { ASSET_URLS, versionedAssetUrl } from "./asset-versions.js?v=68ec130a49da";
 import { createHistoryTrickEntry, filterHistoryTimelineEntries } from "./history-records.js?v=874ba3c97732";
 import { suitTractorOrderValue } from "./replacement-rank-rules.js?v=3b3650aa685e";
 
@@ -557,6 +557,12 @@ function transitionNotice(previousState, nextState) {
   }
   if (previousState.stage === "trump-selecting" && nextState.stage === "burying") {
     return `定主成功：${nextState.setup?.bankerName || "庄家"} 已拿底等待贴底。`;
+  }
+  if (previousState.stage === "burying" && nextState.stage === "shen-haohao-skill") {
+    return "贴底完成，进入神 · 浩浩的聪明伶俐发动阶段。";
+  }
+  if (previousState.stage === "shen-haohao-skill" && nextState.stage === "frying") {
+    return "聪明伶俐发动阶段结束，开始炒底。";
   }
   if ((previousState.stage === "frying" || previousState.stage === "fry-burying") && nextState.stage === "dogleg") {
     const trump = nextState.setup?.currentTrumpSuitName || nextState.setup?.trumpSuitName || "随机花色";
@@ -2075,16 +2081,21 @@ async function submitBoardHeroSkill(action) {
   const costs = state?.boardHeroSkills || {};
   const cost = action === "shen-biesan-activate"
     ? Number(costs.shenBiesan?.cost) || 0
+    : action === "shen-haohao-activate"
+      ? Number(costs.shenHaohao?.cost) || 0
     : action === "shen-jiangwen-activate"
       ? Number(costs.shenJiangwen?.cost) || 0
       : action === "yokoyama-activate"
         ? Number(costs.yokoyama?.cost) || 0
         : 0;
   const skillName = action.startsWith("shen-biesan") ? "玉面雷神"
+    : action.startsWith("shen-haohao") ? "聪明伶俐"
     : action.startsWith("shen-jiangwen") ? "排骨之王"
       : "全能偶像";
   const cooldown = action === "shen-biesan-activate"
     ? Number(costs.shenBiesan?.cooldown) || 0
+    : action === "shen-haohao-activate"
+      ? Number(costs.shenHaohao?.cooldown) || 0
     : action === "shen-jiangwen-activate"
       ? Number(costs.shenJiangwen?.cooldown) || 0
       : 0;
@@ -2103,8 +2114,10 @@ async function submitBoardHeroSkill(action) {
     if (cost) {
       ensureShopState(true);
     }
-    if (action.startsWith("shen-biesan") || action.startsWith("shen-jiangwen")) ensureHeroHomeState(true);
+    if (action.startsWith("shen-biesan") || action.startsWith("shen-haohao") || action.startsWith("shen-jiangwen")) ensureHeroHomeState(true);
     const message = action === "shen-biesan-pass" ? "已放弃玉面雷神"
+      : action === "shen-haohao-pass" ? "已放弃聪明伶俐"
+        : action === "shen-haohao-activate" ? "聪明伶俐已发动，本局按最终阵营免除拖队友五"
       : action === "yokoyama-pass" ? "已结束全能偶像"
         : action === "yokoyama-activate" ? "全桌座位已重新随机，身份和手牌保持不变"
           : `已提交${skillName}`;
@@ -2809,6 +2822,7 @@ function currentSetupCountdownDeadline() {
   if (state?.stage === "frying") return state.setup?.fry?.deadlineAt || null;
   if (state?.stage === "shen-biesan-skill") return state.boardHeroSkills?.shenBiesan?.deadlineAt || null;
   if (state?.stage === "yokoyama-skill") return state.boardHeroSkills?.yokoyama?.deadlineAt || null;
+  if (state?.stage === "shen-haohao-skill") return state.boardHeroSkills?.shenHaohao?.deadlineAt || null;
   return null;
 }
 
@@ -3082,6 +3096,7 @@ const COLORFUL_FRY_ORDER_VISIBLE_STAGES = new Set([
   "yokoyama-skill",
   "trump-selecting",
   "burying",
+  "shen-haohao-skill",
   "frying",
   "fry-burying"
 ]);
@@ -6500,6 +6515,27 @@ function renderSetupCenter() {
     `;
   }
 
+  if (stage === "shen-haohao-skill") {
+    const skill = state.boardHeroSkills?.shenHaohao || {};
+    const activationText = Number(skill.cooldown) > 0
+      ? `花费 ${escapeHtml(skill.cost || 0)} 钻石重置 CD 并发动`
+      : "免费发动";
+    body = `
+      ${renderSetupLines([
+        { label: "当前阶段", value: "神 · 浩浩 · 聪明伶俐" },
+        { label: "倒计时", value: setupCountdownTag(skill.deadlineAt, " 后自动放弃") },
+        { label: "技能 CD", value: skill.viewerEligible ? `${escapeHtml(skill.cooldown || 0)} 轮` : "" },
+        { label: "重置费用", value: skill.viewerEligible && Number(skill.cooldown) > 0 ? `${escapeHtml(skill.cost || 0)} 钻石` : "" }
+      ])}
+      <div class="meta">发动后，本局按结算时的最终阵营回看整局拖五，所有拖队友红五/方五不计入积分和统计；每名最终友方未被对方拖五还会提供英雄钻石。</div>
+      <div class="row">
+        ${!isSpectating() && skill.canChoose ? `<button type="button" data-action="shen-haohao-activate">${activationText}</button><button type="button" class="secondary" data-action="shen-haohao-pass">不发动</button>` : ""}
+        ${!isSpectating() && skill.viewerCompleted ? `<span class="tag good">你已完成选择</span>` : ""}
+        ${isSpectating() || (!skill.viewerEligible && !skill.viewerCompleted) ? `<span class="tag">等待神 · 浩浩玩家选择</span>` : ""}
+      </div>
+    `;
+  }
+
   if (stage === "frying") {
     const fry = setup.fry || {};
     const deadline = fry.deadlineAt || "";
@@ -6993,6 +7029,7 @@ function renderResultPanel() {
           <span class="tag">保底 ${signedScore(null, result.bottomDelta)}</span>
           <span class="tag">拖五 ${signedScore(null, result.draggedDelta)}</span>
           <span class="tag">甩牌 ${signedScore(null, result.throwFailureDelta || 0)}</span>
+          ${result.teammateFiveProtection?.active ? `<span class="tag good">聪明伶俐：免除队友拖五 红${escapeHtml(result.teammateFiveProtection.redFives || 0)} / 方${escapeHtml(result.teammateFiveProtection.diamondFives || 0)}</span>` : ""}
           ${result.bottomDraggedRedFives || result.bottomDraggedDiamondFives ? `<span class="tag accent">底牌拖主：红五 ${result.bottomDraggedRedFives}，方五 ${result.bottomDraggedDiamondFives}</span>` : ""}
         </div>
         ${renderViewerDiamondSummary(result)}
@@ -7335,6 +7372,7 @@ function renderSetupTable() {
     "yokoyama-skill": "全能偶像阶段",
     "trump-selecting": "定主牌桌",
     burying: "贴底牌桌",
+    "shen-haohao-skill": "聪明伶俐阶段",
     frying: "炒底牌桌",
     "fry-burying": "炒底贴底",
     dogleg: "狗腿牌"
@@ -7419,6 +7457,14 @@ function setupSeatStatus(player) {
   if (state.stage === "burying") {
     if (setup.bankerId === player.id) return { text: "贴底", tone: "good" };
     return { text: "等待贴底", tone: "" };
+  }
+  if (state.stage === "shen-haohao-skill") {
+    const skill = state.boardHeroSkills?.shenHaohao || {};
+    if ((skill.eligiblePlayerIds || []).includes(player.id)) {
+      const completed = player.id === state.viewer?.id && skill.viewerCompleted;
+      return { text: completed ? "已选择" : "发动/放弃", tone: "good" };
+    }
+    return { text: "等待技能", tone: "" };
   }
   if (state.stage === "frying") {
     if (fry.currentPlayerId === player.id) return { text: "炒底/过", tone: "good" };
@@ -8267,7 +8313,8 @@ function renderPlayer(player) {
   const isSetupTurn = state.setup?.biddingTurnPlayerId === player.id
     || state.setup?.fry?.currentPlayerId === player.id
     || state.boardHeroSkills?.yokoyama?.currentPlayerId === player.id
-    || (state.stage === "shen-biesan-skill" && (state.boardHeroSkills?.shenBiesan?.eligiblePlayerIds || []).includes(player.id));
+    || (state.stage === "shen-biesan-skill" && (state.boardHeroSkills?.shenBiesan?.eligiblePlayerIds || []).includes(player.id))
+    || (state.stage === "shen-haohao-skill" && (state.boardHeroSkills?.shenHaohao?.eligiblePlayerIds || []).includes(player.id));
   const isBankerAction = (state.stage === "burying" || state.stage === "dogleg") && state.setup?.bankerId === player.id;
   const canKick = !isSpectating() && state.viewer?.host && !isMe && state.status === "lobby" && !player.pveRobot;
   return `
@@ -8821,7 +8868,8 @@ const mutatingActions = new Set([
   "complete-item-stage", "collect-home", "assign-home-unit", "select-battle-hero",
   "pull-hero-gacha", "upgrade-hero-unit", "upgrade-home-region", "dispatch-hero-task", "collect-hero-task", "claim-daily-task",
   "purchase-energy", "claim-achievement", "equip-title",
-  "shen-biesan-activate", "shen-biesan-pass", "yokoyama-activate", "yokoyama-pass", "shen-jiangwen-activate"
+  "shen-biesan-activate", "shen-biesan-pass", "yokoyama-activate", "yokoyama-pass",
+  "shen-haohao-activate", "shen-haohao-pass", "shen-jiangwen-activate"
 ]);
 
 function isRapidMutatingAction(action) {
@@ -9240,6 +9288,8 @@ document.addEventListener("click", (event) => {
   if (action === "shen-biesan-pass") submitBoardHeroSkill(action);
   if (action === "yokoyama-activate") submitBoardHeroSkill(action);
   if (action === "yokoyama-pass") submitBoardHeroSkill(action);
+  if (action === "shen-haohao-activate") submitBoardHeroSkill(action);
+  if (action === "shen-haohao-pass") submitBoardHeroSkill(action);
   if (action === "shen-jiangwen-activate") submitBoardHeroSkill(action);
   if (action === "send-taunt") {
     sendTaunt(event.target.closest("[data-preset-id]")?.dataset.presetId || "");

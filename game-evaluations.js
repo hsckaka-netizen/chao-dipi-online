@@ -62,7 +62,8 @@ export function buildGameEvaluations({
   winnerTeam = "idle",
   provisionalWinnerPlayerIds = null,
   finalSideSuitBottomWinnerId = null,
-  bottom = null
+  bottom = null,
+  protectTeammateFives = false
 } = {}) {
   const bankerIds = new Set(bankerTeamIds);
   const hasProvisionalWinnerData = Array.isArray(provisionalWinnerPlayerIds);
@@ -131,6 +132,7 @@ export function buildGameEvaluations({
         const dragActorTeam = teamByPlayerId.get(dragActor?.playerId);
         if (!dragActor || !dragActorTeam) return;
         if (contributorTeam === dragActorTeam) {
+          if (protectTeammateFives) return;
           dragActor.teammateDragHarmValue += value;
           if (isRedFive) {
             dragActor.teammateDraggedRedFives += 1;

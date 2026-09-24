@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { forcedProtectedFiveIds } from "../dragged-five-attribution.js";
+import { forcedProtectedFiveIds, teammateProtectedFiveCounts } from "../dragged-five-attribution.js";
 
 function card(id, rank, suit) {
   return { id, type: "normal", rank, suit };
@@ -38,4 +38,28 @@ test("only the lower protected five is forced when one of two fives can be prese
       card("lead-trump-2", "2", "S")
     ]
   }), ["diamond-five"]);
+});
+
+test("teammate protection uses final teams even when the dogleg was unknown during play", () => {
+  const result = teammateProtectedFiveCounts([{
+    leaderId: "banker",
+    winnerId: "banker",
+    plays: [
+      { playerId: "banker", cards: [card("banker-ace", "A", "H")] },
+      { playerId: "future-dogleg", cards: [card("ally-red", "5", "H")] },
+      { playerId: "idle", cards: [card("enemy-diamond", "5", "D")] }
+    ]
+  }], {
+    banker: "banker",
+    "future-dogleg": "banker",
+    idle: "idle"
+  });
+
+  assert.deepEqual(result, {
+    redFives: 1,
+    diamondFives: 0,
+    byPlayerId: {
+      "future-dogleg": { redFives: 1, diamondFives: 0 }
+    }
+  });
 });

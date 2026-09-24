@@ -151,6 +151,33 @@ test("a leader whose own five is captured credits the final winner", () => {
   assert.equal(result.byPlayerId.winner.enemyDraggedRedFives, 1);
 });
 
+test("shen haohao protection removes final teammate drags from evaluation harm", () => {
+  const result = buildGameEvaluations({
+    players: [
+      { id: "banker", score: 5 },
+      { id: "future-dogleg", score: 0 },
+      { id: "idle", score: 0 }
+    ],
+    bankerTeamIds: ["banker", "future-dogleg"],
+    winnerTeam: "banker",
+    protectTeammateFives: true,
+    tricks: [{
+      leaderId: "banker",
+      winnerId: "banker",
+      plays: [
+        { playerId: "banker", cards: [card("A", "H")] },
+        { playerId: "future-dogleg", cards: [card("5", "H", "ally-red")] },
+        { playerId: "idle", cards: [card("5", "D", "enemy-diamond")] }
+      ]
+    }]
+  });
+
+  assert.equal(result.byPlayerId.banker.teammateDraggedRedFives, 0);
+  assert.equal(result.byPlayerId["future-dogleg"].draggedByTeammateRedFives, 0);
+  assert.equal(result.byPlayerId.banker.enemyDraggedDiamondFives, 1);
+  assert.equal(result.byPlayerId.idle.draggedByOpponentDiamondFives, 1);
+});
+
 test("bottom dragged fives count as doubled opponent benefit and loss", () => {
   const result = buildGameEvaluations({
     players: [

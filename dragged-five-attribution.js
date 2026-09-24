@@ -107,3 +107,35 @@ export function draggedFiveActorId(trick, play, card) {
   const forcedIds = new Set(play?.forcedProtectedFiveIds || []);
   return forcedIds.has(card?.id) ? trick.leaderId : trick.winnerId;
 }
+
+export function teammateProtectedFiveCounts(tricks = [], teamByPlayerId = {}) {
+  const teamFor = (playerId) => teamByPlayerId instanceof Map
+    ? teamByPlayerId.get(playerId)
+    : teamByPlayerId?.[playerId];
+  const byPlayerId = {};
+  let redFives = 0;
+  let diamondFives = 0;
+
+  (Array.isArray(tricks) ? tricks : []).forEach((trick) => {
+    (trick?.plays || []).forEach((play) => {
+      if (!play?.playerId || play.playerId === trick?.winnerId) return;
+      (play.cards || []).forEach((card) => {
+        if (card?.type !== "normal" || card.rank !== "5" || !["H", "D"].includes(card.suit)) return;
+        const actorId = draggedFiveActorId(trick, play, card);
+        const victimTeam = teamFor(play.playerId);
+        if (!actorId || !victimTeam || teamFor(actorId) !== victimTeam) return;
+        const count = byPlayerId[play.playerId] || { redFives: 0, diamondFives: 0 };
+        if (card.suit === "H") {
+          count.redFives += 1;
+          redFives += 1;
+        } else {
+          count.diamondFives += 1;
+          diamondFives += 1;
+        }
+        byPlayerId[play.playerId] = count;
+      });
+    });
+  });
+
+  return { redFives, diamondFives, byPlayerId };
+}

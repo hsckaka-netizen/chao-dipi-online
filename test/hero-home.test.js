@@ -137,6 +137,7 @@ test("all hero skill descriptions expose concrete per-star diamond values", () =
     "maeda-atsuko": "185/230/280/325/370",
     "watanabe-mayu": "55/70/85/100/115",
     "shen-biesan": "5/7/9/12/15",
+    "shen-haohao": "5/7/9/12/15",
     "shen-jiangwen": "15/20/25/30/40",
     "yokoyama-yui": "15/20/25/30/40"
   };
@@ -324,7 +325,7 @@ test("gelu uses the star score threshold and rewards thirty-two diamonds per tri
   assert.equal(reward.matchedCount, 1);
   assert.equal(reward.cap, null);
   assert.equal(reward.amount, 32);
-  assert.equal(reward.rulesVersion, "2026-09-08-skill-v8");
+  assert.equal(reward.rulesVersion, "2026-09-24-skill-v9");
 });
 
 test("gelu has no trigger or diamond cap at five stars", () => {
@@ -492,10 +493,40 @@ test("yokoyama counts points fed before a dogleg identity became public from fin
   assert.equal(reward.matchedCount, 1);
   assert.equal(reward.amount, 15);
   assert.match(reward.detail, /40分/);
+  assert.match(reward.detail, /最终身份回看全局出牌记录/);
+});
+
+test("shen haohao rewards final allies who avoided all opponent dragged fives after activation", () => {
+  const playerResults = [
+    { playerId: "haohao", team: "banker", draggedRedFives: 0, draggedDiamondFives: 0 },
+    { playerId: "banker", team: "banker", draggedRedFives: 0, draggedDiamondFives: 0 },
+    { playerId: "dogleg", team: "banker", draggedRedFives: 1, draggedDiamondFives: 0 },
+    { playerId: "idle", team: "idle", draggedRedFives: 0, draggedDiamondFives: 0 }
+  ];
+  const reward = calculateHeroSkillReward({
+    snapshot: createBattleHeroSnapshot("shen-haohao", 4),
+    playerId: "haohao",
+    playerResult: playerResults[0],
+    playerResults,
+    boardHeroUses: [{ playerId: "haohao", heroId: "shen-haohao" }]
+  });
+  assert.equal(reward.matchedCount, 2);
+  assert.equal(reward.amount, 24);
+  assert.match(reward.detail, /最终阵营统计/);
+
+  const notActivated = calculateHeroSkillReward({
+    snapshot: createBattleHeroSnapshot("shen-haohao", 5),
+    playerId: "haohao",
+    playerResult: playerResults[0],
+    playerResults
+  });
+  assert.equal(notActivated.amount, 0);
+  assert.match(notActivated.detail, /未发动/);
 });
 
 test("SSR roster, probabilities, production, and cooldown reset costs use the settled values", () => {
   const shenBiesan = createBattleHeroSnapshot("shen-biesan", 5, 2);
+  const shenHaohao = createBattleHeroSnapshot("shen-haohao", 4, 3);
   const shenJiangwen = createBattleHeroSnapshot("shen-jiangwen", 1, 1);
   const yokoyama = createBattleHeroSnapshot("yokoyama-yui", 3);
   assert.equal(shenBiesan.name, "神 · 瘪三");
@@ -504,6 +535,10 @@ test("SSR roster, probabilities, production, and cooldown reset costs use the se
   assert.equal(shenBiesan.skillName, "玉面雷神");
   assert.equal(shenBiesan.paidSkill.cost, 1000);
   assert.equal(shenBiesan.paidSkill.cooldownAfterUse, 1);
+  assert.equal(shenHaohao.name, "神 · 浩浩");
+  assert.equal(shenHaohao.skillName, "聪明伶俐");
+  assert.equal(shenHaohao.paidSkill.cost, 1500);
+  assert.equal(shenHaohao.paidSkill.cooldownAfterUse, 2);
   assert.equal(shenJiangwen.skillName, "排骨之王");
   assert.equal(shenJiangwen.paidSkill.cost, 500);
   assert.equal(createBattleHeroSnapshot("shen-jiangwen", 1, 0).paidSkill.cost, 0);
@@ -625,7 +660,7 @@ test("daily hero tasks use the five settled tiers and feasible owned-hero requir
 
 test("one-click hero dispatch skips occupied heroes and finds a valid relaxed lineup", () => {
   const selected = selectHeroTaskUnits(
-    ["jiang-zha", "deng-huang", "shen-biesan", "xiaoxu", "gelu", "shen-jiangwen", "maeda-atsuko", "watanabe-mayu", "yokoyama-yui"],
+    ["jiang-zha", "deng-huang", "shen-biesan", "shen-haohao", "xiaoxu", "gelu", "shen-jiangwen", "maeda-atsuko", "watanabe-mayu", "yokoyama-yui"],
     ["jiang-zha"],
     5,
     { regions: { boka: 1 }, genders: { female: 2 } }
@@ -647,7 +682,7 @@ test("existing five-person task requirements can be relaxed without changing the
   assert.equal(Object.values(requirements.genders).reduce((sum, count) => sum + count, 0), 2);
 });
 
-test("server and table UI expose all three SSR board skill stages", async () => {
+test("server and table UI expose all four SSR board skill stages", async () => {
   const [serverSource, appSource, gameHistorySource, replacementRankRulesSource] = await Promise.all([
     readFile(fileURLToPath(new URL("../server.js", import.meta.url)), "utf8"),
     readFile(fileURLToPath(new URL("../public/app.js", import.meta.url)), "utf8"),
@@ -657,6 +692,8 @@ test("server and table UI expose all three SSR board skill stages", async () => 
   assert.match(serverSource, /beginShenBiesanSkillStage/);
   assert.match(serverSource, /resolveShenBiesanSkillStage/);
   assert.match(serverSource, /beginYokoyamaSkillStage/);
+  assert.match(serverSource, /beginShenHaohaoSkillStage/);
+  assert.match(serverSource, /submitShenHaohaoSkillChoice/);
   assert.match(serverSource, /activateShenJiangwenSkill/);
   assert.match(serverSource, /pathParts\[3\] === "board-hero-skill"/);
   assert.match(replacementRankRulesSource, /rulesRank = "LOW_2"/);
@@ -669,6 +706,8 @@ test("server and table UI expose all three SSR board skill stages", async () => 
   assert.match(serverSource, /directSkillPendingPlayerId/);
   assert.match(appSource, /data-action="shen-biesan-activate"/);
   assert.match(appSource, /免费随机全桌座位/);
+  assert.match(appSource, /data-action="shen-haohao-activate"/);
+  assert.match(appSource, /按结算时的最终阵营回看整局拖五/);
   assert.match(appSource, /data-action="shen-jiangwen-activate"/);
   assert.match(appSource, /!isBid && shenJiangwenSkill\.canActivate/);
   assert.match(appSource, /英雄技能 · 排骨之王/);

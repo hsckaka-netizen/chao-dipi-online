@@ -28,7 +28,8 @@ import { buildGameEvaluations, finalScoreWinnerTeam } from "./game-evaluations.j
 import { removeSpectatorsForAccount, roomPlayerForAccount } from "./room-identities.js";
 import {
   draggedFiveActorId,
-  forcedProtectedFiveIds
+  forcedProtectedFiveIds,
+  teammateProtectedFiveCounts
 } from "./dragged-five-attribution.js";
 import {
   applyDynamicDoglegPlay,
@@ -1055,6 +1056,12 @@ function emptyBoardHeroSkills() {
       currentPlayerId: null,
       deadlineAt: null
     },
+    shenHaohao: {
+      eligiblePlayerIds: [],
+      completedPlayerIds: [],
+      activatedPlayerIds: [],
+      deadlineAt: null
+    },
     shenJiangwen: {
       offeredPlayerIds: [],
       directPlayerId: null
@@ -1066,7 +1073,14 @@ function emptyBoardHeroEffects() {
   return {
     uses: [],
     replacementRank: null,
-    seatRandomizations: []
+    seatRandomizations: [],
+    teammateFiveProtection: {
+      active: false,
+      playerIds: [],
+      redFives: 0,
+      diamondFives: 0,
+      byPlayerId: {}
+    }
   };
 }
 
@@ -1789,10 +1803,14 @@ function boardHeroSkillsSnapshot(room, viewer = null) {
   const skills = room.boardHeroSkills || emptyBoardHeroSkills();
   const shenBiesan = skills.shenBiesan;
   const yokoyama = skills.yokoyama;
+  const shenHaohao = skills.shenHaohao;
   const viewerIsBiesanEligible = Boolean(viewer && shenBiesan.eligiblePlayerIds.includes(viewer.id));
   const viewerCompletedBiesan = Boolean(viewer && shenBiesan.completedPlayerIds.includes(viewer.id));
+  const viewerIsHaohaoEligible = Boolean(viewer && shenHaohao.eligiblePlayerIds.includes(viewer.id));
+  const viewerCompletedHaohao = Boolean(viewer && shenHaohao.completedPlayerIds.includes(viewer.id));
   const viewerIsCurrentYokoyama = Boolean(viewer && yokoyama.currentPlayerId === viewer.id);
   const biesanSkill = viewer?.battleHeroSnapshot?.heroId === "shen-biesan" ? viewer.battleHeroSnapshot.paidSkill : null;
+  const haohaoSkill = viewer?.battleHeroSnapshot?.heroId === "shen-haohao" ? viewer.battleHeroSnapshot.paidSkill : null;
   const jiangwenSkill = viewer?.battleHeroSnapshot?.heroId === "shen-jiangwen" ? viewer.battleHeroSnapshot.paidSkill : null;
   const yokoyamaPlayer = playerById(room, yokoyama.currentPlayerId);
   const yokoyamaSkill = yokoyamaPlayer?.battleHeroSnapshot?.paidSkill || null;
@@ -1824,6 +1842,18 @@ function boardHeroSkillsSnapshot(room, viewer = null) {
       maxUses: yokoyamaMaxUses,
       remainingUses: Math.max(0, yokoyamaMaxUses - yokoyamaUsedCount)
     },
+    shenHaohao: {
+      active: room.stage === "shen-haohao-skill",
+      deadlineAt: shenHaohao.deadlineAt,
+      eligiblePlayerIds: [...shenHaohao.eligiblePlayerIds],
+      viewerEligible: viewerIsHaohaoEligible,
+      viewerCompleted: viewerCompletedHaohao,
+      canChoose: room.stage === "shen-haohao-skill" && viewerIsHaohaoEligible && !viewerCompletedHaohao,
+      cost: haohaoSkill?.cost || 0,
+      cooldown: haohaoSkill?.cooldown || 0,
+      cooldownAfterUse: haohaoSkill?.cooldownAfterUse || 0,
+      activatedPlayerIds: [...shenHaohao.activatedPlayerIds]
+    },
     shenJiangwen: {
       canActivate: shenJiangwenCanActivate(room, viewer),
       cost: jiangwenSkill?.cost || 0,
@@ -1841,7 +1871,8 @@ function boardHeroSkillsSnapshot(room, viewer = null) {
       effect: use.effect,
       at: use.at
     })),
-    seatRandomizations: [...(room.boardHeroEffects?.seatRandomizations || [])]
+    seatRandomizations: [...(room.boardHeroEffects?.seatRandomizations || [])],
+    teammateFiveProtection: room.boardHeroEffects?.teammateFiveProtection || null
   };
 }
 
@@ -2486,6 +2517,27 @@ function bottomSettlementDelta(room, bottomWinnerTeam) {
   return bottomWinnerTeam === "idle" ? (isFixedTeamGame(room) ? 1 : 2) : -1;
 }
 
+function applyTeammateFiveProtection(room, bankerIdSet) {
+  const protection = room.boardHeroEffects?.teammateFiveProtection;
+  if (!protection?.active) return protection || null;
+  const teamByPlayerId = Object.fromEntries(room.players.map((player) => [
+    player.id,
+    bankerIdSet.has(player.id) ? "banker" : "idle"
+  ]));
+  const protectedCounts = teammateProtectedFiveCounts(room.trickHistory, teamByPlayerId);
+  Object.entries(protectedCounts.byPlayerId).forEach(([playerId, counts]) => {
+    const player = playerById(room, playerId);
+    if (!player) return;
+    player.draggedRedFives = Math.max(0, (Number(player.draggedRedFives) || 0) - counts.redFives);
+    player.draggedDiamondFives = Math.max(0, (Number(player.draggedDiamondFives) || 0) - counts.diamondFives);
+  });
+  Object.assign(protection, protectedCounts);
+  if (protectedCounts.redFives || protectedCounts.diamondFives) {
+    addEvent(room, `聪明伶俐生效：按最终阵营免除拖队友红五 ${protectedCounts.redFives} 张、方五 ${protectedCounts.diamondFives} 张`);
+  }
+  return protection;
+}
+
 function finishGame(room, completedTrick) {
   if (room.result) return;
   clearAiSetupTimer(room);
@@ -2501,6 +2553,7 @@ function finishGame(room, completedTrick) {
   const bankerIds = bankerTeamIds(room);
   const bankerIdSet = new Set(bankerIds);
   const idleIds = idleTeamIds(room);
+  const teammateFiveProtection = applyTeammateFiveProtection(room, bankerIdSet);
   const bottomWinnerId = completedTrick.winnerId;
   const bottomWinnerTeam = bankerIdSet.has(bottomWinnerId) ? "banker" : "idle";
   const bottomPoints = cardsPoint(room.kitty);
@@ -2580,7 +2633,8 @@ function finishGame(room, completedTrick) {
       points: bottomPoints,
       draggedRedFives: bottomDraggedRedFives,
       draggedDiamondFives: bottomDraggedDiamondFives
-    }
+    },
+    protectTeammateFives: Boolean(teammateFiveProtection?.active)
   });
   if (!room.settledTrickHistory?.length) {
     room.settledTrickHistory = room.trickHistory.map((trick) => trickSnapshot(room, trick));
@@ -2639,6 +2693,7 @@ function finishGame(room, completedTrick) {
     bottomCards,
     bottomDraggedRedFives,
     bottomDraggedDiamondFives,
+    teammateFiveProtection,
     baseScore,
     scoreStep,
     bottomDelta,
@@ -3210,6 +3265,7 @@ function selectTrumpSuit(room, player, suit) {
 }
 
 function startFrying(room) {
+  clearBoardHeroSkillTimer(room);
   room.stage = "frying";
   room.phase = "炒底";
   room.setup.fry = {
@@ -3224,6 +3280,63 @@ function startFrying(room) {
     passIds: []
   };
   addEvent(room, `开始炒底，当前底牌 ${room.kitty.length} 张`);
+}
+
+function beginShenHaohaoSkillStage(room) {
+  clearBoardHeroSkillTimer(room);
+  const eligiblePlayerIds = room.players
+    .filter((player) => playerHasBoardHero(room, player, "shen-haohao"))
+    .map((player) => player.id);
+  room.boardHeroSkills.shenHaohao = {
+    eligiblePlayerIds,
+    completedPlayerIds: [],
+    activatedPlayerIds: [],
+    deadlineAt: eligiblePlayerIds.length
+      ? new Date(Date.now() + BOARD_HERO_SKILL_SECONDS * 1000).toISOString()
+      : null
+  };
+  if (!eligiblePlayerIds.length) {
+    startFrying(room);
+    return false;
+  }
+  room.stage = "shen-haohao-skill";
+  room.phase = "聪明伶俐发动阶段";
+  addEvent(room, "炒底开始前进入聪明伶俐发动阶段");
+  return true;
+}
+
+async function submitShenHaohaoSkillChoice(room, player, activate, resetCooldown = false, requestId = "") {
+  if (room.stage !== "shen-haohao-skill") return { error: "当前不是聪明伶俐发动阶段", status: 409 };
+  const state = room.boardHeroSkills.shenHaohao;
+  if (!state.eligiblePlayerIds.includes(player.id)) return { error: "你当前不能发动聪明伶俐", status: 403 };
+  if (state.completedPlayerIds.includes(player.id)) return { error: "你已经完成选择", status: 409 };
+
+  if (activate) {
+    const payment = await chargeRoomBoardHeroSkill(
+      room,
+      player.accountId,
+      room.gameRecordId,
+      "shen-haohao",
+      requestId || `shen-haohao:${room.gameRecordId}:${player.id}`,
+      {
+        resetCooldown: Boolean(resetCooldown),
+        skillStars: player.battleHeroSnapshot?.stars || 1,
+        teammateFiveProtection: true
+      }
+    );
+    recordBoardHeroSkillUse(room, player, "shen-haohao", payment, { teammateFiveProtection: true });
+    state.activatedPlayerIds.push(player.id);
+    const protection = room.boardHeroEffects.teammateFiveProtection;
+    protection.active = true;
+    if (!protection.playerIds.includes(player.id)) protection.playerIds.push(player.id);
+    addEvent(room, `${player.name} 发动聪明伶俐，本局将按最终阵营免除所有拖队友五`);
+  } else {
+    addEvent(room, `${player.name} 放弃发动聪明伶俐`);
+  }
+
+  state.completedPlayerIds.push(player.id);
+  if (state.completedPlayerIds.length >= state.eligiblePlayerIds.length) startFrying(room);
+  return { ok: true };
 }
 
 function shenJiangwenCanActivate(room, player) {
@@ -3377,7 +3490,7 @@ function buryCards(room, player, cardIds) {
   room.kitty = selected.cards;
   addEvent(room, `${player.name} 贴入 ${selected.cards.length} 张底牌`);
   if (room.stage === "burying") {
-    startFrying(room);
+    beginShenHaohaoSkillStage(room);
   } else {
     continueFryingAfterBury(room, player);
   }
@@ -4526,6 +4639,17 @@ async function autoAdvanceExpiredBoardHeroSkill(room) {
     passYokoyamaSkill(room, player);
     return true;
   }
+  if (room.stage === "shen-haohao-skill") {
+    const state = room.boardHeroSkills.shenHaohao;
+    const deadline = new Date(state.deadlineAt || "").getTime();
+    if (!Number.isFinite(deadline) || deadline > Date.now()) return false;
+    state.eligiblePlayerIds.forEach((playerId) => {
+      if (!state.completedPlayerIds.includes(playerId)) state.completedPlayerIds.push(playerId);
+    });
+    addEvent(room, "聪明伶俐倒计时结束，未操作玩家视为放弃");
+    startFrying(room);
+    return true;
+  }
   return false;
 }
 
@@ -4535,6 +4659,8 @@ function scheduleBoardHeroSkillTimer(room) {
     ? room.boardHeroSkills.shenBiesan.deadlineAt
     : room.stage === "yokoyama-skill"
       ? room.boardHeroSkills.yokoyama.deadlineAt
+      : room.stage === "shen-haohao-skill"
+        ? room.boardHeroSkills.shenHaohao.deadlineAt
       : null;
   if (!deadlineAt) return false;
   const deadline = new Date(deadlineAt).getTime();
@@ -8167,6 +8293,8 @@ async function handleApi(req, res, pathParts, url) {
       else if (body.action === "shen-biesan-pass") result = await submitShenBiesanSkillChoice(room, viewer, false);
       else if (body.action === "yokoyama-activate") result = await activateYokoyamaSkill(room, viewer, body.requestId);
       else if (body.action === "yokoyama-pass") result = passYokoyamaSkill(room, viewer);
+      else if (body.action === "shen-haohao-activate") result = await submitShenHaohaoSkillChoice(room, viewer, true, body.resetCooldown, body.requestId);
+      else if (body.action === "shen-haohao-pass") result = await submitShenHaohaoSkillChoice(room, viewer, false);
       else if (body.action === "shen-jiangwen-activate") result = await activateShenJiangwenSkill(room, viewer, body.requestId, body.resetCooldown);
       else return writeJson(res, 400, { error: "未知的英雄技能操作" });
       if (result.error) return writeJson(res, result.status, { error: result.error });

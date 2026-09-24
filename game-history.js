@@ -1883,7 +1883,7 @@ async function settleBoardHeroCooldown(client, record) {
     const unitId = player.battleHeroSnapshot?.heroId;
     const rewardIneligibleForNonEnergyReason = player.diamondReward?.status === "ineligible"
       && !["insufficient-energy", "energy-unavailable"].includes(player.diamondReward?.reason);
-    if (!player.accountId || rewardIneligibleForNonEnergyReason || !["shen-biesan", "shen-jiangwen"].includes(unitId)) continue;
+    if (!player.accountId || rewardIneligibleForNonEnergyReason || !["shen-biesan", "shen-haohao", "shen-jiangwen"].includes(unitId)) continue;
     const existing = await client.query(
       `SELECT game_id FROM cdp_hero_cooldown_settlements
        WHERE game_id = $1::uuid AND account_id = $2::uuid AND unit_id = $3`,
