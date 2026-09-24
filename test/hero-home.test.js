@@ -496,7 +496,7 @@ test("yokoyama counts points fed before a dogleg identity became public from fin
   assert.match(reward.detail, /最终身份回看全局出牌记录/);
 });
 
-test("shen haohao rewards final allies who avoided all opponent dragged fives after activation", () => {
+test("shen haohao passive rewards final allies who avoided all dragged fives without activation", () => {
   const playerResults = [
     { playerId: "haohao", team: "banker", draggedRedFives: 0, draggedDiamondFives: 0 },
     { playerId: "banker", team: "banker", draggedRedFives: 0, draggedDiamondFives: 0 },
@@ -507,21 +507,20 @@ test("shen haohao rewards final allies who avoided all opponent dragged fives af
     snapshot: createBattleHeroSnapshot("shen-haohao", 4),
     playerId: "haohao",
     playerResult: playerResults[0],
-    playerResults,
-    boardHeroUses: [{ playerId: "haohao", heroId: "shen-haohao" }]
+    playerResults
   });
   assert.equal(reward.matchedCount, 2);
   assert.equal(reward.amount, 24);
   assert.match(reward.detail, /最终阵营统计/);
 
-  const notActivated = calculateHeroSkillReward({
+  const fiveStarPassive = calculateHeroSkillReward({
     snapshot: createBattleHeroSnapshot("shen-haohao", 5),
     playerId: "haohao",
     playerResult: playerResults[0],
     playerResults
   });
-  assert.equal(notActivated.amount, 0);
-  assert.match(notActivated.detail, /未发动/);
+  assert.equal(fiveStarPassive.amount, 30);
+  assert.match(fiveStarPassive.detail, /被动按最终阵营统计/);
 });
 
 test("SSR roster, probabilities, production, and cooldown reset costs use the settled values", () => {
@@ -537,6 +536,7 @@ test("SSR roster, probabilities, production, and cooldown reset costs use the se
   assert.equal(shenBiesan.paidSkill.cooldownAfterUse, 1);
   assert.equal(shenHaohao.name, "神 · 浩浩");
   assert.equal(shenHaohao.skillName, "聪明伶俐");
+  assert.match(shenHaohao.skillDescription, /被动：/);
   assert.match(shenHaohao.skillDescription, /本人不会拖到最终队友的红五\/方五/);
   assert.equal(shenHaohao.paidSkill.cost, 1500);
   assert.equal(shenHaohao.paidSkill.cooldownAfterUse, 2);

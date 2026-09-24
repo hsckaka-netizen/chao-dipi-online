@@ -6527,7 +6527,7 @@ function renderSetupCenter() {
         { label: "技能 CD", value: skill.viewerEligible ? `${escapeHtml(skill.cooldown || 0)} 轮` : "" },
         { label: "重置费用", value: skill.viewerEligible && Number(skill.cooldown) > 0 ? `${escapeHtml(skill.cost || 0)} 钻石` : "" }
       ])}
-      <div class="meta">发动后，本局按结算时的最终阵营回看整局拖五；只有你本人拖到最终队友的红五/方五不计入积分和统计。每名最终友方未被拖五还会提供英雄钻石。</div>
+      <div class="meta">发动后，本局按结算时的最终阵营回看整局拖五；只有你本人拖到最终队友的红五/方五不计入积分和统计。未被拖五友方的钻石属于独立被动，无需发动也会结算。</div>
       <div class="row">
         ${!isSpectating() && skill.canChoose ? `<button type="button" data-action="shen-haohao-activate">${activationText}</button><button type="button" class="secondary" data-action="shen-haohao-pass">不发动</button>` : ""}
         ${!isSpectating() && skill.viewerCompleted ? `<span class="tag good">你已完成选择</span>` : ""}

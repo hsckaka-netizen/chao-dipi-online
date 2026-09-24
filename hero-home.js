@@ -65,7 +65,7 @@ export const HOME_UNITS = Object.freeze([
   Object.freeze({
     id: "shen-haohao", name: "神 · 浩浩", namePrefix: "神", baseName: "浩浩", shortName: "浩", type: "hero", rarity: "ssr", gender: "male", regionId: "boka", color: "#0a9b84",
     cardImage: "/assets/heroes/shen-haohao-card-v1.png",
-    skillName: "聪明伶俐", skillDescription: "炒底开始前发动：本局本人不会拖到最终队友的红五/方五；每有1名最终友方角色未被拖五，1～5星分别额外获得5/7/9/12/15钻石；CD为5/4/3/2/1轮。"
+    skillName: "聪明伶俐", skillDescription: "被动：每有1名最终友方角色未被拖五，1～5星分别额外获得5/7/9/12/15钻石。主动：炒底开始前发动，本局本人不会拖到最终队友的红五/方五；CD为5/4/3/2/1轮。"
   }),
   Object.freeze({ id: "boka-youth", name: "博卡青年", shortName: "博", type: "minion", rarity: "minion", gender: null, regionId: "boka", color: "#d6a936" }),
   Object.freeze({
@@ -547,17 +547,12 @@ export function calculateHeroSkillReward({
   }
 
   if (snapshot.heroId === "shen-haohao") {
-    const activated = (Array.isArray(boardHeroUses) ? boardHeroUses : [])
-      .some((use) => use?.playerId === playerId && use?.heroId === "shen-haohao");
     const allies = (Array.isArray(playerResults) ? playerResults : [])
       .filter((result) => result?.team && result.team === playerResult.team);
-    const protectedAllies = activated
-      ? allies.filter((result) => (Number(result.draggedRedFives) || 0) + (Number(result.draggedDiamondFives) || 0) === 0)
-      : [];
+    const protectedAllies = allies
+      .filter((result) => (Number(result.draggedRedFives) || 0) + (Number(result.draggedDiamondFives) || 0) === 0);
     const diamondsPerAlly = SHEN_HAOHAO_DIAMONDS_PER_PROTECTED_ALLY[stars - 1];
-    const detail = activated
-      ? `按最终阵营统计，${protectedAllies.length}/${allies.length}名友方角色未被拖五，每名奖励${diamondsPerAlly}钻`
-      : "本局未发动聪明伶俐";
+    const detail = `被动按最终阵营统计，${protectedAllies.length}/${allies.length}名友方角色未被拖五，每名奖励${diamondsPerAlly}钻`;
     return baseSkillResult(snapshot, protectedAllies.length, null, protectedAllies.length * diamondsPerAlly, detail);
   }
 
