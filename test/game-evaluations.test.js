@@ -151,7 +151,7 @@ test("a leader whose own five is captured credits the final winner", () => {
   assert.equal(result.byPlayerId.winner.enemyDraggedRedFives, 1);
 });
 
-test("shen haohao protection removes final teammate drags from evaluation harm", () => {
+test("shen haohao protection removes only the activating player's final teammate drags", () => {
   const result = buildGameEvaluations({
     players: [
       { id: "banker", score: 5 },
@@ -160,7 +160,7 @@ test("shen haohao protection removes final teammate drags from evaluation harm",
     ],
     bankerTeamIds: ["banker", "future-dogleg"],
     winnerTeam: "banker",
-    protectTeammateFives: true,
+    teammateFiveProtectorIds: ["banker"],
     tricks: [{
       leaderId: "banker",
       winnerId: "banker",
@@ -169,11 +169,21 @@ test("shen haohao protection removes final teammate drags from evaluation harm",
         { playerId: "future-dogleg", cards: [card("5", "H", "ally-red")] },
         { playerId: "idle", cards: [card("5", "D", "enemy-diamond")] }
       ]
+    }, {
+      leaderId: "future-dogleg",
+      winnerId: "future-dogleg",
+      plays: [
+        { playerId: "future-dogleg", cards: [card("A", "D")] },
+        { playerId: "banker", cards: [card("5", "D", "banker-diamond")] },
+        { playerId: "idle", cards: [card("4", "D")] }
+      ]
     }]
   });
 
   assert.equal(result.byPlayerId.banker.teammateDraggedRedFives, 0);
   assert.equal(result.byPlayerId["future-dogleg"].draggedByTeammateRedFives, 0);
+  assert.equal(result.byPlayerId["future-dogleg"].teammateDraggedDiamondFives, 1);
+  assert.equal(result.byPlayerId.banker.draggedByTeammateDiamondFives, 1);
   assert.equal(result.byPlayerId.banker.enemyDraggedDiamondFives, 1);
   assert.equal(result.byPlayerId.idle.draggedByOpponentDiamondFives, 1);
 });

@@ -2117,7 +2117,7 @@ async function submitBoardHeroSkill(action) {
     if (action.startsWith("shen-biesan") || action.startsWith("shen-haohao") || action.startsWith("shen-jiangwen")) ensureHeroHomeState(true);
     const message = action === "shen-biesan-pass" ? "已放弃玉面雷神"
       : action === "shen-haohao-pass" ? "已放弃聪明伶俐"
-        : action === "shen-haohao-activate" ? "聪明伶俐已发动，本局按最终阵营免除拖队友五"
+        : action === "shen-haohao-activate" ? "聪明伶俐已发动，本局你不会拖到最终队友的红五/方五"
       : action === "yokoyama-pass" ? "已结束全能偶像"
         : action === "yokoyama-activate" ? "全桌座位已重新随机，身份和手牌保持不变"
           : `已提交${skillName}`;
@@ -6527,7 +6527,7 @@ function renderSetupCenter() {
         { label: "技能 CD", value: skill.viewerEligible ? `${escapeHtml(skill.cooldown || 0)} 轮` : "" },
         { label: "重置费用", value: skill.viewerEligible && Number(skill.cooldown) > 0 ? `${escapeHtml(skill.cost || 0)} 钻石` : "" }
       ])}
-      <div class="meta">发动后，本局按结算时的最终阵营回看整局拖五，所有拖队友红五/方五不计入积分和统计；每名最终友方未被对方拖五还会提供英雄钻石。</div>
+      <div class="meta">发动后，本局按结算时的最终阵营回看整局拖五；只有你本人拖到最终队友的红五/方五不计入积分和统计。每名最终友方未被拖五还会提供英雄钻石。</div>
       <div class="row">
         ${!isSpectating() && skill.canChoose ? `<button type="button" data-action="shen-haohao-activate">${activationText}</button><button type="button" class="secondary" data-action="shen-haohao-pass">不发动</button>` : ""}
         ${!isSpectating() && skill.viewerCompleted ? `<span class="tag good">你已完成选择</span>` : ""}
@@ -7029,7 +7029,7 @@ function renderResultPanel() {
           <span class="tag">保底 ${signedScore(null, result.bottomDelta)}</span>
           <span class="tag">拖五 ${signedScore(null, result.draggedDelta)}</span>
           <span class="tag">甩牌 ${signedScore(null, result.throwFailureDelta || 0)}</span>
-          ${result.teammateFiveProtection?.active ? `<span class="tag good">聪明伶俐：免除队友拖五 红${escapeHtml(result.teammateFiveProtection.redFives || 0)} / 方${escapeHtml(result.teammateFiveProtection.diamondFives || 0)}</span>` : ""}
+          ${result.teammateFiveProtection?.active ? `<span class="tag good">聪明伶俐：发动者免除拖队友五 红${escapeHtml(result.teammateFiveProtection.redFives || 0)} / 方${escapeHtml(result.teammateFiveProtection.diamondFives || 0)}</span>` : ""}
           ${result.bottomDraggedRedFives || result.bottomDraggedDiamondFives ? `<span class="tag accent">底牌拖主：红五 ${result.bottomDraggedRedFives}，方五 ${result.bottomDraggedDiamondFives}</span>` : ""}
         </div>
         ${renderViewerDiamondSummary(result)}

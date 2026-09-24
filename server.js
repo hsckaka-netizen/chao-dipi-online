@@ -2524,7 +2524,7 @@ function applyTeammateFiveProtection(room, bankerIdSet) {
     player.id,
     bankerIdSet.has(player.id) ? "banker" : "idle"
   ]));
-  const protectedCounts = teammateProtectedFiveCounts(room.trickHistory, teamByPlayerId);
+  const protectedCounts = teammateProtectedFiveCounts(room.trickHistory, teamByPlayerId, protection.playerIds);
   Object.entries(protectedCounts.byPlayerId).forEach(([playerId, counts]) => {
     const player = playerById(room, playerId);
     if (!player) return;
@@ -2533,7 +2533,7 @@ function applyTeammateFiveProtection(room, bankerIdSet) {
   });
   Object.assign(protection, protectedCounts);
   if (protectedCounts.redFives || protectedCounts.diamondFives) {
-    addEvent(room, `聪明伶俐生效：按最终阵营免除拖队友红五 ${protectedCounts.redFives} 张、方五 ${protectedCounts.diamondFives} 张`);
+    addEvent(room, `聪明伶俐生效：发动者按最终阵营免除拖队友红五 ${protectedCounts.redFives} 张、方五 ${protectedCounts.diamondFives} 张`);
   }
   return protection;
 }
@@ -2634,7 +2634,7 @@ function finishGame(room, completedTrick) {
       draggedRedFives: bottomDraggedRedFives,
       draggedDiamondFives: bottomDraggedDiamondFives
     },
-    protectTeammateFives: Boolean(teammateFiveProtection?.active)
+    teammateFiveProtectorIds: teammateFiveProtection?.playerIds || []
   });
   if (!room.settledTrickHistory?.length) {
     room.settledTrickHistory = room.trickHistory.map((trick) => trickSnapshot(room, trick));
@@ -3329,7 +3329,7 @@ async function submitShenHaohaoSkillChoice(room, player, activate, resetCooldown
     const protection = room.boardHeroEffects.teammateFiveProtection;
     protection.active = true;
     if (!protection.playerIds.includes(player.id)) protection.playerIds.push(player.id);
-    addEvent(room, `${player.name} 发动聪明伶俐，本局将按最终阵营免除所有拖队友五`);
+    addEvent(room, `${player.name} 发动聪明伶俐，本局本人将不会拖到最终队友的红五/方五`);
   } else {
     addEvent(room, `${player.name} 放弃发动聪明伶俐`);
   }

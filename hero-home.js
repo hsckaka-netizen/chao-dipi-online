@@ -65,7 +65,7 @@ export const HOME_UNITS = Object.freeze([
   Object.freeze({
     id: "shen-haohao", name: "神 · 浩浩", namePrefix: "神", baseName: "浩浩", shortName: "浩", type: "hero", rarity: "ssr", gender: "male", regionId: "boka", color: "#0a9b84",
     cardImage: "/assets/heroes/shen-haohao-card-v1.png",
-    skillName: "聪明伶俐", skillDescription: "炒底开始前发动：本局按最终阵营免除所有拖队友红五/方五；每有1名最终友方角色未被拖五，1～5星分别额外获得5/7/9/12/15钻石；CD为5/4/3/2/1轮。"
+    skillName: "聪明伶俐", skillDescription: "炒底开始前发动：本局本人不会拖到最终队友的红五/方五；每有1名最终友方角色未被拖五，1～5星分别额外获得5/7/9/12/15钻石；CD为5/4/3/2/1轮。"
   }),
   Object.freeze({ id: "boka-youth", name: "博卡青年", shortName: "博", type: "minion", rarity: "minion", gender: null, regionId: "boka", color: "#d6a936" }),
   Object.freeze({

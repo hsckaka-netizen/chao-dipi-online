@@ -40,7 +40,7 @@ test("only the lower protected five is forced when one of two fives can be prese
   }), ["diamond-five"]);
 });
 
-test("teammate protection uses final teams even when the dogleg was unknown during play", () => {
+test("teammate protection applies only when the final teammate drag actor activated the skill", () => {
   const result = teammateProtectedFiveCounts([{
     leaderId: "banker",
     winnerId: "banker",
@@ -49,11 +49,19 @@ test("teammate protection uses final teams even when the dogleg was unknown duri
       { playerId: "future-dogleg", cards: [card("ally-red", "5", "H")] },
       { playerId: "idle", cards: [card("enemy-diamond", "5", "D")] }
     ]
+  }, {
+    leaderId: "future-dogleg",
+    winnerId: "future-dogleg",
+    plays: [
+      { playerId: "future-dogleg", cards: [card("dogleg-ace", "A", "D")] },
+      { playerId: "banker", cards: [card("ally-diamond", "5", "D")] },
+      { playerId: "idle", cards: [card("idle-four", "4", "D")] }
+    ]
   }], {
     banker: "banker",
     "future-dogleg": "banker",
     idle: "idle"
-  });
+  }, ["banker"]);
 
   assert.deepEqual(result, {
     redFives: 1,

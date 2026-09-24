@@ -537,6 +537,7 @@ test("SSR roster, probabilities, production, and cooldown reset costs use the se
   assert.equal(shenBiesan.paidSkill.cooldownAfterUse, 1);
   assert.equal(shenHaohao.name, "神 · 浩浩");
   assert.equal(shenHaohao.skillName, "聪明伶俐");
+  assert.match(shenHaohao.skillDescription, /本人不会拖到最终队友的红五\/方五/);
   assert.equal(shenHaohao.paidSkill.cost, 1500);
   assert.equal(shenHaohao.paidSkill.cooldownAfterUse, 2);
   assert.equal(shenJiangwen.skillName, "排骨之王");
