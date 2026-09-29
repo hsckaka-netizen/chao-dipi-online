@@ -1384,6 +1384,234 @@
   }
 }
 
+.war-effort-toolbar h2 {
+  margin: 2px 0 0;
+}
+
+.war-effort-hero {
+  position: relative;
+  overflow: hidden;
+  display: grid;
+  grid-template-columns: minmax(0, 1.5fr) minmax(280px, 0.8fr);
+  gap: 24px;
+  margin-bottom: 16px;
+  padding: 26px;
+  border: 1px solid #58462f;
+  border-radius: 16px;
+  color: #f8f0dc;
+  background:
+    radial-gradient(circle at 82% 20%, rgba(223, 143, 57, 0.22), transparent 28%),
+    linear-gradient(135deg, #202923 0%, #313026 54%, #1f2521 100%);
+  box-shadow: 0 16px 36px rgba(28, 31, 25, 0.18);
+}
+
+.war-effort-hero::after {
+  content: "";
+  position: absolute;
+  right: -80px;
+  bottom: -100px;
+  width: 280px;
+  height: 280px;
+  border: 36px solid rgba(203, 136, 55, 0.08);
+  border-radius: 50%;
+}
+
+.war-effort-hero > * {
+  position: relative;
+  z-index: 1;
+}
+
+.war-effort-hero h2 {
+  margin: 14px 0 8px;
+  font-size: clamp(24px, 4vw, 40px);
+  line-height: 1.08;
+}
+
+.war-effort-hero p {
+  max-width: 720px;
+  margin: 0 0 14px;
+  color: #ded5c0;
+  line-height: 1.65;
+}
+
+.war-effort-hero small {
+  color: #baa98c;
+}
+
+.war-effort-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  align-content: center;
+  gap: 8px;
+}
+
+.war-effort-summary span {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  padding: 14px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 12px;
+  text-align: center;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.war-effort-summary small {
+  font-size: 11px;
+}
+
+.war-effort-summary b {
+  color: #f0c471;
+  font-size: 22px;
+}
+
+.war-effort-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin: 16px 0;
+}
+
+.war-effort-resource {
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: linear-gradient(145deg, #fff 0%, #f7f8f4 100%);
+  box-shadow: 0 8px 22px rgba(39, 54, 43, 0.06);
+}
+
+.war-effort-resource.completed {
+  border-color: #8abca6;
+  background: #f1faf5;
+}
+
+.war-effort-resource-head {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+}
+
+.war-effort-resource-icon {
+  display: grid;
+  width: 44px;
+  height: 44px;
+  place-items: center;
+  border-radius: 12px;
+  color: #fff4d6;
+  background: linear-gradient(145deg, #795a31, #bf8244);
+  font-size: 22px;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.15);
+}
+
+.war-effort-resource-head h3,
+.war-effort-resource-head p {
+  margin: 0;
+}
+
+.war-effort-resource-head p {
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.war-effort-resource-head > b {
+  white-space: nowrap;
+  color: #6b4a20;
+  font-size: 13px;
+}
+
+.war-effort-progress {
+  height: 9px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #e3e7e1;
+}
+
+.war-effort-progress i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #287c64, #d39b41);
+}
+
+.war-effort-donation {
+  display: grid;
+  grid-template-columns: minmax(110px, 1fr) minmax(90px, 120px) auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.war-effort-donation span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.war-effort-donation input {
+  min-width: 0;
+}
+
+.war-effort-rules > div:last-child {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.war-effort-rules > div:last-child span {
+  padding: 7px 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: #67502d;
+  background: #faf7ef;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+@media (max-width: 800px) {
+  .war-effort-hero,
+  .war-effort-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 620px) {
+  .war-effort-hero {
+    padding: 20px;
+  }
+
+  .war-effort-summary {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .war-effort-summary span {
+    padding: 10px 4px;
+  }
+
+  .war-effort-summary b {
+    font-size: 17px;
+  }
+
+  .war-effort-resource-head {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .war-effort-resource-head > b {
+    grid-column: 1 / -1;
+  }
+
+  .war-effort-donation {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .war-effort-donation span {
+    grid-column: 1 / -1;
+  }
+}
+
 * {
   box-sizing: border-box;
 }

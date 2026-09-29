@@ -23,6 +23,7 @@
 | 钻石奖励 | `docs/diamond-system-requirement-analysis.md` |
 | 钻石商城、皮肤拥有权、商品管理、对局道具 | `docs/shop-and-consumable-items-requirement-analysis.md` |
 | 英雄卡、抽卡、养成方案（未来能力） | `docs/card-system-requirement-analysis.md` |
+| 全服筹备任务、牌局物资产出、资源捐献与贡献值 | `docs/server-war-effort.md` |
 | 测试、Token 控制、任务交接、Git、发布 | `docs/development-workflow.md` |
 
 ## 维护规则

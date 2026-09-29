@@ -173,6 +173,10 @@ let heroHomeState = null;
 let heroHomeLoading = false;
 let heroHomeAccountId = "";
 let heroActionInFlight = "";
+let warEffortState = null;
+let warEffortLoading = false;
+let warEffortAccountId = "";
+let warEffortDonationInFlight = "";
 let heroCardPreviewUnitId = "";
 let heroGachaResults = [];
 let battleHeroPreviewPlayerId = "";
@@ -791,6 +795,13 @@ function resetHeroHomeState() {
   heroGachaResults = [];
 }
 
+function resetWarEffortState() {
+  warEffortState = null;
+  warEffortLoading = false;
+  warEffortAccountId = "";
+  warEffortDonationInFlight = "";
+}
+
 function requestId() {
   return globalThis.crypto?.randomUUID?.() || `request-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
@@ -939,6 +950,34 @@ function ensureHeroHomeState(force = false) {
     });
 }
 
+function ensureWarEffortState(force = false) {
+  const account = authState.account;
+  if (!account || account.role !== "player") {
+    if (warEffortAccountId) resetWarEffortState();
+    return;
+  }
+  if (warEffortAccountId !== account.id) {
+    resetWarEffortState();
+    warEffortAccountId = account.id;
+  }
+  if (warEffortLoading || (!force && warEffortState)) return;
+  warEffortLoading = true;
+  api("/api/war-effort")
+    .then((data) => {
+      if (authState.account?.id !== account.id) return;
+      warEffortState = data;
+      warEffortLoading = false;
+      render();
+    })
+    .catch((error) => {
+      if (authState.account?.id !== account.id) return;
+      warEffortLoading = false;
+      warEffortState = { unavailable: true };
+      if (homeView === "war-effort") setMessage(error.message || "全服任务暂不可用", true);
+      render();
+    });
+}
+
 async function refreshAuth() {
   const data = await api("/api/auth/status");
   authState = { ...data, loaded: true, loading: false };
@@ -1007,6 +1046,7 @@ async function loginAccount(event) {
     resetAchievementState();
     resetShopState();
     resetHeroHomeState();
+    resetWarEffortState();
     homeView = data.account?.role === "admin" ? "admin" : "rooms";
     adminData = null;
     adminTaunts = null;
@@ -1031,6 +1071,7 @@ async function logoutAccount() {
   resetAchievementState();
   resetShopState();
   resetHeroHomeState();
+  resetWarEffortState();
   adminData = null;
   adminTaunts = null;
   adminTauntsLoading = false;
@@ -3735,6 +3776,7 @@ function renderHome() {
   if (homeView === "hero-catalog") return renderHeroCatalogPage();
   if (homeView === "hero-gacha") return renderHeroGachaPage();
   if (homeView === "achievements") return renderAchievementPage();
+  if (homeView === "war-effort") return renderWarEffortPage();
   renderShell(`
     <section class="home-toolbar">
       <div class="segmented home-tabs" role="tablist" aria-label="首页模块">
@@ -3744,6 +3786,7 @@ function renderHome() {
         ${authState.account?.role === "player" ? `<button type="button" class="secondary" data-action="show-shop">钻石商城</button>` : ""}
         ${authState.account?.role === "player" ? `<button type="button" class="secondary" data-action="show-inventory">背包</button>` : ""}
         ${authState.account?.role === "player" ? `<button type="button" class="secondary" data-action="show-achievements">成就</button>` : ""}
+        ${authState.account?.role === "player" ? `<button type="button" class="accent" data-action="show-war-effort">全服任务</button>` : ""}
       </div>
       ${homeView === "rooms" ? `
         <div class="home-room-actions">
@@ -3883,6 +3926,128 @@ function renderAchievementPage() {
       `).join("") || `<section class="panel"><div class="empty">当前筛选下没有成就。</div></section>`}
     </div>
   `);
+}
+
+const warEffortResourceCopy = Object.freeze({
+  red_cloth: { icon: "▦", earn: "本人每获得 40 牌分产出 1 个，单局最多 5 个", unit: "个" },
+  bounty_order: { icon: "⚔", earn: "拖到敌方红五得 2 个、方五得 1 个，单局最多 5 个", unit: "个" },
+  dreamleaf: { icon: "❧", earn: "首发至少 6 张并赢得本轮时产出 1 个，单局最多 2 个", unit: "个" },
+  dark_iron: { icon: "◆", earn: "每次正常炒底产出 1 个，单局最多 2 个", unit: "个" },
+  diamonds: { icon: "💎", earn: "每捐 20 钻石获得 1 贡献值", unit: "" },
+  universal_fragments: { icon: "✦", earn: "每捐 1 个通用碎片获得 6 贡献值", unit: "个" },
+  building_materials: { icon: "▰", earn: "每捐 25 建材获得 2 贡献值", unit: "" }
+});
+
+function warEffortStatusLabel(statusValue) {
+  if (statusValue === "upcoming") return "即将开启";
+  if (statusValue === "active") return "全服筹备中";
+  if (statusValue === "completed") return "全服已完成";
+  if (statusValue === "ended") return "活动已结束";
+  return "暂不可用";
+}
+
+function renderWarEffortResource(resource, inventory, active) {
+  const copy = warEffortResourceCopy[resource.id] || { icon: "◇", earn: "", unit: "" };
+  const current = Math.min(Number(resource.current) || 0, Number(resource.target) || 0);
+  const target = Number(resource.target) || 0;
+  const progress = target ? Math.min(100, current * 100 / target) : 0;
+  const available = Math.max(0, Number(inventory?.[resource.id]) || 0);
+  const remaining = Math.max(0, target - current);
+  const step = Number(resource.donationStep) || 1;
+  const maxDonation = Math.min(available, remaining);
+  const disabled = !active || remaining <= 0 || maxDonation < step || Boolean(warEffortDonationInFlight);
+  return `
+    <article class="war-effort-resource ${remaining <= 0 ? "completed" : ""}">
+      <div class="war-effort-resource-head">
+        <span class="war-effort-resource-icon" aria-hidden="true">${copy.icon}</span>
+        <div><h3>${escapeHtml(resource.name)}</h3><p>${escapeHtml(copy.earn)}</p></div>
+        <b>${current.toLocaleString("zh-CN")} / ${target.toLocaleString("zh-CN")}</b>
+      </div>
+      <div class="war-effort-progress" aria-label="${escapeHtml(resource.name)}进度 ${Math.floor(progress)}%"><i style="width:${progress.toFixed(2)}%"></i></div>
+      <form class="war-effort-donation" data-form="war-effort-donation" data-resource-type="${escapeHtml(resource.id)}">
+        <span>持有 <strong>${available.toLocaleString("zh-CN")}${copy.unit}</strong></span>
+        <input name="amount" type="number" inputmode="numeric" min="${step}" step="${step}" max="${maxDonation}" value="${Math.min(maxDonation, step)}" aria-label="捐献${escapeHtml(resource.name)}数量" ${disabled ? "disabled" : ""}>
+        <button type="submit" ${disabled ? "disabled" : ""}>${warEffortDonationInFlight === resource.id ? "捐献中…" : remaining <= 0 ? "已完成" : "捐献"}</button>
+      </form>
+    </article>
+  `;
+}
+
+function renderWarEffortPage() {
+  ensureWarEffortState();
+  const account = authState.account;
+  if (!account || account.role !== "player") {
+    homeView = "rooms";
+    return renderHome();
+  }
+  if (!warEffortState || warEffortLoading) {
+    return renderShell(`<section class="panel"><div class="empty">正在读取全服筹备进度…</div></section>`);
+  }
+  if (warEffortState.unavailable) {
+    return renderShell(`<section class="panel"><div class="empty">全服任务暂不可用，请稍后重试。</div></section>`);
+  }
+  const campaign = warEffortState.campaign || {};
+  const active = campaign.status === "active";
+  const totalCurrent = (campaign.resources || []).reduce((sum, resource) => sum + Math.min(1, (Number(resource.current) || 0) / (Number(resource.target) || 1)), 0);
+  const totalProgress = (campaign.resources || []).length ? Math.floor(totalCurrent * 100 / campaign.resources.length) : 0;
+  const timeText = `${new Date(campaign.startsAt).toLocaleString("zh-CN", { month: "long", day: "numeric", hour: "2-digit", minute: "2-digit" })} — ${new Date(campaign.endsAt).toLocaleString("zh-CN", { month: "long", day: "numeric", hour: "2-digit", minute: "2-digit" })}`;
+  return renderShell(`
+    <section class="home-toolbar war-effort-toolbar">
+      <div><span class="eyebrow">SERVER CAMPAIGN</span><h2>${escapeHtml(campaign.name)}</h2></div>
+      <button type="button" class="secondary compact-button" data-action="show-rooms">返回房间</button>
+    </section>
+    <section class="war-effort-hero">
+      <div>
+        <span class="tag accent">${escapeHtml(warEffortStatusLabel(campaign.status))}</span>
+        <h2>集全服之力，备战黑石关</h2>
+        <p>牌局行为会产出四种筹备物资；也可捐献钻石、通用碎片和建材。七项目标全部完成后，任务才算完成。</p>
+        <small>${escapeHtml(timeText)} · PVE 胜负均可产出，体力不足的牌局除外</small>
+      </div>
+      <div class="war-effort-summary">
+        <span><small>综合进度</small><b>${escapeHtml(totalProgress)}%</b></span>
+        <span><small>我的贡献</small><b>${Number(warEffortState.player?.contribution || 0).toLocaleString("zh-CN")}</b></span>
+        <span><small>已参与玩家</small><b>${Number(campaign.contributorCount || 0).toLocaleString("zh-CN")}</b></span>
+      </div>
+    </section>
+    ${campaign.status === "upcoming" ? `<div class="status">任务已上线，将在下一赛季开始时开放牌局产出与捐献。</div>` : ""}
+    ${campaign.status === "completed" ? `<div class="status good">全服筹备已经完成。完成奖励将在后续方案确认后统一公布。</div>` : ""}
+    <section class="war-effort-grid">
+      ${(campaign.resources || []).map((resource) => renderWarEffortResource(resource, warEffortState.player?.inventory, active)).join("")}
+    </section>
+    <section class="panel war-effort-rules">
+      <div class="section-head"><div><h2>贡献值换算</h2><p>贡献值会永久记录在本次全服任务中，后续用于个人贡献奖励。</p></div></div>
+      <div><span>红纹布 ×1</span><span>悬赏令 ×4</span><span>梦叶草 ×5</span><span>黑铁矿石 ×4</span><span>20钻石 = 1</span><span>通用碎片 ×6</span><span>25建材 = 2</span></div>
+    </section>
+  `);
+}
+
+async function donateWarEffort(event) {
+  event.preventDefault();
+  const formEl = event.target.closest("form");
+  const resourceType = formEl?.dataset.resourceType || "";
+  const amount = Number(new FormData(formEl).get("amount"));
+  if (!resourceType || !Number.isSafeInteger(amount) || amount <= 0 || warEffortDonationInFlight) return;
+  warEffortDonationInFlight = resourceType;
+  render();
+  try {
+    const data = await api("/api/war-effort/donate", {
+      method: "POST",
+      body: JSON.stringify({ resourceType, amount, requestId: requestId() })
+    });
+    warEffortState = data;
+    if (resourceType === "diamonds" && diamondWallet) diamondWallet.balance = data.player?.inventory?.diamonds;
+    if (["universal_fragments", "building_materials"].includes(resourceType) && heroHomeState) {
+      heroHomeState.universalFragments = data.player?.inventory?.universal_fragments;
+      heroHomeState.buildingMaterials = data.player?.inventory?.building_materials;
+    }
+    const resourceName = data.campaign?.resources?.find((resource) => resource.id === resourceType)?.name || "资源";
+    setMessage(`已捐献 ${data.donation?.amount || amount} ${resourceName}，获得 ${data.donation?.contribution || 0} 贡献值`);
+  } catch (error) {
+    setMessage(error.message || "捐献失败", true);
+  } finally {
+    warEffortDonationInFlight = "";
+    render();
+  }
 }
 
 function renderPveEnergyNotice() {
@@ -8950,6 +9115,7 @@ document.addEventListener("submit", (event) => {
   if (form.dataset.form === "save-profiles") return saveManagedProfiles(event);
   if (form.dataset.form === "grant-cosmetic") return grantShopCosmetic(event);
   if (form.dataset.form === "grant-diamonds") return grantAdminDiamonds(event);
+  if (form.dataset.form === "war-effort-donation") return donateWarEffort(event);
 });
 
 document.addEventListener("change", (event) => {
@@ -9087,6 +9253,11 @@ document.addEventListener("click", (event) => {
   }
   if (action === "show-achievements") {
     homeView = "achievements";
+    homeJoinOpen = false;
+    render();
+  }
+  if (action === "show-war-effort") {
+    homeView = "war-effort";
     homeJoinOpen = false;
     render();
   }

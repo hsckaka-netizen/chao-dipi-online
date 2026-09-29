@@ -95,6 +95,7 @@ import {
   collectHeroTask,
   createUploadedAvatarFrameProduct,
   dispatchHeroTask,
+  donateWarEffortResource,
   grantDiamondsByAdmin,
   getAchievementState,
   getEnergyState,
@@ -102,6 +103,7 @@ import {
   getBattleHeroSnapshots,
   getDiamondWallet,
   getHeroHomeState,
+  getWarEffortState,
   getGameHistory,
   getPlayerStatistics,
   initializeGameHistory,
@@ -7710,6 +7712,25 @@ async function handleApi(req, res, pathParts, url) {
     if (!account) return;
     if (account.role !== "player") return writeJson(res, 403, { error: "管理员账号没有玩家钻石钱包" });
     return writeJson(res, 200, await getDiamondWallet(account.id, url.searchParams.get("limit")));
+  }
+
+  if (pathParts[1] === "war-effort") {
+    const account = requireAccount(res, req);
+    if (!account) return;
+    if (account.role !== "player") return writeJson(res, 403, { error: "管理员账号不能参与全服任务" });
+    if (req.method === "GET" && pathParts.length === 2) {
+      return writeJson(res, 200, await getWarEffortState(account.id));
+    }
+    if (req.method === "POST" && pathParts[2] === "donate") {
+      const body = await readJson(req);
+      return writeJson(res, 200, await donateWarEffortResource(
+        account.id,
+        body.resourceType,
+        body.amount,
+        body.requestId
+      ));
+    }
+    return writeJson(res, 404, { error: "全服任务接口不存在" });
   }
 
   if (pathParts[1] === "energy") {

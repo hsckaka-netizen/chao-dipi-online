@@ -32,6 +32,13 @@ import {
   recoverEnergy
 } from "./energy.js";
 import {
+  calculateWarEffortDrops,
+  WAR_EFFORT_EVENT_ITEMS,
+  WAR_EFFORT_RULES,
+  warEffortCampaignStatus,
+  warEffortContribution
+} from "./server-war-effort.js";
+import {
   beijingHeroRefreshKey,
   createHeroTaskDefinition,
   createHeroTaskRequirements,
@@ -201,6 +208,10 @@ const MIGRATIONS = [
   {
     version: 36,
     path: fileURLToPath(new URL("./db/migrations/036_draw_results.sql", import.meta.url))
+  },
+  {
+    version: 37,
+    path: fileURLToPath(new URL("./db/migrations/037_server_war_effort.sql", import.meta.url))
   }
 ];
 const HISTORY_ENABLED = String(process.env.GAME_HISTORY_ENABLED || "").toLowerCase() === "true";
@@ -1877,6 +1888,55 @@ async function saveDiamondRewards(client, record) {
   return outcomes;
 }
 
+async function saveWarEffortGameRewards(client, record) {
+  const campaignResult = await client.query(
+    `SELECT campaign_id
+     FROM cdp_war_effort_campaigns
+     WHERE campaign_id = $1
+       AND starts_at <= $2::timestamptz
+       AND ends_at > $2::timestamptz
+       AND completed_at IS NULL`,
+    [WAR_EFFORT_RULES.campaignId, record.finishedAt]
+  );
+  const campaignId = campaignResult.rows[0]?.campaign_id;
+  if (!campaignId) return [];
+  const outcomes = [];
+  for (const player of record.players) {
+    const rewards = calculateWarEffortDrops(record, player);
+    if (!rewards) continue;
+    const inserted = await client.query(
+      `INSERT INTO cdp_war_effort_game_rewards (
+         campaign_id, game_id, account_id, reward_data
+       ) VALUES ($1, $2::uuid, $3::uuid, $4::jsonb)
+       ON CONFLICT (campaign_id, game_id, account_id) DO NOTHING
+       RETURNING account_id`,
+      [campaignId, record.gameId, player.accountId, JSON.stringify(rewards)]
+    );
+    if (!inserted.rows[0]) continue;
+    await client.query(
+      `INSERT INTO cdp_war_effort_players (
+         campaign_id, account_id, red_cloth, bounty_order, dreamleaf, dark_iron
+       ) VALUES ($1, $2::uuid, $3, $4, $5, $6)
+       ON CONFLICT (campaign_id, account_id) DO UPDATE SET
+         red_cloth = cdp_war_effort_players.red_cloth + EXCLUDED.red_cloth,
+         bounty_order = cdp_war_effort_players.bounty_order + EXCLUDED.bounty_order,
+         dreamleaf = cdp_war_effort_players.dreamleaf + EXCLUDED.dreamleaf,
+         dark_iron = cdp_war_effort_players.dark_iron + EXCLUDED.dark_iron,
+         updated_at = now()`,
+      [
+        campaignId,
+        player.accountId,
+        rewards.red_cloth,
+        rewards.bounty_order,
+        rewards.dreamleaf,
+        rewards.dark_iron
+      ]
+    );
+    outcomes.push({ accountId: player.accountId, rewards });
+  }
+  return outcomes;
+}
+
 async function settleBoardHeroCooldown(client, record) {
   const uses = Array.isArray(record.boardHeroEffects?.uses) ? record.boardHeroEffects.uses : [];
   for (const player of record.players) {
@@ -2052,11 +2112,12 @@ async function saveGameRecord(record) {
       );
     }
     const diamondRewards = await saveDiamondRewards(client, record);
+    const warEffortRewards = await saveWarEffortGameRewards(client, record);
     await settleBoardHeroCooldown(client, record);
     await client.query("COMMIT");
     status.connected = true;
     status.lastSavedAt = new Date().toISOString();
-    return { diamondRewards };
+    return { diamondRewards, warEffortRewards };
   } catch (error) {
     await client.query("ROLLBACK");
     throw error;
@@ -2128,6 +2189,242 @@ function requirePool() {
     throw error;
   }
   return pool;
+}
+
+function warEffortError(message, statusCode = 400) {
+  const error = new Error(message);
+  error.status = statusCode;
+  return error;
+}
+
+function publicWarEffortResources(campaign) {
+  return Object.entries(WAR_EFFORT_RULES.resources).map(([id, definition]) => ({
+    id,
+    name: definition.name,
+    target: definition.target,
+    current: Number(campaign?.[id]) || 0,
+    donationStep: definition.donationStep || 1,
+    contributionNumerator: definition.contributionNumerator,
+    contributionDenominator: definition.contributionDenominator
+  }));
+}
+
+async function warEffortStateFromClient(client, accountId) {
+  await ensureHeroAccount(client, accountId);
+  await client.query(
+    `INSERT INTO cdp_war_effort_players (campaign_id, account_id)
+     VALUES ($1, $2::uuid)
+     ON CONFLICT (campaign_id, account_id) DO NOTHING`,
+    [WAR_EFFORT_RULES.campaignId, accountId]
+  );
+  const [campaignResult, playerResult, walletResult, heroResult, contributorResult] = await Promise.all([
+    client.query(
+      `SELECT * FROM cdp_war_effort_campaigns WHERE campaign_id = $1`,
+      [WAR_EFFORT_RULES.campaignId]
+    ),
+    client.query(
+      `SELECT red_cloth, bounty_order, dreamleaf, dark_iron, contribution
+       FROM cdp_war_effort_players
+       WHERE campaign_id = $1 AND account_id = $2::uuid`,
+      [WAR_EFFORT_RULES.campaignId, accountId]
+    ),
+    client.query(`SELECT balance FROM cdp_diamond_wallets WHERE account_id = $1::uuid`, [accountId]),
+    client.query(
+      `SELECT universal_fragments, building_materials
+       FROM cdp_hero_profiles WHERE account_id = $1::uuid`,
+      [accountId]
+    ),
+    client.query(
+      `SELECT count(*)::integer AS count
+       FROM cdp_war_effort_players WHERE campaign_id = $1 AND contribution > 0`,
+      [WAR_EFFORT_RULES.campaignId]
+    )
+  ]);
+  const campaign = campaignResult.rows[0];
+  if (!campaign) throw warEffortError("全服任务尚未配置", 503);
+  const player = playerResult.rows[0] || {};
+  const hero = heroResult.rows[0] || {};
+  return {
+    campaign: {
+      id: campaign.campaign_id,
+      name: campaign.name,
+      rulesVersion: campaign.rules_version,
+      startsAt: new Date(campaign.starts_at).toISOString(),
+      endsAt: new Date(campaign.ends_at).toISOString(),
+      completedAt: campaign.completed_at ? new Date(campaign.completed_at).toISOString() : null,
+      status: warEffortCampaignStatus(campaign),
+      contributorCount: Number(contributorResult.rows[0]?.count) || 0,
+      resources: publicWarEffortResources(campaign)
+    },
+    player: {
+      contribution: Number(player.contribution) || 0,
+      inventory: {
+        red_cloth: Number(player.red_cloth) || 0,
+        bounty_order: Number(player.bounty_order) || 0,
+        dreamleaf: Number(player.dreamleaf) || 0,
+        dark_iron: Number(player.dark_iron) || 0,
+        diamonds: Number(walletResult.rows[0]?.balance) || 0,
+        universal_fragments: Number(hero.universal_fragments) || 0,
+        building_materials: Number(hero.building_materials) || 0
+      }
+    }
+  };
+}
+
+export async function getWarEffortState(accountId) {
+  const database = requirePool();
+  const client = await database.connect();
+  try {
+    await client.query("BEGIN");
+    const state = await warEffortStateFromClient(client, accountId);
+    await client.query("COMMIT");
+    return state;
+  } catch (error) {
+    await client.query("ROLLBACK");
+    rememberError(error);
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+export async function donateWarEffortResource(accountId, resourceTypeValue, amountValue, requestIdValue) {
+  const resourceType = String(resourceTypeValue || "").trim();
+  const definition = WAR_EFFORT_RULES.resources[resourceType];
+  const amount = Math.trunc(Number(amountValue));
+  const requestId = String(requestIdValue || "").trim();
+  if (!definition) throw warEffortError("捐献资源不存在");
+  if (!requestId || requestId.length > 120) throw warEffortError("捐献请求编号无效");
+  if (!Number.isSafeInteger(amount) || amount <= 0) throw warEffortError("捐献数量必须为正整数");
+  if (amount % (definition.donationStep || 1) !== 0) {
+    throw warEffortError(`${definition.name}每次需按 ${definition.donationStep} 的整数倍捐献`);
+  }
+  const database = requirePool();
+  const client = await database.connect();
+  try {
+    await client.query("BEGIN");
+    await ensureHeroAccount(client, accountId);
+    const repeated = await client.query(
+      `SELECT resource_type, amount, contribution
+       FROM cdp_war_effort_donations
+       WHERE account_id = $1::uuid AND request_id = $2`,
+      [accountId, requestId]
+    );
+    if (repeated.rows[0]) {
+      const state = await warEffortStateFromClient(client, accountId);
+      await client.query("COMMIT");
+      return { repeated: true, donation: repeated.rows[0], ...state };
+    }
+    const campaignResult = await client.query(
+      `SELECT * FROM cdp_war_effort_campaigns WHERE campaign_id = $1 FOR UPDATE`,
+      [WAR_EFFORT_RULES.campaignId]
+    );
+    const campaign = campaignResult.rows[0];
+    const statusValue = warEffortCampaignStatus(campaign);
+    if (statusValue !== "active") {
+      const labels = { upcoming: "全服任务尚未开始", completed: "全服任务已经完成", ended: "全服任务已经结束" };
+      throw warEffortError(labels[statusValue] || "全服任务暂不可用", 409);
+    }
+    const remaining = Math.max(0, definition.target - (Number(campaign[resourceType]) || 0));
+    if (!remaining) throw warEffortError(`${definition.name}已经完成`, 409);
+    const actualAmount = Math.min(amount, remaining);
+    const contribution = warEffortContribution(resourceType, actualAmount);
+    if (!contribution) throw warEffortError("捐献数量不足以获得贡献值");
+
+    await client.query(
+      `INSERT INTO cdp_war_effort_players (campaign_id, account_id)
+       VALUES ($1, $2::uuid)
+       ON CONFLICT (campaign_id, account_id) DO NOTHING`,
+      [WAR_EFFORT_RULES.campaignId, accountId]
+    );
+    if (WAR_EFFORT_EVENT_ITEMS.includes(resourceType)) {
+      const deducted = await client.query(
+        `UPDATE cdp_war_effort_players
+         SET ${resourceType} = ${resourceType} - $3, updated_at = now()
+         WHERE campaign_id = $1 AND account_id = $2::uuid AND ${resourceType} >= $3
+         RETURNING account_id`,
+        [WAR_EFFORT_RULES.campaignId, accountId, actualAmount]
+      );
+      if (!deducted.rows[0]) throw warEffortError(`${definition.name}数量不足`, 409);
+    } else if (resourceType === "diamonds") {
+      const deducted = await client.query(
+        `UPDATE cdp_diamond_wallets
+         SET balance = balance - $2, updated_at = now()
+         WHERE account_id = $1::uuid AND balance >= $2
+         RETURNING balance`,
+        [accountId, actualAmount]
+      );
+      if (!deducted.rows[0]) throw warEffortError("钻石余额不足", 409);
+      await client.query(
+        `INSERT INTO cdp_diamond_ledger (
+           account_id, amount, balance_after, reason, rules_version, idempotency_key, detail
+         ) VALUES ($1::uuid, $2, $3, 'war_effort_donation', $4, $5, $6::jsonb)`,
+        [
+          accountId, -actualAmount, Number(deducted.rows[0].balance) || 0,
+          WAR_EFFORT_RULES.version, `war_effort:${accountId}:${requestId}`,
+          JSON.stringify({ campaignId: WAR_EFFORT_RULES.campaignId, resourceType, amount: actualAmount })
+        ]
+      );
+    } else {
+      const column = resourceType === "universal_fragments" ? "universal_fragments" : "building_materials";
+      const deducted = await client.query(
+        `UPDATE cdp_hero_profiles
+         SET ${column} = ${column} - $2, updated_at = now()
+         WHERE account_id = $1::uuid AND ${column} >= $2
+         RETURNING account_id`,
+        [accountId, actualAmount]
+      );
+      if (!deducted.rows[0]) throw warEffortError(`${definition.name}数量不足`, 409);
+    }
+    await client.query(
+      `UPDATE cdp_war_effort_campaigns
+       SET ${resourceType} = ${resourceType} + $2, updated_at = now()
+       WHERE campaign_id = $1`,
+      [WAR_EFFORT_RULES.campaignId, actualAmount]
+    );
+    await client.query(
+      `UPDATE cdp_war_effort_players
+       SET contribution = contribution + $3, updated_at = now()
+       WHERE campaign_id = $1 AND account_id = $2::uuid`,
+      [WAR_EFFORT_RULES.campaignId, accountId, contribution]
+    );
+    await client.query(
+      `INSERT INTO cdp_war_effort_donations (
+         campaign_id, account_id, request_id, resource_type, amount, contribution
+       ) VALUES ($1, $2::uuid, $3, $4, $5, $6)`,
+      [WAR_EFFORT_RULES.campaignId, accountId, requestId, resourceType, actualAmount, contribution]
+    );
+    await client.query(
+      `UPDATE cdp_war_effort_campaigns
+       SET completed_at = coalesce(completed_at, now()), updated_at = now()
+       WHERE campaign_id = $1
+         AND red_cloth >= $2 AND bounty_order >= $3 AND dreamleaf >= $4 AND dark_iron >= $5
+         AND diamonds >= $6 AND universal_fragments >= $7 AND building_materials >= $8`,
+      [
+        WAR_EFFORT_RULES.campaignId,
+        WAR_EFFORT_RULES.resources.red_cloth.target,
+        WAR_EFFORT_RULES.resources.bounty_order.target,
+        WAR_EFFORT_RULES.resources.dreamleaf.target,
+        WAR_EFFORT_RULES.resources.dark_iron.target,
+        WAR_EFFORT_RULES.resources.diamonds.target,
+        WAR_EFFORT_RULES.resources.universal_fragments.target,
+        WAR_EFFORT_RULES.resources.building_materials.target
+      ]
+    );
+    const state = await warEffortStateFromClient(client, accountId);
+    await client.query("COMMIT");
+    return {
+      repeated: false,
+      donation: { resourceType, amount: actualAmount, contribution },
+      ...state
+    };
+  } catch (error) {
+    await client.query("ROLLBACK");
+    rememberError(error);
+    throw error;
+  } finally {
+    client.release();
+  }
 }
 
 async function connectPoolWithTimeout(database, timeoutMs = 1500) {
