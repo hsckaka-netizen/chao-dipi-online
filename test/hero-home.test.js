@@ -690,9 +690,11 @@ test("server and table UI expose the redesigned SSR board skill timing", async (
     readFile(fileURLToPath(new URL("../game-history.js", import.meta.url)), "utf8"),
     readFile(fileURLToPath(new URL("../public/replacement-rank-rules.js", import.meta.url)), "utf8")
   ]);
-  assert.match(serverSource, /beginShenBiesanSkillChoices\(room, room\.gameItems\.stage\.deadlineAt\)/);
+  assert.match(serverSource, /beginShenBiesanSkillStage\(room\)/);
+  assert.match(serverSource, /if \(room\.stage === RESTART_CARD_STAGE\) \{\s*beginShenBiesanSkillStage\(room\)/);
+  assert.match(serverSource, /if \(gameItemAccess\(room\)\.eligible\) beginGameItemStage\(room, OTHER_CARDS_STAGE\)/);
   assert.match(serverSource, /resolveShenBiesanSkillChoices/);
-  assert.doesNotMatch(serverSource, /room\.stage = "shen-biesan-skill"/);
+  assert.match(serverSource, /room\.stage = SHEN_BIESAN_SKILL_STAGE/);
   assert.match(serverSource, /applicants = shuffle\(state\.applicantPlayerIds/);
   assert.match(serverSource, /beginYokoyamaSkillStage/);
   assert.match(serverSource, /beginShenHaohaoSkillStage/);
@@ -717,7 +719,8 @@ test("server and table UI expose the redesigned SSR board skill timing", async (
   assert.doesNotMatch(serverSource, /room\.setup\.fry\.history\.push\(skillAction\)/);
   assert.match(serverSource, /使用神 · 姜文发动排骨之王炒底/);
   assert.match(appSource, /data-action="shen-biesan-activate"/);
-  assert.match(appSource, /其他卡牌与玉面雷神/);
+  assert.match(appSource, /技能结算完成后才进入其他卡牌阶段/);
+  assert.match(appSource, /\[OTHER_CARDS_STAGE\]: "其他卡牌阶段"/);
   assert.match(appSource, /服务端在提交候选的由依玩家中等概率抽取一人/);
   assert.match(appSource, /免费生成候选座位/);
   assert.match(appSource, /我的候选/);

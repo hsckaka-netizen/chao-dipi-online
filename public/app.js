@@ -61,6 +61,7 @@ const CONSUMABLE_ITEM_FALLBACKS = Object.freeze([
 ]);
 const RESTART_CARD_STAGE = "restart-card-using";
 const OTHER_CARDS_STAGE = "other-cards-using";
+const SHEN_BIESAN_SKILL_STAGE = "shen-biesan-skill";
 const AVATAR_FRAME_VALUES = new Set(AVATAR_FRAME_OPTIONS.map((option) => option.value));
 const avatarFrameAssets = new Map(Object.entries(ASSET_URLS.avatarFrames));
 let avatarFrameAssetsLoading = false;
@@ -535,11 +536,17 @@ function transitionNotice(previousState, nextState) {
   });
   if (draggedNotices.length) return draggedNotices.join("，");
   if (previousState.stage === nextState.stage) return "";
-  if (previousState.stage === RESTART_CARD_STAGE && nextState.stage === OTHER_CARDS_STAGE) {
-    return "重开卡阶段结束，进入其他卡牌使用阶段。";
+  if (previousState.stage === RESTART_CARD_STAGE && nextState.stage === SHEN_BIESAN_SKILL_STAGE) {
+    return "重开卡阶段结束，进入玉面雷神发动阶段。";
+  }
+  if ((previousState.stage === RESTART_CARD_STAGE || previousState.stage === SHEN_BIESAN_SKILL_STAGE) && nextState.stage === OTHER_CARDS_STAGE) {
+    return "英雄技能选择结束，进入其他卡牌使用阶段。";
+  }
+  if (previousState.stage === SHEN_BIESAN_SKILL_STAGE && nextState.stage === "score-bidding") {
+    return "玉面雷神选择结束，开始叫庄。";
   }
   if (previousState.stage === OTHER_CARDS_STAGE && nextState.stage === "score-bidding") {
-    return "卡牌与玉面雷神选择结束，开始叫庄。";
+    return "其他卡牌选择结束，开始叫庄。";
   }
   if (previousState.stage === "bidding" && nextState.stage === "burying") {
     return `叫主成功：${nextState.setup?.bankerName || "庄家"} 成为庄家，已拿底等待贴底。`;
@@ -2061,13 +2068,14 @@ async function useGameItem(itemId) {
 
 async function completeGameItemStage() {
   if (!session || isSpectating() || state?.gameItems?.viewerCompleted) return;
+  const completedStage = state?.stage;
   try {
     await roomAction(`/api/rooms/${session.roomId}/item-stage-complete`, {
       method: "POST",
       body: JSON.stringify({ playerId: session.playerId, token: session.token })
     });
     activeDialog = null;
-    setMessage(state?.stage === OTHER_CARDS_STAGE ? "已进入其他卡牌使用阶段。" : "已完成卡牌选择。");
+    setMessage(completedStage === RESTART_CARD_STAGE ? "已完成重开卡选择。" : "已完成其他卡牌选择。");
   } catch (error) {
     setMessage(error.message, true);
   }
@@ -2815,6 +2823,7 @@ function currentSetupCountdownDeadline() {
   if (state?.stage === RESTART_CARD_STAGE || state?.stage === OTHER_CARDS_STAGE) {
     return state.gameItems?.deadlineAt || null;
   }
+  if (state?.stage === SHEN_BIESAN_SKILL_STAGE) return state.boardHeroSkills?.shenBiesan?.deadlineAt || null;
   if (state?.stage === "score-bidding") return state.setup?.scoreBid?.deadlineAt || null;
   if (state?.stage === "frying") return state.setup?.fry?.deadlineAt || null;
   if (state?.stage === "yokoyama-skill") return state.boardHeroSkills?.yokoyama?.deadlineAt || null;
@@ -6394,12 +6403,6 @@ function renderSetupCenter() {
   if (stage === RESTART_CARD_STAGE || stage === OTHER_CARDS_STAGE) {
     const completedIds = state.gameItems?.completedPlayerIds || [];
     const uses = state.gameItems?.uses || [];
-    const biesan = state.boardHeroSkills?.shenBiesan || {};
-    const biesanCompletedIds = biesan.completedPlayerIds || [];
-    const biesanEligibleIds = biesan.eligiblePlayerIds || [];
-    const biesanApplicantNames = (biesan.applicantPlayerIds || [])
-      .map((playerId) => state.players.find((player) => player.id === playerId)?.name)
-      .filter(Boolean);
     const viewerUses = uses.filter((use) => use.playerId === state.viewer?.id);
     const restartNames = (state.gameItems?.restartUsedPlayerIds || [])
       .map((playerId) => state.players.find((player) => player.id === playerId)?.name)
@@ -6411,27 +6414,39 @@ function renderSetupCenter() {
     const completeLabel = viewerUses.length ? "完成卡牌使用" : "不使用卡牌";
     body = `
       ${renderSetupLines([
-        { label: "当前阶段", value: stage === RESTART_CARD_STAGE ? "重开卡" : "其他卡牌与玉面雷神" },
+        { label: "当前阶段", value: stage === RESTART_CARD_STAGE ? "重开卡" : "其他卡牌" },
         { label: "倒计时", value: setupCountdownTag(state.gameItems?.deadlineAt, " 后自动完成") },
-        { label: "卡牌选择", value: `${completedIds.length}/${state.players.length}` },
-        stage === OTHER_CARDS_STAGE && biesanEligibleIds.length
-          ? { label: "瘪三选择", value: `${biesanCompletedIds.length}/${biesanEligibleIds.length}` }
-          : null
+        { label: "卡牌选择", value: `${completedIds.length}/${state.players.length}` }
       ])}
       ${useSummary.length ? `<div class="game-item-use-summary">${useSummary.map((text) => `<span>${escapeHtml(text)}</span>`).join("")}</div>` : `<div class="meta">尚无玩家使用本阶段卡牌</div>`}
-      ${stage === OTHER_CARDS_STAGE && biesanEligibleIds.length ? `
-        <div class="meta">玉面雷神与其他卡牌共用本阶段倒计时；多名瘪三可同时申请，阶段结束后由服务端随机选 1 人成功，只有成功者支付 CD 重置费。</div>
-        ${biesanApplicantNames.length ? `<div class="game-item-use-summary"><span>${escapeHtml(biesanApplicantNames.join("、"))} 已申请玉面雷神</span></div>` : ""}
-        <div class="row">
-          ${!isSpectating() && biesan.canChoose ? `<button type="button" data-action="shen-biesan-activate">${Number(biesan.cooldown) > 0 ? `花费 ${escapeHtml(biesan.cost || 0)} 钻石重置 CD 并申请` : "免费申请玉面雷神"}</button><button type="button" class="secondary" data-action="shen-biesan-pass">不发动玉面雷神</button>` : ""}
-          ${!isSpectating() && biesan.viewerCompleted ? `<span class="tag good">你已完成玉面雷神选择</span>` : ""}
-        </div>
-      ` : ""}
       <div class="row">
         ${!isSpectating() && !completed ? renderGameItemControl() : ""}
         ${!isSpectating() && !completed ? `<button type="button" class="secondary" data-action="complete-item-stage">${escapeHtml(completeLabel)}</button>` : ""}
         ${!isSpectating() && completed ? `<span class="tag good">你已完成卡牌选择</span>` : ""}
         ${isSpectating() ? `<span class="tag">观战中</span>` : ""}
+      </div>
+    `;
+  }
+
+  if (stage === SHEN_BIESAN_SKILL_STAGE) {
+    const biesan = state.boardHeroSkills?.shenBiesan || {};
+    const eligibleIds = biesan.eligiblePlayerIds || [];
+    const completedIds = biesan.completedPlayerIds || [];
+    const applicantNames = (biesan.applicantPlayerIds || [])
+      .map((playerId) => state.players.find((player) => player.id === playerId)?.name)
+      .filter(Boolean);
+    body = `
+      ${renderSetupLines([
+        { label: "当前阶段", value: "神 · 瘪三 · 玉面雷神" },
+        { label: "倒计时", value: setupCountdownTag(biesan.deadlineAt, " 后自动放弃") },
+        { label: "技能选择", value: `${completedIds.length}/${eligibleIds.length}` }
+      ])}
+      <div class="meta">多名神 · 瘪三可同时申请；全部完成后由服务端随机选 1 人成功。只有成功者在需要时支付 CD 重置费，技能结算完成后才进入其他卡牌阶段。</div>
+      ${applicantNames.length ? `<div class="game-item-use-summary"><span>${escapeHtml(applicantNames.join("、"))} 已申请玉面雷神</span></div>` : ""}
+      <div class="row">
+        ${!isSpectating() && biesan.canChoose ? `<button type="button" data-action="shen-biesan-activate">${Number(biesan.cooldown) > 0 ? `花费 ${escapeHtml(biesan.cost || 0)} 钻石重置 CD 并申请` : "免费申请玉面雷神"}</button><button type="button" class="secondary" data-action="shen-biesan-pass">不发动玉面雷神</button>` : ""}
+        ${!isSpectating() && biesan.viewerCompleted ? `<span class="tag good">你已完成玉面雷神选择</span>` : ""}
+        ${isSpectating() || !biesan.viewerEligible ? `<span class="tag">等待符合条件的玩家完成选择</span>` : ""}
       </div>
     `;
   }
@@ -7364,7 +7379,8 @@ function renderSetupTable() {
   const setup = state.setup || {};
   const titleByStage = {
     [RESTART_CARD_STAGE]: "重开卡阶段",
-    [OTHER_CARDS_STAGE]: "卡牌与玉面雷神阶段",
+    [SHEN_BIESAN_SKILL_STAGE]: "玉面雷神阶段",
+    [OTHER_CARDS_STAGE]: "其他卡牌阶段",
     bidding: "叫主牌桌",
     "score-bidding": "叫分牌桌",
     "yokoyama-skill": "全能偶像阶段",
@@ -7419,17 +7435,21 @@ function setupSeatStatus(player) {
   const fry = setup.fry || {};
   if (state.stage === RESTART_CARD_STAGE || state.stage === OTHER_CARDS_STAGE) {
     const cardCompleted = (state.gameItems?.completedPlayerIds || []).includes(player.id);
-    const biesan = state.boardHeroSkills?.shenBiesan || {};
-    const biesanEligible = state.stage === OTHER_CARDS_STAGE && (biesan.eligiblePlayerIds || []).includes(player.id);
-    const biesanCompleted = !biesanEligible || (biesan.completedPlayerIds || []).includes(player.id);
-    if (cardCompleted && biesanCompleted) return { text: "已完成", tone: "good" };
-    if (cardCompleted && biesanEligible) return { text: "选择技能", tone: "good" };
-    if (biesanEligible && biesanCompleted) return { text: "选择卡牌", tone: "" };
-    if (biesanEligible) return { text: "卡牌/技能", tone: "good" };
+    if (cardCompleted) return { text: "已完成", tone: "good" };
     const usedCount = state.stage === RESTART_CARD_STAGE
       ? ((state.gameItems?.restartUsedPlayerIds || []).includes(player.id) ? 1 : 0)
       : (state.gameItems?.uses || []).filter((use) => use.playerId === player.id).length;
     return usedCount ? { text: `已用 ${usedCount} 张`, tone: "accent" } : { text: "选择卡牌", tone: "" };
+  }
+  if (state.stage === SHEN_BIESAN_SKILL_STAGE) {
+    const biesan = state.boardHeroSkills?.shenBiesan || {};
+    if (!(biesan.eligiblePlayerIds || []).includes(player.id)) return { text: "等待技能", tone: "" };
+    if ((biesan.completedPlayerIds || []).includes(player.id)) {
+      return (biesan.applicantPlayerIds || []).includes(player.id)
+        ? { text: "已申请发动", tone: "accent" }
+        : { text: "已放弃", tone: "" };
+    }
+    return { text: "发动/放弃", tone: "good" };
   }
   if (state.stage === "bidding") {
     if (!setup.bid) return { text: "等待叫主", tone: "" };
@@ -8341,7 +8361,7 @@ function renderPlayer(player) {
     || (state.stage === "yokoyama-skill"
       && (state.boardHeroSkills?.yokoyama?.eligiblePlayerIds || []).includes(player.id)
       && !(state.boardHeroSkills?.yokoyama?.completedPlayerIds || []).includes(player.id))
-    || (state.stage === OTHER_CARDS_STAGE
+    || (state.stage === SHEN_BIESAN_SKILL_STAGE
       && (state.boardHeroSkills?.shenBiesan?.eligiblePlayerIds || []).includes(player.id)
       && !(state.boardHeroSkills?.shenBiesan?.completedPlayerIds || []).includes(player.id))
     || (state.stage === "shen-haohao-skill" && (state.boardHeroSkills?.shenHaohao?.eligiblePlayerIds || []).includes(player.id));

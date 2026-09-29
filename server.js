@@ -196,6 +196,7 @@ const SCORE_BID_SECONDS = 20;
 const FRY_SECONDS = 20;
 const GAME_ITEM_STAGE_SECONDS = Math.max(1, Number(process.env.GAME_ITEM_STAGE_SECONDS) || 20);
 const BOARD_HERO_SKILL_SECONDS = Math.max(1, Number(process.env.BOARD_HERO_SKILL_SECONDS) || 20);
+const SHEN_BIESAN_SKILL_STAGE = "shen-biesan-skill";
 const GAME_ITEM_NOTICE_MS = Math.max(1000, Number(process.env.GAME_ITEM_NOTICE_MS) || 5000);
 const TAUNT_DURATION_MS = Math.max(100, Number(process.env.TAUNT_DURATION_MS) || 4500);
 const TAUNT_COOLDOWN_MS = Math.max(0, Number(process.env.TAUNT_COOLDOWN_MS) || 1500);
@@ -1157,8 +1158,7 @@ function beginGameItemStage(room, stage) {
     deadlineAt: new Date(new Date(openedAt).getTime() + GAME_ITEM_STAGE_SECONDS * 1000).toISOString(),
     completedPlayerIds
   };
-  if (stage === OTHER_CARDS_STAGE) beginShenBiesanSkillChoices(room, room.gameItems.stage.deadlineAt);
-  if (allPlayersCompletedGameItemStage(room) && shenBiesanChoicesCompleted(room)) {
+  if (allPlayersCompletedGameItemStage(room)) {
     void advanceGameItemStage(room).catch((error) => {
       console.error("[game-items] advance stage failed", error.message);
     });
@@ -1167,14 +1167,11 @@ function beginGameItemStage(room, stage) {
 
 async function advanceGameItemStage(room) {
   if (room.stage === RESTART_CARD_STAGE) {
-    beginGameItemStage(room, OTHER_CARDS_STAGE);
+    beginShenBiesanSkillStage(room);
     return true;
   }
   if (room.stage === OTHER_CARDS_STAGE) {
-    if (!allPlayersCompletedGameItemStage(room) || !shenBiesanChoicesCompleted(room)) return false;
-    await resolveShenBiesanSkillChoices(room);
-    if (!room.boardHeroSkills.shenBiesan.resolved) return false;
-    if (room.stage !== OTHER_CARDS_STAGE) return false;
+    if (!allPlayersCompletedGameItemStage(room)) return false;
     beginBankerSelectionFlow(room);
     return true;
   }
@@ -1227,8 +1224,28 @@ function beginShenBiesanSkillChoices(room, deadlineAt = null) {
     resolving: false,
     resolved: false
   };
-  if (eligiblePlayerIds.length) addEvent(room, "其他卡牌阶段内，符合条件的神 · 瘪三玩家可同时选择是否申请发动玉面雷神");
+  if (eligiblePlayerIds.length) addEvent(room, "符合条件的神 · 瘪三玩家可同时选择是否申请发动玉面雷神");
   return eligiblePlayerIds.length > 0;
+}
+
+function beginPostShenBiesanFlow(room) {
+  clearBoardHeroSkillTimer(room);
+  if (gameItemAccess(room).eligible) beginGameItemStage(room, OTHER_CARDS_STAGE);
+  else beginBankerSelectionFlow(room);
+}
+
+function beginShenBiesanSkillStage(room) {
+  clearGameItemStageTimer(room);
+  clearBoardHeroSkillTimer(room);
+  const deadlineAt = new Date(Date.now() + BOARD_HERO_SKILL_SECONDS * 1000).toISOString();
+  if (!beginShenBiesanSkillChoices(room, deadlineAt)) {
+    room.boardHeroSkills.shenBiesan.resolved = true;
+    beginPostShenBiesanFlow(room);
+    return false;
+  }
+  room.stage = SHEN_BIESAN_SKILL_STAGE;
+  room.phase = "玉面雷神发动阶段";
+  return true;
 }
 
 function shenBiesanChoicesCompleted(room) {
@@ -1279,7 +1296,7 @@ async function chargeRoomBoardHeroSkill(room, ...args) {
 
 async function resolveShenBiesanSkillChoices(room) {
   const state = room.boardHeroSkills.shenBiesan;
-  if (room.stage !== OTHER_CARDS_STAGE || state.resolving || state.resolved) return false;
+  if (room.stage !== SHEN_BIESAN_SKILL_STAGE || state.resolving || state.resolved) return false;
   state.resolving = true;
   state.deadlineAt = null;
   const applicants = shuffle(state.applicantPlayerIds.map((playerId) => playerById(room, playerId)).filter(Boolean));
@@ -1311,8 +1328,16 @@ async function resolveShenBiesanSkillChoices(room) {
   return true;
 }
 
+async function finishShenBiesanSkillStage(room) {
+  if (room.stage !== SHEN_BIESAN_SKILL_STAGE || !shenBiesanChoicesCompleted(room)) return false;
+  await resolveShenBiesanSkillChoices(room);
+  if (!room.boardHeroSkills.shenBiesan.resolved || room.stage !== SHEN_BIESAN_SKILL_STAGE) return false;
+  beginPostShenBiesanFlow(room);
+  return true;
+}
+
 async function submitShenBiesanSkillChoice(room, player, activate, resetCooldown = false) {
-  if (room.stage !== OTHER_CARDS_STAGE) return { error: "玉面雷神只能在其他卡牌阶段发动", status: 409 };
+  if (room.stage !== SHEN_BIESAN_SKILL_STAGE) return { error: "当前不是玉面雷神发动阶段", status: 409 };
   const state = room.boardHeroSkills.shenBiesan;
   if (!state.eligiblePlayerIds.includes(player.id)) return { error: "你当前不满足玉面雷神发动条件", status: 403 };
   if (state.completedPlayerIds.includes(player.id)) return { error: "你已经完成选择", status: 409 };
@@ -1322,7 +1347,7 @@ async function submitShenBiesanSkillChoice(room, player, activate, resetCooldown
     state.resetCooldownByPlayerId[player.id] = Boolean(resetCooldown);
   }
   addEvent(room, `${player.name}${activate ? "申请发动玉面雷神" : "放弃发动玉面雷神"}`);
-  if (allPlayersCompletedGameItemStage(room) && shenBiesanChoicesCompleted(room)) await advanceGameItemStage(room);
+  if (shenBiesanChoicesCompleted(room)) await finishShenBiesanSkillStage(room);
   return { ok: true };
 }
 
@@ -1332,13 +1357,7 @@ async function autoAdvanceExpiredGameItemStage(room) {
   if (!Number.isFinite(deadline) || Date.now() < deadline) return false;
   room.gameItems.stage.deadlineAt = null;
   room.gameItems.stage.completedPlayerIds = room.players.map((player) => player.id);
-  if (room.stage === OTHER_CARDS_STAGE) {
-    const state = room.boardHeroSkills.shenBiesan;
-    state.eligiblePlayerIds.forEach((playerId) => {
-      if (!state.completedPlayerIds.includes(playerId)) state.completedPlayerIds.push(playerId);
-    });
-    addEvent(room, "卡牌与玉面雷神选择倒计时结束，未操作玩家视为不使用");
-  }
+  addEvent(room, `${room.stage === RESTART_CARD_STAGE ? "重开卡" : "其他卡牌"}选择倒计时结束，未操作玩家视为不使用`);
   return advanceGameItemStage(room);
 }
 
@@ -1347,7 +1366,7 @@ async function completeGameItemStageForPlayer(room, player) {
   const completedIds = completedGameItemPlayerIds(room);
   completedIds.add(player.id);
   room.gameItems.stage.completedPlayerIds = [...completedIds];
-  const advanced = allPlayersCompletedGameItemStage(room) && shenBiesanChoicesCompleted(room)
+  const advanced = allPlayersCompletedGameItemStage(room)
     ? await advanceGameItemStage(room)
     : false;
   return { ok: true, advanced };
@@ -1544,7 +1563,7 @@ function deal(room, options = {}) {
     addEvent(room, `本局开局移除 ${room.removedCards.map((card) => card.label).join("、")}，底牌保持 ${room.kittySize} 张`);
   }
   if (gameItemAccess(room).eligible) beginGameItemStage(room, RESTART_CARD_STAGE);
-  else beginBankerSelectionFlow(room);
+  else beginShenBiesanSkillStage(room);
 }
 
 function readyPlayerCount(room) {
@@ -1851,14 +1870,14 @@ function boardHeroSkillsSnapshot(room, viewer = null) {
   return {
     replacementRank: room.boardHeroEffects?.replacementRank || null,
     shenBiesan: {
-      active: room.stage === OTHER_CARDS_STAGE && shenBiesan.eligiblePlayerIds.length > 0,
+      active: room.stage === SHEN_BIESAN_SKILL_STAGE && shenBiesan.eligiblePlayerIds.length > 0,
       deadlineAt: shenBiesan.deadlineAt,
       eligiblePlayerIds: [...shenBiesan.eligiblePlayerIds],
       completedPlayerIds: [...shenBiesan.completedPlayerIds],
       applicantPlayerIds: [...shenBiesan.applicantPlayerIds],
       viewerEligible: viewerIsBiesanEligible,
       viewerCompleted: viewerCompletedBiesan,
-      canChoose: room.stage === OTHER_CARDS_STAGE && viewerIsBiesanEligible && !viewerCompletedBiesan,
+      canChoose: room.stage === SHEN_BIESAN_SKILL_STAGE && viewerIsBiesanEligible && !viewerCompletedBiesan,
       cost: biesanSkill?.cost || 0,
       cooldown: biesanSkill?.cooldown || 0,
       cooldownAfterUse: biesanSkill?.cooldownAfterUse || 0
@@ -4710,6 +4729,21 @@ function clearBoardHeroSkillTimer(room) {
 }
 
 async function autoAdvanceExpiredBoardHeroSkill(room) {
+  if (room.stage === SHEN_BIESAN_SKILL_STAGE) {
+    const state = room.boardHeroSkills.shenBiesan;
+    const deadline = new Date(state.deadlineAt || "").getTime();
+    if (!Number.isFinite(deadline) || deadline > Date.now()) return false;
+    if (state.resolving || room.boardHeroSkillUseInFlight) {
+      state.deadlineAt = new Date(Date.now() + 1000).toISOString();
+      return true;
+    }
+    state.eligiblePlayerIds.forEach((playerId) => {
+      if (!state.completedPlayerIds.includes(playerId)) state.completedPlayerIds.push(playerId);
+    });
+    addEvent(room, "玉面雷神倒计时结束，未操作玩家视为放弃");
+    await finishShenBiesanSkillStage(room);
+    return true;
+  }
   if (room.stage === "yokoyama-skill") {
     const state = room.boardHeroSkills.yokoyama;
     const deadline = new Date(state.deadlineAt || "").getTime();
@@ -4741,7 +4775,9 @@ async function autoAdvanceExpiredBoardHeroSkill(room) {
 
 function scheduleBoardHeroSkillTimer(room) {
   clearBoardHeroSkillTimer(room);
-  const deadlineAt = room.stage === "yokoyama-skill"
+  const deadlineAt = room.stage === SHEN_BIESAN_SKILL_STAGE
+    ? room.boardHeroSkills.shenBiesan.deadlineAt
+    : room.stage === "yokoyama-skill"
       ? room.boardHeroSkills.yokoyama.deadlineAt
       : room.stage === "shen-haohao-skill"
         ? room.boardHeroSkills.shenHaohao.deadlineAt
