@@ -683,15 +683,17 @@ test("existing five-person task requirements can be relaxed without changing the
   assert.equal(Object.values(requirements.genders).reduce((sum, count) => sum + count, 0), 2);
 });
 
-test("server and table UI expose all four SSR board skill stages", async () => {
+test("server and table UI expose the redesigned SSR board skill timing", async () => {
   const [serverSource, appSource, gameHistorySource, replacementRankRulesSource] = await Promise.all([
     readFile(fileURLToPath(new URL("../server.js", import.meta.url)), "utf8"),
     readFile(fileURLToPath(new URL("../public/app.js", import.meta.url)), "utf8"),
     readFile(fileURLToPath(new URL("../game-history.js", import.meta.url)), "utf8"),
     readFile(fileURLToPath(new URL("../public/replacement-rank-rules.js", import.meta.url)), "utf8")
   ]);
-  assert.match(serverSource, /beginShenBiesanSkillStage/);
-  assert.match(serverSource, /resolveShenBiesanSkillStage/);
+  assert.match(serverSource, /beginShenBiesanSkillChoices\(room, room\.gameItems\.stage\.deadlineAt\)/);
+  assert.match(serverSource, /resolveShenBiesanSkillChoices/);
+  assert.doesNotMatch(serverSource, /room\.stage = "shen-biesan-skill"/);
+  assert.match(serverSource, /applicants = shuffle\(state\.applicantPlayerIds/);
   assert.match(serverSource, /beginYokoyamaSkillStage/);
   assert.match(serverSource, /beginShenHaohaoSkillStage/);
   assert.match(serverSource, /submitShenHaohaoSkillChoice/);
@@ -705,13 +707,21 @@ test("server and table UI expose all four SSR board skill stages", async () => {
   assert.match(serverSource, /refundBoardHeroSkillUses/);
   assert.match(serverSource, /boardHeroSkillUseInFlight/);
   assert.match(serverSource, /directSkillPendingPlayerId/);
+  assert.match(serverSource, /if \(nextUsedCount < maxUses\) state\.queuePlayerIds\.push\(player\.id\)/);
+  assert.match(serverSource, /directSkill: true,[\s\S]*?heroId: "shen-jiangwen"/);
+  assert.match(serverSource, /room\.setup\.fry\.skillHistory\.push\(skillAction\)/);
+  assert.doesNotMatch(serverSource, /room\.setup\.fry\.history\.push\(skillAction\)/);
+  assert.match(serverSource, /使用神 · 姜文发动排骨之王炒底/);
   assert.match(appSource, /data-action="shen-biesan-activate"/);
+  assert.match(appSource, /其他卡牌与玉面雷神/);
+  assert.match(appSource, /多人由依按叫庄结束时锁定的顺序轮流/);
   assert.match(appSource, /免费随机全桌座位/);
   assert.match(appSource, /data-action="shen-haohao-activate"/);
   assert.match(appSource, /按结算时的最终阵营回看整局拖五/);
   assert.match(appSource, /data-action="shen-jiangwen-activate"/);
   assert.match(appSource, /!isBid && shenJiangwenSkill\.canActivate/);
   assert.match(appSource, /英雄技能 · 排骨之王/);
+  assert.match(appSource, /神姜文炒底/);
   assert.match(appSource, /英雄技能钻石和 CD 变化会返还/);
   assert.match(gameHistorySource, /hero_skill_refund/);
   assert.match(gameHistorySource, /SET skill_cooldown = \$3/);

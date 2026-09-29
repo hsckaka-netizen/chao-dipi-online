@@ -538,11 +538,8 @@ function transitionNotice(previousState, nextState) {
   if (previousState.stage === RESTART_CARD_STAGE && nextState.stage === OTHER_CARDS_STAGE) {
     return "重开卡阶段结束，进入其他卡牌使用阶段。";
   }
-  if (previousState.stage === OTHER_CARDS_STAGE && nextState.stage === "shen-biesan-skill") {
-    return "卡牌使用阶段结束，进入神 · 瘪三的玉面雷神发动阶段。";
-  }
-  if ((previousState.stage === OTHER_CARDS_STAGE || previousState.stage === "shen-biesan-skill") && nextState.stage === "score-bidding") {
-    return "卡牌使用阶段结束，开始叫庄。";
+  if (previousState.stage === OTHER_CARDS_STAGE && nextState.stage === "score-bidding") {
+    return "卡牌与玉面雷神选择结束，开始叫庄。";
   }
   if (previousState.stage === "bidding" && nextState.stage === "burying") {
     return `叫主成功：${nextState.setup?.bankerName || "庄家"} 成为庄家，已拿底等待贴底。`;
@@ -2820,7 +2817,6 @@ function currentSetupCountdownDeadline() {
   }
   if (state?.stage === "score-bidding") return state.setup?.scoreBid?.deadlineAt || null;
   if (state?.stage === "frying") return state.setup?.fry?.deadlineAt || null;
-  if (state?.stage === "shen-biesan-skill") return state.boardHeroSkills?.shenBiesan?.deadlineAt || null;
   if (state?.stage === "yokoyama-skill") return state.boardHeroSkills?.yokoyama?.deadlineAt || null;
   if (state?.stage === "shen-haohao-skill") return state.boardHeroSkills?.shenHaohao?.deadlineAt || null;
   return null;
@@ -3090,7 +3086,6 @@ function colorfulFryOrderText() {
 
 const COLORFUL_FRY_ORDER_VISIBLE_STAGES = new Set([
   OTHER_CARDS_STAGE,
-  "shen-biesan-skill",
   "bidding",
   "score-bidding",
   "yokoyama-skill",
@@ -6399,6 +6394,12 @@ function renderSetupCenter() {
   if (stage === RESTART_CARD_STAGE || stage === OTHER_CARDS_STAGE) {
     const completedIds = state.gameItems?.completedPlayerIds || [];
     const uses = state.gameItems?.uses || [];
+    const biesan = state.boardHeroSkills?.shenBiesan || {};
+    const biesanCompletedIds = biesan.completedPlayerIds || [];
+    const biesanEligibleIds = biesan.eligiblePlayerIds || [];
+    const biesanApplicantNames = (biesan.applicantPlayerIds || [])
+      .map((playerId) => state.players.find((player) => player.id === playerId)?.name)
+      .filter(Boolean);
     const viewerUses = uses.filter((use) => use.playerId === state.viewer?.id);
     const restartNames = (state.gameItems?.restartUsedPlayerIds || [])
       .map((playerId) => state.players.find((player) => player.id === playerId)?.name)
@@ -6407,40 +6408,30 @@ function renderSetupCenter() {
       ? restartNames.map((name) => `${name}已重开`)
       : uses.map((use) => `${use.playerName}使用${use.itemName}`);
     const completed = Boolean(state.gameItems?.viewerCompleted);
-    const completeLabel = viewerUses.length ? "完成使用" : "不使用";
+    const completeLabel = viewerUses.length ? "完成卡牌使用" : "不使用卡牌";
     body = `
       ${renderSetupLines([
-        { label: "当前阶段", value: stage === RESTART_CARD_STAGE ? "重开卡" : "战神卡、缤纷卡、牌运卡" },
+        { label: "当前阶段", value: stage === RESTART_CARD_STAGE ? "重开卡" : "其他卡牌与玉面雷神" },
         { label: "倒计时", value: setupCountdownTag(state.gameItems?.deadlineAt, " 后自动完成") },
-        { label: "已完成", value: `${completedIds.length}/${state.players.length}` }
+        { label: "卡牌选择", value: `${completedIds.length}/${state.players.length}` },
+        stage === OTHER_CARDS_STAGE && biesanEligibleIds.length
+          ? { label: "瘪三选择", value: `${biesanCompletedIds.length}/${biesanEligibleIds.length}` }
+          : null
       ])}
       ${useSummary.length ? `<div class="game-item-use-summary">${useSummary.map((text) => `<span>${escapeHtml(text)}</span>`).join("")}</div>` : `<div class="meta">尚无玩家使用本阶段卡牌</div>`}
+      ${stage === OTHER_CARDS_STAGE && biesanEligibleIds.length ? `
+        <div class="meta">玉面雷神与其他卡牌共用本阶段倒计时；多名瘪三可同时申请，阶段结束后由服务端随机选 1 人成功，只有成功者支付 CD 重置费。</div>
+        ${biesanApplicantNames.length ? `<div class="game-item-use-summary"><span>${escapeHtml(biesanApplicantNames.join("、"))} 已申请玉面雷神</span></div>` : ""}
+        <div class="row">
+          ${!isSpectating() && biesan.canChoose ? `<button type="button" data-action="shen-biesan-activate">${Number(biesan.cooldown) > 0 ? `花费 ${escapeHtml(biesan.cost || 0)} 钻石重置 CD 并申请` : "免费申请玉面雷神"}</button><button type="button" class="secondary" data-action="shen-biesan-pass">不发动玉面雷神</button>` : ""}
+          ${!isSpectating() && biesan.viewerCompleted ? `<span class="tag good">你已完成玉面雷神选择</span>` : ""}
+        </div>
+      ` : ""}
       <div class="row">
         ${!isSpectating() && !completed ? renderGameItemControl() : ""}
         ${!isSpectating() && !completed ? `<button type="button" class="secondary" data-action="complete-item-stage">${escapeHtml(completeLabel)}</button>` : ""}
-        ${!isSpectating() && completed ? `<span class="tag good">你已完成选择</span>` : ""}
+        ${!isSpectating() && completed ? `<span class="tag good">你已完成卡牌选择</span>` : ""}
         ${isSpectating() ? `<span class="tag">观战中</span>` : ""}
-      </div>
-    `;
-  }
-
-  if (stage === "shen-biesan-skill") {
-    const skill = state.boardHeroSkills?.shenBiesan || {};
-    const activationText = Number(skill.cooldown) > 0
-      ? `花费 ${escapeHtml(skill.cost || 0)} 钻石重置 CD 并发动`
-      : "免费发动并随机比牌";
-    body = `
-      ${renderSetupLines([
-        { label: "当前阶段", value: "神 · 瘪三 · 玉面雷神" },
-        { label: "倒计时", value: setupCountdownTag(skill.deadlineAt, " 后自动放弃") },
-        { label: "技能 CD", value: skill.viewerEligible ? `${escapeHtml(skill.cooldown || 0)} 轮` : "" },
-        { label: "重置费用", value: skill.viewerEligible && Number(skill.cooldown) > 0 ? `${escapeHtml(skill.cost || 0)} 钻石` : "" }
-      ])}
-      <div class="meta">仅在你没有同花色成对 2 时可发动；服务端会从你实际持有的合法点数中随机 1 个替代 2。多人申请时随机 1 人成功，只有成功者支付 CD 重置费。</div>
-      <div class="row">
-        ${!isSpectating() && skill.canChoose ? `<button type="button" data-action="shen-biesan-activate">${activationText}</button><button type="button" class="secondary" data-action="shen-biesan-pass">不发动</button>` : ""}
-        ${!isSpectating() && skill.viewerCompleted ? `<span class="tag good">你已完成选择</span>` : ""}
-        ${isSpectating() || (!skill.viewerEligible && !skill.viewerCompleted) ? `<span class="tag">等待符合条件的玩家选择</span>` : ""}
       </div>
     `;
   }
@@ -6487,7 +6478,7 @@ function renderSetupCenter() {
         { label: "倒计时", value: setupCountdownTag(skill.deadlineAt, " 后自动放弃") },
         { label: "本局次数", value: skill.canFinish ? `${escapeHtml(skill.usedCount || 0)} / ${escapeHtml(skill.maxUses || 1)}（剩余 ${escapeHtml(skill.remainingUses || 0)} 次）` : "" }
       ])}
-      <div class="meta">每次发动都会将全桌座位重新随机；庄家、阵营、手牌和已叫分结果都跟随玩家保持不变。</div>
+      <div class="meta">每次发动都会将全桌座位重新随机；多人由依按叫庄结束时锁定的顺序轮流，每人每轮最多发动 1 次，有剩余次数则排到队尾等待下一轮。</div>
       <div class="row">
         ${!isSpectating() && skill.canActivate ? `<button type="button" data-action="yokoyama-activate">免费随机全桌座位</button><button type="button" class="secondary" data-action="yokoyama-pass">结束发动</button>` : ""}
         ${!skill.canFinish ? `<span class="tag">等待 ${escapeHtml(skill.currentPlayerName || "玩家")} 选择</span>` : ""}
@@ -7365,8 +7356,7 @@ function renderSetupTable() {
   const setup = state.setup || {};
   const titleByStage = {
     [RESTART_CARD_STAGE]: "重开卡阶段",
-    [OTHER_CARDS_STAGE]: "其他卡牌阶段",
-    "shen-biesan-skill": "玉面雷神阶段",
+    [OTHER_CARDS_STAGE]: "卡牌与玉面雷神阶段",
     bidding: "叫主牌桌",
     "score-bidding": "叫分牌桌",
     "yokoyama-skill": "全能偶像阶段",
@@ -7420,18 +7410,18 @@ function setupSeatStatus(player) {
   const setup = state.setup || {};
   const fry = setup.fry || {};
   if (state.stage === RESTART_CARD_STAGE || state.stage === OTHER_CARDS_STAGE) {
-    if ((state.gameItems?.completedPlayerIds || []).includes(player.id)) return { text: "已完成", tone: "good" };
+    const cardCompleted = (state.gameItems?.completedPlayerIds || []).includes(player.id);
+    const biesan = state.boardHeroSkills?.shenBiesan || {};
+    const biesanEligible = state.stage === OTHER_CARDS_STAGE && (biesan.eligiblePlayerIds || []).includes(player.id);
+    const biesanCompleted = !biesanEligible || (biesan.completedPlayerIds || []).includes(player.id);
+    if (cardCompleted && biesanCompleted) return { text: "已完成", tone: "good" };
+    if (cardCompleted && biesanEligible) return { text: "选择技能", tone: "good" };
+    if (biesanEligible && biesanCompleted) return { text: "选择卡牌", tone: "" };
+    if (biesanEligible) return { text: "卡牌/技能", tone: "good" };
     const usedCount = state.stage === RESTART_CARD_STAGE
       ? ((state.gameItems?.restartUsedPlayerIds || []).includes(player.id) ? 1 : 0)
       : (state.gameItems?.uses || []).filter((use) => use.playerId === player.id).length;
     return usedCount ? { text: `已用 ${usedCount} 张`, tone: "accent" } : { text: "选择卡牌", tone: "" };
-  }
-  if (state.stage === "shen-biesan-skill") {
-    const skill = state.boardHeroSkills?.shenBiesan || {};
-    if ((skill.eligiblePlayerIds || []).includes(player.id)) {
-      return { text: skill.viewerCompleted && player.id === state.viewer?.id ? "已选择" : "发动/放弃", tone: "good" };
-    }
-    return { text: "等待技能", tone: "" };
   }
   if (state.stage === "bidding") {
     if (!setup.bid) return { text: "等待叫主", tone: "" };
@@ -7487,7 +7477,7 @@ function currentSetupActionId() {
   const setup = state.setup || {};
   if (state.stage === "bidding") return setup.bid?.actionId || "";
   if (state.stage === "trump-selecting") return setup.bid?.actionId || "";
-  if (state.stage === "fry-burying") return setup.fry?.pendingBid?.actionId || "";
+  if (state.stage === "fry-burying") return setup.fry?.directSkillActionId || setup.fry?.pendingBid?.actionId || "";
   if (state.stage === "frying") return setup.fry?.lastBid?.actionId || "";
   return "";
 }
@@ -7507,7 +7497,7 @@ function setupActionsForPlayer(playerId) {
   const currentId = currentSetupActionId();
   const source = state.stage === "bidding" || state.stage === "trump-selecting"
     ? (setup.bidHistory || [])
-    : (setup.fry?.history || []);
+    : setupFryActions(setup);
   return source
     .filter((action) => action.playerId === playerId)
     .map((action) => ({
@@ -7522,7 +7512,13 @@ function renderSetupActionTrail(actions, cardSkin = "") {
     <div class="setup-action-trail">
       ${actions.map((action) => `
         <div class="setup-action ${action.current ? "current" : ""}">
-          <span>${escapeHtml(action.kind === "score" ? `${action.score}分` : action.direct ? `${action.suitName}主` : `${action.count}张${action.suitName}2${action.random ? " 随机" : ""}`)}</span>
+          <span>${escapeHtml(action.kind === "score"
+            ? `${action.score}分`
+            : action.directSkill
+              ? "神姜文炒底"
+              : action.direct
+                ? `${action.suitName}主`
+                : `${action.count}张${action.suitName}2${action.random ? " 随机" : ""}`)}</span>
           ${action.cards?.length ? renderMiniCards(action.cards, { cardSkin }) : ""}
         </div>
       `).join("")}
@@ -7997,6 +7993,11 @@ function historyPlayerRole(source, playerId) {
   return player?.role || "";
 }
 
+function setupFryActions(setup) {
+  return [...(setup?.fry?.history || []), ...(setup?.fry?.skillHistory || [])]
+    .sort((left, right) => new Date(left?.at || 0).getTime() - new Date(right?.at || 0).getTime());
+}
+
 function setupHistoryEntries(source) {
   const setup = source.setup || {};
   const entries = [];
@@ -8019,7 +8020,16 @@ function setupHistoryEntries(source) {
         : `${playerName} ${action.random ? "被随机指定" : "亮出"}${action.count || 1}张${action.suitName || historySuitDetail(action.suit).name}2`
     });
   });
-  (setup.fry?.history || []).forEach((action) => {
+  setupFryActions(setup).forEach((action) => {
+    if (action.directSkill) {
+      entries.push({
+        kind: "fry",
+        label: "炒底",
+        at: action.at || null,
+        text: `${action.playerName || historyPlayerName(source, action.playerId)} 使用神 · 姜文发动${action.skillName || "排骨之王"}炒底`
+      });
+      return;
+    }
     entries.push({
       kind: "fry",
       label: "炒底",
@@ -8313,7 +8323,9 @@ function renderPlayer(player) {
   const isSetupTurn = state.setup?.biddingTurnPlayerId === player.id
     || state.setup?.fry?.currentPlayerId === player.id
     || state.boardHeroSkills?.yokoyama?.currentPlayerId === player.id
-    || (state.stage === "shen-biesan-skill" && (state.boardHeroSkills?.shenBiesan?.eligiblePlayerIds || []).includes(player.id))
+    || (state.stage === OTHER_CARDS_STAGE
+      && (state.boardHeroSkills?.shenBiesan?.eligiblePlayerIds || []).includes(player.id)
+      && !(state.boardHeroSkills?.shenBiesan?.completedPlayerIds || []).includes(player.id))
     || (state.stage === "shen-haohao-skill" && (state.boardHeroSkills?.shenHaohao?.eligiblePlayerIds || []).includes(player.id));
   const isBankerAction = (state.stage === "burying" || state.stage === "dogleg") && state.setup?.bankerId === player.id;
   const canKick = !isSpectating() && state.viewer?.host && !isMe && state.status === "lobby" && !player.pveRobot;

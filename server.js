@@ -1049,7 +1049,8 @@ function emptyBoardHeroSkills() {
       replacementRankByPlayerId: {},
       resetCooldownByPlayerId: {},
       deadlineAt: null,
-      resolving: false
+      resolving: false,
+      resolved: false
     },
     yokoyama: {
       queuePlayerIds: [],
@@ -1151,16 +1152,25 @@ function beginGameItemStage(room, stage) {
     deadlineAt: new Date(new Date(openedAt).getTime() + GAME_ITEM_STAGE_SECONDS * 1000).toISOString(),
     completedPlayerIds
   };
-  if (allPlayersCompletedGameItemStage(room)) advanceGameItemStage(room);
+  if (stage === OTHER_CARDS_STAGE) beginShenBiesanSkillChoices(room, room.gameItems.stage.deadlineAt);
+  if (allPlayersCompletedGameItemStage(room) && shenBiesanChoicesCompleted(room)) {
+    void advanceGameItemStage(room).catch((error) => {
+      console.error("[game-items] advance stage failed", error.message);
+    });
+  }
 }
 
-function advanceGameItemStage(room) {
+async function advanceGameItemStage(room) {
   if (room.stage === RESTART_CARD_STAGE) {
     beginGameItemStage(room, OTHER_CARDS_STAGE);
     return true;
   }
   if (room.stage === OTHER_CARDS_STAGE) {
-    beginShenBiesanSkillStage(room);
+    if (!allPlayersCompletedGameItemStage(room) || !shenBiesanChoicesCompleted(room)) return false;
+    await resolveShenBiesanSkillChoices(room);
+    if (!room.boardHeroSkills.shenBiesan.resolved) return false;
+    if (room.stage !== OTHER_CARDS_STAGE) return false;
+    beginBankerSelectionFlow(room);
     return true;
   }
   return false;
@@ -1195,9 +1205,7 @@ function replacementRankForShenBiesan(player) {
   return shuffle(ownedReplacementRanksForShenBiesan(player))[0] || null;
 }
 
-function beginShenBiesanSkillStage(room) {
-  clearGameItemStageTimer(room);
-  clearBoardHeroSkillTimer(room);
+function beginShenBiesanSkillChoices(room, deadlineAt = null) {
   const eligiblePlayers = shenBiesanEligiblePlayers(room);
   const eligiblePlayerIds = eligiblePlayers.map((player) => player.id);
   const replacementRankByPlayerId = Object.fromEntries(eligiblePlayers.map((player) => [
@@ -1210,19 +1218,17 @@ function beginShenBiesanSkillStage(room) {
     applicantPlayerIds: [],
     replacementRankByPlayerId,
     resetCooldownByPlayerId: {},
-    deadlineAt: eligiblePlayerIds.length
-      ? new Date(Date.now() + BOARD_HERO_SKILL_SECONDS * 1000).toISOString()
-      : null,
-    resolving: false
+    deadlineAt: eligiblePlayerIds.length ? deadlineAt : null,
+    resolving: false,
+    resolved: false
   };
-  if (!eligiblePlayerIds.length) {
-    beginBankerSelectionFlow(room);
-    return false;
-  }
-  room.stage = "shen-biesan-skill";
-  room.phase = "玉面雷神发动阶段";
-  addEvent(room, "进入玉面雷神发动阶段，符合条件的玩家可选择是否申请发动");
-  return true;
+  if (eligiblePlayerIds.length) addEvent(room, "其他卡牌阶段内，符合条件的神 · 瘪三玩家可同时选择是否申请发动玉面雷神");
+  return eligiblePlayerIds.length > 0;
+}
+
+function shenBiesanChoicesCompleted(room) {
+  const state = room.boardHeroSkills.shenBiesan;
+  return state.eligiblePlayerIds.every((playerId) => state.completedPlayerIds.includes(playerId));
 }
 
 function applyShenBiesanReplacement(room, replacementRank) {
@@ -1266,12 +1272,11 @@ async function chargeRoomBoardHeroSkill(room, ...args) {
   }
 }
 
-async function resolveShenBiesanSkillStage(room) {
+async function resolveShenBiesanSkillChoices(room) {
   const state = room.boardHeroSkills.shenBiesan;
-  if (room.stage !== "shen-biesan-skill" || state.resolving) return false;
+  if (room.stage !== OTHER_CARDS_STAGE || state.resolving || state.resolved) return false;
   state.resolving = true;
   state.deadlineAt = null;
-  clearBoardHeroSkillTimer(room);
   const applicants = shuffle(state.applicantPlayerIds.map((playerId) => playerById(room, playerId)).filter(Boolean));
   for (const player of applicants) {
     try {
@@ -1296,12 +1301,13 @@ async function resolveShenBiesanSkillStage(room) {
       addEvent(room, `${player.name} 发动玉面雷神失败：${error.message}`);
     }
   }
-  beginBankerSelectionFlow(room);
+  state.resolving = false;
+  state.resolved = true;
   return true;
 }
 
 async function submitShenBiesanSkillChoice(room, player, activate, resetCooldown = false) {
-  if (room.stage !== "shen-biesan-skill") return { error: "当前不是玉面雷神发动阶段", status: 409 };
+  if (room.stage !== OTHER_CARDS_STAGE) return { error: "玉面雷神只能在其他卡牌阶段发动", status: 409 };
   const state = room.boardHeroSkills.shenBiesan;
   if (!state.eligiblePlayerIds.includes(player.id)) return { error: "你当前不满足玉面雷神发动条件", status: 403 };
   if (state.completedPlayerIds.includes(player.id)) return { error: "你已经完成选择", status: 409 };
@@ -1311,23 +1317,34 @@ async function submitShenBiesanSkillChoice(room, player, activate, resetCooldown
     state.resetCooldownByPlayerId[player.id] = Boolean(resetCooldown);
   }
   addEvent(room, `${player.name}${activate ? "申请发动玉面雷神" : "放弃发动玉面雷神"}`);
-  if (state.completedPlayerIds.length >= state.eligiblePlayerIds.length) await resolveShenBiesanSkillStage(room);
+  if (allPlayersCompletedGameItemStage(room) && shenBiesanChoicesCompleted(room)) await advanceGameItemStage(room);
   return { ok: true };
 }
 
-function autoAdvanceExpiredGameItemStage(room) {
+async function autoAdvanceExpiredGameItemStage(room) {
   if (!isItemUseStage(room?.stage)) return false;
   const deadline = new Date(room.gameItems?.stage?.deadlineAt || "").getTime();
   if (!Number.isFinite(deadline) || Date.now() < deadline) return false;
+  room.gameItems.stage.deadlineAt = null;
+  room.gameItems.stage.completedPlayerIds = room.players.map((player) => player.id);
+  if (room.stage === OTHER_CARDS_STAGE) {
+    const state = room.boardHeroSkills.shenBiesan;
+    state.eligiblePlayerIds.forEach((playerId) => {
+      if (!state.completedPlayerIds.includes(playerId)) state.completedPlayerIds.push(playerId);
+    });
+    addEvent(room, "卡牌与玉面雷神选择倒计时结束，未操作玩家视为不使用");
+  }
   return advanceGameItemStage(room);
 }
 
-function completeGameItemStageForPlayer(room, player) {
+async function completeGameItemStageForPlayer(room, player) {
   if (!isItemUseStage(room.stage)) return { error: "当前不是卡牌使用阶段", status: 409 };
   const completedIds = completedGameItemPlayerIds(room);
   completedIds.add(player.id);
   room.gameItems.stage.completedPlayerIds = [...completedIds];
-  const advanced = allPlayersCompletedGameItemStage(room) ? advanceGameItemStage(room) : false;
+  const advanced = allPlayersCompletedGameItemStage(room) && shenBiesanChoicesCompleted(room)
+    ? await advanceGameItemStage(room)
+    : false;
   return { ok: true, advanced };
 }
 
@@ -1522,7 +1539,7 @@ function deal(room, options = {}) {
     addEvent(room, `本局开局移除 ${room.removedCards.map((card) => card.label).join("、")}，底牌保持 ${room.kittySize} 张`);
   }
   if (gameItemAccess(room).eligible) beginGameItemStage(room, RESTART_CARD_STAGE);
-  else beginShenBiesanSkillStage(room);
+  else beginBankerSelectionFlow(room);
 }
 
 function readyPlayerCount(room) {
@@ -1650,6 +1667,9 @@ function publicBid(room, bid) {
     cards: (bid.cards || []).map(publicCard),
     random: Boolean(bid.random),
     direct: Boolean(bid.direct),
+    directSkill: Boolean(bid.directSkill),
+    heroId: bid.heroId || null,
+    skillName: bid.skillName || "",
     at: bid.at || null
   };
 }
@@ -1752,7 +1772,9 @@ function setupSnapshot(room, viewer = null) {
           lastFryerName: fry.lastFryerId ? playerName(room, fry.lastFryerId) : "",
           lastBid: publicBid(room, fry.lastBid),
           pendingBid: publicBid(room, fry.pendingBid),
+          directSkillActionId: fry.directSkillActionId || null,
           history: (fry.history || []).map((bid) => publicBid(room, bid)),
+          skillHistory: (fry.skillHistory || []).map((action) => publicBid(room, action)),
           passHistory: (fry.passHistory || []).map((pass) => ({
             playerId: pass.playerId,
             againstCount: pass.againstCount,
@@ -1820,12 +1842,14 @@ function boardHeroSkillsSnapshot(room, viewer = null) {
   return {
     replacementRank: room.boardHeroEffects?.replacementRank || null,
     shenBiesan: {
-      active: room.stage === "shen-biesan-skill",
+      active: room.stage === OTHER_CARDS_STAGE && shenBiesan.eligiblePlayerIds.length > 0,
       deadlineAt: shenBiesan.deadlineAt,
       eligiblePlayerIds: [...shenBiesan.eligiblePlayerIds],
+      completedPlayerIds: [...shenBiesan.completedPlayerIds],
+      applicantPlayerIds: [...shenBiesan.applicantPlayerIds],
       viewerEligible: viewerIsBiesanEligible,
       viewerCompleted: viewerCompletedBiesan,
-      canChoose: room.stage === "shen-biesan-skill" && viewerIsBiesanEligible && !viewerCompletedBiesan,
+      canChoose: room.stage === OTHER_CARDS_STAGE && viewerIsBiesanEligible && !viewerCompletedBiesan,
       cost: biesanSkill?.cost || 0,
       cooldown: biesanSkill?.cooldown || 0,
       cooldownAfterUse: biesanSkill?.cooldownAfterUse || 0
@@ -1998,7 +2022,11 @@ function roomResultSnapshot(room, privatePlayerId = null) {
 }
 
 function roomSnapshot(room, viewer = null, options = {}) {
-  autoAdvanceExpiredGameItemStage(room);
+  void autoAdvanceExpiredGameItemStage(room)
+    .then((advanced) => {
+      if (advanced) broadcastAndContinueAutomation(room);
+    })
+    .catch((error) => console.error("[game-items] snapshot advance failed", error.message));
   autoAdvanceExpiredScoreBid(room);
   autoAdvanceExpiredFry(room);
   const secretViewer = options.hideViewerSecrets ? null : viewer;
@@ -3157,12 +3185,8 @@ async function activateYokoyamaSkill(room, player, requestId) {
   });
   const nextUsedCount = usedCount + 1;
   addEvent(room, `${player.name} 发动全能偶像，全桌座位已重新随机（${nextUsedCount}/${maxUses}）`);
-  if (nextUsedCount >= maxUses) {
-    advanceYokoyamaSkillStage(room);
-  } else {
-    state.deadlineAt = new Date(Date.now() + BOARD_HERO_SKILL_SECONDS * 1000).toISOString();
-    room.phase = `等待 ${player.name} 决定是否继续发动全能偶像`;
-  }
+  if (nextUsedCount < maxUses) state.queuePlayerIds.push(player.id);
+  advanceYokoyamaSkillStage(room);
   return { ok: true };
 }
 
@@ -3274,6 +3298,7 @@ function startFrying(room) {
     lastBid: room.setup.bid,
     pendingBid: null,
     history: [],
+    skillHistory: [],
     passHistory: [],
     passesSinceLast: 0,
     deadlineAt: new Date(Date.now() + FRY_SECONDS * 1000).toISOString(),
@@ -3371,6 +3396,17 @@ async function activateShenJiangwenSkill(room, player, requestId, resetCooldown 
   );
   completeShenJiangwenOffer(room, player);
   recordBoardHeroSkillUse(room, player, "shen-jiangwen", payment, { directFry: true });
+  const skillAction = {
+    actionId: id(6),
+    playerId: player.id,
+    directSkill: true,
+    heroId: "shen-jiangwen",
+    skillName: player.battleHeroSnapshot?.skillName || "排骨之王",
+    cards: [],
+    at: now()
+  };
+  room.setup.fry.skillHistory.push(skillAction);
+  room.setup.fry.directSkillActionId = skillAction.actionId;
   player.hand = sortHand([...player.hand, ...room.kitty]);
   room.kitty = [];
   room.setup.fry.directSkillPendingPlayerId = player.id;
@@ -3378,7 +3414,7 @@ async function activateShenJiangwenSkill(room, player, requestId, resetCooldown 
   room.boardHeroSkills.shenJiangwen.directPlayerId = player.id;
   room.stage = "fry-burying";
   room.phase = `${player.name} 发动排骨之王，等待贴底`;
-  addEvent(room, `${player.name} 发动排骨之王，直接拿入底牌；本次不提高炒底门槛`);
+  addEvent(room, `${player.name} 使用神 · 姜文发动排骨之王炒底，直接拿入底牌；本次不提高炒底门槛`);
   return { ok: true };
 }
 
@@ -3386,6 +3422,7 @@ function continueFryingAfterBury(room, player) {
   const fry = room.setup.fry;
   if (fry.directSkillPendingPlayerId === player.id) {
     fry.directSkillPendingPlayerId = null;
+    fry.directSkillActionId = null;
     fry.lastFryerId = player.id;
     fry.pendingBid = null;
     fry.passesSinceLast = 0;
@@ -4615,17 +4652,6 @@ function clearBoardHeroSkillTimer(room) {
 }
 
 async function autoAdvanceExpiredBoardHeroSkill(room) {
-  if (room.stage === "shen-biesan-skill") {
-    const state = room.boardHeroSkills.shenBiesan;
-    const deadline = new Date(state.deadlineAt || "").getTime();
-    if (!Number.isFinite(deadline) || deadline > Date.now()) return false;
-    state.eligiblePlayerIds.forEach((playerId) => {
-      if (!state.completedPlayerIds.includes(playerId)) state.completedPlayerIds.push(playerId);
-    });
-    addEvent(room, "玉面雷神倒计时结束，未操作玩家视为放弃");
-    await resolveShenBiesanSkillStage(room);
-    return true;
-  }
   if (room.stage === "yokoyama-skill") {
     const state = room.boardHeroSkills.yokoyama;
     const deadline = new Date(state.deadlineAt || "").getTime();
@@ -4655,9 +4681,7 @@ async function autoAdvanceExpiredBoardHeroSkill(room) {
 
 function scheduleBoardHeroSkillTimer(room) {
   clearBoardHeroSkillTimer(room);
-  const deadlineAt = room.stage === "shen-biesan-skill"
-    ? room.boardHeroSkills.shenBiesan.deadlineAt
-    : room.stage === "yokoyama-skill"
+  const deadlineAt = room.stage === "yokoyama-skill"
       ? room.boardHeroSkills.yokoyama.deadlineAt
       : room.stage === "shen-haohao-skill"
         ? room.boardHeroSkills.shenHaohao.deadlineAt
@@ -4685,10 +4709,15 @@ function scheduleGameItemStageTimer(room) {
   if (!deadlineAt) return false;
   const deadline = new Date(deadlineAt).getTime();
   if (!Number.isFinite(deadline)) return false;
-  room.gameItemStageTimer = setTimeout(() => {
+  room.gameItemStageTimer = setTimeout(async () => {
     room.gameItemStageTimer = null;
     if (rooms.get(room.id) !== room || room.status !== "dealt") return;
-    if (autoAdvanceExpiredGameItemStage(room)) broadcastAndContinueAutomation(room);
+    try {
+      if (await autoAdvanceExpiredGameItemStage(room)) broadcastAndContinueAutomation(room);
+    } catch (error) {
+      console.error("[game-items] stage timeout failed", error.message);
+      broadcastAndContinueAutomation(room);
+    }
   }, Math.max(0, deadline - Date.now()) + 50);
   room.gameItemStageTimer.unref?.();
   return true;
@@ -8278,7 +8307,7 @@ async function handleApi(req, res, pathParts, url) {
       const body = await readJson(req);
       const viewer = requirePlayer(res, room, body.playerId, body.token);
       if (!viewer) return;
-      const result = completeGameItemStageForPlayer(room, viewer);
+      const result = await completeGameItemStageForPlayer(room, viewer);
       if (result.error) return writeJson(res, result.status, { error: result.error });
       broadcastAndContinueAutomation(room);
       return writeJson(res, 200, roomStateAck(room));
