@@ -2115,8 +2115,8 @@ async function submitBoardHeroSkill(action) {
     const message = action === "shen-biesan-pass" ? "已放弃玉面雷神"
       : action === "shen-haohao-pass" ? "已放弃聪明伶俐"
         : action === "shen-haohao-activate" ? "聪明伶俐已发动，本局你不会拖到最终队友的红五/方五"
-      : action === "yokoyama-pass" ? "已结束全能偶像"
-        : action === "yokoyama-activate" ? "全桌座位已重新随机，身份和手牌保持不变"
+      : action === "yokoyama-pass" ? (costs.yokoyama?.viewerCandidatePlayerIds ? "已锁定候选座位" : "已放弃全能偶像")
+        : action === "yokoyama-activate" ? "已生成新的候选座位；最终抽取前不会改变全桌座位"
           : `已提交${skillName}`;
     setMessage(message);
   } catch (error) {
@@ -6471,17 +6471,25 @@ function renderSetupCenter() {
 
   if (stage === "yokoyama-skill") {
     const skill = state.boardHeroSkills?.yokoyama || {};
+    const candidateNames = (skill.viewerCandidatePlayerIds || []).map((playerId) => (
+      state.players.find((player) => player.id === playerId)?.name || "玩家"
+    ));
+    const completedCount = (skill.completedPlayerIds || []).length;
+    const eligibleCount = (skill.eligiblePlayerIds || []).length;
     body = `
       ${renderSetupLines([
         { label: "当前阶段", value: "横山由依 · 全能偶像" },
-        { label: "当前玩家", value: escapeHtml(skill.currentPlayerName || "") },
-        { label: "倒计时", value: setupCountdownTag(skill.deadlineAt, " 后自动放弃") },
-        { label: "本局次数", value: skill.canFinish ? `${escapeHtml(skill.usedCount || 0)} / ${escapeHtml(skill.maxUses || 1)}（剩余 ${escapeHtml(skill.remainingUses || 0)} 次）` : "" }
+        { label: "完成进度", value: `${escapeHtml(completedCount)} / ${escapeHtml(eligibleCount)}` },
+        { label: "倒计时", value: setupCountdownTag(skill.deadlineAt, " 后自动锁定") },
+        skill.viewerEligible ? { label: "我的次数", value: `${escapeHtml(skill.usedCount || 0)} / ${escapeHtml(skill.maxUses || 1)}（剩余 ${escapeHtml(skill.remainingUses || 0)} 次）` } : null
       ])}
-      <div class="meta">每次发动都会将全桌座位重新随机；多人由依按叫庄结束时锁定的顺序轮流，每人每轮最多发动 1 次，有剩余次数则排到队尾等待下一轮。</div>
+      ${candidateNames.length ? `<div class="meta"><strong>我的候选：</strong>${candidateNames.map(escapeHtml).join(" → ")}</div>` : ""}
+      <div class="meta">每名由依各自生成并锁定一套候选座位；全部完成后，服务端在提交候选的由依玩家中等概率抽取一人，并只应用其最后一套候选。星级只增加个人重抽次数，不提高被抽中概率。</div>
       <div class="row">
-        ${!isSpectating() && skill.canActivate ? `<button type="button" data-action="yokoyama-activate">免费随机全桌座位</button><button type="button" class="secondary" data-action="yokoyama-pass">结束发动</button>` : ""}
-        ${!skill.canFinish ? `<span class="tag">等待 ${escapeHtml(skill.currentPlayerName || "玩家")} 选择</span>` : ""}
+        ${!isSpectating() && skill.canActivate ? `<button type="button" data-action="yokoyama-activate">${candidateNames.length ? "免费重抽候选座位" : "免费生成候选座位"}</button>` : ""}
+        ${!isSpectating() && skill.canFinish ? `<button type="button" class="secondary" data-action="yokoyama-pass">${candidateNames.length ? "锁定候选" : "不发动"}</button>` : ""}
+        ${skill.viewerCompleted ? `<span class="tag">${candidateNames.length ? "候选已锁定" : "已放弃发动"}</span>` : ""}
+        ${!skill.viewerEligible ? `<span class="tag">等待由依玩家完成选择</span>` : ""}
       </div>
     `;
   }
@@ -7437,8 +7445,16 @@ function setupSeatStatus(player) {
     return { text: scoreBidState.currentPlayerId ? "可加分/过" : "可起叫", tone: scoreBidState.currentPlayerId ? "good" : "" };
   }
   if (state.stage === "yokoyama-skill") {
-    if (state.boardHeroSkills?.yokoyama?.currentPlayerId === player.id) return { text: "随机座位/结束", tone: "good" };
-    return { text: "等待座位随机", tone: "" };
+    const skill = state.boardHeroSkills?.yokoyama || {};
+    if ((skill.eligiblePlayerIds || []).includes(player.id)) {
+      if ((skill.completedPlayerIds || []).includes(player.id)) {
+        return (skill.candidatePlayerIds || []).includes(player.id)
+          ? { text: "已锁定候选", tone: "good" }
+          : { text: "未发动", tone: "" };
+      }
+      return { text: "生成/锁定候选", tone: "good" };
+    }
+    return { text: "等待候选抽取", tone: "" };
   }
   if (state.stage === "trump-selecting") {
     if (setup.bankerId === player.id) return { text: "选主花色", tone: "good" };
@@ -8322,7 +8338,9 @@ function renderPlayer(player) {
   const isTurn = state.currentTrick?.currentTurnPlayerId === player.id;
   const isSetupTurn = state.setup?.biddingTurnPlayerId === player.id
     || state.setup?.fry?.currentPlayerId === player.id
-    || state.boardHeroSkills?.yokoyama?.currentPlayerId === player.id
+    || (state.stage === "yokoyama-skill"
+      && (state.boardHeroSkills?.yokoyama?.eligiblePlayerIds || []).includes(player.id)
+      && !(state.boardHeroSkills?.yokoyama?.completedPlayerIds || []).includes(player.id))
     || (state.stage === OTHER_CARDS_STAGE
       && (state.boardHeroSkills?.shenBiesan?.eligiblePlayerIds || []).includes(player.id)
       && !(state.boardHeroSkills?.shenBiesan?.completedPlayerIds || []).includes(player.id))

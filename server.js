@@ -1053,9 +1053,14 @@ function emptyBoardHeroSkills() {
       resolved: false
     },
     yokoyama: {
-      queuePlayerIds: [],
-      currentPlayerId: null,
-      deadlineAt: null
+      eligiblePlayerIds: [],
+      completedPlayerIds: [],
+      candidateByPlayerId: {},
+      basePlayerIds: [],
+      inFlightPlayerIds: [],
+      selectedPlayerId: null,
+      deadlineAt: null,
+      resolved: false
     },
     shenHaohao: {
       eligiblePlayerIds: [],
@@ -1830,15 +1835,19 @@ function boardHeroSkillsSnapshot(room, viewer = null) {
   const viewerCompletedBiesan = Boolean(viewer && shenBiesan.completedPlayerIds.includes(viewer.id));
   const viewerIsHaohaoEligible = Boolean(viewer && shenHaohao.eligiblePlayerIds.includes(viewer.id));
   const viewerCompletedHaohao = Boolean(viewer && shenHaohao.completedPlayerIds.includes(viewer.id));
-  const viewerIsCurrentYokoyama = Boolean(viewer && yokoyama.currentPlayerId === viewer.id);
+  const yokoyamaEligiblePlayerIds = yokoyama.eligiblePlayerIds || [];
+  const yokoyamaCompletedPlayerIds = yokoyama.completedPlayerIds || [];
+  const yokoyamaCandidateByPlayerId = yokoyama.candidateByPlayerId || {};
+  const viewerIsYokoyamaEligible = Boolean(viewer && yokoyamaEligiblePlayerIds.includes(viewer.id));
+  const viewerCompletedYokoyama = Boolean(viewer && yokoyamaCompletedPlayerIds.includes(viewer.id));
   const biesanSkill = viewer?.battleHeroSnapshot?.heroId === "shen-biesan" ? viewer.battleHeroSnapshot.paidSkill : null;
   const haohaoSkill = viewer?.battleHeroSnapshot?.heroId === "shen-haohao" ? viewer.battleHeroSnapshot.paidSkill : null;
   const jiangwenSkill = viewer?.battleHeroSnapshot?.heroId === "shen-jiangwen" ? viewer.battleHeroSnapshot.paidSkill : null;
-  const yokoyamaPlayer = playerById(room, yokoyama.currentPlayerId);
-  const yokoyamaSkill = yokoyamaPlayer?.battleHeroSnapshot?.paidSkill || null;
+  const yokoyamaSkill = viewerIsYokoyamaEligible ? viewer?.battleHeroSnapshot?.paidSkill : null;
   const yokoyamaUsedCount = (room.boardHeroEffects?.uses || [])
-    .filter((use) => use.playerId === yokoyama.currentPlayerId && use.heroId === "yokoyama-yui").length;
-  const yokoyamaMaxUses = Number(yokoyamaSkill?.maxUsesPerGame) || 1;
+    .filter((use) => use.playerId === viewer?.id && use.heroId === "yokoyama-yui").length;
+  const yokoyamaMaxUses = viewerIsYokoyamaEligible ? (Number(yokoyamaSkill?.maxUsesPerGame) || 1) : 0;
+  const viewerYokoyamaCandidate = viewer ? yokoyamaCandidateByPlayerId[viewer.id] || null : null;
   return {
     replacementRank: room.boardHeroEffects?.replacementRank || null,
     shenBiesan: {
@@ -1856,11 +1865,15 @@ function boardHeroSkillsSnapshot(room, viewer = null) {
     },
     yokoyama: {
       active: room.stage === "yokoyama-skill",
-      currentPlayerId: yokoyama.currentPlayerId,
-      currentPlayerName: yokoyama.currentPlayerId ? playerName(room, yokoyama.currentPlayerId) : "",
       deadlineAt: yokoyama.deadlineAt,
-      canActivate: room.stage === "yokoyama-skill" && viewerIsCurrentYokoyama && yokoyamaUsedCount < yokoyamaMaxUses,
-      canFinish: room.stage === "yokoyama-skill" && viewerIsCurrentYokoyama,
+      eligiblePlayerIds: [...yokoyamaEligiblePlayerIds],
+      completedPlayerIds: [...yokoyamaCompletedPlayerIds],
+      candidatePlayerIds: yokoyamaCompletedPlayerIds.filter((playerId) => yokoyamaCandidateByPlayerId[playerId]),
+      viewerEligible: viewerIsYokoyamaEligible,
+      viewerCompleted: viewerCompletedYokoyama,
+      viewerCandidatePlayerIds: viewerYokoyamaCandidate ? [...viewerYokoyamaCandidate] : null,
+      canActivate: room.stage === "yokoyama-skill" && viewerIsYokoyamaEligible && !viewerCompletedYokoyama && yokoyamaUsedCount < yokoyamaMaxUses,
+      canFinish: room.stage === "yokoyama-skill" && viewerIsYokoyamaEligible && !viewerCompletedYokoyama,
       cost: 0,
       usedCount: yokoyamaUsedCount,
       maxUses: yokoyamaMaxUses,
@@ -1892,7 +1905,9 @@ function boardHeroSkillsSnapshot(room, viewer = null) {
       cost: use.cost,
       cooldownBefore: use.cooldownBefore,
       cooldownAfter: use.cooldownAfter,
-      effect: use.effect,
+      effect: room.stage === "yokoyama-skill" && use.heroId === "yokoyama-yui" && use.playerId !== viewer?.id
+        ? { candidateHidden: true }
+        : use.effect,
       at: use.at
     })),
     seatRandomizations: [...(room.boardHeroEffects?.seatRandomizations || [])],
@@ -3126,76 +3141,119 @@ function enterTrumpSelecting(room) {
 
 function beginYokoyamaSkillStage(room) {
   clearBoardHeroSkillTimer(room);
-  const queuePlayerIds = room.players
+  const eligiblePlayerIds = room.players
     .filter((player) => playerHasBoardHero(room, player, "yokoyama-yui"))
     .map((player) => player.id);
   room.boardHeroSkills.yokoyama = {
-    queuePlayerIds,
-    currentPlayerId: null,
-    deadlineAt: null
+    eligiblePlayerIds,
+    completedPlayerIds: [],
+    candidateByPlayerId: {},
+    basePlayerIds: room.players.map((player) => player.id),
+    inFlightPlayerIds: [],
+    selectedPlayerId: null,
+    deadlineAt: eligiblePlayerIds.length
+      ? new Date(Date.now() + BOARD_HERO_SKILL_SECONDS * 1000).toISOString()
+      : null,
+    resolved: false
   };
-  return advanceYokoyamaSkillStage(room);
-}
-
-function advanceYokoyamaSkillStage(room) {
-  const state = room.boardHeroSkills.yokoyama;
-  state.currentPlayerId = state.queuePlayerIds.shift() || null;
-  if (!state.currentPlayerId) {
-    state.deadlineAt = null;
+  if (!eligiblePlayerIds.length) {
     enterTrumpSelecting(room);
     return false;
   }
-  state.deadlineAt = new Date(Date.now() + BOARD_HERO_SKILL_SECONDS * 1000).toISOString();
   room.stage = "yokoyama-skill";
-  room.phase = `等待 ${playerName(room, state.currentPlayerId)} 决定是否发动全能偶像`;
+  room.phase = "等待横山由依玩家生成并锁定候选座位";
+  addEvent(room, "横山由依玩家可同时生成并锁定候选座位；全部完成后将等概率抽取一名玩家的候选方案");
+  return true;
+}
+
+function yokoyamaChoicesCompleted(room) {
+  const state = room.boardHeroSkills.yokoyama;
+  return state.eligiblePlayerIds.every((playerId) => state.completedPlayerIds.includes(playerId));
+}
+
+function resolveYokoyamaSkillStage(room) {
+  const state = room.boardHeroSkills.yokoyama;
+  if (state.resolved) return false;
+  state.resolved = true;
+  state.deadlineAt = null;
+  const candidatePlayerIds = state.eligiblePlayerIds.filter((playerId) => state.candidateByPlayerId[playerId]);
+  if (candidatePlayerIds.length) {
+    const selectedPlayerId = shuffle(candidatePlayerIds)[0];
+    const afterPlayerIds = state.candidateByPlayerId[selectedPlayerId];
+    const playerMap = new Map(room.players.map((player) => [player.id, player]));
+    const randomizedPlayers = afterPlayerIds.map((playerId) => playerMap.get(playerId)).filter(Boolean);
+    if (randomizedPlayers.length === room.players.length) {
+      room.players = randomizedPlayers;
+      state.selectedPlayerId = selectedPlayerId;
+      room.boardHeroEffects.seatRandomizations.push({
+        playerId: selectedPlayerId,
+        beforePlayerIds: [...state.basePlayerIds],
+        afterPlayerIds: [...afterPlayerIds],
+        at: now()
+      });
+      addEvent(room, `${playerName(room, selectedPlayerId)} 的候选座位被等概率抽中，全桌座位已重新随机`);
+    }
+  } else {
+    addEvent(room, "没有横山由依提交候选座位，座位保持不变");
+  }
+  enterTrumpSelecting(room);
   return true;
 }
 
 async function activateYokoyamaSkill(room, player, requestId) {
   if (room.stage !== "yokoyama-skill") return { error: "当前不是全能偶像发动阶段", status: 409 };
   const state = room.boardHeroSkills.yokoyama;
-  if (state.currentPlayerId !== player.id) return { error: `现在轮到 ${playerName(room, state.currentPlayerId)} 选择`, status: 409 };
+  if (!state.eligiblePlayerIds.includes(player.id)) return { error: "你不能发动全能偶像", status: 403 };
+  if (state.completedPlayerIds.includes(player.id)) return { error: "你已锁定本局选择", status: 409 };
+  if (state.inFlightPlayerIds.includes(player.id)) return { error: "正在生成候选座位，请稍后", status: 409 };
   const maxUses = Number(player.battleHeroSnapshot?.paidSkill?.maxUsesPerGame) || 1;
   const usedCount = (room.boardHeroEffects?.uses || [])
     .filter((use) => use.playerId === player.id && use.heroId === "yokoyama-yui").length;
   if (usedCount >= maxUses) return { error: "本局全能偶像发动次数已用完", status: 409 };
-  const beforePlayerIds = room.players.map((item) => item.id);
-  const randomizedPlayers = shuffle(room.players);
-  if (randomizedPlayers.length > 1 && randomizedPlayers.every((item, index) => item.id === beforePlayerIds[index])) {
-    randomizedPlayers.push(randomizedPlayers.shift());
+  const beforePlayerIds = [...state.basePlayerIds];
+  const afterPlayerIds = shuffle(beforePlayerIds);
+  if (afterPlayerIds.length > 1 && afterPlayerIds.every((playerId, index) => playerId === beforePlayerIds[index])) {
+    afterPlayerIds.push(afterPlayerIds.shift());
   }
-  const afterPlayerIds = randomizedPlayers.map((item) => item.id);
-  const effect = { beforePlayerIds, afterPlayerIds };
-  const payment = await chargeRoomBoardHeroSkill(
-    room,
-    player.accountId,
-    room.gameRecordId,
-    "yokoyama-yui",
-    requestId || `yokoyama:${room.gameRecordId}:${player.id}:${usedCount + 1}`,
-    { ...effect, skillStars: player.battleHeroSnapshot?.stars || 1 }
-  );
-  if (payment.repeated) return { ok: true, repeated: true };
-  room.players = randomizedPlayers;
-  recordBoardHeroSkillUse(room, player, "yokoyama-yui", payment, effect);
-  room.boardHeroEffects.seatRandomizations.push({
-    playerId: player.id,
-    beforePlayerIds,
-    afterPlayerIds,
-    at: now()
-  });
-  const nextUsedCount = usedCount + 1;
-  addEvent(room, `${player.name} 发动全能偶像，全桌座位已重新随机（${nextUsedCount}/${maxUses}）`);
-  if (nextUsedCount < maxUses) state.queuePlayerIds.push(player.id);
-  advanceYokoyamaSkillStage(room);
-  return { ok: true };
+  const effect = { beforePlayerIds, afterPlayerIds, candidate: true };
+  state.inFlightPlayerIds.push(player.id);
+  try {
+    const payment = await chargeRoomBoardHeroSkill(
+      room,
+      player.accountId,
+      room.gameRecordId,
+      "yokoyama-yui",
+      requestId || `yokoyama:${room.gameRecordId}:${player.id}:${usedCount + 1}`,
+      { ...effect, skillStars: player.battleHeroSnapshot?.stars || 1 }
+    );
+    if (payment.repeated) return { ok: true, repeated: true };
+    state.candidateByPlayerId[player.id] = afterPlayerIds;
+    recordBoardHeroSkillUse(room, player, "yokoyama-yui", payment, effect);
+    const nextUsedCount = usedCount + 1;
+    if (nextUsedCount >= maxUses) {
+      state.completedPlayerIds.push(player.id);
+      addEvent(room, `${player.name} 已用完 ${maxUses} 次机会并锁定候选座位`);
+    } else {
+      addEvent(room, `${player.name} 已生成候选座位（${nextUsedCount}/${maxUses}）`);
+    }
+    if (yokoyamaChoicesCompleted(room)) resolveYokoyamaSkillStage(room);
+    return { ok: true };
+  } finally {
+    state.inFlightPlayerIds = state.inFlightPlayerIds.filter((playerId) => playerId !== player.id);
+  }
 }
 
 function passYokoyamaSkill(room, player) {
   if (room.stage !== "yokoyama-skill") return { error: "当前不是全能偶像发动阶段", status: 409 };
   const state = room.boardHeroSkills.yokoyama;
-  if (state.currentPlayerId !== player.id) return { error: `现在轮到 ${playerName(room, state.currentPlayerId)} 选择`, status: 409 };
-  addEvent(room, `${player.name} 结束发动全能偶像`);
-  advanceYokoyamaSkillStage(room);
+  if (!state.eligiblePlayerIds.includes(player.id)) return { error: "你不能操作全能偶像", status: 403 };
+  if (state.completedPlayerIds.includes(player.id)) return { error: "你已锁定本局选择", status: 409 };
+  if (state.inFlightPlayerIds.includes(player.id)) return { error: "正在生成候选座位，请稍后", status: 409 };
+  state.completedPlayerIds.push(player.id);
+  addEvent(room, state.candidateByPlayerId[player.id]
+    ? `${player.name} 已锁定自己的候选座位`
+    : `${player.name} 放弃发动全能偶像`);
+  if (yokoyamaChoicesCompleted(room)) resolveYokoyamaSkillStage(room);
   return { ok: true };
 }
 
@@ -4656,13 +4714,15 @@ async function autoAdvanceExpiredBoardHeroSkill(room) {
     const state = room.boardHeroSkills.yokoyama;
     const deadline = new Date(state.deadlineAt || "").getTime();
     if (!Number.isFinite(deadline) || deadline > Date.now()) return false;
-    const player = playerById(room, state.currentPlayerId);
-    if (!player) {
-      advanceYokoyamaSkillStage(room);
+    if ((state.inFlightPlayerIds || []).length) {
+      state.deadlineAt = new Date(Date.now() + 1000).toISOString();
       return true;
     }
-    addEvent(room, `${player.name} 全能偶像选择超时`);
-    passYokoyamaSkill(room, player);
+    state.eligiblePlayerIds.forEach((playerId) => {
+      if (!state.completedPlayerIds.includes(playerId)) state.completedPlayerIds.push(playerId);
+    });
+    addEvent(room, "全能偶像倒计时结束：已有候选自动锁定，未生成候选者视为放弃");
+    resolveYokoyamaSkillStage(room);
     return true;
   }
   if (room.stage === "shen-haohao-skill") {
