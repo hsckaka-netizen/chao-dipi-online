@@ -129,6 +129,12 @@ test("boka roster uses jiang zha and deng huang with the supplied card identitie
   assert.equal(createBattleHeroSnapshot("lin-chong", 1), null);
 });
 
+test("Doudou belongs to the Brick Zone and uses his SSR card artwork", () => {
+  assert.equal(HOME_UNIT_BY_ID.get("jie-doudou")?.regionId, "brick");
+  const doudou = createBattleHeroSnapshot("jie-doudou", 1);
+  assert.equal(doudou.cardImage, "/assets/heroes/jie-doudou-card-v2.png");
+});
+
 test("all hero skill descriptions expose concrete per-star diamond values", () => {
   const expectedValues = {
     "jiang-zha": "150/185/220/255/290",

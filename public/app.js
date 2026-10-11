@@ -1,6 +1,6 @@
 import { applyStatePatch } from "./state-patch.js?v=9330552c7e1e";
 import { detectNewDraggedFiveEffects, detectNewLargePlayEffects } from "./gameplay-effects.js?v=14791e626d30";
-import { ASSET_URLS, versionedAssetUrl } from "./asset-versions.js?v=68ec130a49da";
+import { ASSET_URLS, versionedAssetUrl } from "./asset-versions.js?v=01850802c48e";
 import { createHistoryTrickEntry, filterHistoryTimelineEntries } from "./history-records.js?v=874ba3c97732";
 import { suitTractorOrderValue } from "./replacement-rank-rules.js?v=3b3650aa685e";
 
