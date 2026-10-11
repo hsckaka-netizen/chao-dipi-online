@@ -6368,6 +6368,7 @@ function renderRoom() {
               <span class="tag accent">${escapeHtml(state.gameModeName || "PVP")} · ${escapeHtml(state.playModeName || "乱斗模式")}</span>
               ${spectating ? `<span class="tag good">观战 · ${escapeHtml(state.spectator?.targetPlayerName || state.viewer?.name || "玩家")}</span>` : ""}
               <span class="tag">${escapeHtml(waitingNextRound ? "等待其他玩家进入下一局" : state.phase)}</span>
+              ${Number(state.viewer?.doudouNumber) ? `<span class="tag accent">界·豆豆本局点数 ${escapeHtml(state.viewer.doudouNumber)}</span>` : ""}
               ${inLobbyView && state.playMode !== "team" ? `<span class="tag">起叫 ${escapeHtml(state.openingBidPercent || 40)}%</span>` : ""}
               ${inLobbyView && state.playMode !== "team" ? `<span class="tag">${escapeHtml(state.bankerScoreModeName || "庄家承余")}</span>` : ""}
               ${inLobbyView && state.playMode !== "team" ? `<span class="tag">狗腿模式：${escapeHtml(state.doglegModeName || state.setup?.doglegModeName || "传统狗腿")}</span>` : ""}
@@ -7245,6 +7246,7 @@ function renderResultPanel() {
               <span class="result-final-score">
                 <b>${signedScore(player.gameScoreText, player.gameScore)}</b>
                 ${Number(player.itemScoreDelta || 0) ? `<small>原始 ${signedScore(player.baseGameScoreText, player.baseGameScore)} · 道具 ${signedScore(player.itemScoreDeltaText, player.itemScoreDelta)}</small>` : ""}
+                ${Number(player.heroScoreDelta || 0) ? `<small>英雄技能 ${signedScore(player.heroScoreDeltaText, player.heroScoreDelta)}</small>` : ""}
               </span>
             </div>
           `;
@@ -8469,6 +8471,9 @@ function renderStoredGameSettlement(game) {
             const gameScore = statisticNumber(player.gameScore);
             const gameOutcome = player.won === true ? "牌胜" : player.won === false ? "牌负" : "牌平";
             const scoreStatus = resultScoreStatus(gameScore);
+            const heroScoreDelta = (result.heroScoreAdjustments || [])
+              .filter((adjustment) => adjustment.recipientPlayerId === player.roomPlayerId)
+              .reduce((sum, adjustment) => sum + statisticNumber(adjustment.delta), 0);
             return `
               <div class="result-row ${scoreStatus.className}">
                 <strong class="result-player-name">
@@ -8484,6 +8489,7 @@ function renderStoredGameSettlement(game) {
                 <span class="result-final-score">
                   <b>${statisticSigned(gameScore)}</b>
                   ${Number(player.itemScoreDelta || 0) ? `<small>原始 ${statisticSigned(player.baseGameScore)} · 道具 ${statisticSigned(player.itemScoreDelta)}</small>` : ""}
+                  ${heroScoreDelta ? `<small>英雄技能 ${statisticSigned(heroScoreDelta)}</small>` : ""}
                 </span>
               </div>
             `;

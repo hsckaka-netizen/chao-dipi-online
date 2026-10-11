@@ -1,7 +1,7 @@
 export const HERO_HOME_RULES = Object.freeze({
-  version: "2026-09-24-v6",
+  version: "2026-10-11-v7",
   skillVersion: "2026-09-24-skill-v9",
-  boardSkillVersion: "2026-09-24-board-skill-v5",
+  boardSkillVersion: "2026-10-11-board-skill-v6",
   maxProductionHours: 6,
   singlePullPrice: 300,
   tenPullPrice: 2700,
@@ -35,10 +35,20 @@ export const HERO_HOME_RULES = Object.freeze({
   extraSlotProductionEfficiency: 0.5,
   boardSkillCooldowns: Object.freeze([5, 4, 3, 2, 1]),
   boardSkillResetCostPerRound: 500,
-  yokoyamaUsesPerGame: Object.freeze([1, 1, 2, 2, 3])
+  yokoyamaUsesPerGame: Object.freeze([1, 1, 2, 2, 3]),
+  shenHaohaoRedFiveScoreReduction: Object.freeze([1, 2, 4, 6, 10]),
+  shenHaohaoUndraggedTeammateDiamonds: 50,
+  jieDoudouDiamondsPerMatchingCard: Object.freeze([10, 15, 20, 25, 35]),
+  jieDoudouBottomScoreBonus: Object.freeze([1, 1.5, 2, 2.5, 3.5]),
+  jieDoudouJiangwenUseDiamonds: 30
 });
 
 const REGION_UPGRADE_COSTS = Object.freeze([60, 70, 80, 100, 130, 160, 190, 230, 280, 350]);
+const CARD_RANK_TO_NUMBER = Object.freeze({ A: 1, 2: 2, 3: 3, 4: 4, 5: 5, 6: 6, 7: 7, 8: 8, 9: 9, 10: 10, J: 11, Q: 12, K: 13 });
+
+export function cardRankNumber(card) {
+  return CARD_RANK_TO_NUMBER[String(card?.rank || "").toUpperCase()] || null;
+}
 
 export const HOME_REGIONS = Object.freeze([
   Object.freeze({ id: "boka", name: "博卡区", icon: "🏇" }),
@@ -62,11 +72,6 @@ export const HOME_UNITS = Object.freeze([
     cardImage: "/assets/heroes/shen-biesan-card-v2.png",
     skillName: "玉面雷神", skillDescription: "被动：对方阵营每被拖1点红五/方五积分，1～5星分别额外获得5/7/9/12/15钻石。主动：叫庄前若本人没有同花色成对2，可随机一个持有点数替代2成为本局比牌；CD为5/4/3/2/1轮。"
   }),
-  Object.freeze({
-    id: "shen-haohao", name: "神 · 浩浩", namePrefix: "神", baseName: "浩浩", shortName: "浩", type: "hero", rarity: "ssr", gender: "male", regionId: "boka", color: "#0a9b84",
-    cardImage: "/assets/heroes/shen-haohao-card-v1.png",
-    skillName: "聪明伶俐", skillDescription: "被动：每有1名最终友方角色未被拖五，1～5星分别额外获得5/7/9/12/15钻石。主动：炒底开始前发动，本局本人不会拖到最终队友的红五/方五；CD为5/4/3/2/1轮。"
-  }),
   Object.freeze({ id: "boka-youth", name: "博卡青年", shortName: "博", type: "minion", rarity: "minion", gender: null, regionId: "boka", color: "#d6a936" }),
   Object.freeze({
     id: "xiaoxu", name: "小旭", shortName: "旭", type: "hero", rarity: "sr", gender: "male", regionId: "brick", color: "#c45e51",
@@ -82,6 +87,16 @@ export const HOME_UNITS = Object.freeze([
     id: "shen-jiangwen", name: "神 · 姜文", namePrefix: "神", baseName: "姜文", shortName: "姜", type: "hero", rarity: "ssr", gender: "male", regionId: "brick", color: "#4f5e52",
     cardImage: "/assets/heroes/shen-jiangwen-card-v2.png",
     skillName: "排骨之王", skillDescription: "被动：本局每进行1次炒底，1～5星分别额外获得15/20/25/30/40钻石。主动：首次轮到本人炒底时可强制炒底1次，不提高炒底门槛；CD为5/4/3/2/1轮。"
+  }),
+  Object.freeze({
+    id: "shen-haohao", name: "神 · 浩浩", namePrefix: "神", baseName: "浩浩", shortName: "浩", type: "hero", rarity: "ssr", gender: "male", regionId: "brick", color: "#557b9c",
+    cardImage: "/assets/heroes/shen-haohao-card-v1.png",
+    skillName: "聪明伶俐", skillDescription: "本人拖下队友红方五（红桃5或方块5）时，按星级每张使本队少扣1/2/4/6/10分；本队每有一名玩家没有被拖红方五（包括本人），额外获得50钻石。"
+  }),
+  Object.freeze({
+    id: "jie-doudou", name: "界 · 豆豆", namePrefix: "界", baseName: "豆豆", shortName: "豆", type: "hero", rarity: "ssr", gender: "male", regionId: "brick", color: "#8b6a9f",
+    cardImage: "/assets/heroes/jie-doudou-card-v2.png",
+    skillName: "界·豆豆", skillDescription: "发牌后随机获得1～13点数；本局获胜时，每张同点数手牌额外获得10/15/20/25/35钻石；最终底牌含该点数时额外获得1/1.5/2/2.5/3.5积分。每次神·姜文发动技能，额外获得30钻石。"
   }),
   Object.freeze({ id: "brick-worker", name: "搬砖工", shortName: "砖", type: "minion", rarity: "minion", gender: null, regionId: "brick", color: "#a67445" }),
   Object.freeze({
@@ -418,7 +433,9 @@ export function createBattleHeroSnapshot(unitId, stars = 1, cooldownValue = 0) {
     stars: normalizedStars(stars),
     skillVersion: unit.rarity === "ssr" ? HERO_HOME_RULES.boardSkillVersion : HERO_HOME_RULES.skillVersion
   };
-  if (unit.rarity === "ssr") snapshot.paidSkill = boardHeroSkillState(stars, cooldownValue, unit.id);
+  if (unit.rarity === "ssr" && unit.id !== "jie-doudou" && unit.id !== "shen-haohao") {
+    snapshot.paidSkill = boardHeroSkillState(stars, cooldownValue, unit.id);
+  }
   return snapshot;
 }
 
@@ -468,7 +485,13 @@ export function calculateHeroSkillReward({
   gameResult = null,
   trickHistory = [],
   fryHistory = [],
-  boardHeroUses = []
+  boardHeroUses = [],
+  doudouNumber = null,
+  doudouMatchingCards = 0,
+  doudouBottomMatches = false,
+  shenJiangwenUseCount = 0,
+  haohaoDraggedTeammateRedFives = 0,
+  haohaoUndraggedTeammates = 0
 } = {}) {
   if (!snapshot?.heroId || !playerId || !playerResult) return null;
   const stars = normalizedStars(snapshot.stars);
@@ -546,14 +569,33 @@ export function calculateHeroSkillReward({
     return baseSkillResult(snapshot, dragPoints, null, dragPoints * diamondsPerPoint, `对方阵营被拖红五${redFives}张、方五${diamondFives}张${bottomExtra ? `，含保底翻倍追加${bottomExtra}点` : ""}，共${dragPoints}点被拖积分，每点奖励${diamondsPerPoint}钻`);
   }
 
+  if (snapshot.heroId === "jie-doudou") {
+    const diamondsPerCard = HERO_HOME_RULES.jieDoudouDiamondsPerMatchingCard[stars - 1];
+    const won = Number(playerResult.baseGameScore ?? playerResult.gameScore) > 0;
+    const handReward = won ? Math.max(0, Math.trunc(Number(doudouMatchingCards) || 0)) * diamondsPerCard : 0;
+    const fatherReward = Math.max(0, Math.trunc(Number(shenJiangwenUseCount) || 0))
+      * HERO_HOME_RULES.jieDoudouJiangwenUseDiamonds;
+    const bottomScoreBonus = doudouBottomMatches ? HERO_HOME_RULES.jieDoudouBottomScoreBonus[stars - 1] : 0;
+    const amount = handReward + fatherReward;
+    const detail = `随机点数${doudouNumber ?? "未记录"}；${won ? `持有${doudouMatchingCards}张同点数牌，奖励${handReward}钻` : "本局未获胜，手牌奖励为0钻"}；神·姜文成功发动${shenJiangwenUseCount}次，奖励${fatherReward}钻；${doudouBottomMatches ? `底牌命中，追加${bottomScoreBonus}积分` : "底牌未命中，不追加积分"}`;
+    return {
+      ...baseSkillResult(snapshot, (won ? doudouMatchingCards : 0) + shenJiangwenUseCount, null, amount, detail),
+      rulesVersion: HERO_HOME_RULES.boardSkillVersion,
+      scoreBonus: bottomScoreBonus
+    };
+  }
+
   if (snapshot.heroId === "shen-haohao") {
-    const allies = (Array.isArray(playerResults) ? playerResults : [])
-      .filter((result) => result?.team && result.team === playerResult.team);
-    const protectedAllies = allies
-      .filter((result) => (Number(result.draggedRedFives) || 0) + (Number(result.draggedDiamondFives) || 0) === 0);
-    const diamondsPerAlly = SHEN_HAOHAO_DIAMONDS_PER_PROTECTED_ALLY[stars - 1];
-    const detail = `被动按最终阵营统计，${protectedAllies.length}/${allies.length}名友方角色未被拖五，每名奖励${diamondsPerAlly}钻`;
-    return baseSkillResult(snapshot, protectedAllies.length, null, protectedAllies.length * diamondsPerAlly, detail);
+    const diamonds = Math.max(0, Math.trunc(Number(haohaoUndraggedTeammates) || 0))
+      * HERO_HOME_RULES.shenHaohaoUndraggedTeammateDiamonds;
+    const reductionPerFive = HERO_HOME_RULES.shenHaohaoRedFiveScoreReduction[stars - 1];
+    const reduced = Math.max(0, Math.trunc(Number(haohaoDraggedTeammateRedFives) || 0)) * reductionPerFive;
+    return {
+      ...baseSkillResult(snapshot, haohaoUndraggedTeammates, null, diamonds,
+        `本队${haohaoUndraggedTeammates}名玩家未被拖红方五，奖励${diamonds}钻；本人拖下队友${haohaoDraggedTeammateRedFives}张红方五，本队少扣${reduced}分`),
+      rulesVersion: HERO_HOME_RULES.boardSkillVersion,
+      scoreBonus: reduced
+    };
   }
 
   if (snapshot.heroId === "yokoyama-yui") {

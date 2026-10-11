@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import {
   boardHeroSkillState,
   calculateHeroSkillReward,
+  cardRankNumber,
   createBattleHeroSnapshot,
   createHeroTaskDefinition,
   createHeroTaskRequirements,
@@ -137,15 +138,40 @@ test("all hero skill descriptions expose concrete per-star diamond values", () =
     "maeda-atsuko": "185/230/280/325/370",
     "watanabe-mayu": "55/70/85/100/115",
     "shen-biesan": "5/7/9/12/15",
-    "shen-haohao": "5/7/9/12/15",
+    "shen-haohao": "50",
     "shen-jiangwen": "15/20/25/30/40",
-    "yokoyama-yui": "15/20/25/30/40"
+    "yokoyama-yui": "15/20/25/30/40",
+    "jie-doudou": "10/15/20/25/35"
   };
   Object.entries(expectedValues).forEach(([unitId, values]) => {
     const description = HOME_UNIT_BY_ID.get(unitId)?.skillDescription || "";
     assert.match(description, new RegExp(values.replaceAll("/", "\\/")));
     assert.match(description, /钻石/);
   });
+});
+
+test("Doudou and Haohao rewards use frozen hand, bottom, activation, and dragged-five facts", () => {
+  assert.deepEqual(["A", "2", "10", "J", "Q", "K"].map((rank) => cardRankNumber({ rank })), [1, 2, 10, 11, 12, 13]);
+  const doudou = calculateHeroSkillReward({
+    snapshot: createBattleHeroSnapshot("jie-doudou", 5),
+    playerId: "doudou",
+    playerResult: { baseGameScore: 2 },
+    doudouNumber: 13,
+    doudouMatchingCards: 3,
+    doudouBottomMatches: true,
+    shenJiangwenUseCount: 2
+  });
+  assert.equal(doudou.amount, 165);
+  assert.equal(doudou.scoreBonus, 3.5);
+  const haohao = calculateHeroSkillReward({
+    snapshot: createBattleHeroSnapshot("shen-haohao", 4),
+    playerId: "haohao",
+    playerResult: { baseGameScore: -2 },
+    haohaoDraggedTeammateRedFives: 2,
+    haohaoUndraggedTeammates: 3
+  });
+  assert.equal(haohao.amount, 150);
+  assert.equal(haohao.scoreBonus, 12);
 });
 
 test("home UI renders full hero cards and a large skill preview", async () => {
@@ -496,31 +522,17 @@ test("yokoyama counts points fed before a dogleg identity became public from fin
   assert.match(reward.detail, /最终身份回看全局出牌记录/);
 });
 
-test("shen haohao passive rewards final allies who avoided all dragged fives without activation", () => {
-  const playerResults = [
-    { playerId: "haohao", team: "banker", draggedRedFives: 0, draggedDiamondFives: 0 },
-    { playerId: "banker", team: "banker", draggedRedFives: 0, draggedDiamondFives: 0 },
-    { playerId: "dogleg", team: "banker", draggedRedFives: 1, draggedDiamondFives: 0 },
-    { playerId: "idle", team: "idle", draggedRedFives: 0, draggedDiamondFives: 0 }
-  ];
+test("shen haohao rewards undragged teammates and reduces teammate red-five loss", () => {
   const reward = calculateHeroSkillReward({
     snapshot: createBattleHeroSnapshot("shen-haohao", 4),
     playerId: "haohao",
-    playerResult: playerResults[0],
-    playerResults
+    playerResult: { baseGameScore: -2 },
+    haohaoDraggedTeammateRedFives: 2,
+    haohaoUndraggedTeammates: 3
   });
-  assert.equal(reward.matchedCount, 2);
-  assert.equal(reward.amount, 24);
-  assert.match(reward.detail, /最终阵营统计/);
-
-  const fiveStarPassive = calculateHeroSkillReward({
-    snapshot: createBattleHeroSnapshot("shen-haohao", 5),
-    playerId: "haohao",
-    playerResult: playerResults[0],
-    playerResults
-  });
-  assert.equal(fiveStarPassive.amount, 30);
-  assert.match(fiveStarPassive.detail, /被动按最终阵营统计/);
+  assert.equal(reward.matchedCount, 3);
+  assert.equal(reward.amount, 150);
+  assert.equal(reward.scoreBonus, 12);
 });
 
 test("SSR roster, probabilities, production, and cooldown reset costs use the settled values", () => {
@@ -536,10 +548,8 @@ test("SSR roster, probabilities, production, and cooldown reset costs use the se
   assert.equal(shenBiesan.paidSkill.cooldownAfterUse, 1);
   assert.equal(shenHaohao.name, "神 · 浩浩");
   assert.equal(shenHaohao.skillName, "聪明伶俐");
-  assert.match(shenHaohao.skillDescription, /被动：/);
-  assert.match(shenHaohao.skillDescription, /本人不会拖到最终队友的红五\/方五/);
-  assert.equal(shenHaohao.paidSkill.cost, 1500);
-  assert.equal(shenHaohao.paidSkill.cooldownAfterUse, 2);
+  assert.match(shenHaohao.skillDescription, /本队少扣1\/2\/4\/6\/10分/);
+  assert.equal(shenHaohao.paidSkill, undefined);
   assert.equal(shenJiangwen.skillName, "排骨之王");
   assert.equal(shenJiangwen.paidSkill.cost, 500);
   assert.equal(createBattleHeroSnapshot("shen-jiangwen", 1, 0).paidSkill.cost, 0);
@@ -661,7 +671,7 @@ test("daily hero tasks use the five settled tiers and feasible owned-hero requir
 
 test("one-click hero dispatch skips occupied heroes and finds a valid relaxed lineup", () => {
   const selected = selectHeroTaskUnits(
-    ["jiang-zha", "deng-huang", "shen-biesan", "shen-haohao", "xiaoxu", "gelu", "shen-jiangwen", "maeda-atsuko", "watanabe-mayu", "yokoyama-yui"],
+    ["jiang-zha", "deng-huang", "shen-biesan", "jie-doudou", "xiaoxu", "gelu", "shen-jiangwen", "shen-haohao", "maeda-atsuko", "watanabe-mayu", "yokoyama-yui"],
     ["jiang-zha"],
     5,
     { regions: { boka: 1 }, genders: { female: 2 } }

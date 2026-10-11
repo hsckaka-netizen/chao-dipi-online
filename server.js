@@ -65,6 +65,7 @@ import {
   isDiamondEligibleGame
 } from "./diamond-rewards.js";
 import {
+  applyHeroBoardScoreAdjustments,
   applyWarGodAdjustments,
   AVATAR_FRAME_KEYS,
   CONSUMABLE_ITEMS,
@@ -81,7 +82,7 @@ import {
 import { versionedAssetUrl } from "./public/asset-versions.js";
 import { createStatePatch } from "./public/state-patch.js";
 import { applyShenBiesanCardRules, suitTractorOrderValue } from "./public/replacement-rank-rules.js";
-import { calculateHeroSkillReward, HERO_HOME_RULES } from "./hero-home.js";
+import { calculateHeroSkillReward, cardRankNumber, HERO_HOME_RULES } from "./hero-home.js";
 import { ACHIEVEMENT_TITLE_BY_ID } from "./achievements.js";
 import {
   assignHomeUnit,
@@ -1522,6 +1523,7 @@ function deal(room, options = {}) {
   const preparedDeck = deckForPlayerCount(count);
   const deck = shuffle(preparedDeck.deck);
   room.removedCards = preparedDeck.removedCards;
+  room.heroRoundState = {};
   room.players.forEach((player, playerIndex) => {
     const start = playerIndex * HAND_SIZE;
     player.hand = sortHand(deck.slice(start, start + HAND_SIZE));
@@ -1531,6 +1533,13 @@ function deal(room, options = {}) {
     player.throwFailures = 0;
     player.ready = false;
     player.nextRoundEntered = false;
+    if (player.battleHeroSnapshot?.heroId === "jie-doudou") {
+      const number = randomInt(1, 14);
+      room.heroRoundState[player.id] = {
+        number,
+        matchingCards: player.hand.filter((card) => cardRankNumber(card) === number).length
+      };
+    }
   });
   room.kitty = deck.slice(count * HAND_SIZE);
   room.status = "dealt";
@@ -2131,6 +2140,9 @@ function roomSnapshot(room, viewer = null, options = {}) {
       autoPlayEnabled: Boolean(viewer.autoPlayEnabled),
       squad: viewer.squad || null,
       battleHeroSnapshot: viewer.battleHeroSnapshot || null,
+      doudouNumber: viewer.battleHeroSnapshot?.heroId === "jie-doudou"
+        ? room.heroRoundState?.[viewer.id]?.number ?? null
+        : null,
       equippedTitle: equippedTitleForPlayer(viewer),
       pveEnergyEligible: viewer.pveEnergyEligible !== false,
       pveEnergySpent: Number(viewer.pveEnergySpent) || 0,
@@ -2573,6 +2585,19 @@ function gameScoreText(value) {
   return Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(2).replace(/0+$/, "").replace(/\.$/, "");
 }
 
+function draggedTeammateRedFiveCount(room, playerId, teamIds) {
+  const teammates = new Set(teamIds);
+  return (room.trickHistory || []).reduce((sum, trick) => sum + (trick.plays || []).reduce((trickSum, play) => {
+    if (play.playerId === playerId || !teammates.has(play.playerId)) return trickSum;
+    return trickSum + (play.cards || []).filter((card) => (
+      card.type === "normal"
+      && card.rank === "5"
+      && (card.suit === "H" || card.suit === "D")
+      && draggedFiveActorId(trick, play, card) === playerId
+    )).length;
+  }, 0), 0);
+}
+
 function teamName(team) {
   return team === "idle" ? "闲家" : team === "banker" ? "庄队" : "双方";
 }
@@ -2834,6 +2859,19 @@ function finishGame(room, completedTrick) {
   }));
   room.result.playerResults.forEach((playerResult) => {
     const roomPlayer = room.players.find((player) => player.id === playerResult.playerId);
+    const teamResults = room.result.playerResults.filter((result) => result.team === playerResult.team);
+    const teamIds = teamResults.map((result) => result.playerId);
+    const doudouState = room.heroRoundState?.[playerResult.playerId];
+    const doudouBottomMatches = Boolean(doudouState && room.result.bottomCards.some((card) => cardRankNumber(card) === doudouState.number));
+    const draggedTeammateFives = roomPlayer?.battleHeroSnapshot?.heroId === "shen-haohao"
+      ? draggedTeammateRedFiveCount(room, playerResult.playerId, teamIds)
+      : 0;
+    const undraggedTeammates = roomPlayer?.battleHeroSnapshot?.heroId === "shen-haohao"
+      ? teamResults.filter((result) => {
+          const member = room.players.find((player) => player.id === result.playerId);
+          return (member?.draggedRedFives || 0) === 0 && (member?.draggedDiamondFives || 0) === 0;
+        }).length
+      : 0;
     playerResult.heroSkillReward = calculateHeroSkillReward({
       snapshot: roomPlayer?.battleHeroSnapshot,
       playerId: playerResult.playerId,
@@ -2842,9 +2880,38 @@ function finishGame(room, completedTrick) {
       gameResult: room.result,
       trickHistory: room.trickHistory,
       fryHistory: room.setup?.fry?.history || [],
-      boardHeroUses: room.boardHeroEffects?.uses || []
+      boardHeroUses: room.boardHeroEffects?.uses || [],
+      doudouNumber: doudouState?.number,
+      doudouMatchingCards: doudouState?.matchingCards,
+      doudouBottomMatches,
+      shenJiangwenUseCount: (room.boardHeroEffects?.uses || []).filter((use) => use.heroId === "shen-jiangwen").length,
+      haohaoDraggedTeammateRedFives: draggedTeammateFives,
+      haohaoUndraggedTeammates: undraggedTeammates
     });
   });
+  const heroScoreAdjusted = applyHeroBoardScoreAdjustments(room.result.playerResults, {
+    teamTransfers: room.result.playerResults.flatMap((playerResult) => {
+      const roomPlayer = room.players.find((player) => player.id === playerResult.playerId);
+      return roomPlayer?.battleHeroSnapshot?.heroId === "shen-haohao" && playerResult.heroSkillReward?.scoreBonus
+        ? [{ sourcePlayerId: playerResult.playerId, sourceTeam: playerResult.team, amount: playerResult.heroSkillReward.scoreBonus }]
+        : [];
+    }),
+    personalBonuses: room.result.playerResults.flatMap((playerResult) => (
+      playerResult.heroSkillReward?.scoreBonus && playerResult.heroSkillReward?.hero?.heroId === "jie-doudou"
+        ? [{ playerId: playerResult.playerId, amount: playerResult.heroSkillReward.scoreBonus }]
+        : []
+    ))
+  });
+  room.result.heroScoreAdjustments = heroScoreAdjusted.adjustments;
+  room.result.playerResults = heroScoreAdjusted.playerResults.map((playerResult) => ({
+    ...playerResult,
+    baseGameScoreText: gameScoreText(playerResult.baseGameScore),
+    itemSelfDeltaText: gameScoreText(playerResult.itemSelfDelta),
+    itemOpponentDeltaText: gameScoreText(playerResult.itemOpponentDelta),
+    itemScoreDeltaText: gameScoreText(playerResult.itemScoreDelta),
+    heroScoreDeltaText: gameScoreText(playerResult.heroScoreDelta),
+    gameScoreText: gameScoreText(playerResult.gameScore)
+  }));
   attachDiamondRewards(room);
 
   const bankerSettlementText = bankerIds.length > 1
@@ -3606,7 +3673,7 @@ function buryCards(room, player, cardIds) {
   room.kitty = selected.cards;
   addEvent(room, `${player.name} 贴入 ${selected.cards.length} 张底牌`);
   if (room.stage === "burying") {
-    beginShenHaohaoSkillStage(room);
+    startFrying(room);
   } else {
     continueFryingAfterBury(room, player);
   }

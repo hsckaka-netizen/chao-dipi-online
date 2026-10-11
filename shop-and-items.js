@@ -214,6 +214,41 @@ function distributeCents(totalCents, recipientIds) {
   });
 }
 
+export function applyHeroBoardScoreAdjustments(playerResults, { teamTransfers = [], personalBonuses = [] } = {}) {
+  const normalized = (playerResults || []).map((player, seatIndex) => ({
+    ...player,
+    seatIndex,
+    gameScore: Math.round((Number(player.gameScore) || 0) * 100) / 100,
+    heroScoreDelta: 0
+  }));
+  const byId = new Map(normalized.map((player) => [player.playerId, player]));
+  const adjustments = [];
+  teamTransfers.forEach(({ sourcePlayerId, sourceTeam, amount }) => {
+    const source = byId.get(sourcePlayerId);
+    const cents = Math.max(0, Math.round((Number(amount) || 0) * 100));
+    if (!source || !cents) return;
+    const ownIds = normalized.filter((player) => player.team === sourceTeam).sort((a, b) => a.seatIndex - b.seatIndex).map((player) => player.playerId);
+    const opponentIds = normalized.filter((player) => player.team !== sourceTeam).sort((a, b) => a.seatIndex - b.seatIndex).map((player) => player.playerId);
+    [...distributeCents(cents, ownIds), ...distributeCents(-cents, opponentIds)].forEach(({ recipientId, cents: delta }) => {
+      const recipient = byId.get(recipientId);
+      if (!recipient) return;
+      recipient.gameScore = Math.round((recipient.gameScore + delta / 100) * 100) / 100;
+      recipient.heroScoreDelta = Math.round((recipient.heroScoreDelta + delta / 100) * 100) / 100;
+      adjustments.push({ sourcePlayerId, recipientPlayerId: recipientId, adjustmentType: "hero-team-transfer", delta: delta / 100 });
+    });
+  });
+  personalBonuses.forEach(({ playerId, amount }) => {
+    const player = byId.get(playerId);
+    const delta = Math.round((Number(amount) || 0) * 100) / 100;
+    if (!player || !delta) return;
+    player.gameScore = Math.round((player.gameScore + delta) * 100) / 100;
+    player.heroScoreDelta = Math.round((player.heroScoreDelta + delta) * 100) / 100;
+    adjustments.push({ sourcePlayerId: playerId, recipientPlayerId: playerId, adjustmentType: "hero-personal-score", delta });
+  });
+  normalized.forEach((player) => delete player.seatIndex);
+  return { playerResults: normalized, adjustments };
+}
+
 export function applyWarGodAdjustments(playerResults, warGodPlayerIds = []) {
   const normalized = (playerResults || []).map((player, seatIndex) => ({
     ...player,

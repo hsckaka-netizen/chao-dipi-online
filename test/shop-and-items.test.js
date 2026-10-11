@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 
 import {
   AVATAR_FRAME_KEYS,
+  applyHeroBoardScoreAdjustments,
   applyWarGodAdjustments,
   CARD_SKIN_KEYS,
   DEFAULT_FRY_SUIT_ORDER,
@@ -18,6 +19,19 @@ import {
   RESTART_CARD_STAGE,
   shopProductIdFromPath
 } from "../shop-and-items.js";
+
+test("hero team score adjustment transfers equal points between teams and preserves personal score bonuses", () => {
+  const result = applyHeroBoardScoreAdjustments([
+    { playerId: "a", team: "idle", gameScore: -2 },
+    { playerId: "b", team: "idle", gameScore: -2 },
+    { playerId: "c", team: "banker", gameScore: 4 }
+  ], {
+    teamTransfers: [{ sourcePlayerId: "a", sourceTeam: "idle", amount: 2 }],
+    personalBonuses: [{ playerId: "a", amount: 1.5 }]
+  });
+  assert.deepEqual(result.playerResults.map((player) => [player.playerId, player.gameScore]), [["a", 0.5], ["b", -1], ["c", 2]]);
+  assert.equal(result.playerResults.reduce((sum, player) => sum + player.heroScoreDelta, 0), 1.5);
+});
 
 test("hero cards and consumable items have an independent fixed shop catalog", () => {
   assert.ok(DEFAULT_SHOP_PRODUCTS.some((product) => product.id === "consumable:restart-card"));
