@@ -135,6 +135,10 @@ test("Doudou belongs to the Brick Zone and uses his SSR card artwork", () => {
   assert.equal(doudou.cardImage, "/assets/heroes/jie-doudou-card-v2.png");
 });
 
+test("Haohao belongs to the Boka Zone", () => {
+  assert.equal(HOME_UNIT_BY_ID.get("shen-haohao")?.regionId, "boka");
+});
+
 test("all hero skill descriptions expose concrete per-star diamond values", () => {
   const expectedValues = {
     "jiang-zha": "150/185/220/255/290",

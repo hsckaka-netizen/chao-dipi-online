@@ -89,7 +89,7 @@ export const HOME_UNITS = Object.freeze([
     skillName: "排骨之王", skillDescription: "被动：本局每进行1次炒底，1～5星分别额外获得15/20/25/30/40钻石。主动：首次轮到本人炒底时可强制炒底1次，不提高炒底门槛；CD为5/4/3/2/1轮。"
   }),
   Object.freeze({
-    id: "shen-haohao", name: "神 · 浩浩", namePrefix: "神", baseName: "浩浩", shortName: "浩", type: "hero", rarity: "ssr", gender: "male", regionId: "brick", color: "#557b9c",
+    id: "shen-haohao", name: "神 · 浩浩", namePrefix: "神", baseName: "浩浩", shortName: "浩", type: "hero", rarity: "ssr", gender: "male", regionId: "boka", color: "#557b9c",
     cardImage: "/assets/heroes/shen-haohao-card-v1.png",
     skillName: "聪明伶俐", skillDescription: "本人拖下队友红方五（红桃5或方块5）时，按星级每张使本队少扣1/2/4/6/10分；本队每有一名玩家没有被拖红方五（包括本人），额外获得50钻石。"
   }),
