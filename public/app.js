@@ -1,6 +1,6 @@
 import { applyStatePatch } from "./state-patch.js?v=9330552c7e1e";
 import { detectNewDraggedFiveEffects, detectNewLargePlayEffects } from "./gameplay-effects.js?v=14791e626d30";
-import { ASSET_URLS, versionedAssetUrl } from "./asset-versions.js?v=01850802c48e";
+import { ASSET_URLS, versionedAssetUrl } from "./asset-versions.js?v=e13f132e3dc1";
 import { createHistoryTrickEntry, filterHistoryTimelineEntries } from "./history-records.js?v=874ba3c97732";
 import { suitTractorOrderValue } from "./replacement-rank-rules.js?v=3b3650aa685e";
 
@@ -62,6 +62,7 @@ const CONSUMABLE_ITEM_FALLBACKS = Object.freeze([
 const RESTART_CARD_STAGE = "restart-card-using";
 const OTHER_CARDS_STAGE = "other-cards-using";
 const SHEN_BIESAN_SKILL_STAGE = "shen-biesan-skill";
+const JIE_RANCHEN_SKILL_STAGE = "jie-ranchen-skill";
 const AVATAR_FRAME_VALUES = new Set(AVATAR_FRAME_OPTIONS.map((option) => option.value));
 const avatarFrameAssets = new Map(Object.entries(ASSET_URLS.avatarFrames));
 let avatarFrameAssetsLoading = false;
@@ -2122,10 +2123,12 @@ async function completeGameItemStage() {
   }
 }
 
-async function submitBoardHeroSkill(action) {
+async function submitBoardHeroSkill(action, investment = null) {
   if (!session || isSpectating()) return;
   const costs = state?.boardHeroSkills || {};
-  const cost = action === "shen-biesan-activate"
+  const cost = action === "jie-ranchen-invest"
+    ? Number(investment) || 0
+    : action === "shen-biesan-activate"
     ? Number(costs.shenBiesan?.cost) || 0
     : action === "shen-haohao-activate"
       ? Number(costs.shenHaohao?.cost) || 0
@@ -2134,7 +2137,8 @@ async function submitBoardHeroSkill(action) {
       : action === "yokoyama-activate"
         ? Number(costs.yokoyama?.cost) || 0
         : 0;
-  const skillName = action.startsWith("shen-biesan") ? "玉面雷神"
+  const skillName = action.startsWith("jie-ranchen") ? "命运投资"
+    : action.startsWith("shen-biesan") ? "玉面雷神"
     : action.startsWith("shen-haohao") ? "聪明伶俐"
     : action.startsWith("shen-jiangwen") ? "排骨之王"
       : "全能偶像";
@@ -2145,7 +2149,10 @@ async function submitBoardHeroSkill(action) {
     : action === "shen-jiangwen-activate"
       ? Number(costs.shenJiangwen?.cooldown) || 0
       : 0;
-  if (cost && !window.confirm(`重置${cooldown}轮冷却并发动${skillName}将消耗 ${cost} 钻石，确定继续吗？`)) return;
+  if (action === "jie-ranchen-invest") {
+    const multiplier = Number(costs.jieRanchen?.winMultiplier) || 0;
+    if (!window.confirm(`投资 ${cost} 钻石将公开锁定狗腿或闲家身份，并跳过叫庄。获胜额外获得 ${Math.round(cost * multiplier)} 钻石，确认投资吗？`)) return;
+  } else if (cost && !window.confirm(`重置${cooldown}轮冷却并发动${skillName}将消耗 ${cost} 钻石，确定继续吗？`)) return;
   try {
     await roomAction(`/api/rooms/${session.roomId}/board-hero-skill`, {
       method: "POST",
@@ -2153,7 +2160,8 @@ async function submitBoardHeroSkill(action) {
         playerId: session.playerId,
         token: session.token,
         action,
-        resetCooldown: cost > 0,
+        investment,
+        resetCooldown: action !== "jie-ranchen-invest" && cost > 0,
         requestId: requestId()
       })
     });
@@ -2161,7 +2169,9 @@ async function submitBoardHeroSkill(action) {
       ensureShopState(true);
     }
     if (action.startsWith("shen-biesan") || action.startsWith("shen-haohao") || action.startsWith("shen-jiangwen")) ensureHeroHomeState(true);
-    const message = action === "shen-biesan-pass" ? "已放弃玉面雷神"
+    const message = action === "jie-ranchen-pass" ? "已放弃命运投资"
+      : action === "jie-ranchen-invest" ? "命运投资已发动，身份已公开锁定"
+      : action === "shen-biesan-pass" ? "已放弃玉面雷神"
       : action === "shen-haohao-pass" ? "已放弃聪明伶俐"
         : action === "shen-haohao-activate" ? "聪明伶俐已发动，本局你不会拖到最终队友的红五/方五"
       : action === "yokoyama-pass" ? (costs.yokoyama?.viewerCandidatePlayerIds ? "已锁定候选座位" : "已放弃全能偶像")
@@ -2795,6 +2805,7 @@ function viewerCanPassBid() {
 
 function viewerCanScoreBid() {
   if (isSpectating() || state?.stage !== "score-bidding") return false;
+  if (state.setup?.ranchenRoleLocks?.[state.viewer?.id]) return false;
   const currentId = state.setup?.scoreBid?.currentPlayerId || null;
   if (currentId === state.viewer?.id) return false;
   return !(state.setup?.scoreBid?.passIds || []).includes(state.viewer?.id);
@@ -2865,6 +2876,7 @@ function currentSetupCountdownDeadline() {
     return state.gameItems?.deadlineAt || null;
   }
   if (state?.stage === SHEN_BIESAN_SKILL_STAGE) return state.boardHeroSkills?.shenBiesan?.deadlineAt || null;
+  if (state?.stage === JIE_RANCHEN_SKILL_STAGE) return state.boardHeroSkills?.jieRanchen?.deadlineAt || null;
   if (state?.stage === "score-bidding") return state.setup?.scoreBid?.deadlineAt || null;
   if (state?.stage === "frying") return state.setup?.fry?.deadlineAt || null;
   if (state?.stage === "yokoyama-skill") return state.boardHeroSkills?.yokoyama?.deadlineAt || null;
@@ -3136,6 +3148,7 @@ function colorfulFryOrderText() {
 
 const COLORFUL_FRY_ORDER_VISIBLE_STAGES = new Set([
   OTHER_CARDS_STAGE,
+  JIE_RANCHEN_SKILL_STAGE,
   "bidding",
   "score-bidding",
   "yokoyama-skill",
@@ -6617,6 +6630,27 @@ function renderSetupCenter() {
     `;
   }
 
+  if (stage === JIE_RANCHEN_SKILL_STAGE) {
+    const skill = state.boardHeroSkills?.jieRanchen || {};
+    const rolesAvailable = (skill.availableRoles || []).length > 0;
+    body = `
+      ${renderSetupLines([
+        { label: "当前阶段", value: "界 · 然陈 · 命运投资" },
+        { label: "倒计时", value: setupCountdownTag(skill.deadlineAt, " 后自动放弃") },
+        { label: "完成进度", value: `${escapeHtml((skill.completedPlayerIds || []).length)} / ${escapeHtml((skill.eligiblePlayerIds || []).length)}` },
+        skill.viewerEligible ? { label: "获胜倍率", value: `${escapeHtml(skill.winMultiplier || 0)} 倍投资额` } : null
+      ])}
+      <div class="meta">可投资 100、200 或 300 钻石，服务端随机公开锁定狗腿或闲家身份，本人跳过叫庄。获胜按投资额获得额外钻石；名额已满时不能发动。</div>
+      <div class="row">
+        ${!isSpectating() && skill.canChoose && rolesAvailable ? (skill.investmentOptions || []).map((amount) => `<button type="button" data-action="jie-ranchen-invest" data-investment="${escapeHtml(amount)}">投资 ${escapeHtml(amount)} 钻</button>`).join("") : ""}
+        ${!isSpectating() && skill.canChoose ? `<button type="button" class="secondary" data-action="jie-ranchen-pass">不投资</button>` : ""}
+        ${!isSpectating() && skill.viewerCompleted ? `<span class="tag good">你已完成选择</span>` : ""}
+        ${isSpectating() || !skill.viewerEligible ? `<span class="tag">等待界 · 然陈玩家选择</span>` : ""}
+        ${skill.canChoose && !rolesAvailable ? `<span class="tag">身份名额已满</span>` : ""}
+      </div>
+    `;
+  }
+
   if (stage === "bidding") {
     const turnText = setup.bid
       ? `轮到 ${setup.biddingTurnPlayerName} 抢主或过`
@@ -7550,6 +7584,7 @@ function renderSetupTable() {
     [OTHER_CARDS_STAGE]: "其他卡牌阶段",
     bidding: "叫主牌桌",
     "score-bidding": "叫分牌桌",
+    [JIE_RANCHEN_SKILL_STAGE]: "命运投资阶段",
     "yokoyama-skill": "全能偶像阶段",
     "trump-selecting": "定主牌桌",
     burying: "贴底牌桌",
@@ -7618,6 +7653,15 @@ function setupSeatStatus(player) {
     }
     return { text: "发动/放弃", tone: "good" };
   }
+  if (state.stage === JIE_RANCHEN_SKILL_STAGE) {
+    const skill = state.boardHeroSkills?.jieRanchen || {};
+    if (!(skill.eligiblePlayerIds || []).includes(player.id)) return { text: "等待选择", tone: "" };
+    if ((skill.completedPlayerIds || []).includes(player.id)) {
+      const role = setup.ranchenRoleLocks?.[player.id];
+      return { text: role === "dogleg" ? "锁定狗腿" : role === "idle" ? "锁定闲家" : "未投资", tone: role ? "accent" : "" };
+    }
+    return { text: "投资/放弃", tone: "good" };
+  }
   if (state.stage === "bidding") {
     if (!setup.bid) return { text: "等待叫主", tone: "" };
     if (setup.biddingTurnPlayerId === player.id) return { text: "抢主/过", tone: "good" };
@@ -7627,6 +7671,7 @@ function setupSeatStatus(player) {
   }
   if (state.stage === "score-bidding") {
     const scoreBidState = setup.scoreBid || {};
+    if (setup.ranchenRoleLocks?.[player.id]) return { text: "身份锁定", tone: "accent" };
     if (scoreBidState.currentPlayerId === player.id) return { text: `${scoreBidState.currentScore}分`, tone: "accent" };
     if ((scoreBidState.passIds || []).includes(player.id)) return { text: "已过", tone: "" };
     return { text: scoreBidState.currentPlayerId ? "可加分/过" : "可起叫", tone: scoreBidState.currentPlayerId ? "good" : "" };
@@ -8535,6 +8580,9 @@ function renderPlayer(player) {
     || (state.stage === SHEN_BIESAN_SKILL_STAGE
       && (state.boardHeroSkills?.shenBiesan?.eligiblePlayerIds || []).includes(player.id)
       && !(state.boardHeroSkills?.shenBiesan?.completedPlayerIds || []).includes(player.id))
+    || (state.stage === JIE_RANCHEN_SKILL_STAGE
+      && (state.boardHeroSkills?.jieRanchen?.eligiblePlayerIds || []).includes(player.id)
+      && !(state.boardHeroSkills?.jieRanchen?.completedPlayerIds || []).includes(player.id))
     || (state.stage === "shen-haohao-skill" && (state.boardHeroSkills?.shenHaohao?.eligiblePlayerIds || []).includes(player.id));
   const isBankerAction = (state.stage === "burying" || state.stage === "dogleg") && state.setup?.bankerId === player.id;
   const canKick = !isSpectating() && state.viewer?.host && !isMe && state.status === "lobby" && !player.pveRobot;
@@ -9089,7 +9137,7 @@ const mutatingActions = new Set([
   "complete-item-stage", "collect-home", "assign-home-unit", "select-battle-hero",
   "pull-hero-gacha", "upgrade-hero-unit", "upgrade-home-region", "dispatch-hero-task", "collect-hero-task", "claim-daily-task",
   "purchase-energy", "claim-achievement", "equip-title",
-  "shen-biesan-activate", "shen-biesan-pass", "yokoyama-activate", "yokoyama-pass",
+  "shen-biesan-activate", "shen-biesan-pass", "jie-ranchen-invest", "jie-ranchen-pass", "yokoyama-activate", "yokoyama-pass",
   "shen-haohao-activate", "shen-haohao-pass", "shen-jiangwen-activate"
 ]);
 
@@ -9513,6 +9561,8 @@ document.addEventListener("click", (event) => {
   if (action === "complete-item-stage") completeGameItemStage();
   if (action === "shen-biesan-activate") submitBoardHeroSkill(action);
   if (action === "shen-biesan-pass") submitBoardHeroSkill(action);
+  if (action === "jie-ranchen-invest") submitBoardHeroSkill(action, Number(event.target.closest("[data-investment]")?.dataset.investment));
+  if (action === "jie-ranchen-pass") submitBoardHeroSkill(action);
   if (action === "yokoyama-activate") submitBoardHeroSkill(action);
   if (action === "yokoyama-pass") submitBoardHeroSkill(action);
   if (action === "shen-haohao-activate") submitBoardHeroSkill(action);

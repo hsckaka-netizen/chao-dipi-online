@@ -221,6 +221,19 @@ test("PVP dogleg-mode idle players receive fifty percent more diamonds", () => {
   assert.equal(teamIdleReward.totalAmount, 130);
 });
 
+test("Ranchen investment payout keeps its star multiplier when locked as idle", () => {
+  const reward = calculateGameDiamondReward({
+    gameMode: "pvp",
+    playMode: "brawl",
+    team: "idle",
+    gameScore: 1,
+    heroSkillReward: { amount: 210, skillName: "命运投资", exemptFromIdleRate: true }
+  });
+  assert.equal(reward.baseAmount, 150);
+  assert.equal(reward.heroBonus, 210);
+  assert.equal(reward.totalAmount, 360);
+});
+
 test("win bonuses remain disabled after item-adjusted score changes", () => {
   const room = {
     players: [

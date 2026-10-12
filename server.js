@@ -51,6 +51,7 @@ import {
   normalizeDoglegMode,
   sameRandomOrderDoglegCard
 } from "./dogleg-mechanism.js";
+import { availableRanchenRoles, lockedDoglegIds, lockedNonBankerIds } from "./hero-role-lock.js";
 import {
   allocateBankerTeamScores,
   BANKER_SCORE_MODE_AVERAGE,
@@ -200,6 +201,7 @@ const FRY_SECONDS = 20;
 const GAME_ITEM_STAGE_SECONDS = Math.max(1, Number(process.env.GAME_ITEM_STAGE_SECONDS) || 20);
 const BOARD_HERO_SKILL_SECONDS = Math.max(1, Number(process.env.BOARD_HERO_SKILL_SECONDS) || 20);
 const SHEN_BIESAN_SKILL_STAGE = "shen-biesan-skill";
+const JIE_RANCHEN_SKILL_STAGE = "jie-ranchen-skill";
 const GAME_ITEM_NOTICE_MS = Math.max(1000, Number(process.env.GAME_ITEM_NOTICE_MS) || 5000);
 const TAUNT_DURATION_MS = Math.max(100, Number(process.env.TAUNT_DURATION_MS) || 4500);
 const TAUNT_COOLDOWN_MS = Math.max(0, Number(process.env.TAUNT_COOLDOWN_MS) || 1500);
@@ -1009,7 +1011,8 @@ function openingBankerScore(room) {
 
 function createScoreBidSetup(room) {
   const minimum = openingBankerScore(room);
-  const firstPlayer = randomPlayer(room) || null;
+  const availablePlayers = room.players.filter((player) => !lockedNonBankerIds(room.ranchenRoleLocks).includes(player.id));
+  const firstPlayer = availablePlayers[randomInt(availablePlayers.length)] || null;
   const openedAt = now();
   const current = firstPlayer
     ? {
@@ -1075,6 +1078,11 @@ function emptyBoardHeroSkills() {
     shenJiangwen: {
       offeredPlayerIds: [],
       directPlayerId: null
+    },
+    jieRanchen: {
+      eligiblePlayerIds: [],
+      completedPlayerIds: [],
+      deadlineAt: null
     }
   };
 }
@@ -1124,6 +1132,7 @@ function beginScoreBidding(room) {
   const scoreBid = room.setup.scoreBid;
   room.phase = `${playerName(room, scoreBid.current.playerId)} 以 ${scoreBid.current.score} 分起叫，等待其他玩家加分或过`;
   addEvent(room, `${playerName(room, scoreBid.current.playerId)} 以 ${scoreBid.current.score} 分起叫抢庄`);
+  if (scoreBidOthersPassed(room)) finishScoreBidding(room);
 }
 
 function beginBankerSelectionFlow(room) {
@@ -1133,6 +1142,70 @@ function beginBankerSelectionFlow(room) {
   }
   addEvent(room, `${playerName(room, room.bankerId)} 随机成为庄家，其所在战队为庄队`);
   beginYokoyamaSkillStage(room);
+}
+
+function beginRanchenSkillStage(room) {
+  clearGameItemStageTimer(room);
+  clearBoardHeroSkillTimer(room);
+  if (isFixedTeamGame(room) || !room.doglegNeeded) {
+    beginBankerSelectionFlow(room);
+    return false;
+  }
+  const eligiblePlayerIds = room.players
+    .filter((player) => playerHasBoardHero(room, player, "jie-ranchen"))
+    .map((player) => player.id);
+  if (!eligiblePlayerIds.length) {
+    beginBankerSelectionFlow(room);
+    return false;
+  }
+  room.boardHeroSkills.jieRanchen = {
+    eligiblePlayerIds,
+    completedPlayerIds: [],
+    deadlineAt: new Date(Date.now() + BOARD_HERO_SKILL_SECONDS * 1000).toISOString()
+  };
+  room.stage = JIE_RANCHEN_SKILL_STAGE;
+  room.phase = "命运投资选择阶段";
+  addEvent(room, "界 · 然陈玩家可在叫庄前选择投资并公开锁定身份");
+  return true;
+}
+
+function finishRanchenSkillStage(room) {
+  if (room.stage !== JIE_RANCHEN_SKILL_STAGE) return false;
+  const state = room.boardHeroSkills.jieRanchen;
+  if (!state.eligiblePlayerIds.every((playerId) => state.completedPlayerIds.includes(playerId))) return false;
+  state.deadlineAt = null;
+  beginBankerSelectionFlow(room);
+  return true;
+}
+
+async function submitRanchenSkillChoice(room, player, investment = null) {
+  if (room.stage !== JIE_RANCHEN_SKILL_STAGE) return { error: "当前不是命运投资阶段", status: 409 };
+  const state = room.boardHeroSkills.jieRanchen;
+  if (!state.eligiblePlayerIds.includes(player.id)) return { error: "你不能发动命运投资", status: 403 };
+  if (state.completedPlayerIds.includes(player.id)) return { error: "你已经完成选择", status: 409 };
+  if (investment != null) {
+    const amount = Number(investment);
+    if (!HERO_HOME_RULES.jieRanchenInvestmentOptions.includes(amount)) return { error: "投资额只能选择100、200或300钻石", status: 400 };
+    const availableRoles = availableRanchenRoles(room.players.length, room.doglegNeeded, room.ranchenRoleLocks);
+    if (!availableRoles.length) return { error: "狗腿和闲家名额均已满，无法发动", status: 409 };
+    const lockedRole = availableRoles[randomInt(availableRoles.length)];
+    let payment;
+    try {
+      payment = await chargeRoomBoardHeroSkill(room, player.accountId, room.gameRecordId, "jie-ranchen",
+        `jie-ranchen:${room.gameRecordId}:${player.id}`, { investment: amount, skillStars: player.battleHeroSnapshot?.stars || 1 });
+    } catch (error) {
+      return { error: error.message, status: error.status || 503 };
+    }
+    room.ranchenRoleLocks[player.id] = lockedRole;
+    if (lockedRole === "dogleg") room.doglegPlayerIds.push(player.id);
+    recordBoardHeroSkillUse(room, player, "jie-ranchen", payment, { investment: amount, lockedRole });
+    addEvent(room, `${player.name} 投资 ${amount} 钻石发动命运投资，本局身份公开锁定为${lockedRole === "dogleg" ? "狗腿" : "闲家"}，跳过叫庄`);
+  } else {
+    addEvent(room, `${player.name} 放弃命运投资`);
+  }
+  state.completedPlayerIds.push(player.id);
+  finishRanchenSkillStage(room);
+  return { ok: true };
 }
 
 function completedGameItemPlayerIds(room) {
@@ -1175,7 +1248,7 @@ async function advanceGameItemStage(room) {
   }
   if (room.stage === OTHER_CARDS_STAGE) {
     if (!allPlayersCompletedGameItemStage(room)) return false;
-    beginBankerSelectionFlow(room);
+    beginRanchenSkillStage(room);
     return true;
   }
   return false;
@@ -1234,7 +1307,7 @@ function beginShenBiesanSkillChoices(room, deadlineAt = null) {
 function beginPostShenBiesanFlow(room) {
   clearBoardHeroSkillTimer(room);
   if (gameItemAccess(room).eligible) beginGameItemStage(room, OTHER_CARDS_STAGE);
-  else beginBankerSelectionFlow(room);
+  else beginRanchenSkillStage(room);
 }
 
 function beginShenBiesanSkillStage(room) {
@@ -1553,6 +1626,7 @@ function deal(room, options = {}) {
   room.trumpSuit = null;
   room.doglegCard = null;
   room.doglegPlayerIds = [];
+  room.ranchenRoleLocks = {};
   room.dynamicDogleg = null;
   room.hiddenDogleg = null;
   room.randomOrderDogleg = null;
@@ -1625,6 +1699,7 @@ function resetRoomToLobby(room, options = {}) {
   room.trumpSuit = null;
   room.doglegCard = null;
   room.doglegPlayerIds = [];
+  room.ranchenRoleLocks = {};
   room.dynamicDogleg = null;
   room.hiddenDogleg = null;
   room.randomOrderDogleg = null;
@@ -1787,10 +1862,11 @@ function setupSnapshot(room, viewer = null) {
       ? [...(room.randomOrderDogleg?.targetPositions || [])]
       : [],
     doglegTargetCount: mode === DOGLEG_MODE_RANDOM_ORDER
-      ? (room.randomOrderDogleg?.targetPositions || []).length
+      ? lockedDoglegIds(room.ranchenRoleLocks).length + (room.randomOrderDogleg?.targetPositions || []).length
       : room.doglegNeeded || 0,
     doglegPlayerIds: [...(room.doglegPlayerIds || [])],
     doglegPlayerNames: (room.doglegPlayerIds || []).map((playerId) => playerName(room, playerId)),
+    ranchenRoleLocks: { ...(room.ranchenRoleLocks || {}) },
     doglegNeeded: room.doglegNeeded || 0,
     doglegMax: maxDoglegCount(room.players.length),
     bid: publicBid(room, room.setup?.bid),
@@ -1861,6 +1937,7 @@ function boardHeroSkillsSnapshot(room, viewer = null) {
   const shenBiesan = skills.shenBiesan;
   const yokoyama = skills.yokoyama;
   const shenHaohao = skills.shenHaohao;
+  const jieRanchen = skills.jieRanchen;
   const viewerIsBiesanEligible = Boolean(viewer && shenBiesan.eligiblePlayerIds.includes(viewer.id));
   const viewerCompletedBiesan = Boolean(viewer && shenBiesan.completedPlayerIds.includes(viewer.id));
   const viewerIsHaohaoEligible = Boolean(viewer && shenHaohao.eligiblePlayerIds.includes(viewer.id));
@@ -1880,6 +1957,20 @@ function boardHeroSkillsSnapshot(room, viewer = null) {
   const viewerYokoyamaCandidate = viewer ? yokoyamaCandidateByPlayerId[viewer.id] || null : null;
   return {
     replacementRank: room.boardHeroEffects?.replacementRank || null,
+    jieRanchen: {
+      active: room.stage === JIE_RANCHEN_SKILL_STAGE,
+      deadlineAt: jieRanchen.deadlineAt,
+      eligiblePlayerIds: [...jieRanchen.eligiblePlayerIds],
+      completedPlayerIds: [...jieRanchen.completedPlayerIds],
+      viewerEligible: Boolean(viewer && jieRanchen.eligiblePlayerIds.includes(viewer.id)),
+      viewerCompleted: Boolean(viewer && jieRanchen.completedPlayerIds.includes(viewer.id)),
+      canChoose: room.stage === JIE_RANCHEN_SKILL_STAGE && Boolean(viewer && jieRanchen.eligiblePlayerIds.includes(viewer.id) && !jieRanchen.completedPlayerIds.includes(viewer.id)),
+      availableRoles: availableRanchenRoles(room.players.length, room.doglegNeeded, room.ranchenRoleLocks),
+      investmentOptions: HERO_HOME_RULES.jieRanchenInvestmentOptions,
+      winMultiplier: viewer?.battleHeroSnapshot?.heroId === "jie-ranchen"
+        ? HERO_HOME_RULES.jieRanchenWinMultipliers[Math.max(0, Math.min(4, (viewer.battleHeroSnapshot.stars || 1) - 1))]
+        : null
+    },
     shenBiesan: {
       active: room.stage === SHEN_BIESAN_SKILL_STAGE && shenBiesan.eligiblePlayerIds.length > 0,
       deadlineAt: shenBiesan.deadlineAt,
@@ -1947,6 +2038,8 @@ function boardHeroSkillsSnapshot(room, viewer = null) {
 
 function playerRole(room, playerId, viewer = null) {
   if (room.bankerId === playerId) return "庄家";
+  if (room.ranchenRoleLocks?.[playerId] === "dogleg") return "狗腿";
+  if (room.ranchenRoleLocks?.[playerId] === "idle") return "闲家";
   if (isFixedTeamGame(room) && room.bankerId) {
     const banker = playerById(room, room.bankerId);
     const player = playerById(room, playerId);
@@ -2524,14 +2617,14 @@ function updateDraggedFiveStats(room, trick, winnerId) {
 
 function actualDoglegPlayerIds(room) {
   if (normalizeDoglegMode(room.doglegMode) === DOGLEG_MODE_HIDDEN) {
-    return hiddenDoglegPlayerIds(room.hiddenDogleg);
+    return [...new Set([...lockedDoglegIds(room.ranchenRoleLocks), ...hiddenDoglegPlayerIds(room.hiddenDogleg)])];
   }
   return [...(room.doglegPlayerIds || [])];
 }
 
 function revealRemainingHiddenDoglegs(room) {
   if (normalizeDoglegMode(room.doglegMode) !== DOGLEG_MODE_HIDDEN || !room.hiddenDogleg) return;
-  const actualIds = hiddenDoglegPlayerIds(room.hiddenDogleg);
+  const actualIds = actualDoglegPlayerIds(room);
   const previouslyRevealed = new Set(room.doglegPlayerIds || []);
   const newlyRevealed = actualIds.filter((playerId) => !previouslyRevealed.has(playerId));
   actualIds.forEach((playerId) => {
@@ -3218,7 +3311,7 @@ function scoreBidOthersPassed(room) {
   const currentId = scoreBid?.current?.playerId;
   if (!currentId) return false;
   const passIds = new Set(scoreBid.passIds || []);
-  return room.players.every((player) => player.id === currentId || passIds.has(player.id));
+  return room.players.every((player) => player.id === currentId || (room.ranchenRoleLocks || {})[player.id] || passIds.has(player.id));
 }
 
 function enterTrumpSelecting(room) {
@@ -3359,6 +3452,7 @@ function finishScoreBidding(room) {
 
 function submitScoreBid(room, player, increment) {
   if (room.stage !== "score-bidding") return { error: "当前不能叫分抢庄", status: 409 };
+  if ((room.ranchenRoleLocks || {})[player.id]) return { error: "命运投资已锁定身份，本局跳过叫庄", status: 403 };
   const scoreBid = ensureScoreBidSetup(room);
   const current = scoreBid.current || null;
   if (current?.playerId === player.id) return { error: "你已经是当前最高叫分", status: 400 };
@@ -3395,6 +3489,7 @@ function submitScoreBid(room, player, increment) {
 
 function passScoreBid(room, player) {
   if (room.stage !== "score-bidding") return { error: "当前不能过叫分", status: 409 };
+  if ((room.ranchenRoleLocks || {})[player.id]) return { error: "命运投资已锁定身份，本局跳过叫庄", status: 403 };
   const scoreBid = ensureScoreBidSetup(room);
   if (!scoreBid.current) return { error: "还没有玩家叫分，暂不能过", status: 409 };
   if (scoreBid.current.playerId === player.id) return { error: "当前最高叫分玩家不需要过", status: 400 };
@@ -3608,6 +3703,10 @@ function finishFrying(room) {
   if (room.setup.fry) room.setup.fry.deadlineAt = null;
   room.trumpSuit = lastBid?.suit || randomSuitId();
   addEvent(room, `炒底结束，主牌确定为${suitName(room.trumpSuit)}`);
+  const fixedDoglegIds = lockedDoglegIds(room.ranchenRoleLocks);
+  const excludedIds = new Set(lockedNonBankerIds(room.ranchenRoleLocks));
+  const candidatePlayers = room.players.filter((player) => !excludedIds.has(player.id));
+  const remainingDoglegs = Math.max(0, room.doglegNeeded - fixedDoglegIds.length);
   if (!room.doglegNeeded) {
     room.doglegCard = null;
     room.doglegPlayerIds = [];
@@ -3618,10 +3717,20 @@ function finishFrying(room) {
     addEvent(room, "本局不设置狗腿，直接开始打牌");
     return;
   }
+  if (!remainingDoglegs) {
+    room.doglegCard = null;
+    room.doglegPlayerIds = [...fixedDoglegIds];
+    room.dynamicDogleg = null;
+    room.hiddenDogleg = null;
+    room.randomOrderDogleg = null;
+    beginPlaying(room);
+    addEvent(room, "狗腿名额已由命运投资锁定，直接开始打牌");
+    return;
+  }
   if (normalizeDoglegMode(room.doglegMode) === DOGLEG_MODE_DYNAMIC) {
     room.doglegCard = null;
-    room.doglegPlayerIds = [];
-    room.dynamicDogleg = createDynamicDoglegState(room.players, room.bankerId);
+    room.doglegPlayerIds = [...fixedDoglegIds];
+    room.dynamicDogleg = createDynamicDoglegState(candidatePlayers, room.bankerId);
     room.hiddenDogleg = null;
     room.randomOrderDogleg = null;
     beginPlaying(room);
@@ -3630,19 +3739,19 @@ function finishFrying(room) {
   }
   if (normalizeDoglegMode(room.doglegMode) === DOGLEG_MODE_HIDDEN) {
     room.doglegCard = null;
-    room.doglegPlayerIds = [];
+    room.doglegPlayerIds = [...fixedDoglegIds];
     room.dynamicDogleg = null;
-    room.hiddenDogleg = createHiddenDoglegState(room.players, room.bankerId, room.doglegNeeded);
+    room.hiddenDogleg = createHiddenDoglegState(candidatePlayers, room.bankerId, remainingDoglegs);
     room.randomOrderDogleg = null;
     beginPlaying(room);
     addEvent(room, `本局使用暗狗腿，已随机确定 ${hiddenDoglegPlayerIds(room.hiddenDogleg).length} 名暗狗腿并分别标记专属狗腿牌`);
     return;
   }
   if (normalizeDoglegMode(room.doglegMode) === DOGLEG_MODE_RANDOM_ORDER) {
-    room.doglegPlayerIds = [];
+    room.doglegPlayerIds = [...fixedDoglegIds];
     room.dynamicDogleg = null;
     room.hiddenDogleg = null;
-    room.randomOrderDogleg = createRandomOrderDoglegState(room.players, room.bankerId, room.doglegNeeded);
+    room.randomOrderDogleg = createRandomOrderDoglegState(candidatePlayers, room.bankerId, remainingDoglegs);
     room.doglegCard = room.randomOrderDogleg.card;
     beginPlaying(room);
     const positions = room.randomOrderDogleg.targetPositions.map((position) => `第 ${position} 次`).join("、") || "无";
@@ -3652,6 +3761,7 @@ function finishFrying(room) {
   room.dynamicDogleg = null;
   room.hiddenDogleg = null;
   room.randomOrderDogleg = null;
+  room.doglegPlayerIds = [...fixedDoglegIds];
   room.stage = "dogleg";
   room.phase = `主牌为${suitName(room.trumpSuit)}，等待庄家选择狗腿牌`;
 }
@@ -3776,12 +3886,13 @@ function sameRoomDoglegCard(room, card) {
 
 function doglegTargetCount(room) {
   if (normalizeDoglegMode(room.doglegMode) === DOGLEG_MODE_RANDOM_ORDER) {
-    return (room.randomOrderDogleg?.targetPositions || []).length;
+    return lockedDoglegIds(room.ranchenRoleLocks).length + (room.randomOrderDogleg?.targetPositions || []).length;
   }
   return Math.max(0, Number(room.doglegNeeded) || 0);
 }
 
 function revealDoglegIfNeeded(room, player, selected) {
+  if (room.ranchenRoleLocks?.[player.id]) return;
   if (normalizeDoglegMode(room.doglegMode) === DOGLEG_MODE_HIDDEN) {
     if (!room.hiddenDogleg) return;
     const outcome = applyHiddenDoglegPlay(room.hiddenDogleg, {
@@ -3789,7 +3900,7 @@ function revealDoglegIfNeeded(room, player, selected) {
       playedCards: selected
     });
     room.hiddenDogleg = outcome.state;
-    room.doglegPlayerIds = outcome.doglegPlayerIds;
+    room.doglegPlayerIds = [...lockedDoglegIds(room.ranchenRoleLocks), ...outcome.doglegPlayerIds];
     if (!outcome.hit) return;
     const hitCard = selected.find((card) => card.id === outcome.hit.cardId);
     addEvent(room, `${player.name} 打出暗狗腿牌${hitCard?.label ? ` ${hitCard.label}` : ""}，公开狗腿身份`);
@@ -3802,10 +3913,10 @@ function revealDoglegIfNeeded(room, player, selected) {
       playerId: player.id,
       playedCards: selected,
       remainingHand: player.hand,
-      needed: room.doglegNeeded
+      needed: Math.max(0, room.doglegNeeded - lockedDoglegIds(room.ranchenRoleLocks).length)
     });
     room.dynamicDogleg = outcome.state;
-    room.doglegPlayerIds = outcome.doglegPlayerIds;
+    room.doglegPlayerIds = [...lockedDoglegIds(room.ranchenRoleLocks), ...outcome.doglegPlayerIds];
     if (!outcome.hit) return;
     const hitCard = selected.find((card) => card.id === outcome.hit.cardId);
     addEvent(room, `${player.name} 打出动态狗腿牌${hitCard?.label ? ` ${hitCard.label}` : ""}，获得第 ${outcome.hit.count} 个狗腿标记`);
@@ -3824,7 +3935,7 @@ function revealDoglegIfNeeded(room, player, selected) {
       playedCards: selected
     });
     room.randomOrderDogleg = outcome.state;
-    room.doglegPlayerIds = outcome.doglegPlayerIds;
+    room.doglegPlayerIds = [...lockedDoglegIds(room.ranchenRoleLocks), ...outcome.doglegPlayerIds];
     if (!outcome.hit) return;
     const hitCard = selected.find((card) => sameRandomOrderDoglegCard(card, room.doglegCard));
     if (outcome.hit.becameDogleg) {
@@ -3862,7 +3973,7 @@ function selectDogleg(room, player, cardIds) {
     rank: card.rank,
     label: card.label
   };
-  room.doglegPlayerIds = [];
+  room.doglegPlayerIds = lockedDoglegIds(room.ranchenRoleLocks);
   room.dynamicDogleg = null;
   room.hiddenDogleg = null;
   room.randomOrderDogleg = null;
@@ -4663,7 +4774,7 @@ function autoProgressTestSetup(room, maxActions = Number.POSITIVE_INFINITY) {
       const scoreBid = ensureScoreBidSetup(room);
       const currentId = scoreBid.current?.playerId || null;
       const passed = new Set(scoreBid.passIds || []);
-      const candidates = room.players.filter((player) => player.test && player.id !== currentId && !passed.has(player.id));
+      const candidates = room.players.filter((player) => player.test && player.id !== currentId && !passed.has(player.id) && !(room.ranchenRoleLocks || {})[player.id]);
       if (!candidates.length) break;
       if (!currentId) {
         const best = candidates
@@ -4798,6 +4909,21 @@ function clearBoardHeroSkillTimer(room) {
 }
 
 async function autoAdvanceExpiredBoardHeroSkill(room) {
+  if (room.stage === JIE_RANCHEN_SKILL_STAGE) {
+    const state = room.boardHeroSkills.jieRanchen;
+    const deadline = new Date(state.deadlineAt || "").getTime();
+    if (!Number.isFinite(deadline) || deadline > Date.now()) return false;
+    if (room.boardHeroSkillUseInFlight) {
+      state.deadlineAt = new Date(Date.now() + 1000).toISOString();
+      return true;
+    }
+    state.eligiblePlayerIds.forEach((playerId) => {
+      if (!state.completedPlayerIds.includes(playerId)) state.completedPlayerIds.push(playerId);
+    });
+    addEvent(room, "命运投资倒计时结束，未操作玩家视为放弃");
+    finishRanchenSkillStage(room);
+    return true;
+  }
   if (room.stage === SHEN_BIESAN_SKILL_STAGE) {
     const state = room.boardHeroSkills.shenBiesan;
     const deadline = new Date(state.deadlineAt || "").getTime();
@@ -4844,7 +4970,9 @@ async function autoAdvanceExpiredBoardHeroSkill(room) {
 
 function scheduleBoardHeroSkillTimer(room) {
   clearBoardHeroSkillTimer(room);
-  const deadlineAt = room.stage === SHEN_BIESAN_SKILL_STAGE
+  const deadlineAt = room.stage === JIE_RANCHEN_SKILL_STAGE
+    ? room.boardHeroSkills.jieRanchen.deadlineAt
+    : room.stage === SHEN_BIESAN_SKILL_STAGE
     ? room.boardHeroSkills.shenBiesan.deadlineAt
     : room.stage === "yokoyama-skill"
       ? room.boardHeroSkills.yokoyama.deadlineAt
@@ -8504,6 +8632,10 @@ async function handleApi(req, res, pathParts, url) {
       let result = null;
       if (body.action === "shen-biesan-activate") result = await submitShenBiesanSkillChoice(room, viewer, true, body.resetCooldown);
       else if (body.action === "shen-biesan-pass") result = await submitShenBiesanSkillChoice(room, viewer, false);
+      else if (body.action === "jie-ranchen-invest") result = body.investment == null
+        ? { error: "请选择投资额", status: 400 }
+        : await submitRanchenSkillChoice(room, viewer, body.investment);
+      else if (body.action === "jie-ranchen-pass") result = await submitRanchenSkillChoice(room, viewer);
       else if (body.action === "yokoyama-activate") result = await activateYokoyamaSkill(room, viewer, body.requestId);
       else if (body.action === "yokoyama-pass") result = passYokoyamaSkill(room, viewer);
       else if (body.action === "shen-haohao-activate") result = await submitShenHaohaoSkillChoice(room, viewer, true, body.resetCooldown, body.requestId);

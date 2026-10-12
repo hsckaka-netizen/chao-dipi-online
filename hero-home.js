@@ -1,7 +1,7 @@
 export const HERO_HOME_RULES = Object.freeze({
-  version: "2026-10-11-v7",
+  version: "2026-10-12-v8",
   skillVersion: "2026-09-24-skill-v9",
-  boardSkillVersion: "2026-10-11-board-skill-v6",
+  boardSkillVersion: "2026-10-12-board-skill-v7",
   maxProductionHours: 6,
   singlePullPrice: 300,
   tenPullPrice: 2700,
@@ -40,7 +40,9 @@ export const HERO_HOME_RULES = Object.freeze({
   shenHaohaoUndraggedTeammateDiamonds: 50,
   jieDoudouDiamondsPerMatchingCard: Object.freeze([10, 15, 20, 25, 35]),
   jieDoudouBottomScoreBonus: Object.freeze([1, 1.5, 2, 2.5, 3.5]),
-  jieDoudouJiangwenUseDiamonds: 30
+  jieDoudouJiangwenUseDiamonds: 30,
+  jieRanchenInvestmentOptions: Object.freeze([100, 200, 300]),
+  jieRanchenWinMultipliers: Object.freeze([2.1, 2.3, 2.6, 3, 3.5])
 });
 
 const REGION_UPGRADE_COSTS = Object.freeze([60, 70, 80, 100, 130, 160, 190, 230, 280, 350]);
@@ -113,6 +115,11 @@ export const HOME_UNITS = Object.freeze([
     id: "yokoyama-yui", name: "横山由依", shortName: "横", type: "hero", rarity: "ssr", gender: "female", regionId: "stage", color: "#bd4d83",
     cardImage: "/assets/heroes/yokoyama-yui-card-v2.png",
     skillName: "全能偶像", skillDescription: "被动：本局每为友方贴出40分，1～5星分别额外获得15/20/25/30/40钻石。主动：叫庄结束后可将全桌座位重新随机，每局可发动1/1/2/2/3次，CD为0轮。"
+  }),
+  Object.freeze({
+    id: "jie-ranchen", name: "界 · 然陈", namePrefix: "界", baseName: "然陈", shortName: "然", type: "hero", rarity: "ssr", gender: "female", regionId: "stage", color: "#b75078",
+    cardImage: "/assets/heroes/jie-ranchen-card-v2.png",
+    skillName: "命运投资", skillDescription: "叫庄前可投资100/200/300钻石并跳过本人叫庄，随机公开锁定狗腿或闲家身份；名额已满时无法发动。若本局最终获胜，按投资额额外获得1～5星对应的2.1/2.3/2.6/3/3.5倍钻石。"
   }),
   Object.freeze({ id: "trainee", name: "练习生", shortName: "练", type: "minion", rarity: "minion", gender: null, regionId: "stage", color: "#7197bd" })
 ]);
@@ -433,7 +440,7 @@ export function createBattleHeroSnapshot(unitId, stars = 1, cooldownValue = 0) {
     stars: normalizedStars(stars),
     skillVersion: unit.rarity === "ssr" ? HERO_HOME_RULES.boardSkillVersion : HERO_HOME_RULES.skillVersion
   };
-  if (unit.rarity === "ssr" && unit.id !== "jie-doudou" && unit.id !== "shen-haohao") {
+  if (unit.rarity === "ssr" && unit.id !== "jie-doudou" && unit.id !== "shen-haohao" && unit.id !== "jie-ranchen") {
     snapshot.paidSkill = boardHeroSkillState(stars, cooldownValue, unit.id);
   }
   return snapshot;
@@ -496,6 +503,24 @@ export function calculateHeroSkillReward({
   if (!snapshot?.heroId || !playerId || !playerResult) return null;
   const stars = normalizedStars(snapshot.stars);
   const history = Array.isArray(trickHistory) ? trickHistory : [];
+
+  if (snapshot.heroId === "jie-ranchen") {
+    const use = (Array.isArray(boardHeroUses) ? boardHeroUses : []).find((item) => item.playerId === playerId && item.heroId === "jie-ranchen");
+    const investment = Number(use?.effect?.investment) || 0;
+    const validInvestment = HERO_HOME_RULES.jieRanchenInvestmentOptions.includes(investment);
+    const won = Number(playerResult.baseGameScore ?? playerResult.gameScore) > 0;
+    const multiplier = HERO_HOME_RULES.jieRanchenWinMultipliers[stars - 1];
+    const amount = validInvestment && won ? Math.round(investment * multiplier) : 0;
+    return {
+      ...baseSkillResult(snapshot, validInvestment && won, 1, amount,
+        validInvestment
+          ? `投资${investment}钻石，${won ? `获胜按${multiplier}倍获得${amount}钻石` : "本局未获胜，无投资奖励"}`
+          : "本局未发动命运投资"),
+      investment: validInvestment ? investment : 0,
+      multiplier,
+      exemptFromIdleRate: true
+    };
+  }
 
   if (snapshot.heroId === "xiaoxu") {
     const sources = new Set();

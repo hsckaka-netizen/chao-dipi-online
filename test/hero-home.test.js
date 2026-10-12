@@ -139,6 +139,33 @@ test("Haohao belongs to the Boka Zone", () => {
   assert.equal(HOME_UNIT_BY_ID.get("shen-haohao")?.regionId, "boka");
 });
 
+test("Ranchen is a Stage SSR and winning investment pays by frozen stars", () => {
+  assert.equal(HOME_UNIT_BY_ID.get("jie-ranchen")?.regionId, "stage");
+  const expected = [210, 230, 260, 300, 350];
+  expected.forEach((amount, index) => {
+    const snapshot = createBattleHeroSnapshot("jie-ranchen", index + 1);
+    assert.equal(snapshot.cardImage, "/assets/heroes/jie-ranchen-card-v2.png");
+    assert.equal(snapshot.paidSkill, undefined);
+    const reward = calculateHeroSkillReward({
+      snapshot,
+      playerId: "ranchen",
+      playerResult: { baseGameScore: 1 },
+      boardHeroUses: [{ playerId: "ranchen", heroId: "jie-ranchen", effect: { investment: 100 } }]
+    });
+    assert.equal(reward.amount, amount);
+    assert.equal(reward.exemptFromIdleRate, true);
+  });
+  for (const baseGameScore of [0, -1]) {
+    const reward = calculateHeroSkillReward({
+      snapshot: createBattleHeroSnapshot("jie-ranchen", 5),
+      playerId: "ranchen",
+      playerResult: { baseGameScore },
+      boardHeroUses: [{ playerId: "ranchen", heroId: "jie-ranchen", effect: { investment: 300 } }]
+    });
+    assert.equal(reward.amount, 0);
+  }
+});
+
 test("all hero skill descriptions expose concrete per-star diamond values", () => {
   const expectedValues = {
     "jiang-zha": "150/185/220/255/290",
@@ -151,7 +178,8 @@ test("all hero skill descriptions expose concrete per-star diamond values", () =
     "shen-haohao": "50",
     "shen-jiangwen": "15/20/25/30/40",
     "yokoyama-yui": "15/20/25/30/40",
-    "jie-doudou": "10/15/20/25/35"
+    "jie-doudou": "10/15/20/25/35",
+    "jie-ranchen": "2.1/2.3/2.6/3/3.5"
   };
   Object.entries(expectedValues).forEach(([unitId, values]) => {
     const description = HOME_UNIT_BY_ID.get(unitId)?.skillDescription || "";

@@ -3313,14 +3313,22 @@ export async function chargeBoardHeroSkill(accountId, gameIdValue, unitIdValue, 
     if (!owned.rows[0]) throw commerceError("尚未拥有这个SSR英雄", 403);
     const storedStars = Number(owned.rows[0].stars) || 1;
     const snapshotStars = Math.max(1, Math.min(storedStars, Math.trunc(Number(effectData.skillStars) || storedStars)));
-    const paidState = boardHeroSkillState(snapshotStars, owned.rows[0].skill_cooldown, unitId);
-    if (paidState.cooldown > 0 && !effectData.resetCooldown) {
+    const isRanchenInvestment = unitId === "jie-ranchen";
+    const investment = Number(effectData.investment);
+    if (isRanchenInvestment && !HERO_HOME_RULES.jieRanchenInvestmentOptions.includes(investment)) {
+      throw commerceError("投资额只能选择100、200或300钻石", 400);
+    }
+    const paidState = isRanchenInvestment
+      ? { cooldown: 0, cooldownAfterUse: null, cost: investment }
+      : boardHeroSkillState(snapshotStars, owned.rows[0].skill_cooldown, unitId);
+    if (!isRanchenInvestment && paidState.cooldown > 0 && !effectData.resetCooldown) {
       throw commerceError(`技能还需冷却${paidState.cooldown}轮，可花费${paidState.resetCost}钻石重置`, 409);
     }
     const storedEffectData = {
       ...effectData,
       skillStars: snapshotStars,
-      cooldownResetRounds: paidState.cooldown
+      cooldownResetRounds: paidState.cooldown,
+      ...(isRanchenInvestment ? { investment } : {})
     };
     await client.query(
       `INSERT INTO cdp_diamond_wallets (account_id) VALUES ($1::uuid)
@@ -3335,13 +3343,15 @@ export async function chargeBoardHeroSkill(accountId, gameIdValue, unitIdValue, 
       [accountId, paidState.cost]
     );
     if (!wallet.rows[0]) throw commerceError("钻石余额不足", 409);
-    const cooldownBefore = paidState.cooldown;
+    const cooldownBefore = isRanchenInvestment ? null : paidState.cooldown;
     const cooldownAfter = paidState.cooldownAfterUse;
-    await client.query(
-      `UPDATE cdp_hero_units SET skill_cooldown = $3, updated_at = now()
-       WHERE account_id = $1::uuid AND unit_id = $2`,
-      [accountId, unitId, cooldownAfter]
-    );
+    if (!isRanchenInvestment) {
+      await client.query(
+        `UPDATE cdp_hero_units SET skill_cooldown = $3, updated_at = now()
+         WHERE account_id = $1::uuid AND unit_id = $2`,
+        [accountId, unitId, cooldownAfter]
+      );
+    }
     const balanceAfter = Number(wallet.rows[0].balance) || 0;
     const useId = randomUUID();
     await client.query(

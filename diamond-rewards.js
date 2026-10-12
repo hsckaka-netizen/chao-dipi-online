@@ -1,5 +1,5 @@
 export const DIAMOND_REWARD_RULES = Object.freeze({
-  version: "2026-09-23-v6",
+  version: "2026-10-12-v7",
   baseAmount: 100,
   winBonus: 0,
   titleBonusCap: 50,
@@ -83,7 +83,9 @@ export function calculateGameDiamondReward({
       const titleBonus = Math.min(titleBonusBeforeCap, titleBonusCap);
       const baseAmount = scaledRewardAmount(reward.baseAmount, rate);
       const winBonus = scaledRewardAmount(reward.winBonus, rate);
-      const heroBonus = scaledRewardAmount(reward.heroBonus, rate);
+      const heroBonus = reward.heroSkillReward?.exemptFromIdleRate
+        ? reward.heroBonus
+        : scaledRewardAmount(reward.heroBonus, rate);
       return {
         ...reward,
         baseAmount,
