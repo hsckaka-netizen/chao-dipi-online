@@ -1,7 +1,7 @@
 export const HERO_HOME_RULES = Object.freeze({
   version: "2026-10-12-v8",
   skillVersion: "2026-09-24-skill-v9",
-  boardSkillVersion: "2026-10-12-board-skill-v7",
+  boardSkillVersion: "2026-10-14-board-skill-v8",
   maxProductionHours: 6,
   singlePullPrice: 300,
   tenPullPrice: 2700,
@@ -36,8 +36,8 @@ export const HERO_HOME_RULES = Object.freeze({
   boardSkillCooldowns: Object.freeze([5, 4, 3, 2, 1]),
   boardSkillResetCostPerRound: 500,
   yokoyamaUsesPerGame: Object.freeze([1, 1, 2, 2, 3]),
-  shenHaohaoRedFiveScoreReduction: Object.freeze([1, 2, 4, 6, 10]),
-  shenHaohaoUndraggedTeammateDiamonds: 50,
+  shenHaohaoFiveScoreReductionCap: Object.freeze([2, 4, 6, 8, 10]),
+  shenHaohaoUndraggedTeammateDiamonds: Object.freeze([10, 15, 20, 25, 40]),
   jieDoudouDiamondsPerMatchingCard: Object.freeze([10, 15, 20, 25, 35]),
   jieDoudouBottomScoreBonus: Object.freeze([1, 1.5, 2, 2.5, 3.5]),
   jieDoudouJiangwenUseDiamonds: 30,
@@ -93,7 +93,7 @@ export const HOME_UNITS = Object.freeze([
   Object.freeze({
     id: "shen-haohao", name: "神 · 浩浩", namePrefix: "神", baseName: "浩浩", shortName: "浩", type: "hero", rarity: "ssr", gender: "male", regionId: "boka", color: "#557b9c",
     cardImage: "/assets/heroes/shen-haohao-card-v1.png",
-    skillName: "聪明伶俐", skillDescription: "本人拖下队友红方五（红桃5或方块5）时，按星级每张使本队少扣1/2/4/6/10分；本队每有一名玩家没有被拖红方五（包括本人），额外获得50钻石。"
+    skillName: "聪明伶俐", skillDescription: "本人拖下队友红方五（红桃5或方块5）时，1～5星整局累计最多免除2/4/6/8/10分扣分，且不超过实际拖五扣分；本队每有一名玩家没有被拖红方五（包括本人），按星级额外获得10/15/20/25/40钻石。"
   }),
   Object.freeze({
     id: "jie-doudou", name: "界 · 豆豆", namePrefix: "界", baseName: "豆豆", shortName: "豆", type: "hero", rarity: "ssr", gender: "male", regionId: "brick", color: "#8b6a9f",
@@ -497,7 +497,8 @@ export function calculateHeroSkillReward({
   doudouMatchingCards = 0,
   doudouBottomMatches = false,
   shenJiangwenUseCount = 0,
-  haohaoDraggedTeammateRedFives = 0,
+  haohaoDraggedTeammateFives = 0,
+  haohaoDraggedTeammateFivePenalty = 0,
   haohaoUndraggedTeammates = 0
 } = {}) {
   if (!snapshot?.heroId || !playerId || !playerResult) return null;
@@ -612,12 +613,13 @@ export function calculateHeroSkillReward({
 
   if (snapshot.heroId === "shen-haohao") {
     const diamonds = Math.max(0, Math.trunc(Number(haohaoUndraggedTeammates) || 0))
-      * HERO_HOME_RULES.shenHaohaoUndraggedTeammateDiamonds;
-    const reductionPerFive = HERO_HOME_RULES.shenHaohaoRedFiveScoreReduction[stars - 1];
-    const reduced = Math.max(0, Math.trunc(Number(haohaoDraggedTeammateRedFives) || 0)) * reductionPerFive;
+      * HERO_HOME_RULES.shenHaohaoUndraggedTeammateDiamonds[stars - 1];
+    const reductionCap = HERO_HOME_RULES.shenHaohaoFiveScoreReductionCap[stars - 1];
+    const penalty = Math.max(0, Math.trunc(Number(haohaoDraggedTeammateFivePenalty) || 0));
+    const reduced = Math.min(penalty, reductionCap);
     return {
       ...baseSkillResult(snapshot, haohaoUndraggedTeammates, null, diamonds,
-        `本队${haohaoUndraggedTeammates}名玩家未被拖红方五，奖励${diamonds}钻；本人拖下队友${haohaoDraggedTeammateRedFives}张红方五，本队少扣${reduced}分`),
+        `本队${haohaoUndraggedTeammates}名玩家未被拖红方五，奖励${diamonds}钻；本人拖下队友${haohaoDraggedTeammateFives}张红方五，实际扣分${penalty}分，本局最多免除${reductionCap}分，本队少扣${reduced}分`),
       rulesVersion: HERO_HOME_RULES.boardSkillVersion,
       scoreBonus: reduced
     };

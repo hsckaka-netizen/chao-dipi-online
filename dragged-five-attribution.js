@@ -140,3 +140,21 @@ export function teammateProtectedFiveCounts(tricks = [], teamByPlayerId = {}, pr
 
   return { redFives, diamondFives, byPlayerId };
 }
+
+export function draggedTeammateFiveSummary(tricks = [], playerId, teamIds = []) {
+  const teammates = new Set(teamIds);
+  let redFives = 0;
+  let diamondFives = 0;
+  if (!playerId || !teammates.has(playerId)) return { redFives, diamondFives, count: 0, penalty: 0 };
+  (Array.isArray(tricks) ? tricks : []).forEach((trick) => {
+    (trick?.plays || []).forEach((play) => {
+      if (play.playerId === playerId || !teammates.has(play.playerId)) return;
+      (play.cards || []).forEach((card) => {
+        if (!isProtectedFive(card) || draggedFiveActorId(trick, play, card) !== playerId) return;
+        if (card.suit === "H") redFives += 1;
+        else diamondFives += 1;
+      });
+    });
+  });
+  return { redFives, diamondFives, count: redFives + diamondFives, penalty: redFives * 2 + diamondFives };
+}

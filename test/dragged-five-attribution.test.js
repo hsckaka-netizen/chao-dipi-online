@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { forcedProtectedFiveIds, teammateProtectedFiveCounts } from "../dragged-five-attribution.js";
+import { draggedTeammateFiveSummary, forcedProtectedFiveIds, teammateProtectedFiveCounts } from "../dragged-five-attribution.js";
 
 function card(id, rank, suit) {
   return { id, type: "normal", rank, suit };
@@ -70,4 +70,37 @@ test("teammate protection applies only when the final teammate drag actor activa
       "future-dogleg": { redFives: 1, diamondFives: 0 }
     }
   });
+});
+
+
+test("Haohao reduction weights final teammate hearts by two and diamonds by one", () => {
+  const tricks = [{
+    leaderId: "haohao",
+    winnerId: "haohao",
+    plays: [
+      { playerId: "haohao", cards: [card("own-five", "5", "H")] },
+      { playerId: "future-dogleg", cards: [card("ally-red", "5", "H"), card("ally-diamond", "5", "D"), card("ally-black", "5", "S")] },
+      { playerId: "idle", cards: [card("enemy-red", "5", "H")] }
+    ]
+  }];
+  assert.deepEqual(draggedTeammateFiveSummary(tricks, "haohao", ["haohao", "future-dogleg"]), {
+    redFives: 1, diamondFives: 1, count: 2, penalty: 3
+  });
+  assert.equal(draggedTeammateFiveSummary(tricks, "haohao", ["haohao"]).penalty, 0);
+});
+
+test("Haohao reduction follows forced drag attribution and excludes another actor's drags", () => {
+  const tricks = [{
+    leaderId: "haohao",
+    winnerId: "idle",
+    plays: [
+      { playerId: "haohao", cards: [card("own-red", "5", "H")], forcedProtectedFiveIds: ["own-red"] },
+      { playerId: "ally", cards: [card("forced-red", "5", "H"), card("voluntary-diamond", "5", "D")], forcedProtectedFiveIds: ["forced-red"] },
+      { playerId: "idle", cards: [card("winner-diamond", "5", "D")], forcedProtectedFiveIds: ["winner-diamond"] }
+    ]
+  }];
+  assert.deepEqual(draggedTeammateFiveSummary(tricks, "haohao", ["haohao", "ally"]), {
+    redFives: 1, diamondFives: 0, count: 1, penalty: 2
+  });
+  assert.equal(draggedTeammateFiveSummary([], "haohao", ["haohao", "ally"]).penalty, 0);
 });

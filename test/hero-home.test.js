@@ -175,7 +175,7 @@ test("all hero skill descriptions expose concrete per-star diamond values", () =
     "maeda-atsuko": "185/230/280/325/370",
     "watanabe-mayu": "55/70/85/100/115",
     "shen-biesan": "5/7/9/12/15",
-    "shen-haohao": "50",
+    "shen-haohao": "10/15/20/25/40",
     "shen-jiangwen": "15/20/25/30/40",
     "yokoyama-yui": "15/20/25/30/40",
     "jie-doudou": "10/15/20/25/35",
@@ -205,11 +205,12 @@ test("Doudou and Haohao rewards use frozen hand, bottom, activation, and dragged
     snapshot: createBattleHeroSnapshot("shen-haohao", 4),
     playerId: "haohao",
     playerResult: { baseGameScore: -2 },
-    haohaoDraggedTeammateRedFives: 2,
+    haohaoDraggedTeammateFives: 2,
+    haohaoDraggedTeammateFivePenalty: 4,
     haohaoUndraggedTeammates: 3
   });
-  assert.equal(haohao.amount, 150);
-  assert.equal(haohao.scoreBonus, 12);
+  assert.equal(haohao.amount, 75);
+  assert.equal(haohao.scoreBonus, 4);
 });
 
 test("home UI renders full hero cards and a large skill preview", async () => {
@@ -565,12 +566,13 @@ test("shen haohao rewards undragged teammates and reduces teammate red-five loss
     snapshot: createBattleHeroSnapshot("shen-haohao", 4),
     playerId: "haohao",
     playerResult: { baseGameScore: -2 },
-    haohaoDraggedTeammateRedFives: 2,
+    haohaoDraggedTeammateFives: 2,
+    haohaoDraggedTeammateFivePenalty: 4,
     haohaoUndraggedTeammates: 3
   });
   assert.equal(reward.matchedCount, 3);
-  assert.equal(reward.amount, 150);
-  assert.equal(reward.scoreBonus, 12);
+  assert.equal(reward.amount, 75);
+  assert.equal(reward.scoreBonus, 4);
 });
 
 test("SSR roster, probabilities, production, and cooldown reset costs use the settled values", () => {
@@ -586,7 +588,7 @@ test("SSR roster, probabilities, production, and cooldown reset costs use the se
   assert.equal(shenBiesan.paidSkill.cooldownAfterUse, 1);
   assert.equal(shenHaohao.name, "神 · 浩浩");
   assert.equal(shenHaohao.skillName, "聪明伶俐");
-  assert.match(shenHaohao.skillDescription, /本队少扣1\/2\/4\/6\/10分/);
+  assert.match(shenHaohao.skillDescription, /整局累计最多免除2\/4\/6\/8\/10分扣分/);
   assert.equal(shenHaohao.paidSkill, undefined);
   assert.equal(shenJiangwen.skillName, "排骨之王");
   assert.equal(shenJiangwen.paidSkill.cost, 500);
@@ -916,4 +918,36 @@ test("hero migration stores home, gacha, snapshots, and hero bonus", async () =>
   assert.match(cooldownMigration, /DROP CONSTRAINT IF EXISTS cdp_game_hero_skill_uses_game_id_account_id_unit_id_key/);
   assert.match(cooldownMigration, /CREATE TABLE IF NOT EXISTS cdp_hero_cooldown_settlements/);
   assert.match(gameHistorySource, /032_ssr_skill_cooldowns\.sql/);
+});
+
+
+test("Haohao caps the whole-game reduction at each star and pays per undragged teammate", () => {
+  const caps = [2, 4, 6, 8, 10];
+  const diamonds = [10, 15, 20, 25, 40];
+  for (let stars = 1; stars <= 5; stars += 1) {
+    for (const penalty of [0, 1, 3, 7, 20]) {
+      const reward = calculateHeroSkillReward({
+        snapshot: createBattleHeroSnapshot("shen-haohao", stars),
+        playerId: "haohao",
+        playerResult: { baseGameScore: -20 },
+        haohaoDraggedTeammateFives: penalty,
+        haohaoDraggedTeammateFivePenalty: penalty,
+        haohaoUndraggedTeammates: 3
+      });
+      assert.equal(reward.scoreBonus, Math.min(penalty, caps[stars - 1]));
+      assert.equal(reward.amount, 3 * diamonds[stars - 1]);
+      assert.equal(reward.matchedCount, 3);
+      assert.equal(reward.rulesVersion, HERO_HOME_RULES.boardSkillVersion);
+    }
+  }
+  const noUndragged = calculateHeroSkillReward({
+    snapshot: createBattleHeroSnapshot("shen-haohao", 5),
+    playerId: "haohao",
+    playerResult: { baseGameScore: -20 },
+    haohaoDraggedTeammateFives: 1,
+    haohaoDraggedTeammateFivePenalty: 1,
+    haohaoUndraggedTeammates: 0
+  });
+  assert.equal(noUndragged.amount, 0);
+  assert.equal(noUndragged.scoreBonus, 1);
 });

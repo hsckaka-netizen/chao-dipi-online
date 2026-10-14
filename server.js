@@ -28,6 +28,7 @@ import { buildGameEvaluations, finalScoreWinnerTeam } from "./game-evaluations.j
 import { removeSpectatorsForAccount, roomPlayerForAccount } from "./room-identities.js";
 import {
   draggedFiveActorId,
+  draggedTeammateFiveSummary,
   forcedProtectedFiveIds,
   teammateProtectedFiveCounts
 } from "./dragged-five-attribution.js";
@@ -2678,19 +2679,6 @@ function gameScoreText(value) {
   return Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(2).replace(/0+$/, "").replace(/\.$/, "");
 }
 
-function draggedTeammateRedFiveCount(room, playerId, teamIds) {
-  const teammates = new Set(teamIds);
-  return (room.trickHistory || []).reduce((sum, trick) => sum + (trick.plays || []).reduce((trickSum, play) => {
-    if (play.playerId === playerId || !teammates.has(play.playerId)) return trickSum;
-    return trickSum + (play.cards || []).filter((card) => (
-      card.type === "normal"
-      && card.rank === "5"
-      && (card.suit === "H" || card.suit === "D")
-      && draggedFiveActorId(trick, play, card) === playerId
-    )).length;
-  }, 0), 0);
-}
-
 function teamName(team) {
   return team === "idle" ? "闲家" : team === "banker" ? "庄队" : "双方";
 }
@@ -2957,8 +2945,8 @@ function finishGame(room, completedTrick) {
     const doudouState = room.heroRoundState?.[playerResult.playerId];
     const doudouBottomMatches = Boolean(doudouState && room.result.bottomCards.some((card) => cardRankNumber(card) === doudouState.number));
     const draggedTeammateFives = roomPlayer?.battleHeroSnapshot?.heroId === "shen-haohao"
-      ? draggedTeammateRedFiveCount(room, playerResult.playerId, teamIds)
-      : 0;
+      ? draggedTeammateFiveSummary(room.trickHistory, playerResult.playerId, teamIds)
+      : { count: 0, penalty: 0 };
     const undraggedTeammates = roomPlayer?.battleHeroSnapshot?.heroId === "shen-haohao"
       ? teamResults.filter((result) => {
           const member = room.players.find((player) => player.id === result.playerId);
@@ -2978,7 +2966,8 @@ function finishGame(room, completedTrick) {
       doudouMatchingCards: doudouState?.matchingCards,
       doudouBottomMatches,
       shenJiangwenUseCount: (room.boardHeroEffects?.uses || []).filter((use) => use.heroId === "shen-jiangwen").length,
-      haohaoDraggedTeammateRedFives: draggedTeammateFives,
+      haohaoDraggedTeammateFives: draggedTeammateFives.count,
+      haohaoDraggedTeammateFivePenalty: draggedTeammateFives.penalty,
       haohaoUndraggedTeammates: undraggedTeammates
     });
   });
