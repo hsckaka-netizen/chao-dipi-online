@@ -3,6 +3,7 @@ import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
 
 import pg from "pg";
+import { mutateWarEffort } from "./war-effort-commerce.js";
 import {
   calculateGameDiamondReward,
   diamondRewardDate,
@@ -35,6 +36,9 @@ import {
   calculateWarEffortDrops,
   WAR_EFFORT_EVENT_ITEMS,
   WAR_EFFORT_RULES,
+  WAR_EFFORT_SHOP,
+  WAR_EFFORT_SSR_IDS,
+  warEffortBalance,
   warEffortCampaignStatus,
   warEffortContribution
 } from "./server-war-effort.js";
@@ -212,6 +216,10 @@ const MIGRATIONS = [
   {
     version: 37,
     path: fileURLToPath(new URL("./db/migrations/037_server_war_effort.sql", import.meta.url))
+  },
+  {
+    version: 38,
+    path: fileURLToPath(new URL("./db/migrations/038_war_effort_exchange.sql", import.meta.url))
   }
 ];
 const HISTORY_ENABLED = String(process.env.GAME_HISTORY_ENABLED || "").toLowerCase() === "true";
@@ -2217,13 +2225,14 @@ async function warEffortStateFromClient(client, accountId) {
      ON CONFLICT (campaign_id, account_id) DO NOTHING`,
     [WAR_EFFORT_RULES.campaignId, accountId]
   );
-  const [campaignResult, playerResult, walletResult, heroResult, contributorResult] = await Promise.all([
+  const [campaignResult, playerResult, walletResult, heroResult, contributorResult, ownedResult, frameResult] = await Promise.all([
     client.query(
       `SELECT * FROM cdp_war_effort_campaigns WHERE campaign_id = $1`,
       [WAR_EFFORT_RULES.campaignId]
     ),
     client.query(
-      `SELECT red_cloth, bounty_order, dreamleaf, dark_iron, contribution
+      `SELECT red_cloth, bounty_order, dreamleaf, dark_iron, contribution,
+              reward_claimed_at, reward_contribution, spent_contribution, ssr_exchange_count
        FROM cdp_war_effort_players
        WHERE campaign_id = $1 AND account_id = $2::uuid`,
       [WAR_EFFORT_RULES.campaignId, accountId]
@@ -2238,7 +2247,10 @@ async function warEffortStateFromClient(client, accountId) {
       `SELECT count(*)::integer AS count
        FROM cdp_war_effort_players WHERE campaign_id = $1 AND contribution > 0`,
       [WAR_EFFORT_RULES.campaignId]
-    )
+    ),
+    client.query(`SELECT unit_id, stars FROM cdp_hero_units WHERE account_id = $1::uuid`, [accountId]),
+    client.query(`SELECT 1 FROM cdp_cosmetic_entitlements
+      WHERE account_id = $1::uuid AND cosmetic_type = 'avatar_frame' AND cosmetic_key = 'blackstone-vanguard'`, [accountId])
   ]);
   const campaign = campaignResult.rows[0];
   if (!campaign) throw warEffortError("全服任务尚未配置", 503);
@@ -2258,6 +2270,9 @@ async function warEffortStateFromClient(client, accountId) {
     },
     player: {
       contribution: Number(player.contribution) || 0,
+      availableContribution: warEffortBalance(player),
+      rewardClaimed: Boolean(player.reward_claimed_at),
+      ssrExchangeCount: Number(player.ssr_exchange_count) || 0,
       inventory: {
         red_cloth: Number(player.red_cloth) || 0,
         bounty_order: Number(player.bounty_order) || 0,
@@ -2267,6 +2282,20 @@ async function warEffortStateFromClient(client, accountId) {
         universal_fragments: Number(hero.universal_fragments) || 0,
         building_materials: Number(hero.building_materials) || 0
       }
+    },
+    reward: { amount: WAR_EFFORT_RULES.completionContribution, available: Boolean(campaign.completed_at) && !player.reward_claimed_at },
+    shop: {
+      unlocked: Boolean(campaign.completed_at),
+      products: WAR_EFFORT_SHOP.map((product) => ({
+        ...product,
+        owned: product.type === 'frame' && Boolean(frameResult.rows[0]),
+        remaining: product.type === 'hero' ? product.limit - Number(player.ssr_exchange_count || 0)
+          : product.type === 'frame' ? (frameResult.rows[0] ? 0 : 1) : null
+      })),
+      heroes: HERO_UNITS.filter((unit) => WAR_EFFORT_SSR_IDS.includes(unit.id)).map((unit) => ({
+        id: unit.id, name: unit.name, cardImage: unit.cardImage,
+        stars: Number(ownedResult.rows.find((row) => row.unit_id === unit.id)?.stars) || 0
+      }))
     }
   };
 }
@@ -2279,6 +2308,32 @@ export async function getWarEffortState(accountId) {
     const state = await warEffortStateFromClient(client, accountId);
     await client.query("COMMIT");
     return state;
+  } catch (error) {
+    await client.query("ROLLBACK");
+    rememberError(error);
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+export async function claimWarEffortReward(accountId) {
+  return mutateWarEffortAccount(accountId, { action: "claim" });
+}
+
+export async function exchangeWarEffortProduct(accountId, input) {
+  return mutateWarEffortAccount(accountId, { ...input, action: "exchange" });
+}
+
+async function mutateWarEffortAccount(accountId, input) {
+  const client = await requirePool().connect();
+  try {
+    await client.query("BEGIN");
+    await ensureHeroAccount(client, accountId);
+    const result = await mutateWarEffort(client, accountId, input);
+    const state = await warEffortStateFromClient(client, accountId);
+    await client.query("COMMIT");
+    return { ...result, ...state };
   } catch (error) {
     await client.query("ROLLBACK");
     rememberError(error);

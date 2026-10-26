@@ -124,7 +124,11 @@ test("every bundled avatar frame keeps its audited earliest material and fixed v
   assert.deepEqual(mappedFilenames, filenames);
   for (const material of materialMap.materials) {
     assert.equal(material.virtualFrame, "rounded-square-372-r32", material.theme);
-    assert.match(material.sourceRevision, /^[0-9a-f]{40}$/, material.theme);
+    if (material.source?.kind === "imagegen") {
+      assert.ok(material.source.promptFile, material.theme);
+    } else {
+      assert.match(material.sourceRevision, /^[0-9a-f]{40}$/, material.theme);
+    }
     const filename = material.path.split("/").at(-1);
     const image = await readFile(`${cosmetics}/${filename}`);
     assert.equal(image.subarray(0, 8).toString("hex"), "89504e470d0a1a0a", filename);

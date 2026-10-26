@@ -78,7 +78,8 @@ export const AVATAR_FRAME_KEYS = Object.freeze([
   "death-knight",
   "minions",
   "usagi",
-  "toy-story"
+  "toy-story",
+  "blackstone-vanguard"
 ]);
 
 const AVATAR_FRAME_DEFAULT_PRICES = Object.freeze({
@@ -116,7 +117,7 @@ export const CARD_SKIN_KEYS = Object.freeze([
 ]);
 
 export const DEFAULT_SHOP_PRODUCTS = Object.freeze([
-  ...AVATAR_FRAME_KEYS.map((assetKey, index) => ({
+  ...AVATAR_FRAME_KEYS.filter((key) => key !== "blackstone-vanguard").map((assetKey, index) => ({
     id: `avatar-frame:${assetKey}`,
     productType: "avatar_frame",
     assetKey,

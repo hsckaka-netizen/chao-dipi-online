@@ -1,8 +1,9 @@
 import { applyStatePatch } from "./state-patch.js?v=9330552c7e1e";
 import { detectNewDraggedFiveEffects, detectNewLargePlayEffects } from "./gameplay-effects.js?v=14791e626d30";
-import { ASSET_URLS, versionedAssetUrl } from "./asset-versions.js?v=e13f132e3dc1";
+import { ASSET_URLS, versionedAssetUrl } from "./asset-versions.js?v=64f62bed0a35";
 import { createHistoryTrickEntry, filterHistoryTimelineEntries } from "./history-records.js?v=874ba3c97732";
 import { suitTractorOrderValue } from "./replacement-rank-rules.js?v=3b3650aa685e";
+import { doudouPointLabel, doudouPointNotice } from "./doudou-notice.js?v=3ded4697e374";
 
 const app = document.querySelector("#app");
 document.documentElement.style.setProperty("--joker-face-image", `url("${ASSET_URLS.jokerFace}")`);
@@ -37,7 +38,8 @@ const AVATAR_FRAME_OPTIONS = [
   { value: "death-knight", label: "魔兽死亡骑士" },
   { value: "minions", label: "小黄人工坊（小黄人主题）" },
   { value: "usagi", label: "乌萨奇萌兔" },
-  { value: "toy-story", label: "玩具总动员" }
+  { value: "toy-story", label: "玩具总动员" },
+  { value: "blackstone-vanguard", label: "黑石关·远征先锋" }
 ];
 const CARD_SKIN_OPTIONS = [
   { value: "", label: "默认牌框" },
@@ -178,6 +180,8 @@ let warEffortState = null;
 let warEffortLoading = false;
 let warEffortAccountId = "";
 let warEffortDonationInFlight = "";
+let warEffortActionInFlight = "";
+let warEffortPendingExchange = null;
 let heroCardPreviewUnitId = "";
 let heroGachaResults = [];
 let battleHeroPreviewPlayerId = "";
@@ -321,7 +325,9 @@ function applyState(nextState, options = {}) {
     : null;
   const throwNotice = throwFailureTransitionNotice(previousState, nextState);
   const notice = transitionNotice(previousState, nextState);
-  if (roomNotice && options.showTransitionNotice !== false) setMessage(roomNotice.text, Boolean(roomNotice.bad), true);
+  const doudouNotice = doudouPointNotice(previousState, nextState);
+  if (doudouNotice) setMessage(doudouNotice);
+  else if (roomNotice && options.showTransitionNotice !== false) setMessage(roomNotice.text, Boolean(roomNotice.bad), true);
   else if (throwNotice && options.showTransitionNotice !== false) setMessage(throwNotice, true, true);
   else if (notice && options.showTransitionNotice !== false) setMessage(notice);
   scheduleScoreBidAutoPass();
@@ -801,6 +807,8 @@ function resetWarEffortState() {
   warEffortLoading = false;
   warEffortAccountId = "";
   warEffortDonationInFlight = "";
+  warEffortActionInFlight = "";
+  warEffortPendingExchange = null;
 }
 
 function requestId() {
@@ -4023,15 +4031,98 @@ function renderWarEffortPage() {
       </div>
     </section>
     ${campaign.status === "upcoming" ? `<div class="status">任务已上线，将在下一赛季开始时开放牌局产出与捐献。</div>` : ""}
-    ${campaign.status === "completed" ? `<div class="status good">全服筹备已经完成。完成奖励将在后续方案确认后统一公布。</div>` : ""}
+    ${renderWarEffortRewards()}
     <section class="war-effort-grid">
       ${(campaign.resources || []).map((resource) => renderWarEffortResource(resource, warEffortState.player?.inventory, active)).join("")}
     </section>
     <section class="panel war-effort-rules">
-      <div class="section-head"><div><h2>贡献值换算</h2><p>贡献值会永久记录在本次全服任务中，后续用于个人贡献奖励。</p></div></div>
+      <div class="section-head"><div><h2>贡献值换算</h2><p>累计捐献贡献保留，兑换只消耗可用贡献。七项目标完成后，所有玩家均可领取 1,500 贡献并兑换奖励。</p></div></div>
       <div><span>红纹布 ×1</span><span>悬赏令 ×4</span><span>梦叶草 ×5</span><span>黑铁矿石 ×4</span><span>20钻石 = 1</span><span>通用碎片 ×6</span><span>25建材 = 2</span></div>
     </section>
   `);
+}
+
+function warEffortHeroReceived(hero, quantity = 1) {
+  if (!hero) return "请选择一名 SSR 英雄";
+  if (hero.stars >= 5) return `已满星，获得 ${quantity * 200} 通用碎片`;
+  if (hero.stars) return `已拥有，获得 ${quantity * 40} 个该英雄专属碎片`;
+  return `获得 1 星英雄${quantity > 1 ? `及 ${(quantity - 1) * 40} 个专属碎片` : ""}`;
+}
+
+function renderWarEffortRewards() {
+  const { player = {}, shop = {}, reward = {} } = warEffortState || {};
+  const unlocked = Boolean(shop.unlocked);
+  const balance = Number(player.availableContribution || 0);
+  const busy = Boolean(warEffortActionInFlight);
+  return `<section class="panel war-effort-rewards">
+    <div class="section-head"><div><h2>全服完成奖励</h2><p>所有玩家均可领取，无需捐献；每个账号限领一次。</p></div>
+      <button type="button" data-action="claim-war-effort" ${!reward.available || busy ? "disabled" : ""}>${player.rewardClaimed ? "已领取 1,500 贡献" : !unlocked ? "全服完成后领取" : busy ? "处理中…" : "领取 1,500 贡献"}</button></div>
+    <div class="war-effort-credit"><span>可用贡献 <b>${balance.toLocaleString("zh-CN")}</b></span><span>累计捐献贡献 ${Number(player.contribution || 0).toLocaleString("zh-CN")}</span></div>
+  </section>
+  <section class="panel war-effort-rewards"><div class="section-head"><div><h2>贡献兑换</h2><p>${unlocked ? "筹备已完成，捐献已关闭。兑换直接发放到英雄收藏、背包或我的皮肤。" : "七项目标全部完成后开放兑换，当前可预览奖励。"}</p></div><button type="button" class="secondary compact-button" data-action="refresh-war-effort" ${busy ? "disabled" : ""}>刷新进度</button></div>
+    <div class="war-effort-shop-grid">${(shop.products || []).map((product) => {
+      const hero = shop.heroes?.[0];
+      const maxQuantity = Math.max(0, Math.min(Math.floor(balance / product.price), product.remaining ?? Infinity));
+      const disabled = !unlocked || busy || maxQuantity < 1 || product.owned;
+      const summary = product.type === "hero" ? `本期还可兑换 ${product.remaining} / ${product.limit} 张，所有 SSR 合计` : product.type === "frame" ? "永久拥有，每个账号兑换一次" : "不限总兑换数量";
+      return `<article class="war-effort-shop-card">
+        ${product.type === "frame" ? avatarFrameArtworkHtml(product.id, "shop-feature", product.name) : `<div class="war-effort-shop-icon" aria-hidden="true">${product.type === "hero" ? "SSR" : product.id === "restart-card" ? "↻" : product.id === "war-god-card" ? "⚔" : "♠♥♣♦"}</div>`}
+        <h3>${escapeHtml(product.name)}</h3><p>${escapeHtml(summary)}</p><strong>${product.price.toLocaleString("zh-CN")} 贡献 / ${product.type === "frame" ? "个" : "张"}</strong>
+        <form data-form="war-effort-exchange" data-product-id="${escapeHtml(product.id)}" data-price="${product.price}">
+          ${product.type === "hero" ? `<label>选择英雄<select name="heroId" ${disabled ? "disabled" : ""}>${(shop.heroes || []).map((item) => `<option value="${escapeHtml(item.id)}">${escapeHtml(item.name)}${item.stars ? ` · ${item.stars}星` : " · 未拥有"}</option>`).join("")}</select></label><small data-exchange-received>${escapeHtml(warEffortHeroReceived(hero))}</small>` : ""}
+          ${product.type !== "frame" ? `<label>兑换数量<input name="quantity" type="number" inputmode="numeric" min="1" max="${Math.max(1, maxQuantity)}" step="1" value="1" ${disabled ? "disabled" : ""}></label>` : `<input name="quantity" type="hidden" value="1">`}
+          <small data-exchange-cost>合计 ${product.price} 贡献</small>
+          <button type="submit" ${disabled ? "disabled" : ""}>${product.owned ? "已拥有" : !unlocked ? "完成后开放" : product.remaining === 0 ? "已达兑换上限" : maxQuantity < 1 ? "贡献不足" : "兑换"}</button>
+        </form></article>`;
+    }).join("")}</div>
+  </section>`;
+}
+
+function updateWarEffortExchangePreview(form) {
+  const quantity = Number(form.elements.quantity?.value || 1);
+  const cost = form.querySelector("[data-exchange-cost]");
+  if (cost) cost.textContent = `合计 ${Number.isSafeInteger(quantity) && quantity > 0 ? (quantity * Number(form.dataset.price)).toLocaleString("zh-CN") : "—"} 贡献`;
+  const received = form.querySelector("[data-exchange-received]");
+  if (received) received.textContent = warEffortHeroReceived(warEffortState?.shop?.heroes?.find((hero) => hero.id === form.elements.heroId?.value), quantity);
+}
+
+async function mutateWarEffortRewards(action, payload = {}) {
+  if (warEffortActionInFlight) return;
+  const accountId = authState.account?.id;
+  warEffortActionInFlight = action;
+  render();
+  try {
+    const data = await api(`/api/war-effort/${action}`, { method: "POST", body: JSON.stringify(payload) });
+    if (authState.account?.id !== accountId) return;
+    warEffortState = data;
+    if (action === "exchange") warEffortPendingExchange = null;
+    resetShopState();
+    resetHeroHomeState();
+    setMessage(action === "claim" ? data.repeated ? "完成奖励已领取" : "已领取 1,500 贡献" : `已兑换：${data.exchange?.received || "奖励"}`);
+  } catch (error) {
+    if (authState.account?.id === accountId) {
+      setMessage(error.message || "操作失败，请重试", true);
+      ensureWarEffortState(true);
+    }
+  } finally {
+    if (authState.account?.id === accountId) warEffortActionInFlight = "";
+    render();
+  }
+}
+
+function exchangeWarEffort(event) {
+  event.preventDefault();
+  const form = event.target.closest("form");
+  const quantity = Number(form.elements.quantity?.value || 1);
+  const productId = form.dataset.productId;
+  const heroId = form.elements.heroId?.value || "";
+  const product = warEffortState?.shop?.products?.find((item) => item.id === productId);
+  const received = heroId ? warEffortHeroReceived(warEffortState.shop.heroes.find((hero) => hero.id === heroId), quantity) : `${product?.name} ×${quantity}`;
+  if (!product || !Number.isSafeInteger(quantity) || quantity < 1) return;
+  if (!window.confirm(`花费 ${product.price * quantity} 贡献兑换${product.name}？\n${received}`)) return;
+  const signature = JSON.stringify({ productId, heroId, quantity });
+  if (warEffortPendingExchange?.signature !== signature) warEffortPendingExchange = { signature, requestId: requestId() };
+  mutateWarEffortRewards("exchange", { productId, heroId, quantity, requestId: warEffortPendingExchange.requestId });
 }
 
 async function donateWarEffort(event) {
@@ -6368,6 +6459,7 @@ function renderRoom() {
       : "人数已满足，等待所有玩家准备";
 
   renderShell(`
+    ${!spectating && gameInProgress && Number(state.viewer?.doudouNumber) ? `<div class="status good doudou-point-notice" role="status"><strong>界·豆豆「随机点数」：${escapeHtml(doudouPointLabel(state.viewer.doudouNumber))}</strong><span>本局技能按此点数结算</span></div>` : ""}
     <div class="room-layout ${spectating ? "spectator-mode" : ""}">
       <div class="stack room-main">
         <section class="panel stack room-overview ${showTable ? "game-room-overview" : ""}">
@@ -9170,9 +9262,12 @@ document.addEventListener("submit", (event) => {
   if (form.dataset.form === "grant-cosmetic") return grantShopCosmetic(event);
   if (form.dataset.form === "grant-diamonds") return grantAdminDiamonds(event);
   if (form.dataset.form === "war-effort-donation") return donateWarEffort(event);
+  if (form.dataset.form === "war-effort-exchange") return exchangeWarEffort(event);
 });
 
 document.addEventListener("change", (event) => {
+  const exchangeForm = event.target.closest('[data-form="war-effort-exchange"]');
+  if (exchangeForm) { updateWarEffortExchangePreview(exchangeForm); return; }
   const avatarFrameUploadTarget = event.target.closest('input[name="avatarFrame"]');
   if (avatarFrameUploadTarget) {
     previewAvatarFrameUpload(avatarFrameUploadTarget);
@@ -9315,6 +9410,8 @@ document.addEventListener("click", (event) => {
     homeJoinOpen = false;
     render();
   }
+  if (action === "claim-war-effort") mutateWarEffortRewards("claim");
+  if (action === "refresh-war-effort") ensureWarEffortState(true);
   if (action === "filter-achievements") {
     const filter = event.target.closest("[data-filter]")?.dataset.filter || "all";
     achievementFilter = new Set(["all", "unfinished", "claimable", "completed"]).has(filter) ? filter : "all";

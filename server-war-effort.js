@@ -1,5 +1,6 @@
 export const WAR_EFFORT_RULES = Object.freeze({
-  version: "2026-10-war-effort-v1",
+  version: "2026-10-war-effort-v2",
+  completionContribution: 1500,
   campaignId: "2026-season-4-war-effort",
   name: "黑石关全服筹备",
   startsAt: "2026-09-30T19:00:00.000Z",
@@ -14,6 +15,50 @@ export const WAR_EFFORT_RULES = Object.freeze({
     building_materials: Object.freeze({ name: "建材", target: 80000, contributionNumerator: 2, contributionDenominator: 25, donationStep: 25 })
   })
 });
+
+// Freeze this campaign's selection; later progression-only SSRs are not unlocked here.
+export const WAR_EFFORT_SSR_IDS = Object.freeze([
+  "shen-biesan", "shen-jiangwen", "shen-haohao", "jie-doudou", "yokoyama-yui", "jie-ranchen"
+]);
+
+export const WAR_EFFORT_SHOP = Object.freeze([
+  Object.freeze({ id: "ssr-choice", name: "SSR 自选卡", price: 1000, limit: 6, type: "hero" }),
+  Object.freeze({ id: "restart-card", name: "重开卡", price: 100, limit: null, type: "item" }),
+  Object.freeze({ id: "war-god-card", name: "战神卡", price: 70, limit: null, type: "item" }),
+  Object.freeze({ id: "colorful-card", name: "缤纷卡", price: 50, limit: null, type: "item" }),
+  Object.freeze({ id: "blackstone-vanguard", name: "黑石关·远征先锋头像框", price: 500, limit: 1, type: "frame" })
+]);
+
+export function warEffortBalance(player = {}) {
+  return Number(player.contribution || 0)
+    + Number(player.reward_contribution || 0)
+    - Number(player.spent_contribution || 0);
+}
+
+export function validateWarEffortExchange({ campaign, player, productId, quantity, heroId, heroes, frameOwned }) {
+  if (!campaign?.completed_at) throw Object.assign(new Error("七项目标全部完成后开放贡献兑换"), { status: 409 });
+  const product = WAR_EFFORT_SHOP.find((item) => item.id === productId);
+  if (!product) throw Object.assign(new Error("兑换商品不存在"), { status: 400 });
+  if (!Number.isSafeInteger(quantity) || quantity < 1 || quantity > 2147483647) {
+    throw Object.assign(new Error("兑换数量必须为有效正整数"), { status: 400 });
+  }
+  if (product.type === "hero") {
+    if (!WAR_EFFORT_SSR_IDS.includes(heroId) || !heroes.some((hero) => hero.id === heroId && hero.rarity === "ssr")) {
+      throw Object.assign(new Error("请选择可兑换的 SSR 英雄"), { status: 400 });
+    }
+    if (Number(player.ssr_exchange_count || 0) + quantity > product.limit) {
+      throw Object.assign(new Error("本期 SSR 自选卡每人合计最多兑换 6 张"), { status: 409 });
+    }
+  }
+  if (product.type === "frame" && (quantity !== 1 || frameOwned)) {
+    throw Object.assign(new Error(frameOwned ? "已经拥有此头像框" : "头像框只能兑换一次"), { status: 409 });
+  }
+  const cost = product.price * quantity;
+  if (!Number.isSafeInteger(cost) || cost > warEffortBalance(player)) {
+    throw Object.assign(new Error("可用贡献不足"), { status: 409 });
+  }
+  return { product, cost };
+}
 
 export const WAR_EFFORT_EVENT_ITEMS = Object.freeze([
   "red_cloth",

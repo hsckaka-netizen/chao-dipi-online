@@ -99,6 +99,8 @@ import {
   createUploadedAvatarFrameProduct,
   dispatchHeroTask,
   donateWarEffortResource,
+  claimWarEffortReward,
+  exchangeWarEffortProduct,
   grantDiamondsByAdmin,
   getAchievementState,
   getEnergyState,
@@ -7904,6 +7906,12 @@ async function handleApi(req, res, pathParts, url) {
     if (account.role !== "player") return writeJson(res, 403, { error: "管理员账号不能参与全服任务" });
     if (req.method === "GET" && pathParts.length === 2) {
       return writeJson(res, 200, await getWarEffortState(account.id));
+    }
+    if (req.method === "POST" && pathParts.length === 3 && pathParts[2] === "claim") {
+      return writeJson(res, 200, await claimWarEffortReward(account.id));
+    }
+    if (req.method === "POST" && pathParts.length === 3 && pathParts[2] === "exchange") {
+      return writeJson(res, 200, await exchangeWarEffortProduct(account.id, await readJson(req)));
     }
     if (req.method === "POST" && pathParts[2] === "donate") {
       const body = await readJson(req);

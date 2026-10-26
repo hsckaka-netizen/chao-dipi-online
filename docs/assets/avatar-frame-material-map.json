@@ -147,6 +147,16 @@
       "sourceRevision": "fed4ca42f304a6f9dc82e9c3c778e260d110539b",
       "sha256": "7d400be96a1da52ec770bc217a3a8df785e33f46ae410d229ff8f1ccdd61d395",
       "virtualFrame": "rounded-square-372-r32"
+    },
+    {
+      "theme": "blackstone-vanguard",
+      "path": "/assets/cosmetics/avatar-frame-blackstone-vanguard.png",
+      "source": {
+        "kind": "imagegen",
+        "promptFile": "docs/assets/blackstone-vanguard-prompt.md"
+      },
+      "sha256": "a6bae798b83f16bad49c5a5e5938d359a4defcd00140d823d294b97766cf9d68",
+      "virtualFrame": "rounded-square-372-r32"
     }
   ]
 }

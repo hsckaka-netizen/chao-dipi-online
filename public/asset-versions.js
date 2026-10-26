@@ -1,4 +1,5 @@
 export const ASSET_VERSIONS = Object.freeze({
+  "/assets/cosmetics/avatar-frame-blackstone-vanguard.png": "a6bae798b83f",
   "/assets/avatars/benlei.png": "d699949c7781",
   "/assets/avatars/biesan.png": "a66d00372b8e",
   "/assets/avatars/chenran.png": "b4222318b1f0",
@@ -125,7 +126,8 @@ export const ASSET_URLS = Object.freeze({
     "death-knight": versionedAssetUrl("/assets/cosmetics/avatar-frame-death-knight.png"),
     minions: versionedAssetUrl("/assets/cosmetics/avatar-frame-minions.png"),
     usagi: versionedAssetUrl("/assets/cosmetics/avatar-frame-usagi.png"),
-    "toy-story": versionedAssetUrl("/assets/cosmetics/avatar-frame-toy-story.png")
+    "toy-story": versionedAssetUrl("/assets/cosmetics/avatar-frame-toy-story.png"),
+    "blackstone-vanguard": versionedAssetUrl("/assets/cosmetics/avatar-frame-blackstone-vanguard.png")
   }),
   cardFrames: Object.freeze({
     emerald: versionedAssetUrl("/assets/cosmetics/card-frame-emerald.svg"),

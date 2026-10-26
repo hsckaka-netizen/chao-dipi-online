@@ -1,3 +1,25 @@
+.war-effort-rewards { margin-top: 18px; }
+.war-effort-rewards .section-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+.war-effort-rewards p { color: var(--muted); line-height: 1.6; }
+.war-effort-credit { display: flex; gap: 24px; align-items: baseline; flex-wrap: wrap; margin-top: 16px; }
+.war-effort-credit b { font-size: 28px; color: var(--accent); }
+.war-effort-shop-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 230px), 1fr)); gap: 16px; margin-top: 18px; }
+.war-effort-shop-card { min-width: 0; border: 1px solid var(--line); border-radius: 16px; padding: 18px; background: rgba(255,255,255,.025); }
+.war-effort-shop-card h3 { margin: 12px 0 8px; }
+.war-effort-shop-card p { min-height: 44px; font-size: 13px; }
+.war-effort-shop-card form, .war-effort-shop-card label { display: grid; gap: 8px; }
+.war-effort-shop-card form { margin-top: 16px; }
+.war-effort-shop-card select, .war-effort-shop-card input { width: 100%; min-width: 0; }
+.war-effort-shop-card small { line-height: 1.5; color: var(--muted); }
+.war-effort-shop-icon { height: 88px; display: grid; place-items: center; font-size: 28px; color: #d3a45b; font-weight: 800; }
+.doudou-point-notice { display: flex; flex-wrap: wrap; gap: 8px 20px; margin-bottom: 12px; }
+.doudou-point-notice span { font-size: 13px; }
+@media (max-width: 600px) {
+  .war-effort-rewards .section-head { align-items: stretch; flex-direction: column; }
+  .war-effort-rewards .section-head button { width: 100%; }
+  .war-effort-shop-card p { min-height: 0; }
+}
+
 :root {
   color-scheme: light;
   --bg: #f6f7f4;
