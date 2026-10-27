@@ -73,12 +73,12 @@ export const HOME_UNITS = Object.freeze([
   }),
   Object.freeze({
     id: "jie-jiangzha", name: "界 · 蒋渣", namePrefix: "界", baseName: "蒋渣", shortName: "渣", type: "hero", rarity: "ssr", gender: "male", regionId: "boka", color: "#285b93", advancementFrom: "jiang-zha",
-    cardImage: "/assets/heroes/jie-jiangzha-card-v2.png",
+    cardImage: "/assets/heroes/jie-jiangzha-card-v3.png",
     skillName: "渣代天命", skillDescription: "传统狗腿模式定完狗腿牌后，可为自己重选一张非比牌作为专属狗腿牌。以狗腿身份获胜时获得150/185/220/255/290钻石；若本局至少赢过一轮，再获得1/1.2/1.5/2/3积分。"
   }),
   Object.freeze({
     id: "jie-denghuang", name: "界 · 灯皇", namePrefix: "界", baseName: "灯皇", shortName: "灯", type: "hero", rarity: "ssr", gender: "male", regionId: "boka", color: "#16858a", advancementFrom: "deng-huang",
-    cardImage: "/assets/heroes/jie-denghuang-card-v2.png",
+    cardImage: "/assets/heroes/jie-denghuang-card-v3.png",
     skillName: "底牌易手", skillDescription: "炒底结束后，可随机拿取1/1/1/1/2张底牌并扣回相同数量手牌，每局一次。本人赢得最后一轮时，获得120/150/180/210/240钻石及1/1.2/1.5/2/3积分。"
   }),
   Object.freeze({

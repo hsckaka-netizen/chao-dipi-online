@@ -5377,7 +5377,7 @@ async function claimHeroAdvancementFromClient(client, accountId, definition) {
   const progress = await client.query(`SELECT progress, claimed_at FROM cdp_hero_advancements WHERE account_id = $1::uuid AND sr_unit_id = $2 FOR UPDATE`, [accountId, srId]);
   const row = progress.rows[0];
   if (!row?.claimed_at) {
-    if (Number(owned.rows[0]?.stars) !== 5 || !row || !advancementProgress(definition, row.progress).complete) throw commerceError("需五星SR并完成全部进阶任务", 409);
+    if (Number(owned.rows[0]?.stars) !== 5 || !row || !advancementProgress(definition, row.progress).complete) throw commerceError("需五星SR并完成进阶任务", 409);
     // The SSR is independently owned. Retain the original SR and its placements.
     await client.query(`INSERT INTO cdp_hero_units (account_id, unit_id, exclusive_fragments) VALUES ($1::uuid, $2, 40)
       ON CONFLICT (account_id, unit_id) DO UPDATE SET exclusive_fragments = cdp_hero_units.exclusive_fragments + CASE WHEN cdp_hero_units.stars < 5 THEN 80 ELSE 0 END`, [accountId, definition.ssrId]);

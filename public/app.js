@@ -5016,7 +5016,7 @@ function heroDisplayName(unit) {
 
 function heroCardVariantPath(value, size = "full") {
   const path = String(value || "");
-  if (!path.endsWith("-card-v2.png")) return path;
+  if (!/-card-v\d+\.png$/.test(path)) return path;
   const suffix = size === "thumb" ? "-thumb.webp" : size === "medium" ? "-medium.webp" : ".webp";
   return `${path.slice(0, -4)}${suffix}`;
 }
@@ -5380,7 +5380,7 @@ function renderAdvancementTasks(unit) {
   if (!advancement) return "";
   if (advancement.claimed) return `<p class="tag good">已完成进阶 · 对应SSR已加入抽卡池</p>`;
   return `<div class="hero-advancement"><b>五星进阶 · ${escapeHtml(heroUnitById(advancement.ssrId)?.name || "SSR")}</b>
-    <p>${advancement.unlocked ? "携带本英雄完成有效真人对局，任务同步累计、永久保留。" : "升至五星后，携带本英雄开始累计任务。"}</p>
+    <p>${advancement.unlocked ? "携带本英雄完成有效真人对局，进度永久保留。" : "升至五星后，携带本英雄开始累计任务。"}</p>
     ${advancement.tasks.map((task) => `<p>${escapeHtml(task.label)} <b>${escapeHtml(task.progress)}/${escapeHtml(task.target)}</b></p>`).join("")}
     <p>奖励：对应SSR×1＋40专属碎片；保留原SR。</p>
     <button type="button" data-action="claim-hero-advancement" data-unit-id="${escapeHtml(unit.id)}" ${!advancement.unlocked || !advancement.complete || heroActionInFlight ? "disabled" : ""}>${advancement.complete ? "完成进阶并领取SSR" : "进阶任务进行中"}</button></div>`;

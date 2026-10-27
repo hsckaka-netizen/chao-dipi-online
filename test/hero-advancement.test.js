@@ -42,15 +42,22 @@ test("account SSR pool excludes advanced heroes until individually unlocked, inc
 
 test("progress requires the corresponding frozen five-star SR and original hero-specific facts", () => {
   const player = { roomPlayerId: "p", role: "狗腿", baseGameScore: 2, battleHeroSnapshot: createBattleHeroSnapshot("jiang-zha", 5) };
-  assert.deepEqual(advancementGameDelta(player, { wonTrickPlayerIds: ["p"] }), { doglegWins: 1, activeDoglegWins: 1 });
-  assert.deepEqual(advancementGameDelta(player, {}), { doglegWins: 1, activeDoglegWins: 0 });
+  assert.deepEqual(advancementGameDelta(player, { wonTrickPlayerIds: ["p"] }), { doglegWins: 1 });
+  assert.deepEqual(advancementGameDelta(player, {}), { doglegWins: 1 });
   player.battleHeroSnapshot.stars = 4;
   assert.equal(advancementGameDelta(player), null);
   player.battleHeroSnapshot = createBattleHeroSnapshot("deng-huang", 5);
-  player.tags = [{ code: "precision" }];
-  assert.deepEqual(advancementGameDelta(player, { bottomWinnerRoomPlayerId: "p" }), { bottomWins: 1, precisionBottomWins: 1 });
-  assert.equal(advancementProgress(HERO_ADVANCEMENTS[0], { doglegWins: 12, activeDoglegWins: 5 }).complete, false);
-  assert.equal(advancementProgress(HERO_ADVANCEMENTS[0], { doglegWins: 99, activeDoglegWins: 6 }).complete, true);
+  player.tags = [];
+  assert.deepEqual(advancementGameDelta(player, { bottomWinnerRoomPlayerId: "p" }), { bottomWins: 1 });
+  assert.deepEqual(advancementGameDelta(player, { bottomWinnerRoomPlayerId: "other" }), { bottomWins: 0 });
+  for (const [definition, key] of [[HERO_ADVANCEMENTS[0], "doglegWins"], [HERO_ADVANCEMENTS[1], "bottomWins"]]) {
+    assert.equal(definition.tasks.length, 1);
+    assert.equal(advancementProgress(definition, { [key]: 9 }).complete, false);
+    assert.equal(advancementProgress(definition, { [key]: 10 }).complete, true);
+    const legacy = advancementProgress(definition, { [key]: 12, activeDoglegWins: 0, precisionBottomWins: 0 });
+    assert.equal(legacy.complete, true);
+    assert.equal(legacy.tasks[0].progress, 10);
+  }
 });
 
 test("Denghuang exchanges exact physical cards once, validates count and ownership, preserving the deck", () => {
