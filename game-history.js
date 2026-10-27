@@ -2258,10 +2258,10 @@ async function warEffortStateFromClient(client, accountId) {
     client.query(`SELECT 1 FROM cdp_cosmetic_entitlements
       WHERE account_id = $1::uuid AND cosmetic_type = 'avatar_frame' AND cosmetic_key = 'blackstone-vanguard'`, [accountId]),
     client.query(`SELECT champion.account_id, champion.contribution,
-        coalesce(profile.name, account.username, '玩家') AS name
+        coalesce(profile.display_name, account.username, '玩家') AS name
       FROM cdp_war_effort_champions champion
       JOIN cdp_accounts account ON account.account_id = champion.account_id
-      LEFT JOIN LATERAL (SELECT name FROM cdp_player_profiles WHERE account_id = champion.account_id LIMIT 1) profile ON true
+      LEFT JOIN LATERAL (SELECT display_name FROM cdp_player_profiles WHERE account_id = champion.account_id LIMIT 1) profile ON true
       WHERE champion.campaign_id = $1 ORDER BY champion.awarded_at, champion.account_id`, [WAR_EFFORT_RULES.campaignId])
   ]);
   const campaign = campaignResult.rows[0];
