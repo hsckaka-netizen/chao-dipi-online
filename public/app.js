@@ -2881,6 +2881,7 @@ function scheduleScoreBidAutoPass() {
 }
 
 function currentSetupCountdownDeadline() {
+  if (["jie-denghuang-skill", "jie-jiangzha-skill"].includes(state?.stage)) return state.boardHeroSkills?.advanced?.deadlineAt || null;
   if (state?.stage === RESTART_CARD_STAGE || state?.stage === OTHER_CARDS_STAGE) {
     return state.gameItems?.deadlineAt || null;
   }
@@ -2950,8 +2951,13 @@ function viewerCanRevealTrump() {
   return state?.stage === "trump-selecting" && isViewer(state.setup?.bankerId);
 }
 
+function viewerCanChooseAdvancedCards() {
+  const skill = state?.boardHeroSkills?.advanced;
+  return Boolean(skill?.canChoose && (state.stage === "jie-jiangzha-skill" || (state.stage === "jie-denghuang-skill" && skill.hasDrawn)));
+}
+
 function viewerCanSelectCards() {
-  return !isSpectating() && (state?.stage === "playing" || viewerCanBid() || viewerCanBury() || viewerCanFry() || viewerCanChooseDogleg());
+  return !isSpectating() && (state?.stage === "playing" || viewerCanBid() || viewerCanBury() || viewerCanFry() || viewerCanChooseDogleg() || viewerCanChooseAdvancedCards());
 }
 
 function selectedCards() {
@@ -3356,6 +3362,11 @@ function viewerCanThrowLead() {
 }
 
 function selectionAction() {
+  if (viewerCanChooseAdvancedCards()) {
+    const isDeng = state.stage === "jie-denghuang-skill";
+    const count = isDeng ? state.boardHeroSkills.advanced.exchangeCount : 1;
+    return { action: isDeng ? "jie-denghuang-bury" : "jie-jiangzha-select", label: isDeng ? "扣回选中的牌" : "选为专属狗腿牌", enabled: selectedCardIds.size === count, reason: selectedCardIds.size === count ? "" : `请选择 ${count} 张${isDeng ? "手牌" : "非比牌"}` };
+  }
   if (viewerCanBid()) {
     const validation = validateBidLikeSelection("bid");
     return { action: "bid-selected", label: "亮选中的2叫/抢主", enabled: validation.ok, reason: validation.reason };
@@ -5364,6 +5375,17 @@ function renderHeroHomePage() {
   `);
 }
 
+function renderAdvancementTasks(unit) {
+  const advancement = (heroHomeState?.advancements || []).find((item) => item.srId === unit.id);
+  if (!advancement) return "";
+  if (advancement.claimed) return `<p class="tag good">已完成进阶 · 对应SSR已加入抽卡池</p>`;
+  return `<div class="hero-advancement"><b>五星进阶 · ${escapeHtml(heroUnitById(advancement.ssrId)?.name || "SSR")}</b>
+    <p>${advancement.unlocked ? "携带本英雄完成有效真人对局，任务同步累计、永久保留。" : "升至五星后，携带本英雄开始累计任务。"}</p>
+    ${advancement.tasks.map((task) => `<p>${escapeHtml(task.label)} <b>${escapeHtml(task.progress)}/${escapeHtml(task.target)}</b></p>`).join("")}
+    <p>奖励：对应SSR×1＋40专属碎片；保留原SR。</p>
+    <button type="button" data-action="claim-hero-advancement" data-unit-id="${escapeHtml(unit.id)}" ${!advancement.unlocked || !advancement.complete || heroActionInFlight ? "disabled" : ""}>${advancement.complete ? "完成进阶并领取SSR" : "进阶任务进行中"}</button></div>`;
+}
+
 function renderCatalogUnit(unit) {
   const owned = ownedHeroUnit(unit.id);
   const cost = owned?.upgradeCost;
@@ -5386,8 +5408,9 @@ function renderCatalogUnit(unit) {
           ${unit.rarity === "ssr" && owned ? `<span>技能 CD <b>${escapeHtml(owned.skillCooldown || 0)} 轮</b></span>` : ""}
         </div>
       </div>
+      ${renderAdvancementTasks(unit)}
       <div class="hero-upgrade-action">
-        ${!owned ? `<span>抽到完整角色后解锁1星</span>` : owned.stars >= 5 ? `<b>已满5星</b>` : `<span>升${owned.stars + 1}星需要 ${cost} 专属碎片${unit.rarity === "ssr" ? "（不足部分10通用=1专属）" : ""}</span><button type="button" data-action="upgrade-hero-unit" data-unit-id="${escapeHtml(unit.id)}" ${!enough || heroActionInFlight ? "disabled" : ""}>${enough ? "确认升星" : "碎片不足"}</button>`}
+        ${!owned ? `<span>${unit.advancementFrom ? "完成对应五星SR进阶后获得并解锁抽取" : "抽到完整角色后解锁1星"}</span>` : owned.stars >= 5 ? `<b>已满5星</b>` : `<span>升${owned.stars + 1}星需要 ${cost} 专属碎片${unit.rarity === "ssr" ? "（不足部分10通用=1专属）" : ""}</span><button type="button" data-action="upgrade-hero-unit" data-unit-id="${escapeHtml(unit.id)}" ${!enough || heroActionInFlight ? "disabled" : ""}>${enough ? "确认升星" : "碎片不足"}</button>`}
       </div>
     </article>
   `;
@@ -6687,6 +6710,20 @@ function renderSetupCenter() {
     ? { label: "当前主牌", value: escapeHtml(setup.currentTrumpSuitName) }
     : null;
 
+  if (stage === "jie-denghuang-skill" || stage === "jie-jiangzha-skill") {
+    const skill = state.boardHeroSkills?.advanced || {};
+    const isDeng = stage === "jie-denghuang-skill";
+    const actor = state.players.find((player) => player.id === skill.currentPlayerId)?.name || "玩家";
+    body = `${renderSetupLines([
+      { label: "英雄技能", value: isDeng ? "底牌易手" : "渣代天命" },
+      { label: "当前操作", value: escapeHtml(actor) },
+      { label: "倒计时", value: setupCountdownTag(skill.deadlineAt, " 后自动完成") }
+    ])}<p>${isDeng ? (skill.hasDrawn ? `已随机拿取${skill.exchangeCount}张底牌，请选择相同数量的手牌扣回；超时自动扣回刚拿取的牌。` : "可随机拿取底牌，再从手牌中扣回相同数量的牌。") : "选择手中一张非比牌作为专属狗腿牌，仅改变自己的狗腿判定；放弃则沿用庄家选择。"}</p>
+    <div class="row">${!isSpectating() && skill.canChoose ? (isDeng
+      ? (skill.hasDrawn ? `<button type="button" data-action="jie-denghuang-bury">扣回选中的 ${skill.exchangeCount} 张牌</button>` : `<button type="button" data-action="jie-denghuang-draw">随机拿取 ${skill.exchangeCount} 张底牌</button><button type="button" class="secondary" data-action="jie-denghuang-pass">放弃</button>`)
+      : `<button type="button" data-action="jie-jiangzha-select">确认专属狗腿牌</button><button type="button" class="secondary" data-action="jie-jiangzha-pass">沿用庄家选择</button>`) : `<span class="tag">等待 ${escapeHtml(actor)} 操作</span>`}</div>`;
+  }
+
   if (stage === RESTART_CARD_STAGE || stage === OTHER_CARDS_STAGE) {
     const completedIds = state.gameItems?.completedPlayerIds || [];
     const uses = state.gameItems?.uses || [];
@@ -7591,7 +7628,7 @@ function renderDoglegTableTag() {
     `;
   }
   if (setup.doglegMode === "random-order") {
-    const card = setup.doglegCard;
+    const card = setup.personalDoglegCard || setup.doglegCard;
     if (!card || !activeIdentityStage) return preparationTag("顺位狗腿", "random-order");
     const targetPositions = setup.doglegTargetPositions || [];
     const positions = targetPositions.map((position) => `第${position}次`).join("、") || "无";
@@ -7610,12 +7647,12 @@ function renderDoglegTableTag() {
       </span>
     `;
   }
-  const card = setup.doglegCard;
+  const card = setup.personalDoglegCard || setup.doglegCard;
   if (!card) return preparationTag("传统狗腿");
   const revealText = names.length ? `已出现：${names.join("、")}` : "尚未出现";
   return `
     <span class="tag table-dogleg-tag" title="${escapeHtml(revealText)}">
-      狗腿牌 <strong class="${escapeHtml(card.color || suitColor(card.suit))}">${escapeHtml(doglegCardText(card))}</strong>
+      ${setup.personalDoglegCard ? "我的狗腿牌" : "狗腿牌"} <strong class="${escapeHtml(card.color || suitColor(card.suit))}">${escapeHtml(doglegCardText(card))}</strong>
       <i>${names.length}/${needed}</i>
     </span>
   `;
@@ -7699,6 +7736,8 @@ function renderSetupTable() {
     "shen-haohao-skill": "聪明伶俐阶段",
     frying: "炒底牌桌",
     "fry-burying": "炒底贴底",
+    "jie-denghuang-skill": "界·灯皇换底",
+    "jie-jiangzha-skill": "界·蒋渣专属狗腿牌",
     dogleg: "狗腿牌"
   };
   const seats = state.players.map((player) => {
@@ -7741,6 +7780,9 @@ function renderSetupTable() {
 }
 
 function setupSeatStatus(player) {
+  if (["jie-denghuang-skill", "jie-jiangzha-skill"].includes(state.stage)) return {
+    text: state.boardHeroSkills?.advanced?.currentPlayerId === player.id ? "技能操作" : "等待技能", tone: state.boardHeroSkills?.advanced?.currentPlayerId === player.id ? "good" : ""
+  };
   const setup = state.setup || {};
   const fry = setup.fry || {};
   if (state.stage === RESTART_CARD_STAGE || state.stage === OTHER_CARDS_STAGE) {
@@ -8740,7 +8782,7 @@ function currentTrumpSuit() {
 }
 
 function handUsesFinalTrumpOrder() {
-  return state?.stage === "dogleg" || state?.stage === "playing";
+  return state?.stage === "dogleg" || state?.stage === "playing" || state?.stage === "jie-denghuang-skill" || state?.stage === "jie-jiangzha-skill";
 }
 
 function isCounselor(card, trumpSuit) {
@@ -8902,7 +8944,7 @@ function isDoglegHandCard(card) {
   if (setup.doglegMode === "dynamic" || setup.doglegMode === "hidden") {
     return Boolean(state?.stage === "playing" && setup.doglegMarkedCardId && card?.id === setup.doglegMarkedCardId);
   }
-  const doglegCard = setup.doglegCard;
+  const doglegCard = setup.personalDoglegCard || setup.doglegCard;
   const revealedIds = setup.doglegPlayerIds || [];
   const needed = setup.doglegMode === "random-order"
     ? Number(setup.doglegTargetCount) || 0
@@ -9244,6 +9286,7 @@ const mutatingActions = new Set([
   "send-taunt", "delete-taunt", "kick-player", "buy-shop-product", "equip-avatar-frame", "use-game-item",
   "complete-item-stage", "collect-home", "assign-home-unit", "select-battle-hero",
   "pull-hero-gacha", "upgrade-hero-unit", "upgrade-home-region", "dispatch-hero-task", "collect-hero-task", "claim-daily-task",
+  "claim-hero-advancement", "jie-denghuang-draw", "jie-denghuang-bury", "jie-denghuang-pass", "jie-jiangzha-select", "jie-jiangzha-pass",
   "purchase-energy", "claim-achievement", "equip-title",
   "shen-biesan-activate", "shen-biesan-pass", "jie-ranchen-invest", "jie-ranchen-pass", "yokoyama-activate", "yokoyama-pass",
   "shen-haohao-activate", "shen-haohao-pass", "shen-jiangwen-activate"
@@ -9528,6 +9571,12 @@ document.addEventListener("click", (event) => {
   if (action === "pull-hero-gacha") {
     pullHeroCards(Number(event.target.closest("[data-pull-count]")?.dataset.pullCount || 1));
   }
+  if (action === "claim-hero-advancement") {
+    claimAdvancedHero(event.target.closest("[data-unit-id]")?.dataset.unitId || "");
+  }
+  if (["jie-denghuang-draw", "jie-denghuang-bury", "jie-denghuang-pass", "jie-jiangzha-select", "jie-jiangzha-pass"].includes(action)) {
+    submitAdvancedHeroAction(action);
+  }
   if (action === "upgrade-hero-unit") {
     upgradeHeroCard(event.target.closest("[data-unit-id]")?.dataset.unitId || "");
   }
@@ -9800,3 +9849,26 @@ async function resume() {
 }
 
 resume();
+
+async function claimAdvancedHero(unitId) {
+  if (heroActionInFlight) return;
+  heroActionInFlight = `advancement:${unitId}`;
+  render();
+  try {
+    const data = await api("/api/heroes/advancement/claim", { method: "POST", body: JSON.stringify({ unitId }) });
+    applyHeroMutationState(data.state);
+    setMessage("进阶完成，SSR与专属碎片已到账，可立即升至2星");
+  } catch (error) { setMessage(error.message || "进阶失败", true); }
+  finally { heroActionInFlight = ""; render(); }
+}
+
+async function submitAdvancedHeroAction(action) {
+  if (!session || isSpectating()) return;
+  try {
+    await roomAction(`/api/rooms/${session.roomId}/board-hero-skill`, {
+      method: "POST", body: JSON.stringify({ playerId: session.playerId, token: session.token, action, cardIds: [...selectedCardIds] })
+    });
+    selectedCardIds = new Set();
+    render();
+  } catch (error) { setMessage(error.message || "技能操作失败", true); }
+}

@@ -1,5 +1,13 @@
 export const ASSET_VERSIONS = Object.freeze({
   "/assets/cosmetics/avatar-frame-blackstone-commander.png": "0eba99dab8ce",
+  "/assets/heroes/jie-jiangzha-card-v2.webp": "5b8014e7ea92",
+  "/assets/heroes/jie-jiangzha-card-v2.png": "4280ea690775",
+  "/assets/heroes/jie-jiangzha-card-v2-thumb.webp": "6d8eee9ea95d",
+  "/assets/heroes/jie-jiangzha-card-v2-medium.webp": "9822d909da8a",
+  "/assets/heroes/jie-denghuang-card-v2.webp": "088f21172a44",
+  "/assets/heroes/jie-denghuang-card-v2.png": "80bac989e9d8",
+  "/assets/heroes/jie-denghuang-card-v2-thumb.webp": "9b75644f34ad",
+  "/assets/heroes/jie-denghuang-card-v2-medium.webp": "e7601bfc75ec",
   "/assets/cosmetics/avatar-frame-blackstone-vanguard.png": "a6bae798b83f",
   "/assets/avatars/benlei.png": "d699949c7781",
   "/assets/avatars/biesan.png": "a66d00372b8e",

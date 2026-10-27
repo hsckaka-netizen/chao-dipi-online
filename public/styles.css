@@ -9235,3 +9235,8 @@ button.auto-play-toggle.active {
     max-width: min(100%, 260px);
   }
 }
+
+.hero-catalog-grid:has(.hero-advancement) { align-items: start; }
+.hero-advancement { grid-column: 1 / -1; font-size: 12px; line-height: 1.6; margin-top: 0; padding: 12px; border: 1px solid #b4c9c5; border-radius: 12px; overflow-wrap: anywhere; }
+.hero-advancement p { margin: 7px 0; }
+.hero-advancement button { max-width: 100%; white-space: normal; }

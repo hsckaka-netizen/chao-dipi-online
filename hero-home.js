@@ -1,7 +1,9 @@
 export const HERO_HOME_RULES = Object.freeze({
-  version: "2026-10-12-v8",
+  version: "2026-10-27-v9",
   skillVersion: "2026-09-24-skill-v9",
-  boardSkillVersion: "2026-10-14-board-skill-v8",
+  boardSkillVersion: "2026-10-27-board-skill-v9",
+  advancedScoreBonus: Object.freeze([1, 1.2, 1.5, 2, 3]),
+  denghuangExchangeCount: Object.freeze([1, 1, 1, 1, 2]),
   maxProductionHours: 6,
   singlePullPrice: 300,
   tenPullPrice: 2700,
@@ -68,6 +70,16 @@ export const HOME_UNITS = Object.freeze([
     id: "deng-huang", name: "灯皇", shortName: "灯", type: "hero", rarity: "sr", gender: "male", regionId: "boka", color: "#16858a",
     cardImage: "/assets/heroes/deng-huang-card-v2.png",
     skillName: "倒买倒卖", skillDescription: "本人赢得最后一轮时触发；1～5星分别额外获得120/150/180/210/240钻石。"
+  }),
+  Object.freeze({
+    id: "jie-jiangzha", name: "界 · 蒋渣", namePrefix: "界", baseName: "蒋渣", shortName: "渣", type: "hero", rarity: "ssr", gender: "male", regionId: "boka", color: "#285b93", advancementFrom: "jiang-zha",
+    cardImage: "/assets/heroes/jie-jiangzha-card-v2.png",
+    skillName: "渣代天命", skillDescription: "传统狗腿模式定完狗腿牌后，可为自己重选一张非比牌作为专属狗腿牌。以狗腿身份获胜时获得150/185/220/255/290钻石；若本局至少赢过一轮，再获得1/1.2/1.5/2/3积分。"
+  }),
+  Object.freeze({
+    id: "jie-denghuang", name: "界 · 灯皇", namePrefix: "界", baseName: "灯皇", shortName: "灯", type: "hero", rarity: "ssr", gender: "male", regionId: "boka", color: "#16858a", advancementFrom: "deng-huang",
+    cardImage: "/assets/heroes/jie-denghuang-card-v2.png",
+    skillName: "底牌易手", skillDescription: "炒底结束后，可随机拿取1/1/1/1/2张底牌并扣回相同数量手牌，每局一次。本人赢得最后一轮时，获得120/150/180/210/240钻石及1/1.2/1.5/2/3积分。"
   }),
   Object.freeze({
     id: "shen-biesan", name: "神 · 瘪三", namePrefix: "神", baseName: "瘪三", shortName: "瘪", type: "hero", rarity: "ssr", gender: "male", regionId: "boka", color: "#9f742c",
@@ -440,7 +452,7 @@ export function createBattleHeroSnapshot(unitId, stars = 1, cooldownValue = 0) {
     stars: normalizedStars(stars),
     skillVersion: unit.rarity === "ssr" ? HERO_HOME_RULES.boardSkillVersion : HERO_HOME_RULES.skillVersion
   };
-  if (unit.rarity === "ssr" && unit.id !== "jie-doudou" && unit.id !== "shen-haohao" && unit.id !== "jie-ranchen") {
+  if (unit.rarity === "ssr" && unit.id !== "jie-doudou" && unit.id !== "shen-haohao" && unit.id !== "jie-ranchen" && !unit.advancementFrom) {
     snapshot.paidSkill = boardHeroSkillState(stars, cooldownValue, unit.id);
   }
   return snapshot;
@@ -545,6 +557,23 @@ export function calculateHeroSkillReward({
     return baseSkillResult(snapshot, matched, null, amount, `个人赢墩牌分${wonPoints}分，每满${pointsPerTrigger}分奖励${GELU_DIAMONDS_PER_TRIGGER}钻，共触发${matched}次，无次数和奖励上限`);
   }
 
+  if (snapshot.heroId === "jie-jiangzha" || snapshot.heroId === "jie-denghuang") {
+    const isJiang = snapshot.heroId === "jie-jiangzha";
+    const matched = isJiang
+      ? playerResult.role === "狗腿" && Number(playerResult.baseGameScore ?? playerResult.gameScore) > 0
+      : history.at(-1)?.winnerId === playerId;
+    const scoreMatched = matched && (!isJiang || history.some((trick) => trick?.winnerId === playerId));
+    const srId = isJiang ? "jiang-zha" : "deng-huang";
+    const amount = matched ? DIRECT_SKILL_REWARDS[srId][stars - 1] : 0;
+    const scoreBonus = scoreMatched ? HERO_HOME_RULES.advancedScoreBonus[stars - 1] : 0;
+    return {
+      ...baseSkillResult(snapshot, Number(matched), 1, amount,
+        `${matched ? (isJiang ? "狗腿身份获胜" : "本人赢得最后一轮") : "未满足奖励条件"}；额外${amount}钻石、${scoreBonus}积分`),
+      rulesVersion: HERO_HOME_RULES.boardSkillVersion,
+      scoreBonus
+    };
+  }
+
   if (snapshot.heroId === "jiang-zha") {
     const matched = playerResult.role === "狗腿" && Number(playerResult.baseGameScore ?? playerResult.gameScore) > 0;
     const amount = matched ? DIRECT_SKILL_REWARDS[snapshot.heroId][stars - 1] : 0;
@@ -646,6 +675,7 @@ export function drawHomeUnit({
   forceHero = false,
   forceRarity = null,
   preferredUnownedHeroIds = [],
+  unlockedSsrIds = [],
   randomFloat = Math.random
 } = {}) {
   let rarity = forceRarity;
@@ -658,7 +688,10 @@ export function drawHomeUnit({
         ? "sr"
         : "minion";
   }
-  if (rarity === "ssr") return SSR_HERO_UNITS[randomIndex(SSR_HERO_UNITS.length, randomFloat)];
+  if (rarity === "ssr") {
+    const pool = SSR_HERO_UNITS.filter((unit) => !unit.advancementFrom || unlockedSsrIds.includes(unit.id));
+    return pool[randomIndex(pool.length, randomFloat)];
+  }
   if (rarity === "sr") {
     const preferred = SR_HERO_UNITS.filter((unit) => preferredUnownedHeroIds.includes(unit.id));
     const pool = preferred.length ? preferred : SR_HERO_UNITS;
@@ -671,17 +704,18 @@ export function drawHeroGachaResult({
   forceHero = false,
   forceRarity = null,
   preferredUnownedHeroIds = [],
+  unlockedSsrIds = [],
   randomFloat = Math.random
 } = {}) {
   if (forceHero || forceRarity) {
     return {
       type: "unit",
-      unit: drawHomeUnit({ forceHero, forceRarity, preferredUnownedHeroIds, randomFloat })
+      unit: drawHomeUnit({ forceHero, forceRarity, preferredUnownedHeroIds, unlockedSsrIds, randomFloat })
     };
   }
   const roll = randomFloat();
   if (roll < HERO_HOME_RULES.ssrChance) {
-    return { type: "unit", unit: drawHomeUnit({ forceRarity: "ssr", randomFloat }) };
+    return { type: "unit", unit: drawHomeUnit({ forceRarity: "ssr", unlockedSsrIds, randomFloat }) };
   }
   if (roll < HERO_HOME_RULES.ssrChance + HERO_HOME_RULES.srChance) {
     return { type: "unit", unit: drawHomeUnit({ forceRarity: "sr", preferredUnownedHeroIds, randomFloat }) };

@@ -144,7 +144,8 @@ import {
   updateShopProducts,
   updateStoredAccount,
   upgradeHomeRegion,
-  upgradeHeroUnit
+  upgradeHeroUnit,
+  claimHeroAdvancement
 } from "./game-history.js";
 import {
   availableTauntPresets,
@@ -1052,6 +1053,7 @@ function emptyGameItems() {
 
 function emptyBoardHeroSkills() {
   return {
+    advanced: { kind: null, eligiblePlayerIds: [], completedPlayerIds: [], currentPlayerId: null, deadlineAt: null, drawnCardIds: [] },
     shenBiesan: {
       eligiblePlayerIds: [],
       completedPlayerIds: [],
@@ -1837,6 +1839,7 @@ function setupSnapshot(room, viewer = null) {
       ? hiddenDoglegCardId(room.hiddenDogleg, viewer.id)
       : null;
   return {
+    personalDoglegCard: viewer ? room.heroRoundState?.[viewer.id]?.personalDoglegCard || null : null,
     stage: room.stage,
     callMode: normalizedCallMode(room.callMode),
     callModeName: callModeName(room.callMode),
@@ -1937,6 +1940,7 @@ function gameItemsSnapshot(room, viewer = null) {
 
 function boardHeroSkillsSnapshot(room, viewer = null) {
   const skills = room.boardHeroSkills || emptyBoardHeroSkills();
+  const advanced = skills.advanced || {};
   const shenBiesan = skills.shenBiesan;
   const yokoyama = skills.yokoyama;
   const shenHaohao = skills.shenHaohao;
@@ -1959,6 +1963,14 @@ function boardHeroSkillsSnapshot(room, viewer = null) {
   const yokoyamaMaxUses = viewerIsYokoyamaEligible ? (Number(yokoyamaSkill?.maxUsesPerGame) || 1) : 0;
   const viewerYokoyamaCandidate = viewer ? yokoyamaCandidateByPlayerId[viewer.id] || null : null;
   return {
+    advanced: {
+      kind: advanced.kind,
+      currentPlayerId: advanced.currentPlayerId,
+      deadlineAt: advanced.deadlineAt,
+      canChoose: Boolean(viewer && viewer.id === advanced.currentPlayerId && ["jie-denghuang-skill", "jie-jiangzha-skill"].includes(room.stage)),
+      exchangeCount: viewer?.battleHeroSnapshot?.heroId === "jie-denghuang" ? HERO_HOME_RULES.denghuangExchangeCount[(viewer.battleHeroSnapshot.stars || 1) - 1] : 0,
+      hasDrawn: Boolean(viewer && viewer.id === advanced.currentPlayerId && advanced.drawnCardIds?.length)
+    },
     replacementRank: room.boardHeroEffects?.replacementRank || null,
     jieRanchen: {
       active: room.stage === JIE_RANCHEN_SKILL_STAGE,
@@ -2171,7 +2183,7 @@ function roomSnapshot(room, viewer = null, options = {}) {
   autoAdvanceExpiredScoreBid(room);
   autoAdvanceExpiredFry(room);
   const secretViewer = options.hideViewerSecrets ? null : viewer;
-  const canViewKitty = Boolean(viewer && room.kitty.length && room.setup?.fry?.lastFryerId === viewer.id);
+  const canViewKitty = Boolean(viewer && room.kitty.length && room.setup?.fry?.lastFryerId === viewer.id && room.stage !== "jie-denghuang-skill");
   const kittyViewerId = room.setup?.fry?.lastFryerId || null;
   const readyCount = readyPlayerCount(room);
   const allReady = allPlayersReady(room);
@@ -2222,7 +2234,7 @@ function roomSnapshot(room, viewer = null, options = {}) {
     tauntPresets: availableTauntPresets(tauntPresets, viewer?.accountId || null),
     taunts: activeTauntsSnapshot(room),
     gameItems: gameItemsSnapshot(room, viewer),
-    boardHeroSkills: boardHeroSkillsSnapshot(room, viewer),
+    boardHeroSkills: boardHeroSkillsSnapshot(room, secretViewer),
     hostId: room.hostId,
     setup: setupSnapshot(room, secretViewer),
     viewer: viewer ? {
@@ -2981,7 +2993,7 @@ function finishGame(room, completedTrick) {
         : [];
     }),
     personalBonuses: room.result.playerResults.flatMap((playerResult) => (
-      playerResult.heroSkillReward?.scoreBonus && playerResult.heroSkillReward?.hero?.heroId === "jie-doudou"
+      playerResult.heroSkillReward?.scoreBonus && ["jie-doudou", "jie-jiangzha", "jie-denghuang"].includes(playerResult.heroSkillReward?.hero?.heroId)
         ? [{ playerId: playerResult.playerId, amount: playerResult.heroSkillReward.scoreBonus }]
         : []
     ))
@@ -3694,6 +3706,11 @@ function finishFrying(room) {
   if (room.setup.fry) room.setup.fry.deadlineAt = null;
   room.trumpSuit = lastBid?.suit || randomSuitId();
   addEvent(room, `炒底结束，主牌确定为${suitName(room.trumpSuit)}`);
+  if (beginAdvancedHeroStage(room, "denghuang")) return;
+  finishAdvancedBottomStage(room);
+}
+
+function finishAdvancedBottomStage(room) {
   const fixedDoglegIds = lockedDoglegIds(room.ranchenRoleLocks);
   const excludedIds = new Set(lockedNonBankerIds(room.ranchenRoleLocks));
   const candidatePlayers = room.players.filter((player) => !excludedIds.has(player.id));
@@ -3939,10 +3956,11 @@ function revealDoglegIfNeeded(room, player, selected) {
   if (!room.doglegCard || player.id === room.bankerId) return;
   if ((room.doglegPlayerIds || []).includes(player.id)) return;
   if ((room.doglegPlayerIds || []).length >= (room.doglegNeeded || 0)) return;
-  if (!selected.some((card) => sameDoglegCard(card, room.doglegCard))) return;
+  const effectiveCard = personalDoglegCard(room, player);
+  if (!selected.some((card) => sameDoglegCard(card, effectiveCard))) return;
   if (!room.doglegPlayerIds) room.doglegPlayerIds = [];
   room.doglegPlayerIds.push(player.id);
-  addEvent(room, `${player.name} 打出狗腿牌 ${room.doglegCard.label}，身份变为狗腿`);
+  addEvent(room, `${player.name} 打出狗腿牌 ${effectiveCard.label}，身份变为狗腿`);
 }
 
 function selectDogleg(room, player, cardIds) {
@@ -3968,8 +3986,8 @@ function selectDogleg(room, player, cardIds) {
   room.dynamicDogleg = null;
   room.hiddenDogleg = null;
   room.randomOrderDogleg = null;
-  beginPlaying(room);
-  addEvent(room, `${player.name} 选择 ${card.label} 为狗腿牌，开始打牌`);
+  addEvent(room, `${player.name} 选择 ${card.label} 为狗腿牌`);
+  if (!beginAdvancedHeroStage(room, "jiangzha")) beginPlaying(room);
   return { ok: true };
 }
 
@@ -4900,6 +4918,14 @@ function clearBoardHeroSkillTimer(room) {
 }
 
 async function autoAdvanceExpiredBoardHeroSkill(room) {
+  if (["jie-denghuang-skill", "jie-jiangzha-skill"].includes(room.stage)) {
+    const skill = room.boardHeroSkills.advanced;
+    if (!skill.deadlineAt || Date.parse(skill.deadlineAt) > Date.now()) return false;
+    const player = playerById(room, skill.currentPlayerId);
+    if (skill.drawnCardIds.length) finishAdvancedExchange(room, player, skill.drawnCardIds);
+    completeAdvancedHeroChoice(room);
+    return true;
+  }
   if (room.stage === JIE_RANCHEN_SKILL_STAGE) {
     const state = room.boardHeroSkills.jieRanchen;
     const deadline = new Date(state.deadlineAt || "").getTime();
@@ -4961,7 +4987,9 @@ async function autoAdvanceExpiredBoardHeroSkill(room) {
 
 function scheduleBoardHeroSkillTimer(room) {
   clearBoardHeroSkillTimer(room);
-  const deadlineAt = room.stage === JIE_RANCHEN_SKILL_STAGE
+  const deadlineAt = ["jie-denghuang-skill", "jie-jiangzha-skill"].includes(room.stage)
+    ? room.boardHeroSkills.advanced.deadlineAt
+    : room.stage === JIE_RANCHEN_SKILL_STAGE
     ? room.boardHeroSkills.jieRanchen.deadlineAt
     : room.stage === SHEN_BIESAN_SKILL_STAGE
     ? room.boardHeroSkills.shenBiesan.deadlineAt
@@ -5534,7 +5562,7 @@ function hiddenDoglegInHand(room, player) {
       && player.hand.some((card) => sameRoomDoglegCard(room, card)));
   }
   return Boolean(room.doglegCard && player.id !== room.bankerId && !(room.doglegPlayerIds || []).includes(player.id)
-    && player.hand.some((card) => sameDoglegCard(card, room.doglegCard)));
+    && player.hand.some((card) => sameDoglegCard(card, personalDoglegCard(room, player))));
 }
 
 function cardIsHiddenDogleg(room, player, card) {
@@ -5548,7 +5576,7 @@ function cardIsHiddenDogleg(room, player, card) {
   if (mode === DOGLEG_MODE_RANDOM_ORDER) {
     return Boolean(hiddenDoglegInHand(room, player) && sameRoomDoglegCard(room, card));
   }
-  return Boolean(hiddenDoglegInHand(room, player) && sameDoglegCard(card, room.doglegCard));
+  return Boolean(hiddenDoglegInHand(room, player) && sameDoglegCard(card, personalDoglegCard(room, player)));
 }
 
 function aiOwnTeam(room, player) {
@@ -7873,6 +7901,10 @@ async function handleApi(req, res, pathParts, url) {
       const result = await pullHeroGacha(account.id, body.pullCount, body.requestId);
       return writeJson(res, 200, { ...result, state: await getHeroHomeState(account.id) });
     }
+    if (req.method === "POST" && pathParts[2] === "advancement" && pathParts[3] === "claim" && pathParts.length === 4) {
+      const body = await readJson(req);
+      return writeJson(res, 200, await claimHeroAdvancement(account.id, body.unitId));
+    }
     if (req.method === "POST" && pathParts[2] === "upgrade" && pathParts.length === 3) {
       const body = await readJson(req);
       const result = await upgradeHeroUnit(account.id, body.unitId, body.requestId);
@@ -8627,7 +8659,8 @@ async function handleApi(req, res, pathParts, url) {
       const viewer = requirePlayer(res, room, body.playerId, body.token);
       if (!viewer) return;
       let result = null;
-      if (body.action === "shen-biesan-activate") result = await submitShenBiesanSkillChoice(room, viewer, true, body.resetCooldown);
+      if (body.action?.startsWith("jie-denghuang-") || body.action?.startsWith("jie-jiangzha-")) result = submitAdvancedHeroChoice(room, viewer, body.action, body.cardIds);
+      else if (body.action === "shen-biesan-activate") result = await submitShenBiesanSkillChoice(room, viewer, true, body.resetCooldown);
       else if (body.action === "shen-biesan-pass") result = await submitShenBiesanSkillChoice(room, viewer, false);
       else if (body.action === "jie-ranchen-invest") result = body.investment == null
         ? { error: "请选择投资额", status: 400 }
@@ -9028,6 +9061,12 @@ export const __aiPlayTesting = {
   setupBottomTransferForecast
 };
 
+export const __heroAdvancementTesting = {
+  emptyBoardHeroSkills, emptySetup, beginAdvancedHeroStage, submitAdvancedHeroChoice,
+  autoAdvanceExpiredBoardHeroSkill, personalDoglegCard, revealDoglegIfNeeded,
+  setupSnapshot, boardHeroSkillsSnapshot, finishFrying, selectDogleg, finishGame, roomSnapshot
+};
+
 export const __gameModeTesting = {
   bankerTeamIds,
   bottomSettlementDelta,
@@ -9044,4 +9083,92 @@ if (executedFileUrl === import.meta.url) {
       console.error("[persistence] background initialization failed", error.message);
     });
   });
+}
+
+function personalDoglegCard(room, player) {
+  return room.heroRoundState?.[player?.id]?.personalDoglegCard || room.doglegCard;
+}
+
+function beginAdvancedHeroStage(room, kind) {
+  const heroId = kind === "denghuang" ? "jie-denghuang" : "jie-jiangzha";
+  const eligiblePlayerIds = room.players.filter((player) => playerHasBoardHero(room, player, heroId)
+    && (kind === "denghuang" || (normalizeDoglegMode(room.doglegMode) === "traditional"
+      && player.id !== room.bankerId && !room.ranchenRoleLocks?.[player.id]
+      && player.hand.some((card) => !isCompareCard(card, room.trumpSuit)))))
+    .map((player) => player.id);
+  if (!eligiblePlayerIds.length) return false;
+  room.boardHeroSkills.advanced = { kind, eligiblePlayerIds, completedPlayerIds: [], currentPlayerId: eligiblePlayerIds[0], drawnCardIds: [], deadlineAt: new Date(Date.now() + 20000).toISOString() };
+  room.stage = kind === "denghuang" ? "jie-denghuang-skill" : "jie-jiangzha-skill";
+  room.phase = kind === "denghuang" ? "界·灯皇选择随机换底" : "界·蒋渣选择专属狗腿牌";
+  return true;
+}
+
+function completeAdvancedHeroChoice(room) {
+  const skill = room.boardHeroSkills.advanced;
+  skill.completedPlayerIds.push(skill.currentPlayerId);
+  skill.currentPlayerId = skill.eligiblePlayerIds.find((playerId) => !skill.completedPlayerIds.includes(playerId)) || null;
+  skill.drawnCardIds = [];
+  skill.deadlineAt = skill.currentPlayerId ? new Date(Date.now() + 20000).toISOString() : null;
+  if (skill.currentPlayerId) return;
+  clearBoardHeroSkillTimer(room);
+  if (skill.kind === "denghuang") finishAdvancedBottomStage(room);
+  else beginPlaying(room);
+}
+
+function finishAdvancedExchange(room, player, cardIds) {
+  const skill = room.boardHeroSkills.advanced;
+  const selected = selectedCardsFromHand(player, cardIds);
+  if (selected.error) return selected;
+  if (selected.cards.length !== skill.drawnCardIds.length) return { error: `请选择${skill.drawnCardIds.length}张牌扣回底牌`, status: 400 };
+  const ids = new Set(cardIds);
+  player.hand = player.hand.filter((card) => !ids.has(card.id));
+  room.kitty.push(...selected.cards);
+  skill.drawnCardIds = [];
+  return { ok: true };
+}
+
+function submitAdvancedHeroChoice(room, player, action, cardIds) {
+  const skill = room.boardHeroSkills.advanced;
+  const prefix = skill.kind === "denghuang" ? "jie-denghuang" : "jie-jiangzha";
+  if (room.stage !== `${prefix}-skill` || !action.startsWith(`${prefix}-`)) return { error: "当前不能发动该技能", status: 409 };
+  if (skill.currentPlayerId !== player.id) return { error: "尚未轮到你操作", status: 403 };
+  if (Date.parse(skill.deadlineAt) <= Date.now()) return { error: "技能选择已超时", status: 409 };
+  if (action === `${prefix}-pass`) {
+    if (skill.drawnCardIds.length) return { error: "已经拿底，请先扣回相应数量的牌", status: 409 };
+    completeAdvancedHeroChoice(room);
+    return { ok: true };
+  }
+  if (action === "jie-jiangzha-select") {
+    const selected = selectedCardsFromHand(player, cardIds);
+    if (selected.error) return selected;
+    if (selected.cards.length !== 1 || isCompareCard(selected.cards[0], room.trumpSuit)) return { error: "请选择手中一张非比牌", status: 400 };
+    const card = selected.cards[0];
+    room.heroRoundState ||= {};
+    room.heroRoundState[player.id] = { ...room.heroRoundState[player.id], personalDoglegCard: publicCard(card) };
+    addEvent(room, `${player.name} 已重新选择自己的专属狗腿牌`);
+    completeAdvancedHeroChoice(room);
+    return { ok: true };
+  }
+  if (action === "jie-denghuang-draw") {
+    if (skill.drawnCardIds.length) return { error: "本局已经拿取底牌", status: 409 };
+    const count = HERO_HOME_RULES.denghuangExchangeCount[(player.battleHeroSnapshot.stars || 1) - 1];
+    if (room.kitty.length < count) return { error: "底牌数量不足", status: 409 };
+    const cards = shuffle([...room.kitty]).slice(0, count);
+    const ids = new Set(cards.map((card) => card.id));
+    room.kitty = room.kitty.filter((card) => !ids.has(card.id));
+    player.hand = sortHand([...player.hand, ...cards]);
+    skill.drawnCardIds = [...ids];
+    // A full return window starts after the server confirms the random draw.
+    skill.deadlineAt = new Date(Date.now() + 20000).toISOString();
+    return { ok: true };
+  }
+  if (action === "jie-denghuang-bury") {
+    if (!skill.drawnCardIds.length) return { error: "请先拿取随机底牌", status: 409 };
+    const result = finishAdvancedExchange(room, player, cardIds);
+    if (result.error) return result;
+    addEvent(room, `${player.name} 完成界·灯皇随机换底`);
+    completeAdvancedHeroChoice(room);
+    return result;
+  }
+  return { error: "未知的进阶英雄技能操作", status: 400 };
 }

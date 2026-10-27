@@ -1,3 +1,4 @@
+import { HERO_ADVANCEMENTS, advancementProgress, advancementGameDelta } from "./hero-advancement.js";
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
@@ -226,6 +227,10 @@ const MIGRATIONS = [
   {
     version: 39,
     path: fileURLToPath(new URL("./db/migrations/039_war_effort_champions.sql", import.meta.url))
+  },
+  {
+    version: 40,
+    path: fileURLToPath(new URL("./db/migrations/040_sr_advancement.sql", import.meta.url))
   }
 ];
 const HISTORY_ENABLED = String(process.env.GAME_HISTORY_ENABLED || "").toLowerCase() === "true";
@@ -1752,6 +1757,7 @@ export function buildGameRecord(room) {
     setup: publicHistorySetup({
       ...jsonValue(room.setup, {}),
       bankerScoreMode: room.bankerScoreMode || "banker-remainder",
+      personalDoglegCards: Object.fromEntries(Object.entries(room.heroRoundState || {}).filter(([, value]) => value.personalDoglegCard).map(([playerId, value]) => [playerId, value.personalDoglegCard])),
       doglegMode: room.doglegMode || "traditional",
       dynamicDogleg: jsonValue(room.dynamicDogleg, null),
       hiddenDogleg: jsonValue(room.hiddenDogleg, null),
@@ -1760,6 +1766,8 @@ export function buildGameRecord(room) {
     }),
     result: compactResult(result),
     trickHistory: compactTrickHistory(room.settledTrickHistory?.length ? room.settledTrickHistory : room.trickHistory),
+    wonTrickPlayerIds: [...new Set((room.trickHistory || []).map((trick) => trick.winnerId))],
+    advancementEligible: isDiamondEligibleGame(room),
     boardHeroEffects: jsonValue(room.boardHeroEffects, {}),
     itemUses: jsonValue(result.itemUses, []),
     itemAdjustments: jsonValue(result.itemAdjustments, []),
@@ -2125,6 +2133,7 @@ async function saveGameRecord(record) {
         [record.gameId, JSON.stringify(tags)]
       );
     }
+    await settleHeroAdvancement(client, record);
     const diamondRewards = await saveDiamondRewards(client, record);
     const warEffortRewards = await saveWarEffortGameRewards(client, record);
     await settleBoardHeroCooldown(client, record);
@@ -2749,6 +2758,12 @@ async function heroHomeStateFromClient(client, accountId) {
   const freePull = freeHeroPullState(profile.free_pull_used_at, nowAt);
   const tasks = await heroTasksFromClient(client, accountId, ownedUnits, nowAt);
   const dailyTasks = await dailyTaskStateFromClient(client, accountId, nowAt);
+  const advancementRows = await client.query(
+    `SELECT sr_unit_id, progress, claimed_at FROM cdp_hero_advancements WHERE account_id = $1::uuid`, [accountId]);
+  const advancements = HERO_ADVANCEMENTS.map((definition) => {
+    const row = advancementRows.rows.find((item) => item.sr_unit_id === definition.srId);
+    return { ...advancementProgress(definition, row?.progress), unlocked: ownedById.get(definition.srId)?.stars === 5, claimed: Boolean(row?.claimed_at) };
+  });
   return {
     ...publicHeroCatalog(),
     accountId,
@@ -2771,6 +2786,7 @@ async function heroHomeStateFromClient(client, accountId) {
         )
       : null,
     ownedUnits,
+    advancements,
     regions,
     tasks,
     dailyTasks,
@@ -3643,6 +3659,9 @@ export async function pullHeroGacha(accountId, pullCountValue, requestIdValue) {
     }]));
     const ownedHeroIds = new Set([...owned.keys()].filter((unitId) => HOME_UNIT_BY_ID.get(unitId)?.type === "hero"));
     let universalFragments = Number(profileResult.rows[0]?.universal_fragments) || 0;
+    const unlockedAdvancements = await client.query(
+      `SELECT sr_unit_id FROM cdp_hero_advancements WHERE account_id = $1::uuid AND claimed_at IS NOT NULL`, [accountId]);
+    const unlockedSsrIds = HERO_ADVANCEMENTS.filter((definition) => unlockedAdvancements.rows.some((row) => row.sr_unit_id === definition.srId)).map((definition) => definition.ssrId);
     let pityCount = Number(profileResult.rows[0]?.non_hero_pity_count) || 0;
     let ssrPityCount = Number(profileResult.rows[0]?.non_ssr_pity_count) || 0;
     const buildingMaterialsBefore = Number(profileResult.rows[0]?.building_materials) || 0;
@@ -3660,7 +3679,7 @@ export async function pullHeroGacha(accountId, pullCountValue, requestIdValue) {
       if (firstPullGuarantee) forceRarity = "sr";
       else if (ssrPityGuarantee) forceRarity = "ssr";
       else if (pityGuarantee) forceRarity = Math.random() < HERO_HOME_RULES.ssrChance ? "ssr" : "sr";
-      const draw = drawHeroGachaResult({ forceRarity, preferredUnownedHeroIds });
+      const draw = drawHeroGachaResult({ forceRarity, preferredUnownedHeroIds, unlockedSsrIds });
       if (draw.type === "materials") {
         buildingMaterialsAwarded += draw.amount;
         pityCount += 1;
@@ -5312,3 +5331,60 @@ export async function listRecentGames(limit = 30) {
   );
   return result.rows;
 }
+
+async function settleHeroAdvancement(client, record) {
+  if (!record.advancementEligible || record.gameMode === "pve") return;
+  for (const player of [...record.players].sort((a, b) => String(a.accountId).localeCompare(String(b.accountId)))) {
+    const delta = advancementGameDelta(player, record);
+    if (!player.accountId || player.diamondReward?.reason === "spectator" || !delta) continue;
+    await ensureHeroAccount(client, player.accountId);
+    await client.query(`SELECT account_id FROM cdp_hero_profiles WHERE account_id = $1::uuid FOR UPDATE`, [player.accountId]);
+    const srId = player.battleHeroSnapshot.heroId;
+    const receipt = await client.query(
+      `INSERT INTO cdp_hero_advancement_games (account_id, sr_unit_id, game_id)
+       VALUES ($1::uuid, $2, $3::uuid) ON CONFLICT DO NOTHING RETURNING game_id`, [player.accountId, srId, record.gameId]);
+    if (!receipt.rows.length) continue;
+    await client.query(`INSERT INTO cdp_hero_advancements (account_id, sr_unit_id) VALUES ($1::uuid, $2) ON CONFLICT DO NOTHING`, [player.accountId, srId]);
+    const row = await client.query(`SELECT progress, claimed_at FROM cdp_hero_advancements WHERE account_id = $1::uuid AND sr_unit_id = $2 FOR UPDATE`, [player.accountId, srId]);
+    if (row.rows[0].claimed_at) continue;
+    const definition = HERO_ADVANCEMENTS.find((item) => item.srId === srId);
+    const counts = { ...row.rows[0].progress };
+    definition.tasks.forEach((task) => { counts[task.key] = Math.min(task.target, (Number(counts[task.key]) || 0) + (delta[task.key] || 0)); });
+    await client.query(`UPDATE cdp_hero_advancements SET progress = $3::jsonb WHERE account_id = $1::uuid AND sr_unit_id = $2`, [player.accountId, srId, JSON.stringify(counts)]);
+  }
+}
+
+export async function claimHeroAdvancement(accountId, srId) {
+  const definition = HERO_ADVANCEMENTS.find((item) => item.srId === srId);
+  if (!definition) throw commerceError("该英雄暂未开放进阶", 400);
+  if (!pool) throw commerceError("英雄系统暂不可用", 503);
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    await claimHeroAdvancementFromClient(client, accountId, definition);
+    const state = await heroHomeStateFromClient(client, accountId);
+    await client.query("COMMIT");
+    return { ssrId: definition.ssrId, state };
+  } catch (error) { await client.query("ROLLBACK"); throw error; }
+  finally { client.release(); }
+}
+
+async function claimHeroAdvancementFromClient(client, accountId, definition) {
+  const srId = definition.srId;
+  await ensureHeroAccount(client, accountId);
+  await client.query(`SELECT account_id FROM cdp_hero_profiles WHERE account_id = $1::uuid FOR UPDATE`, [accountId]);
+  const owned = await client.query(`SELECT stars FROM cdp_hero_units WHERE account_id = $1::uuid AND unit_id = $2`, [accountId, srId]);
+  const progress = await client.query(`SELECT progress, claimed_at FROM cdp_hero_advancements WHERE account_id = $1::uuid AND sr_unit_id = $2 FOR UPDATE`, [accountId, srId]);
+  const row = progress.rows[0];
+  if (!row?.claimed_at) {
+    if (Number(owned.rows[0]?.stars) !== 5 || !row || !advancementProgress(definition, row.progress).complete) throw commerceError("需五星SR并完成全部进阶任务", 409);
+    // The SSR is independently owned. Retain the original SR and its placements.
+    await client.query(`INSERT INTO cdp_hero_units (account_id, unit_id, exclusive_fragments) VALUES ($1::uuid, $2, 40)
+      ON CONFLICT (account_id, unit_id) DO UPDATE SET exclusive_fragments = cdp_hero_units.exclusive_fragments + CASE WHEN cdp_hero_units.stars < 5 THEN 80 ELSE 0 END`, [accountId, definition.ssrId]);
+    const maxed = await client.query(`SELECT stars FROM cdp_hero_units WHERE account_id = $1::uuid AND unit_id = $2`, [accountId, definition.ssrId]);
+    if (Number(maxed.rows[0]?.stars) === 5) await client.query(`UPDATE cdp_hero_profiles SET universal_fragments = universal_fragments + 400 WHERE account_id = $1::uuid`, [accountId]);
+    await client.query(`UPDATE cdp_hero_advancements SET claimed_at = now() WHERE account_id = $1::uuid AND sr_unit_id = $2`, [accountId, srId]);
+  }
+}
+
+export const __heroAdvancementStorageTesting = { settleHeroAdvancement, claimHeroAdvancementFromClient };

@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { HERO_UNITS } from "../hero-home.js";
 import { WAR_EFFORT_RULES, WAR_EFFORT_SHOP, validateWarEffortExchange, warEffortBalance } from "../server-war-effort.js";
 
-const heroId = HERO_UNITS.find((hero) => hero.rarity === "ssr").id;
+const heroId = HERO_UNITS.find((hero) => hero.rarity === "ssr" && !hero.advancementFrom).id;
 function exchange(overrides = {}) {
   return validateWarEffortExchange({ campaign: { completed_at: "2026-10-26" },
     player: { contribution: 7000, spent_contribution: 0, ssr_exchange_count: 0 },
@@ -29,6 +29,8 @@ test("exchanges require completed campaign, valid choices, funds and integer qua
   assert.throws(() => exchange({ campaign: { completed_at: null } }), /全部完成/);
   assert.throws(() => exchange({ productId: "__proto__" }), /不存在/);
   assert.throws(() => exchange({ heroId: "jiang-zha" }), /SSR/);
+  assert.throws(() => exchange({ heroId: "jie-jiangzha" }), /SSR/);
+  assert.throws(() => exchange({ heroId: "jie-denghuang" }), /SSR/);
   assert.throws(() => exchange({ heroId: "future-locked-ssr" }), /SSR/);
   assert.throws(() => exchange({ heroId: "future-locked-ssr", heroes: [...HERO_UNITS, { id: "future-locked-ssr", rarity: "ssr" }] }), /SSR/);
   for (const quantity of [0, -1, 1.5, Infinity, NaN, Number.MAX_SAFE_INTEGER]) {
