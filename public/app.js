@@ -1,6 +1,6 @@
 import { applyStatePatch } from "./state-patch.js?v=9330552c7e1e";
 import { detectNewDraggedFiveEffects, detectNewLargePlayEffects } from "./gameplay-effects.js?v=14791e626d30";
-import { ASSET_URLS, versionedAssetUrl } from "./asset-versions.js?v=64f62bed0a35";
+import { ASSET_URLS, versionedAssetUrl } from "./asset-versions.js?v=a79ef3297644";
 import { createHistoryTrickEntry, filterHistoryTimelineEntries } from "./history-records.js?v=874ba3c97732";
 import { suitTractorOrderValue } from "./replacement-rank-rules.js?v=3b3650aa685e";
 import { doudouPointLabel, doudouPointNotice } from "./doudou-notice.js?v=3ded4697e374";
@@ -39,7 +39,8 @@ const AVATAR_FRAME_OPTIONS = [
   { value: "minions", label: "小黄人工坊（小黄人主题）" },
   { value: "usagi", label: "乌萨奇萌兔" },
   { value: "toy-story", label: "玩具总动员" },
-  { value: "blackstone-vanguard", label: "黑石关·远征先锋" }
+  { value: "blackstone-vanguard", label: "黑石关·远征先锋" },
+  { value: "blackstone-commander", label: "黑石关·烬龙统帅" }
 ];
 const CARD_SKIN_OPTIONS = [
   { value: "", label: "默认牌框" },
@@ -3930,7 +3931,7 @@ function renderAchievementPage() {
         <button type="button" class="title-choice ${achievementState.equippedTitleId ? "secondary" : "active"}" data-action="equip-title" data-title-id="" ${titleEquipInFlight ? "disabled" : ""}>不装备</button>
         ${ownedTitles.map((title) => `<button type="button" class="title-choice ${achievementState.equippedTitleId === title.id ? "active" : "secondary"}" data-action="equip-title" data-title-id="${escapeHtml(title.id)}" ${titleEquipInFlight ? "disabled" : ""}>${renderEquippedTitle(title)}</button>`).join("")}
       </div>
-      ${ownedTitles.length ? "" : `<div class="empty">领取带称号奖励的成就后，可在这里自由装备。</div>`}
+      ${ownedTitles.length ? "" : `<div class="empty">获得成就或活动称号后，可在这里自由装备。</div>`}
     </section>
     <section class="panel">
       <div class="section-head"><div><h2>成就筛选</h2><p>默认优先显示可领取项目，其次按完成进度排序。</p></div></div>
@@ -4032,6 +4033,7 @@ function renderWarEffortPage() {
     </section>
     ${campaign.status === "upcoming" ? `<div class="status">任务已上线，将在下一赛季开始时开放牌局产出与捐献。</div>` : ""}
     ${renderWarEffortRewards()}
+    ${renderWarEffortChampion()}
     <section class="war-effort-grid">
       ${(campaign.resources || []).map((resource) => renderWarEffortResource(resource, warEffortState.player?.inventory, active)).join("")}
     </section>
@@ -4040,6 +4042,20 @@ function renderWarEffortPage() {
       <div><span>红纹布 ×1</span><span>悬赏令 ×4</span><span>梦叶草 ×5</span><span>黑铁矿石 ×4</span><span>20钻石 = 1</span><span>通用碎片 ×6</span><span>25建材 = 2</span></div>
     </section>
   `);
+}
+
+function renderWarEffortChampion() {
+  const champion = warEffortState?.champion;
+  if (!champion) return "";
+  const names = (champion.winners || []).map((winner) => escapeHtml(winner.name)).join("、");
+  return `<section class="panel war-effort-champion">
+    <div class="war-effort-champion-art">${avatarFrameArtworkHtml(champion.frameKey, "shop-feature", champion.frameName)}</div>
+    <div class="war-effort-champion-copy"><span class="eyebrow">BLACKSTONE COMMANDER</span><h2>贡献冠军专属荣耀</h2>
+      <div class="war-effort-champion-title">${renderEquippedTitle(champion.title)}<strong>${escapeHtml(champion.frameName)}</strong></div>
+      <p>本期累计捐献贡献最高的玩家，额外获得永久专属头像框与称号。并列最高同奖；兑换和完成奖励不影响排名。</p>
+      ${champion.settled ? names ? `<p class="war-effort-champion-winners">本期贡献冠军：<strong>${names}</strong> · ${Number(champion.winners[0]?.contribution || 0).toLocaleString("zh-CN")} 贡献</p>` : `<p>本期没有符合条件的贡献冠军。</p>` : `<p>全服筹备完成后确定获奖玩家，并自动发放奖励。</p>`}
+      ${champion.awardedToMe ? `<div class="status good">你已获得冠军奖励，可分别在「我的皮肤」和「成就与称号」中装备。</div><div class="row"><button type="button" class="secondary compact-button" data-action="show-shop">我的皮肤</button><button type="button" class="secondary compact-button" data-action="show-achievements">装备称号</button></div>` : ""}
+    </div></section>`;
 }
 
 function warEffortHeroReceived(hero, quantity = 1) {
@@ -8137,7 +8153,7 @@ function viewerCardSkin() {
 
 function renderEquippedTitle(title) {
   return title?.name
-    ? `<span class="equipped-title" title="已装备称号">${escapeHtml(title.name)}</span>`
+    ? `<span class="equipped-title${title.id === "war-effort-s4-commander" ? " champion-title" : ""}" title="${escapeHtml(title.source || "已装备称号")}">${escapeHtml(title.name)}</span>`
     : "";
 }
 

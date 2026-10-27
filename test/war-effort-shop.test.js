@@ -6,7 +6,7 @@ import { WAR_EFFORT_RULES, WAR_EFFORT_SHOP, validateWarEffortExchange, warEffort
 const heroId = HERO_UNITS.find((hero) => hero.rarity === "ssr").id;
 function exchange(overrides = {}) {
   return validateWarEffortExchange({ campaign: { completed_at: "2026-10-26" },
-    player: { contribution: 6000, spent_contribution: 0, ssr_exchange_count: 0 },
+    player: { contribution: 7000, spent_contribution: 0, ssr_exchange_count: 0 },
     productId: "ssr-choice", quantity: 1, heroId, heroes: HERO_UNITS, frameOwned: false, ...overrides });
 }
 
@@ -19,7 +19,7 @@ test("all players including zero donors receive the same once-only claim value",
 
 test("confirmed prices and unrestricted consumable quantities", () => {
   assert.deepEqual(WAR_EFFORT_SHOP.map(({ id, price, limit }) => [id, price, limit]), [
-    ["ssr-choice", 1000, 6], ["restart-card", 100, null], ["war-god-card", 70, null],
+    ["ssr-choice", 1000, 7], ["restart-card", 100, null], ["war-god-card", 70, null],
     ["colorful-card", 50, null], ["blackstone-vanguard", 500, 1]
   ]);
   assert.equal(exchange({ productId: "war-god-card", quantity: 80 }).cost, 5600);
@@ -39,9 +39,10 @@ test("exchanges require completed campaign, valid choices, funds and integer qua
 });
 
 test("SSR limit counts total cards across heroes and frame ownership prevents repurchase", () => {
-  assert.equal(exchange({ quantity: 6 }).cost, 6000);
-  assert.throws(() => exchange({ quantity: 7 }), /最多兑换 6/);
-  assert.throws(() => exchange({ quantity: 2, player: { contribution: 10000, ssr_exchange_count: 5 } }), /最多兑换 6/);
+  assert.equal(exchange({ quantity: 7 }).cost, 7000);
+  assert.equal(exchange({ quantity: 1, player: { contribution: 7000, ssr_exchange_count: 6 } }).cost, 1000);
+  assert.throws(() => exchange({ quantity: 8 }), /最多兑换 7/);
+  assert.throws(() => exchange({ quantity: 2, player: { contribution: 10000, ssr_exchange_count: 6 } }), /最多兑换 7/);
   assert.throws(() => exchange({ productId: "blackstone-vanguard", frameOwned: true }), /已经拥有/);
   assert.throws(() => exchange({ productId: "blackstone-vanguard", quantity: 2 }), /只能兑换一次/);
 });

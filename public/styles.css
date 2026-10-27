@@ -20,6 +20,21 @@
   .war-effort-shop-card p { min-height: 0; }
 }
 
+.panel.war-effort-champion { display: grid; grid-template-columns: 160px minmax(0, 1fr); gap: 24px; align-items: center; margin-top: 18px; border: 1px solid #b28042; background: radial-gradient(ellipse at 8% 40%, #44251a 0, #24211d 45%, #171c1b 100%); color: #f5ead7; }
+.war-effort-champion-art { display: grid; place-items: center; }
+.war-effort-champion .avatar-frame-material-preview { width: 156px; height: 156px; background: transparent; border: 0; }
+.war-effort-champion .eyebrow { color: #d1a66b; }
+.war-effort-champion h2 { color: #ffe3ab; margin: 7px 0 12px; }
+.war-effort-champion p { color: #d3c4ad; line-height: 1.7; overflow-wrap: anywhere; }
+.war-effort-champion-copy { min-width: 0; }
+.war-effort-champion-title { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.war-effort-champion-title strong { font-size: 13px; }
+.equipped-title.champion-title { border-color: #bd9145; color: #ffe7a6; background: linear-gradient(115deg, #26201a, #51331d, #221e1c); box-shadow: inset 0 1px 0 #a57e3c, 0 0 7px rgba(175, 93, 31, .16); }
+@media (max-width: 600px) {
+  .panel.war-effort-champion { grid-template-columns: minmax(0, 1fr); gap: 10px; }
+  .war-effort-champion-art { justify-content: center; }
+}
+
 :root {
   color-scheme: light;
   --bg: #f6f7f4;

@@ -157,6 +157,16 @@
       },
       "sha256": "a6bae798b83f16bad49c5a5e5938d359a4defcd00140d823d294b97766cf9d68",
       "virtualFrame": "rounded-square-372-r32"
+    },
+    {
+      "theme": "blackstone-commander",
+      "path": "/assets/cosmetics/avatar-frame-blackstone-commander.png",
+      "source": {
+        "kind": "imagegen",
+        "promptFile": "docs/assets/blackstone-commander-prompt.md"
+      },
+      "sha256": "0eba99dab8ce62fc89d18abcc8c310fba7505436f6e9e70d76cda8c477c518bc",
+      "virtualFrame": "rounded-square-372-r32"
     }
   ]
 }

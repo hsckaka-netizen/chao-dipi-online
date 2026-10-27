@@ -48,9 +48,11 @@ test("hero cards and consumable items have an independent fixed shop catalog", (
   assert.ok(!AVATAR_FRAME_KEYS.includes("champion"));
   assert.ok(CARD_SKIN_KEYS.includes("champion"));
   const avatarFrameProducts = DEFAULT_SHOP_PRODUCTS.filter((product) => product.productType === "avatar_frame");
-  assert.equal(avatarFrameProducts.length, AVATAR_FRAME_KEYS.length - 1);
+  assert.equal(avatarFrameProducts.length, AVATAR_FRAME_KEYS.length - 2);
   assert.ok(AVATAR_FRAME_KEYS.includes("blackstone-vanguard"));
   assert.ok(!avatarFrameProducts.some((product) => product.assetKey === "blackstone-vanguard"));
+  assert.ok(AVATAR_FRAME_KEYS.includes("blackstone-commander"));
+  assert.ok(!avatarFrameProducts.some((product) => product.assetKey === "blackstone-commander"));
   assert.ok(avatarFrameProducts.every((product) => product.defaultPrice >= 6000 && product.defaultPrice <= 10000));
   assert.ok(!AVATAR_FRAME_KEYS.includes("vip-legend"));
   assert.ok(!avatarFrameProducts.some((product) => product.assetKey === "vip-legend"));

@@ -68,6 +68,21 @@ test("completed rewards remain claimable and only claimed titles can be equipped
   assert.equal(afterClaim.equippedTitle.name, "牌桌新秀");
 });
 
+test("campaign champion title is equipable only with a server-awarded entitlement and does not count as an achievement", () => {
+  const titleId = "war-effort-s4-commander";
+  const before = buildAchievementState({}, [], titleId);
+  assert.equal(before.equippedTitleId, "");
+  const after = buildAchievementState({}, [], titleId, [titleId]);
+  assert.equal(after.equippedTitleId, titleId);
+  assert.equal(after.equippedTitle.name, "破军统帅");
+  assert.equal(after.equippedTitle.rarity, "legendary");
+  assert.equal(after.ownedTitles.length, 1);
+  assert.equal(after.totalCount, before.totalCount);
+  assert.equal(after.claimedCount, 0);
+  assert.equal(after.claimableCount, before.claimableCount);
+  assert.equal(buildAchievementState({}, [], "pvp-rookie", ["pvp-rookie"]).equippedTitleId, "");
+});
+
 test("special achievements count only actual lead cards and successful fry actions", () => {
   const trickHistory = [
     {

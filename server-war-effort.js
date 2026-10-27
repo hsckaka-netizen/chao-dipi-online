@@ -1,5 +1,5 @@
 export const WAR_EFFORT_RULES = Object.freeze({
-  version: "2026-10-war-effort-v2",
+  version: "2026-10-war-effort-v3",
   completionContribution: 1500,
   campaignId: "2026-season-4-war-effort",
   name: "黑石关全服筹备",
@@ -21,8 +21,14 @@ export const WAR_EFFORT_SSR_IDS = Object.freeze([
   "shen-biesan", "shen-jiangwen", "shen-haohao", "jie-doudou", "yokoyama-yui", "jie-ranchen"
 ]);
 
+export const WAR_EFFORT_CHAMPION = Object.freeze({
+  frameKey: "blackstone-commander",
+  frameName: "黑石关·烬龙统帅头像框",
+  title: Object.freeze({ id: "war-effort-s4-commander", name: "破军统帅", rarity: "legendary", source: "黑石关贡献冠军" })
+});
+
 export const WAR_EFFORT_SHOP = Object.freeze([
-  Object.freeze({ id: "ssr-choice", name: "SSR 自选卡", price: 1000, limit: 6, type: "hero" }),
+  Object.freeze({ id: "ssr-choice", name: "SSR 自选卡", price: 1000, limit: 7, type: "hero" }),
   Object.freeze({ id: "restart-card", name: "重开卡", price: 100, limit: null, type: "item" }),
   Object.freeze({ id: "war-god-card", name: "战神卡", price: 70, limit: null, type: "item" }),
   Object.freeze({ id: "colorful-card", name: "缤纷卡", price: 50, limit: null, type: "item" }),
@@ -47,7 +53,7 @@ export function validateWarEffortExchange({ campaign, player, productId, quantit
       throw Object.assign(new Error("请选择可兑换的 SSR 英雄"), { status: 400 });
     }
     if (Number(player.ssr_exchange_count || 0) + quantity > product.limit) {
-      throw Object.assign(new Error("本期 SSR 自选卡每人合计最多兑换 6 张"), { status: 409 });
+      throw Object.assign(new Error(`本期 SSR 自选卡每人合计最多兑换 ${product.limit} 张`), { status: 409 });
     }
   }
   if (product.type === "frame" && (quantity !== 1 || frameOwned)) {

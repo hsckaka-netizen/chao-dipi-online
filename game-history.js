@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 
 import pg from "pg";
 import { mutateWarEffort } from "./war-effort-commerce.js";
+import { awardWarEffortChampions } from "./war-effort-champions.js";
 import {
   calculateGameDiamondReward,
   diamondRewardDate,
@@ -38,6 +39,7 @@ import {
   WAR_EFFORT_RULES,
   WAR_EFFORT_SHOP,
   WAR_EFFORT_SSR_IDS,
+  WAR_EFFORT_CHAMPION,
   warEffortBalance,
   warEffortCampaignStatus,
   warEffortContribution
@@ -220,6 +222,10 @@ const MIGRATIONS = [
   {
     version: 38,
     path: fileURLToPath(new URL("./db/migrations/038_war_effort_exchange.sql", import.meta.url))
+  },
+  {
+    version: 39,
+    path: fileURLToPath(new URL("./db/migrations/039_war_effort_champions.sql", import.meta.url))
   }
 ];
 const HISTORY_ENABLED = String(process.env.GAME_HISTORY_ENABLED || "").toLowerCase() === "true";
@@ -2225,7 +2231,7 @@ async function warEffortStateFromClient(client, accountId) {
      ON CONFLICT (campaign_id, account_id) DO NOTHING`,
     [WAR_EFFORT_RULES.campaignId, accountId]
   );
-  const [campaignResult, playerResult, walletResult, heroResult, contributorResult, ownedResult, frameResult] = await Promise.all([
+  const [campaignResult, playerResult, walletResult, heroResult, contributorResult, ownedResult, frameResult, championResult] = await Promise.all([
     client.query(
       `SELECT * FROM cdp_war_effort_campaigns WHERE campaign_id = $1`,
       [WAR_EFFORT_RULES.campaignId]
@@ -2250,7 +2256,13 @@ async function warEffortStateFromClient(client, accountId) {
     ),
     client.query(`SELECT unit_id, stars FROM cdp_hero_units WHERE account_id = $1::uuid`, [accountId]),
     client.query(`SELECT 1 FROM cdp_cosmetic_entitlements
-      WHERE account_id = $1::uuid AND cosmetic_type = 'avatar_frame' AND cosmetic_key = 'blackstone-vanguard'`, [accountId])
+      WHERE account_id = $1::uuid AND cosmetic_type = 'avatar_frame' AND cosmetic_key = 'blackstone-vanguard'`, [accountId]),
+    client.query(`SELECT champion.account_id, champion.contribution,
+        coalesce(profile.name, account.username, '玩家') AS name
+      FROM cdp_war_effort_champions champion
+      JOIN cdp_accounts account ON account.account_id = champion.account_id
+      LEFT JOIN LATERAL (SELECT name FROM cdp_player_profiles WHERE account_id = champion.account_id LIMIT 1) profile ON true
+      WHERE champion.campaign_id = $1 ORDER BY champion.awarded_at, champion.account_id`, [WAR_EFFORT_RULES.campaignId])
   ]);
   const campaign = campaignResult.rows[0];
   if (!campaign) throw warEffortError("全服任务尚未配置", 503);
@@ -2284,6 +2296,12 @@ async function warEffortStateFromClient(client, accountId) {
       }
     },
     reward: { amount: WAR_EFFORT_RULES.completionContribution, available: Boolean(campaign.completed_at) && !player.reward_claimed_at },
+    champion: {
+      ...WAR_EFFORT_CHAMPION,
+      settled: Boolean(campaign.champion_settled_at),
+      awardedToMe: championResult.rows.some((row) => row.account_id === accountId),
+      winners: championResult.rows.map((row) => ({ name: row.name, contribution: Number(row.contribution) || 0 }))
+    },
     shop: {
       unlocked: Boolean(campaign.completed_at),
       products: WAR_EFFORT_SHOP.map((product) => ({
@@ -2466,6 +2484,7 @@ export async function donateWarEffortResource(accountId, resourceTypeValue, amou
         WAR_EFFORT_RULES.resources.building_materials.target
       ]
     );
+    await awardWarEffortChampions(client);
     const state = await warEffortStateFromClient(client, accountId);
     await client.query("COMMIT");
     return {
@@ -4226,7 +4245,7 @@ async function achievementMetricsFromClient(client, accountId) {
 }
 
 async function achievementStateFromClient(client, accountId) {
-  const [metrics, claimsResult, profileResult] = await Promise.all([
+  const [metrics, claimsResult, profileResult, activityTitlesResult] = await Promise.all([
     achievementMetricsFromClient(client, accountId),
     client.query(
       `SELECT achievement_id, claimed_at
@@ -4240,7 +4259,8 @@ async function achievementStateFromClient(client, accountId) {
        FROM cdp_player_profiles
        WHERE account_id = $1::uuid`,
       [accountId]
-    )
+    ),
+    client.query(`SELECT title_id FROM cdp_war_effort_champions WHERE account_id = $1::uuid`, [accountId])
   ]);
   return buildAchievementState(
     metrics,
@@ -4248,7 +4268,8 @@ async function achievementStateFromClient(client, accountId) {
       achievementId: row.achievement_id,
       claimedAt: row.claimed_at ? new Date(row.claimed_at).toISOString() : null
     })),
-    profileResult.rows[0]?.equipped_title || ""
+    profileResult.rows[0]?.equipped_title || "",
+    activityTitlesResult.rows.map((row) => row.title_id)
   );
 }
 
@@ -4378,7 +4399,10 @@ export async function equipAchievementTitle(accountId, profileId, titleIdValue) 
       const owned = await client.query(
         `SELECT 1
          FROM cdp_achievement_claims
-         WHERE account_id = $1::uuid AND reward_title_id = $2`,
+         WHERE account_id = $1::uuid AND reward_title_id = $2
+         UNION ALL
+         SELECT 1 FROM cdp_war_effort_champions WHERE account_id = $1::uuid AND title_id = $2
+         LIMIT 1`,
         [accountId, titleId]
       );
       if (!owned.rows[0]) throw commerceError("只能装备已经领取的称号", 403);

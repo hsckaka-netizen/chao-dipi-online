@@ -1,3 +1,5 @@
+import { WAR_EFFORT_CHAMPION } from "./server-war-effort.js";
+
 export const ACHIEVEMENT_RULES = Object.freeze({
   version: "2026-09-23-v3"
 });
@@ -247,7 +249,8 @@ export const ACHIEVEMENTS = Object.freeze([
 
 export const ACHIEVEMENT_BY_ID = new Map(ACHIEVEMENTS.map((item) => [item.id, item]));
 export const ACHIEVEMENT_TITLE_BY_ID = new Map(
-  ACHIEVEMENTS.filter((item) => item.title).map((item) => [item.title.id, item.title])
+  [...ACHIEVEMENTS.filter((item) => item.title).map((item) => [item.title.id, item.title]),
+    [WAR_EFFORT_CHAMPION.title.id, WAR_EFFORT_CHAMPION.title]]
 );
 
 export function calculateStreaks(results = []) {
@@ -350,7 +353,7 @@ export function buildModeAchievementMetrics(games = [], tags = [], mode = "pvp")
   };
 }
 
-export function buildAchievementState(metrics = {}, claimedRows = [], equippedTitleId = "") {
+export function buildAchievementState(metrics = {}, claimedRows = [], equippedTitleId = "", activityTitleIds = []) {
   const claimedById = new Map(claimedRows.map((row) => [row.achievementId, row]));
   const achievements = ACHIEVEMENTS.map((definition) => {
     const progress = Math.max(0, Math.trunc(Number(metrics[definition.metric]) || 0));
@@ -366,6 +369,7 @@ export function buildAchievementState(metrics = {}, claimedRows = [], equippedTi
   const ownedTitles = achievements
     .filter((item) => item.claimed && item.title)
     .map((item) => item.title);
+  if (activityTitleIds.includes(WAR_EFFORT_CHAMPION.title.id)) ownedTitles.push(WAR_EFFORT_CHAMPION.title);
   const validEquipped = ownedTitles.some((title) => title.id === equippedTitleId) ? equippedTitleId : "";
   return {
     rulesVersion: ACHIEVEMENT_RULES.version,
