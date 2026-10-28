@@ -9240,3 +9240,51 @@ button.auto-play-toggle.active {
 .hero-advancement { grid-column: 1 / -1; font-size: 12px; line-height: 1.6; margin-top: 0; padding: 12px; border: 1px solid #b4c9c5; border-radius: 12px; overflow-wrap: anywhere; }
 .hero-advancement p { margin: 7px 0; }
 .hero-advancement button { max-width: 100%; white-space: normal; }
+
+/* Keep the nickname visible independently of the optional title. */
+.player-name-copy {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+}
+
+.player-name-copy > .equipped-title {
+  flex: 0 1 auto;
+  max-width: min(100%, 72px);
+  margin: 0;
+}
+
+.player-name-copy > .name-text,
+.player-name-copy > .trick-player-display-name,
+.player-name-copy > .seat-hand-name,
+.player-name-copy > b {
+  flex: 0 1 auto;
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  line-height: 1.25;
+}
+
+.statistics-player-button,
+.statistics-player {
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: 100%;
+}
+
+@media (min-width: 981px) {
+  .table-circle .seat-left .player-name-copy {
+    align-items: flex-end;
+  }
+}
+
+@media (max-width: 980px) {
+  .trick:not(.setup-table) .trick-grid.table-circle .trick-seat:not(.viewer-seat) .player-name-copy {
+    align-items: center;
+  }
+}

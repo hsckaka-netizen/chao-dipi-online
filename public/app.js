@@ -1943,7 +1943,7 @@ async function equipOwnedTitle(titleId) {
     });
     achievementState = data.state;
     authState.account = data.account;
-    setMessage(titleId ? "称号已装备，会显示在名字前。" : "已取消装备称号。", false);
+    setMessage(titleId ? "称号已装备。" : "已取消装备称号。", false);
   } catch (error) {
     setMessage(error.message, true);
   } finally {
@@ -3937,7 +3937,7 @@ function renderAchievementPage() {
       </article>
     </section>
     <section class="panel title-equipment-panel">
-      <div class="section-head"><div><h2>装备称号</h2><p>称号会以独立标签显示在名字前，长昵称会自动省略，不会挤乱牌桌。</p></div><span class="tag">已拥有 ${escapeHtml(ownedTitles.length)}</span></div>
+      <div class="section-head"><div><h2>装备称号</h2><p>牌桌和排行榜中，称号显示在昵称上方；长昵称会自动省略。</p></div><span class="tag">已拥有 ${escapeHtml(ownedTitles.length)}</span></div>
       <div class="title-choice-list">
         <button type="button" class="title-choice ${achievementState.equippedTitleId ? "secondary" : "active"}" data-action="equip-title" data-title-id="" ${titleEquipInFlight ? "disabled" : ""}>不装备</button>
         ${ownedTitles.map((title) => `<button type="button" class="title-choice ${achievementState.equippedTitleId === title.id ? "active" : "secondary"}" data-action="equip-title" data-title-id="${escapeHtml(title.id)}" ${titleEquipInFlight ? "disabled" : ""}>${renderEquippedTitle(title)}</button>`).join("")}
@@ -4391,7 +4391,7 @@ function renderHomeStatistics() {
       <div class="statistics-summary statistics-summary-wide">
         <div class="statistics-current-leader">
           ${rows[0] ? avatarHtml(rows[0].latest_name || "玩家", rows[0].latest_avatar_url || "", "normal", rows[0].avatar_frame || "") : ""}
-          <span><i>当前排名第一</i><b>${renderEquippedTitle(rows[0]?.equipped_title)}${escapeHtml(rows[0]?.latest_name || "暂无")}</b><em>${rows[0] ? escapeHtml(currentColumn.format(currentColumn.value(rows[0]), rows[0])) : "-"}</em></span>
+          <span><i>当前排名第一</i><b class="player-name-copy">${renderEquippedTitle(rows[0]?.equipped_title)}<span class="name-text">${escapeHtml(rows[0]?.latest_name || "暂无")}</span></b><em>${rows[0] ? escapeHtml(currentColumn.format(currentColumn.value(rows[0]), rows[0])) : "-"}</em></span>
         </div>
         <div><span>上榜玩家</span><strong>${rows.length}</strong></div>
         <div><span>参赛人次</span><strong>${appearances}</strong></div>
@@ -4559,14 +4559,12 @@ function renderStatisticsTable(rows) {
                 ${row.account_id ? `
                   <button type="button" class="statistics-player-button" data-action="show-player-statistics" data-account-id="${escapeHtml(row.account_id)}" title="${escapeHtml(row.latest_name || "玩家")} · @${escapeHtml(row.username || "player")}">
                     ${avatarHtml(row.latest_name || "玩家", row.latest_avatar_url || "", "small", row.avatar_frame || "")}
-                    ${renderEquippedTitle(row.equipped_title)}
-                    <b>${escapeHtml(row.latest_name || "玩家")}</b>
+                    <span class="player-name-copy">${renderEquippedTitle(row.equipped_title)}<b>${escapeHtml(row.latest_name || "玩家")}</b></span>
                   </button>
                 ` : `
                   <span class="statistics-player">
                     ${avatarHtml(row.latest_name || "玩家", row.latest_avatar_url || "", "small", row.avatar_frame || "")}
-                    ${renderEquippedTitle(row.equipped_title)}
-                    <b>${escapeHtml(row.latest_name || "玩家")}</b>
+                    <span class="player-name-copy">${renderEquippedTitle(row.equipped_title)}<b>${escapeHtml(row.latest_name || "玩家")}</b></span>
                   </span>
                 `}
                 </div>
@@ -7945,7 +7943,7 @@ function renderSeatHand(action, play, trick, index, options = {}) {
           <div class="seat-hand-profile-copy">
             ${renderBattleHeroMark(play.battleHeroSnapshot || roomPlayer.battleHeroSnapshot, true, play.playerId)}
             <div class="seat-hand-player-line">
-              <strong>${renderEquippedTitle(play.equippedTitle || roomPlayer.equippedTitle)}<span class="seat-hand-name">${escapeHtml(play.playerName)}</span>${roleMark(play.role, play.playerId)}${renderAutoPlayMark(roomPlayer)}</strong>
+              <strong><span class="player-name-copy">${renderEquippedTitle(play.equippedTitle || roomPlayer.equippedTitle)}<span class="seat-hand-name">${escapeHtml(play.playerName)}</span></span>${roleMark(play.role, play.playerId)}${renderAutoPlayMark(roomPlayer)}</strong>
               <span class="seat-status ${escapeHtml(statusTone)}">${escapeHtml(statusText)}</span>
             </div>
           </div>
@@ -8207,8 +8205,7 @@ function playerIdentity(name, role, avatarUrl = "", suffix = "", playerId = "", 
       ${renderLuckyMark(playerId)}
       ${renderWarGodMark(playerId)}
       ${roleMark(role, playerId)}
-      ${renderEquippedTitle(equippedTitle)}
-      <span class="name-text">${escapeHtml(`${name}${suffix}`)}</span>
+      <span class="player-name-copy">${renderEquippedTitle(equippedTitle)}<span class="name-text">${escapeHtml(`${name}${suffix}`)}</span></span>
     </span>
   `;
 }
@@ -8232,8 +8229,7 @@ function tablePlayerIdentity(play) {
         ${renderPlayerHistoryMini(play.playerId, { overlay: true })}
       </span>
       ${roleMark(play.role, play.playerId)}
-      ${renderEquippedTitle(play.equippedTitle || player?.equippedTitle)}
-      <span class="name-text">${escapeHtml(play.playerName)}</span>
+      <span class="player-name-copy">${renderEquippedTitle(play.equippedTitle || player?.equippedTitle)}<span class="name-text">${escapeHtml(play.playerName)}</span></span>
       ${renderBattleHeroMark(play.battleHeroSnapshot || player?.battleHeroSnapshot, true, play.playerId)}
     </span>
   `;
@@ -8258,8 +8254,7 @@ function renderTablePlayerSummary(play, statusText, statusTone) {
       </span>
       <span class="trick-player-summary">
         <span class="trick-player-line">
-          ${renderEquippedTitle(play.equippedTitle || player?.equippedTitle)}
-          <strong class="trick-player-display-name">${escapeHtml(play.playerName)}</strong>
+          <span class="player-name-copy">${renderEquippedTitle(play.equippedTitle || player?.equippedTitle)}<strong class="trick-player-display-name">${escapeHtml(play.playerName)}</strong></span>
           ${renderBattleHeroMark(play.battleHeroSnapshot || player?.battleHeroSnapshot, true, play.playerId)}
           ${renderAutoPlayMark(player || play)}
         </span>
