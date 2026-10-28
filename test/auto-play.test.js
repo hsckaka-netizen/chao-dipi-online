@@ -1,3 +1,4 @@
+import { startWithoutHero } from "./helpers/hero-draft.js";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
@@ -40,6 +41,9 @@ async function startServer(env = {}) {
   return { child, baseUrl: `http://127.0.0.1:${port}` };
 }
 
+const testSessions = new Map();
+async function startWithoutHeroes(url, options) { return startWithoutHero(jsonRequest, url, options, testSessions); }
+
 async function jsonRequest(url, options = {}) {
   const response = await fetch(url, {
     ...options,
@@ -50,6 +54,7 @@ async function jsonRequest(url, options = {}) {
   });
   const data = await response.json();
   assert.equal(response.ok, true, data.error || `请求失败：${response.status}`);
+  if (data.playerId && data.token) testSessions.set(data.playerId, data);
   return data;
 }
 
@@ -224,7 +229,7 @@ test("trustee state is public, plays the smallest legal cards, and can be cancel
     method: "POST",
     body: JSON.stringify({ ...credentials, ready: true })
   });
-  await jsonRequest(actionUrl("start"), {
+  await startWithoutHeroes(actionUrl("start"), {
     method: "POST",
     body: JSON.stringify(credentials)
   });
@@ -304,7 +309,7 @@ test("动态狗腿跳过庄家选牌，并以最终实时排名结算", async (t
     method: "POST",
     body: JSON.stringify({ ...credentials, ready: true })
   });
-  await jsonRequest(actionUrl("start"), {
+  await startWithoutHeroes(actionUrl("start"), {
     method: "POST",
     body: JSON.stringify(credentials)
   });
@@ -384,7 +389,7 @@ test("暗狗腿仅向本人暴露专属牌，打出后公开并按固定身份�
     method: "POST",
     body: JSON.stringify({ ...credentials, ready: true })
   });
-  await jsonRequest(actionUrl("start"), {
+  await startWithoutHeroes(actionUrl("start"), {
     method: "POST",
     body: JSON.stringify(credentials)
   });
@@ -468,7 +473,7 @@ test("顺位狗腿公开同色同点牌组与随机顺位，并按有效打出�
     method: "POST",
     body: JSON.stringify({ ...credentials, ready: true })
   });
-  await jsonRequest(actionUrl("start"), {
+  await startWithoutHeroes(actionUrl("start"), {
     method: "POST",
     body: JSON.stringify(credentials)
   });
@@ -539,7 +544,7 @@ test("players leave a finished result independently and auto-ready for the next 
     method: "POST",
     body: JSON.stringify({ ...credentials, ready: true })
   });
-  await jsonRequest(actionUrl("start"), {
+  await startWithoutHeroes(actionUrl("start"), {
     method: "POST",
     body: JSON.stringify(credentials)
   });
@@ -646,7 +651,7 @@ test("preset taunts are validated, visible to the room, and expire", async (t) =
     method: "POST",
     body: JSON.stringify({ ...credentials, ready: true })
   });
-  await jsonRequest(actionUrl("start"), {
+  await startWithoutHeroes(actionUrl("start"), {
     method: "POST",
     body: JSON.stringify(credentials)
   });

@@ -1,3 +1,4 @@
+import { startWithoutHero } from "./helpers/hero-draft.js";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
@@ -39,6 +40,9 @@ async function startServer(env = {}) {
   return { child, baseUrl: `http://127.0.0.1:${port}` };
 }
 
+const testSessions = new Map();
+async function startWithoutHeroes(url, options) { return startWithoutHero(jsonRequest, url, options, testSessions); }
+
 async function jsonRequest(url, options = {}) {
   const response = await fetch(url, {
     ...options,
@@ -49,6 +53,7 @@ async function jsonRequest(url, options = {}) {
   });
   const data = await response.json();
   assert.equal(response.ok, true, data.error || `请求失败：${response.status}`);
+  if (data.playerId && data.token) testSessions.set(data.playerId, data);
   return data;
 }
 
@@ -125,7 +130,7 @@ test("team PVP and official PVE start with public fixed teams and no score biddi
       body: JSON.stringify({ playerId: player.playerId, token: player.token, ready: true })
     });
   }
-  await jsonRequest(`${teamRoomUrl}/start`, {
+  await startWithoutHeroes(`${teamRoomUrl}/start`, {
     method: "POST",
     body: JSON.stringify({ playerId: teamHost.playerId, token: teamHost.token })
   });
@@ -162,7 +167,7 @@ test("team PVP and official PVE start with public fixed teams and no score biddi
       body: JSON.stringify({ playerId: player.playerId, token: player.token, ready: true })
     });
   }
-  await jsonRequest(`${pveRoomUrl}/start`, {
+  await startWithoutHeroes(`${pveRoomUrl}/start`, {
     method: "POST",
     body: JSON.stringify({ playerId: pveHost.playerId, token: pveHost.token })
   });
@@ -280,7 +285,7 @@ test("host configures the opening bid from 10% to 50% before a score-bidding gam
     method: "POST",
     body: JSON.stringify({ ...credentials, ready: true })
   });
-  await jsonRequest(`${roomUrl}/start`, {
+  await startWithoutHeroes(`${roomUrl}/start`, {
     method: "POST",
     body: JSON.stringify(credentials)
   });
@@ -342,7 +347,7 @@ test("players can leave the lobby and reclaim their active-game seat", async (t)
     method: "POST",
     body: JSON.stringify({ playerId: secondPlayer.playerId, token: secondPlayer.token, ready: true })
   });
-  await jsonRequest(`${server.baseUrl}/api/rooms/${lobby.roomId}/start`, {
+  await startWithoutHeroes(`${server.baseUrl}/api/rooms/${lobby.roomId}/start`, {
     method: "POST",
     body: JSON.stringify({ playerId: secondPlayer.playerId, token: secondPlayer.token })
   });
@@ -457,7 +462,7 @@ test("room snapshots stay monotonic and visual assets are cached", async (t) => 
     method: "POST",
     body: JSON.stringify({ ...credentials, ready: true })
   });
-  const startedAck = await jsonRequest(`${server.baseUrl}/api/rooms/${created.roomId}/start`, {
+  const startedAck = await startWithoutHeroes(`${server.baseUrl}/api/rooms/${created.roomId}/start`, {
     method: "POST",
     body: JSON.stringify(credentials)
   });
@@ -537,7 +542,7 @@ test("room snapshots stay monotonic and visual assets are cached", async (t) => 
       method: "POST",
       body: JSON.stringify({ ...countAuth, ready: true })
     });
-    const countStartedAck = await jsonRequest(`${server.baseUrl}/api/rooms/${countRoom.roomId}/start`, {
+    const countStartedAck = await startWithoutHeroes(`${server.baseUrl}/api/rooms/${countRoom.roomId}/start`, {
       method: "POST",
       body: JSON.stringify(countAuth)
     });
@@ -569,4 +574,48 @@ test("room snapshots stay monotonic and visual assets are cached", async (t) => 
       body: JSON.stringify({ spectatorId: countSpectate.spectatorId, token: countSpectate.token })
     });
   }
+});
+
+test("hero draft keeps unowned random candidates fixed and rejects unavailable or forged choices", async (t) => {
+  const server = await startServer();
+  t.after(() => server.child.kill());
+  const host = await jsonRequest(`${server.baseUrl}/api/rooms`, {
+    method: "POST", body: JSON.stringify({ profileId: "player-benlei" })
+  });
+  const base = `${server.baseUrl}/api/rooms/${host.roomId}`;
+  const credentials = { playerId: host.playerId, token: host.token };
+  const post = (action, body = {}) => jsonRequest(`${base}/${action}`, {
+    method: "POST", body: JSON.stringify({ ...credentials, ...body })
+  });
+  await post("test-players", { targetCount: 5 });
+  await post("ready", { ready: true });
+  await post("start");
+  const stateUrl = `${base}/state?${new URLSearchParams(credentials)}`;
+  const first = await jsonRequest(stateUrl);
+  assert.equal(first.stage, "hero-selecting");
+  assert.equal(first.hand.length, 0);
+  assert.equal(first.heroDraft.choices.length, 2);
+  assert.ok(first.heroDraft.choices.every((hero) => !hero.owned && !hero.canSelect));
+  assert.deepEqual((await jsonRequest(stateUrl)).heroDraft.choices, first.heroDraft.choices);
+  const spectator = await jsonRequest(`${base}/spectate`, {
+    method: "POST", body: JSON.stringify({ targetPlayerId: host.playerId })
+  });
+  assert.deepEqual(spectator.snapshot.heroDraft.choices, []);
+  for (const [body, expectedStatus] of [
+    [{ heroId: first.heroDraft.choices[0].heroId }, 403],
+    [{ heroId: "not-a-hero" }, 409],
+    [{ token: "forged-token", heroId: first.heroDraft.choices[0].heroId }, 401]
+  ]) {
+    const response = await fetch(`${base}/hero-select`, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ ...credentials, ...body })
+    });
+    assert.equal(response.status, expectedStatus);
+  }
+  assert.deepEqual((await jsonRequest(stateUrl)).heroDraft.choices, first.heroDraft.choices);
+  await post("hero-select", { heroId: null });
+  const dealt = await jsonRequest(stateUrl);
+  assert.equal(dealt.stage, "score-bidding");
+  assert.equal(dealt.hand.length, 53);
+  assert.equal(dealt.viewer.battleHeroSnapshot, null);
 });

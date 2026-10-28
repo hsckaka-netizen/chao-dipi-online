@@ -85,6 +85,7 @@ import { versionedAssetUrl } from "./public/asset-versions.js";
 import { createStatePatch } from "./public/state-patch.js";
 import { applyShenBiesanCardRules, suitTractorOrderValue } from "./public/replacement-rank-rules.js";
 import { calculateHeroSkillReward, cardRankNumber, HERO_HOME_RULES } from "./hero-home.js";
+import { createHeroDraft, chooseDraftHero, heroDraftComplete, heroDraftSnapshot, HERO_DRAFT_STAGE } from "./hero-draft.js";
 import { ACHIEVEMENT_TITLE_BY_ID } from "./achievements.js";
 import {
   assignHomeUnit,
@@ -105,7 +106,7 @@ import {
   getAchievementState,
   getEnergyState,
   getPlayerShopState,
-  getBattleHeroSnapshots,
+  getBattleHeroInventory,
   getDiamondWallet,
   getHeroHomeState,
   getWarEffortState,
@@ -137,7 +138,6 @@ import {
   saveEquippedCosmetics,
   saveStoredTauntPreset,
   saveStoredPlayerProfile,
-  selectBattleHero,
   consumePveStartEnergy,
   equipAchievementTitle,
   updateShopProduct,
@@ -1526,29 +1526,64 @@ function sortHand(hand) {
   });
 }
 
-async function lockBattleHeroesForDeal(room) {
-  room.players.forEach((player) => {
-    player.battleHeroSnapshot = null;
-  });
-  const accountIds = room.players.filter((player) => !player.test && player.accountId).map((player) => player.accountId);
-  if (!accountIds.length) return;
-  let timeoutId = null;
+async function beginHeroDraft(room, loadInventory = getBattleHeroInventory) {
+  room.players.forEach((player) => { player.battleHeroSnapshot = null; });
+  const accountIds = humanPlayers(room).map((player) => player.accountId).filter(Boolean);
+  let timer;
+  let inventory;
   try {
-    const snapshots = await Promise.race([
-      getBattleHeroSnapshots(accountIds),
+    inventory = await Promise.race([
+      loadInventory(accountIds),
       new Promise((_, reject) => {
-        timeoutId = setTimeout(() => reject(new Error("读取上阵英雄超时")), 1500);
-        timeoutId.unref?.();
+        timer = setTimeout(() => reject(new Error("读取英雄星级超时")), 1500);
+        timer.unref?.();
       })
     ]);
-    room.players.forEach((player) => {
-      player.battleHeroSnapshot = snapshots[player.accountId] || null;
-    });
   } catch (error) {
-    console.error("[hero-home] battle hero snapshot unavailable; game continues", error.message);
+    console.error("[hero-home] draft inventory unavailable; game continues without heroes", error.message);
+    deal(room);
+    addEvent(room, "英雄数据暂不可用，本局无英雄出战");
+    return;
   } finally {
-    if (timeoutId) clearTimeout(timeoutId);
+    clearTimeout(timer);
   }
+  room.heroDraft = createHeroDraft(room.players, inventory);
+  room.status = "dealt";
+  room.stage = HERO_DRAFT_STAGE;
+  room.phase = "选择本局出战英雄";
+  finishHeroDraftIfComplete(room);
+}
+
+function finishHeroDraftIfComplete(room) {
+  if (room.stage !== HERO_DRAFT_STAGE || !heroDraftComplete(room.heroDraft)) return false;
+  clearHeroDraftTimer(room);
+  deal(room);
+  addEvent(room, `选将结束：${room.players.length} 人，每人 ${HAND_SIZE} 张，底牌 ${room.kitty.length} 张`);
+  return true;
+}
+
+function expireHeroDraft(room) {
+  if (room.stage !== HERO_DRAFT_STAGE || Date.parse(room.heroDraft.deadlineAt) > Date.now()) return false;
+  room.players.forEach((player) => {
+    const entry = room.heroDraft.entries[player.id];
+    if (entry && !entry.completed) chooseDraftHero(room.heroDraft, player.id, null);
+  });
+  return finishHeroDraftIfComplete(room);
+}
+
+function clearHeroDraftTimer(room) {
+  if (room?.heroDraftTimer) clearTimeout(room.heroDraftTimer);
+  if (room) room.heroDraftTimer = null;
+}
+
+function scheduleHeroDraftTimer(room) {
+  clearHeroDraftTimer(room);
+  if (room.stage !== HERO_DRAFT_STAGE) return;
+  room.heroDraftTimer = setTimeout(() => {
+    room.heroDraftTimer = null;
+    if (rooms.get(room.id) === room && expireHeroDraft(room)) broadcastAndContinueAutomation(room);
+  }, Math.max(0, Date.parse(room.heroDraft.deadlineAt) - Date.now()) + 50);
+  room.heroDraftTimer.unref?.();
 }
 
 async function preparePveEnergyForDeal(room, startId) {
@@ -1582,6 +1617,8 @@ async function preparePveEnergyForDeal(room, startId) {
 }
 
 function deal(room, options = {}) {
+  clearHeroDraftTimer(room);
+  room.heroDraft = null;
   clearAiSetupTimer(room);
   clearAiPlayTimer(room);
   clearScoreBidTimer(room);
@@ -1682,6 +1719,8 @@ function finalizeNextRoundLobby(room) {
 }
 
 function resetRoomToLobby(room, options = {}) {
+  clearHeroDraftTimer(room);
+  room.heroDraft = null;
   clearAiSetupTimer(room);
   clearAiPlayTimer(room);
   clearScoreBidTimer(room);
@@ -1727,6 +1766,7 @@ function resetRoomToLobby(room, options = {}) {
   if (normalizeGameMode(room.gameMode) === GAME_MODE_PVE) syncPveLobbyPlayers(room);
   room.players.forEach((player) => {
     player.hand = [];
+    player.battleHeroSnapshot = null;
     player.autoPlayEnabled = false;
     player.score = 0;
     player.draggedRedFives = 0;
@@ -2175,6 +2215,7 @@ function roomResultSnapshot(room, privatePlayerId = null) {
 }
 
 function roomSnapshot(room, viewer = null, options = {}) {
+  if (expireHeroDraft(room)) queueMicrotask(() => broadcastAndContinueAutomation(room));
   void autoAdvanceExpiredGameItemStage(room)
     .then((advanced) => {
       if (advanced) broadcastAndContinueAutomation(room);
@@ -2233,6 +2274,7 @@ function roomSnapshot(room, viewer = null, options = {}) {
     notice: room.notice?.expiresAt && Date.now() < new Date(room.notice.expiresAt).getTime() ? room.notice : null,
     tauntPresets: availableTauntPresets(tauntPresets, viewer?.accountId || null),
     taunts: activeTauntsSnapshot(room),
+    heroDraft: heroDraftSnapshot(room.heroDraft, secretViewer?.id, room.stage === HERO_DRAFT_STAGE),
     gameItems: gameItemsSnapshot(room, viewer),
     boardHeroSkills: boardHeroSkillsSnapshot(room, secretViewer),
     hostId: room.hostId,
@@ -2560,6 +2602,7 @@ function hasHumanPlayer(room) {
 }
 
 function dissolveRoom(room, messageText) {
+  clearHeroDraftTimer(room);
   clearAiSetupTimer(room);
   clearAiPlayTimer(room);
   clearScoreBidTimer(room);
@@ -5081,6 +5124,7 @@ function scheduleNextAiSetupAction(room, delayMs = AI_SETUP_DELAY_MS) {
 
 function broadcastAndContinueAutomation(room) {
   broadcast(room);
+  scheduleHeroDraftTimer(room);
   scheduleGameItemStageTimer(room);
   scheduleScoreBidTimer(room);
   scheduleFryTimer(room);
@@ -7893,9 +7937,9 @@ async function handleApi(req, res, pathParts, url) {
       return writeJson(res, 200, await upgradeHomeRegion(account.id, body.regionId, body.requestId));
     }
     if (req.method === "PATCH" && pathParts[2] === "battle" && pathParts.length === 3) {
-      const body = await readJson(req);
-      return writeJson(res, 200, await selectBattleHero(account.id, body.unitId));
+      return writeJson(res, 409, { error: "出战英雄已改为开局随机候选，请在牌桌选将" });
     }
+
     if (req.method === "POST" && pathParts[2] === "gacha" && pathParts.length === 3) {
       const body = await readJson(req);
       const result = await pullHeroGacha(account.id, body.pullCount, body.requestId);
@@ -8629,10 +8673,9 @@ async function handleApi(req, res, pathParts, url) {
         const nextGameRecordId = randomUUID();
         const energyStartId = randomUUID();
         await preparePveEnergyForDeal(room, energyStartId);
-        await lockBattleHeroesForDeal(room);
-        deal(room);
         room.gameRecordId = nextGameRecordId;
-        addEvent(room, `房主开始牌局：${room.players.length} 人，每人 ${HAND_SIZE} 张，底牌 ${room.kitty.length} 张`);
+        await beginHeroDraft(room);
+        addEvent(room, room.stage === HERO_DRAFT_STAGE ? "房主开始牌局，请选择本局出战英雄" : `房主开始牌局：${room.players.length} 人，每人 ${HAND_SIZE} 张，底牌 ${room.kitty.length} 张`);
         const ineligiblePlayers = humanPlayers(room).filter((player) => player.pveEnergyEligible === false);
         if (normalizeGameMode(room.gameMode) === GAME_MODE_PVE && ineligiblePlayers.length) {
           addEvent(room, `${ineligiblePlayers.map((player) => player.name).join("、")}体力不足或暂不可用，本局不获得钻石且不计每日任务和 PVE 成就`);
@@ -8642,6 +8685,20 @@ async function handleApi(req, res, pathParts, url) {
       } finally {
         room.startInFlight = false;
       }
+    }
+
+    if (req.method === "POST" && pathParts[3] === "hero-select") {
+      const body = await readJson(req);
+      const viewer = requirePlayer(res, room, body.playerId, body.token);
+      if (!viewer) return;
+      if (expireHeroDraft(room)) broadcastAndContinueAutomation(room);
+      if (room.stage !== HERO_DRAFT_STAGE) return writeJson(res, 409, { error: "当前不在选将阶段" });
+      const result = chooseDraftHero(room.heroDraft, viewer.id, body.heroId || null);
+      if (result.error) return writeJson(res, result.status, { error: result.error });
+      viewer.battleHeroSnapshot = result.snapshot;
+      finishHeroDraftIfComplete(room);
+      broadcastAndContinueAutomation(room);
+      return writeJson(res, 200, roomStateAck(room));
     }
 
     if (req.method === "POST" && pathParts[3] === "item-stage-complete") {
@@ -9059,6 +9116,11 @@ export const __aiPlayTesting = {
   setupBottomHoldConfidence,
   setupBottomControlScore,
   setupBottomTransferForecast
+};
+
+export const __heroDraftTesting = {
+  beginHeroDraft, finishHeroDraftIfComplete, expireHeroDraft, resetRoomToLobby, deal,
+  roomSnapshot, emptySetup, emptyGameItems, emptyBoardHeroSkills, emptyBoardHeroEffects
 };
 
 export const __heroAdvancementTesting = {

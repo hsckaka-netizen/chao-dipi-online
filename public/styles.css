@@ -9288,3 +9288,25 @@ button.auto-play-toggle.active {
     align-items: center;
   }
 }
+
+/* The draft remains above the table so every skill and choice stays readable. */
+.hero-draft-panel { display: grid; gap: 16px; }
+.hero-draft-heading, .hero-draft-footer { display: flex; flex-wrap: wrap; gap: 12px; justify-content: space-between; align-items: center; }
+.hero-draft-heading h2, .hero-draft-choice h3 { margin: 0; }
+.hero-draft-heading p, .hero-draft-footer { color: var(--muted); font-size: 13px; }
+.hero-draft-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+.hero-draft-choice { min-width: 0; border: 1px solid var(--line); border-radius: 14px; padding: 12px; display: flex; flex-direction: column; align-items: center; gap: 12px; background: var(--panel); }
+.hero-draft-art { width: 126px; max-width: 100%; aspect-ratio: 2 / 3; object-fit: contain; border-radius: 10px; }
+.hero-draft-details { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; flex: 1; width: 100%; }
+.hero-draft-details p { margin: 0 0 8px; font-size: 13px; line-height: 1.6; overflow-wrap: anywhere; }
+.hero-draft-details button { margin-top: auto; width: 100%; }
+@media (max-width: 700px) {
+  .hero-draft-grid { grid-template-columns: 1fr; }
+  .hero-draft-choice { flex-direction: row; align-items: flex-start; }
+  .hero-draft-art { width: 96px; flex: 0 0 96px; }
+  .hero-draft-details { min-width: 0; }
+  .hero-draft-footer button { width: 100%; }
+}
+
+.hero-draft-choice.is-unowned .hero-draft-art { filter: grayscale(1); opacity: .5; }
+.hero-draft-choice.is-unowned h3 { color: var(--muted); }

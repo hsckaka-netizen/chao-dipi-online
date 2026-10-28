@@ -2881,6 +2881,7 @@ function scheduleScoreBidAutoPass() {
 }
 
 function currentSetupCountdownDeadline() {
+  if (state?.stage === "hero-selecting") return state.heroDraft?.deadlineAt || null;
   if (["jie-denghuang-skill", "jie-jiangzha-skill"].includes(state?.stage)) return state.boardHeroSkills?.advanced?.deadlineAt || null;
   if (state?.stage === RESTART_CARD_STAGE || state?.stage === OTHER_CARDS_STAGE) {
     return state.gameItems?.deadlineAt || null;
@@ -5058,7 +5059,7 @@ function renderHeroCardPreview(unit) {
               <p>${escapeHtml(unit.skillDescription || "暂无技能说明")}</p>
             </div>
             ${unit.rarity === "ssr" && owned ? `<p class="meta">当前技能 CD ${escapeHtml(owned.skillCooldown || 0)} 轮</p>` : ""}
-            <p class="meta">英雄出战不影响家园钻石产出；正式发牌时锁定当局英雄、星级和技能版本。</p>
+            <p class="meta">开局从随机候选中选择英雄，不影响家园产出；已拥有英雄沿用实际星级。</p>
           </div>
         </div>
       </section>
@@ -5104,7 +5105,7 @@ function renderBattleHeroPreview() {
               <h3>${escapeHtml(snapshot.skillName || "暂无技能")}</h3>
               <p>${escapeHtml(snapshot.skillDescription || "本局快照未保存技能说明，请在英雄图鉴查看完整规则。")}</p>
             </div>
-            <p class="meta">本局已锁定该英雄、星级和技能版本；局中调整只会影响下一局。</p>
+            <p class="meta">本局已锁定该英雄、星级和技能版本。</p>
           </div>
         </div>
       </section>
@@ -5143,14 +5144,11 @@ function renderHomeRegionCard(region) {
   const primaryRatePerHour = formatHeroProductionNumber(region.primaryRatePerHour);
   const extraRatePerHour = formatHeroProductionNumber(region.extraRatePerHour);
   const progress = Math.max(0, Math.min(100, Number(region.productionHours || 0) / maxProductionHours * 100));
-  const battle = placed?.type === "hero" && heroHomeState?.battleUnitId === placed.id;
-  const extraBattle = extraPlaced?.type === "hero" && heroHomeState?.battleUnitId === extraPlaced.id;
   return `
     <article class="home-region-card region-${escapeHtml(region.id)}">
       <header>
         <span class="home-region-icon" aria-hidden="true">${escapeHtml(region.icon || "◇")}</span>
         <div><h3>${escapeHtml(region.name)} · Lv.${escapeHtml(region.level || 0)}</h3><span>产出 +${escapeHtml(formatHeroProductionNumber(productionBonusPercent, 1))}% · 总计 ${escapeHtml(ratePerHour)} 钻/小时 · 最多累计${escapeHtml(maxProductionHours)}小时</span></div>
-        ${battle ? `<span class="tag good">出战中</span>` : ""}
       </header>
       <div class="home-region-worker ${placed ? "occupied" : "empty"} ${placed?.cardImage ? "hero-card-worker" : ""}">
         ${placed?.cardImage ? `
@@ -5181,7 +5179,7 @@ function renderHomeRegionCard(region) {
         <div class="home-production-track"><i style="width:${progress.toFixed(2)}%"></i></div>
         <div class="home-region-actions">
           <button type="button" data-action="collect-home" data-region-id="${escapeHtml(region.id)}" ${heroActionInFlight ? "disabled" : ""}>领取 ${region.collectableDiamonds || 0} 💎</button>
-          ${placed?.type === "hero" ? `<button type="button" class="secondary" data-action="select-battle-hero" data-unit-id="${escapeHtml(placed.id)}" ${battle || heroActionInFlight ? "disabled" : ""}>${battle ? "已出战" : "设为出战"}</button>` : ""}
+
           <button type="button" class="secondary" data-action="upgrade-home-region" data-region-id="${escapeHtml(region.id)}" ${!region.upgradeCost || Number(heroHomeState?.buildingMaterials || 0) < Number(region.upgradeCost) || heroActionInFlight ? "disabled" : ""}>${region.upgradeCost ? `升级 · ${escapeHtml(region.upgradeCost)}建材` : "已满100级"}</button>
         </div>
       </div>
@@ -5200,7 +5198,7 @@ function renderHomeRegionCard(region) {
         const active = extraPlaced?.id === unit.id;
         const unavailable = assignedIds.has(unit.id) && !active;
         return `<button type="button" class="home-unit-choice ${active ? "active" : "secondary"}" data-action="assign-home-unit" data-slot="extra" data-region-id="${escapeHtml(region.id)}" data-unit-id="${escapeHtml(unit.id)}" ${active || unavailable || heroActionInFlight ? "disabled" : ""}>${heroUnitBadge(unit, "tiny")}<span>${escapeHtml(unit.name)}</span></button>`;
-      }).join("")}${extraPlaced ? `<button type="button" class="secondary home-unit-choice" data-action="assign-home-unit" data-slot="extra" data-region-id="${escapeHtml(region.id)}" data-unit-id="" ${heroActionInFlight ? "disabled" : ""}><span class="hero-unit-badge tiny empty">空</span><span>移除</span></button>` : ""}</div>${extraPlaced ? `<div class="home-region-actions"><span>${escapeHtml(extraPlaced.name)} ${heroStars(extraPlaced.stars)} · 每小时 ${escapeHtml(extraRatePerHour)} 钻石</span><button type="button" class="secondary" data-action="select-battle-hero" data-unit-id="${escapeHtml(extraPlaced.id)}" ${extraBattle || heroActionInFlight ? "disabled" : ""}>${extraBattle ? "已出战" : "设为出战"}</button></div>` : ""}</div>` : ""}
+      }).join("")}${extraPlaced ? `<button type="button" class="secondary home-unit-choice" data-action="assign-home-unit" data-slot="extra" data-region-id="${escapeHtml(region.id)}" data-unit-id="" ${heroActionInFlight ? "disabled" : ""}><span class="hero-unit-badge tiny empty">空</span><span>移除</span></button>` : ""}</div>${extraPlaced ? `<div class="home-region-actions"><span>${escapeHtml(extraPlaced.name)} ${heroStars(extraPlaced.stars)} · 每小时 ${escapeHtml(extraRatePerHour)} 钻石</span></div>` : ""}</div>` : ""}
     </article>
   `;
 }
@@ -5351,12 +5349,12 @@ function renderHeroHomePage() {
       <div>
         <span class="eyebrow">HERO HOME</span>
         <h2>英雄家园</h2>
-        <p>派驻角色持续生产钻石；只有已派驻英雄能被选为出战英雄。</p>
+        <p>派驻角色持续生产钻石；出战英雄在每局开局时从随机候选中选择。</p>
       </div>
       <div class="hero-home-summary">
         <span><small>当前钻石</small><b>💎 ${escapeHtml(heroHomeState.balance || 0)}</b></span>
         <span><small>建材</small><b>▰ ${escapeHtml(heroHomeState.buildingMaterials || 0)}</b></span>
-        <span><small>出战英雄</small><b>${escapeHtml(heroHomeState.battleHero?.name || "未选择")}</b></span>
+        <span><small>出战英雄</small><b>开局选将</b></span>
         <button type="button" data-action="collect-home" data-region-id="all" ${heroActionInFlight ? "disabled" : ""}>一键领取</button>
       </div>
     </section>
@@ -5644,18 +5642,17 @@ async function claimDailyGameTask(taskId) {
   }
 }
 
-async function selectHeroForBattle(unitId) {
-  if (heroActionInFlight) return;
-  heroActionInFlight = `battle:${unitId}`;
+async function selectHeroForBattle(heroId) {
+  if (heroActionInFlight || !state?.heroDraft?.canChoose || isSpectating()) return;
+  heroActionInFlight = "draft";
   render();
   try {
-    applyHeroMutationState(await api("/api/heroes/battle", {
-      method: "PATCH",
-      body: JSON.stringify({ unitId: unitId || null })
-    }));
-    setMessage(unitId ? `${heroUnitById(unitId)?.name || "英雄"}已设为出战英雄，下次正式发牌时生效` : "已清空出战英雄");
+    await roomAction(`/api/rooms/${session.roomId}/hero-select`, {
+      method: "POST",
+      body: JSON.stringify({ playerId: session.playerId, token: session.token, heroId: heroId || null })
+    });
   } catch (error) {
-    setMessage(error.message || "出战设置失败", true);
+    setMessage(error.message || "选将失败，请重试", true);
   } finally {
     heroActionInFlight = "";
     render();
@@ -6537,7 +6534,7 @@ function renderRoom() {
                 ${state.viewer.host && configuringLobby ? renderTeamLobbyControls() : ""}
                 ${state.viewer.host && configuringLobby && state.gameMode === "pvp" && state.playMode === "brawl" ? `<button type="button" class="secondary" data-action="add-robot" ${state.players.length >= state.maxPlayers ? "disabled" : ""}>添加机器人</button>` : ""}
                 ${state.viewer.host && configuringLobby && state.playMode === "brawl" ? `<button type="button" class="secondary" data-action="random-seats" ${state.players.length < 2 ? "disabled" : ""}>随机座位</button>` : ""}
-                ${state.viewer.host && state.status === "lobby" ? `<button type="button" data-action="start" ${canStart() ? "" : "disabled"}>开始并发牌</button>` : ""}
+                ${state.viewer.host && state.status === "lobby" ? `<button type="button" data-action="start" ${canStart() ? "" : "disabled"}>开始选将</button>` : ""}
                 ${state.viewer.host && gameInProgress ? `<button type="button" class="secondary" data-action="reset">重开房间</button>` : ""}
                 ${state.viewer.host ? `<button type="button" class="secondary danger" data-action="dissolve-room">解散房间</button>` : ""}
                 ${state.status === "lobby" ? `<button type="button" class="secondary" data-action="room-leave">退出房间</button>` : ""}
@@ -6551,6 +6548,7 @@ function renderRoom() {
         ${!showTable ? renderPveEnergyNotice() : ""}
         ${!showTable ? renderLobbyPlayersPanel() : ""}
         ${showTable ? renderRoomManagementActions() : ""}
+        ${state.stage === "hero-selecting" ? renderHeroDraftPanel() : ""}
         ${showTable ? renderPlayTable() : ""}
         ${!showTable ? `<section class="panel"><div class="empty">${escapeHtml(lobbyEmptyText(waitingNextRound))}</div></section>` : ""}
       </div>
@@ -6700,6 +6698,22 @@ function renderSetupLines(items) {
   `;
 }
 
+function renderHeroDraftPanel() {
+  const draft = state.heroDraft || {};
+  const selected = state.viewer?.battleHeroSnapshot;
+  return `<section class="panel hero-draft-panel" aria-label="选择出战英雄">
+    <div class="hero-draft-heading"><div><h2>选择本局英雄</h2><p>从全英雄池随机候选；仅已拥有的英雄可以选择，沿用实际星数。</p></div>${setupCountdownTag(draft.deadlineAt, " 后结束选将")}</div>
+    ${draft.canChoose && !isSpectating() ? `<div class="hero-draft-grid">${(draft.choices || []).map((hero) => `<article class="hero-draft-choice ${hero.owned ? "" : "is-unowned"}">
+      ${heroCardArtwork(hero, "hero-draft-art", `draft:${hero.heroId}`, "medium")}
+      <div class="hero-draft-details"><span class="tag ${hero.rarity === "ssr" ? "accent" : ""}">${escapeHtml(hero.rarity.toUpperCase())}</span><h3>${escapeHtml(hero.name)}</h3><div>${hero.owned ? heroStars(hero.stars) : "未拥有"}${hero.selectedElsewhere ? " · 本局已有人选择" : ""}</div>
+      <strong>${escapeHtml(hero.skillName)}</strong><p>${escapeHtml(hero.skillDescription)}</p>
+      <button type="button" data-action="select-battle-hero" data-unit-id="${escapeHtml(hero.heroId)}" ${heroActionInFlight || !hero.canSelect ? "disabled" : ""}>${!hero.owned ? "未拥有，无法选择" : hero.selectedElsewhere && !hero.canSelect ? "请优先选择其他候选" : `选择 ${escapeHtml(hero.name)}`}</button></div>
+    </article>`).join("")}</div><div class="hero-draft-footer"><span>候选固定，不因拥有情况重抽；超时按本局不出战继续。</span><button type="button" class="secondary" data-action="select-battle-hero" data-unit-id="" ${heroActionInFlight ? "disabled" : ""}>本局不出战</button></div>`
+      : `<p role="status">${isSpectating() ? "等待玩家选择英雄" : selected ? `已选择 ${escapeHtml(selected.name)} · ${selected.stars} 星，等待其他玩家` : "本局不出战，等待其他玩家"}</p>`}
+    <div class="meta">已完成 ${draft.completedPlayerIds?.length || 0}/${state.players.length}</div>
+  </section>`;
+}
+
 function renderSetupCenter() {
   const setup = state.setup || {};
   const stage = state.stage;
@@ -6707,6 +6721,8 @@ function renderSetupCenter() {
   const currentTrumpItem = setup.currentTrumpSuitName
     ? { label: "当前主牌", value: escapeHtml(setup.currentTrumpSuitName) }
     : null;
+
+  if (stage === "hero-selecting") body = `<p>所有玩家选将完成后发牌</p><span class="tag">已完成 ${state.heroDraft?.completedPlayerIds?.length || 0}/${state.players.length}</span>`;
 
   if (stage === "jie-denghuang-skill" || stage === "jie-jiangzha-skill") {
     const skill = state.boardHeroSkills?.advanced || {};
@@ -7722,6 +7738,7 @@ function renderPlayTable() {
 function renderSetupTable() {
   const setup = state.setup || {};
   const titleByStage = {
+    "hero-selecting": "开局选将",
     [RESTART_CARD_STAGE]: "重开卡阶段",
     [SHEN_BIESAN_SKILL_STAGE]: "偷梁换柱阶段",
     [OTHER_CARDS_STAGE]: "其他卡牌阶段",
@@ -7778,6 +7795,7 @@ function renderSetupTable() {
 }
 
 function setupSeatStatus(player) {
+  if (state.stage === "hero-selecting") return { text: state.heroDraft?.completedPlayerIds?.includes(player.id) ? "已完成选将" : "正在选将", tone: state.heroDraft?.completedPlayerIds?.includes(player.id) ? "good" : "" };
   if (["jie-denghuang-skill", "jie-jiangzha-skill"].includes(state.stage)) return {
     text: state.boardHeroSkills?.advanced?.currentPlayerId === player.id ? "技能操作" : "等待技能", tone: state.boardHeroSkills?.advanced?.currentPlayerId === player.id ? "good" : ""
   };

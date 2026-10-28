@@ -2777,14 +2777,8 @@ async function heroHomeStateFromClient(client, accountId) {
     firstPullGuaranteed: !profile.first_pull_completed,
     freePullAvailable: freePull.available,
     nextFreePullAt: freePull.nextFreePullAt,
-    battleUnitId: profile.battle_unit_id || null,
-    battleHero: profile.battle_unit_id
-      ? createBattleHeroSnapshot(
-          profile.battle_unit_id,
-          ownedById.get(profile.battle_unit_id)?.stars,
-          ownedById.get(profile.battle_unit_id)?.skillCooldown
-        )
-      : null,
+    battleUnitId: null,
+    battleHero: null,
     ownedUnits,
     advancements,
     regions,
@@ -3556,50 +3550,6 @@ export async function refundBoardHeroSkillUses(gameIdValue) {
   }
 }
 
-export async function selectBattleHero(accountId, unitIdValue) {
-  const database = requirePool();
-  const unitId = unitIdValue ? String(unitIdValue) : null;
-  const client = await database.connect();
-  try {
-    await client.query("BEGIN");
-    await ensureHeroAccount(client, accountId);
-    await client.query(
-      `SELECT account_id FROM cdp_hero_profiles WHERE account_id = $1::uuid FOR UPDATE`,
-      [accountId]
-    );
-    if (unitId) {
-      const unit = HOME_UNIT_BY_ID.get(unitId);
-      if (!unit || unit.type !== "hero") throw commerceError("只有已放置的英雄可以出战", 409);
-      const placed = await client.query(
-        `SELECT unit.stars
-         FROM cdp_home_regions region
-         JOIN cdp_hero_units unit
-           ON unit.account_id = region.account_id
-          AND unit.unit_id = $2
-         WHERE region.account_id = $1::uuid
-           AND (region.unit_id = $2 OR region.extra_unit_id = $2)
-         FOR UPDATE OF region, unit`,
-        [accountId, unitId]
-      );
-      if (!placed.rows[0]) throw commerceError("只有当前放置的英雄可以出战", 409);
-    }
-    await client.query(
-      `UPDATE cdp_hero_profiles
-       SET battle_unit_id = $2, updated_at = now()
-       WHERE account_id = $1::uuid`,
-      [accountId, unitId]
-    );
-    const state = await heroHomeStateFromClient(client, accountId);
-    await client.query("COMMIT");
-    return state;
-  } catch (error) {
-    await client.query("ROLLBACK");
-    rememberError(error);
-    throw error;
-  } finally {
-    client.release();
-  }
-}
 
 export async function pullHeroGacha(accountId, pullCountValue, requestIdValue) {
   const database = requirePool();
@@ -3900,24 +3850,23 @@ export async function upgradeHeroUnit(accountId, unitIdValue, requestIdValue) {
   }
 }
 
-export async function getBattleHeroSnapshots(accountIds = []) {
+export async function getBattleHeroInventory(accountIds = []) {
   const uniqueIds = [...new Set(accountIds.filter(Boolean).map(String))];
   if (!uniqueIds.length) return {};
   const result = await requirePool().query(
-    `SELECT profile.account_id, profile.battle_unit_id, unit.stars, unit.skill_cooldown
-     FROM cdp_hero_profiles profile
-     JOIN cdp_hero_units unit
-       ON unit.account_id = profile.account_id AND unit.unit_id = profile.battle_unit_id
-     JOIN cdp_home_regions region
-       ON region.account_id = profile.account_id
-      AND (region.unit_id = profile.battle_unit_id OR region.extra_unit_id = profile.battle_unit_id)
-     WHERE profile.account_id = ANY($1::uuid[])`,
+    `SELECT account_id, unit_id, stars, skill_cooldown
+     FROM cdp_hero_units WHERE account_id = ANY($1::uuid[])`,
     [uniqueIds]
   );
-  return Object.fromEntries(result.rows.map((row) => [
-    row.account_id,
-    createBattleHeroSnapshot(row.battle_unit_id, row.stars, row.skill_cooldown)
-  ]));
+  const inventory = {};
+  result.rows.forEach((row) => {
+    if (HOME_UNIT_BY_ID.get(row.unit_id)?.type !== "hero") return;
+    inventory[row.account_id] ||= {};
+    inventory[row.account_id][row.unit_id] = {
+      stars: Number(row.stars), skillCooldown: Number(row.skill_cooldown) || 0
+    };
+  });
+  return inventory;
 }
 
 export async function getDiamondWallet(accountId, limit = 20) {
