@@ -1,4 +1,4 @@
-import { createJudgmentSession, submitJudgment, advanceJudgments, judgmentSnapshot, applyJudgmentOutcomes } from "./shen-yingwu.js";
+import { createJudgmentSession, beginJudgmentTarget, finishJudgmentTarget, submitJudgment, advanceJudgments, judgmentSnapshot, applyJudgmentOutcomes } from "./shen-yingwu.js";
 import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
 import { createReadStream } from "node:fs";
@@ -92,6 +92,7 @@ import { ACHIEVEMENT_TITLE_BY_ID } from "./achievements.js";
 import {
   assignHomeUnit,
   chargeBoardHeroSkill,
+  chargeJudgmentEntry,
   claimAchievement,
   claimDailyTask,
   collectHomeProduction,
@@ -3185,12 +3186,33 @@ function beginRoomJudgment(room, at = Date.now()) {
   return true;
 }
 
-function submitRoomJudgment(room, viewer, body, at = Date.now()) {
+async function submitRoomJudgment(room, viewer, body, at = Date.now(), charge = chargeJudgmentEntry) {
   const context = room.judgmentContext;
   if (!context || body.gameId !== context.session.gameId) return { error: '本局审判已失效', status: 409 };
-  const result = submitJudgment(context.session, viewer.id, body, at);
-  advanceRoomJudgment(context, at);
-  return result;
+  if (body.action !== 'target') {
+    const result = submitJudgment(context.session, viewer.id, body, at);
+    advanceRoomJudgment(context, at);
+    return result;
+  }
+  const result = beginJudgmentTarget(context.session, viewer.id, body, at);
+  if (!result.ok || result.repeated) { advanceRoomJudgment(context, at); return result; }
+  const { trial } = result;
+  const owner = context.recordRoom.players.find(player => player.id === trial.ownerId);
+  scheduleJudgment(context);
+  broadcast(room);
+  const startedAt = Date.now();
+  let payment;
+  try {
+    payment = await charge(owner.accountId, context.session.gameId, trial.id, trial.targetId);
+  } catch (error) {
+    finishJudgmentTarget(context.session, trial.id, null, at + Math.max(0, Date.now() - startedAt));
+    advanceRoomJudgment(context, at + Math.max(0, Date.now() - startedAt));
+    return { error: error.message || '发起费扣除失败，请重试', status: error.status || 503 };
+  }
+  const finishedAt = at + Math.max(0, Date.now() - startedAt);
+  finishJudgmentTarget(context.session, trial.id, payment, finishedAt);
+  advanceRoomJudgment(context, finishedAt);
+  return { ok: true, balanceAfter: payment.balanceAfter };
 }
 
 function completeCurrentTrick(room) {
@@ -8843,7 +8865,7 @@ async function handleApi(req, res, pathParts, url) {
       const body = await readJson(req);
       const viewer = requirePlayer(res, room, body.playerId, body.token);
       if (!viewer) return;
-      const result = submitRoomJudgment(room, viewer, body);
+      const result = await submitRoomJudgment(room, viewer, body);
       broadcast(room);
       if (result.error) return writeJson(res, result.status, { error: result.error });
       return writeJson(res, 200, roomStateAck(room));

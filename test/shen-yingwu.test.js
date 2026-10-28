@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createJudgmentSession, submitJudgment, advanceJudgments, judgmentSnapshot, applyJudgmentOutcomes } from '../shen-yingwu.js';
+import { createJudgmentSession, beginJudgmentTarget, finishJudgmentTarget, submitJudgment, advanceJudgments, judgmentSnapshot, applyJudgmentOutcomes } from '../shen-yingwu.js';
 import { createBattleHeroSnapshot, unitProductionRate, drawHomeUnit, SSR_HERO_UNITS } from '../hero-home.js';
 import { attachDiamondRewards, calculateGameDiamondReward } from '../diamond-rewards.js';
 import { buildGameRecord } from '../game-history.js';
@@ -17,10 +17,15 @@ function fixture(n = 5, stars = 1) {
         team: i === 0 ? 'banker' : 'idle', baseGameScore: i === 0 ? -10 : 10, gameScore: i === 0 ? -10 : 10,
         heroScoreDelta: 0, evaluationTags: [], trickScore: 0 })) } };
 }
+function paidTarget(session, actorId, body, time) {
+  const result = beginJudgmentTarget(session, actorId, body, time);
+  if (result.trial) finishJudgmentTarget(session, result.trial.id, { cost: 200 }, time);
+  return result;
+}
 function start(room, target = 'p1') {
   const session = createJudgmentSession(room, at);
   assert.ok(session);
-  assert.equal(submitJudgment(session, 'p0', { trialId: session.trials[0].id, action: 'target', targetPlayerId: target }, at + 1000).ok, true);
+  assert.equal(paidTarget(session, 'p0', { trialId: session.trials[0].id, action: 'target', targetPlayerId: target }, at + 1000).ok, true);
   return session;
 }
 const vote = (session, id, choice, time = at + 2000, index = 0) => submitJudgment(session, id, { trialId: session.trials[index].id, action: 'vote', choice }, time);
@@ -98,9 +103,9 @@ test('all five star rates and diamond amounts use the original loss, with cents 
 
 test('authorization, target validation, vote immutability, replay protection and private unfinished votes', () => {
   const room = fixture(); const session = createJudgmentSession(room, at); const trialId = session.trials[0].id;
-  assert.equal(submitJudgment(session, 'p2', { trialId, action: 'target', targetPlayerId: 'p1' }, at).status, 403);
-  for (const targetPlayerId of ['p0', 'outsider']) assert.equal(submitJudgment(session, 'p0', { trialId, action: 'target', targetPlayerId }, at).status, 400);
-  submitJudgment(session, 'p0', { trialId, action: 'target', targetPlayerId: 'p1' }, at);
+  assert.equal(paidTarget(session, 'p2', { trialId, action: 'target', targetPlayerId: 'p1' }, at).status, 403);
+  for (const targetPlayerId of ['p0', 'outsider']) assert.equal(paidTarget(session, 'p0', { trialId, action: 'target', targetPlayerId }, at).status, 400);
+  paidTarget(session, 'p0', { trialId, action: 'target', targetPlayerId: 'p1' }, at);
   for (const id of ['p0','p1','outsider']) assert.equal(vote(session, id, 'support').status, 403);
   assert.equal(vote(session, 'p2', 'invalid').status, 400);
   vote(session, 'p2', 'support'); assert.equal(vote(session, 'p2', 'support').ok, true);
@@ -108,7 +113,7 @@ test('authorization, target validation, vote immutability, replay protection and
   assert.equal(judgmentSnapshot(session, 'p3').trials[0].viewerVote, null);
   assert.equal(judgmentSnapshot(session, null).trials[0].canVote, false);
   assert.equal(judgmentSnapshot(session, 'p3').trials[0].supportCount, undefined);
-  assert.equal(submitJudgment(session, 'p0', { trialId, action: 'target', targetPlayerId: 'p3' }, at + 2000).status, 409);
+  assert.equal(paidTarget(session, 'p0', { trialId, action: 'target', targetPlayerId: 'p3' }, at + 2000).status, 409);
   vote(session, 'p3', 'support'); vote(session, 'p4', 'support');
   applyJudgmentOutcomes(room.result, session);
   const before = JSON.stringify(room.result);
@@ -131,7 +136,7 @@ test('multiple parrots have independent concurrent trials and only apply each ou
   const room = fixture(); room.players[1].battleHeroSnapshot = createBattleHeroSnapshot('shen-yingwu', 5);
   room.result.playerResults[1].team = 'banker'; room.result.playerResults[1].gameScore = -10;
   const session = start(room);
-  submitJudgment(session, 'p1', { trialId: session.trials[1].id, action: 'target', targetPlayerId:'p0' }, at + 1000);
+  paidTarget(session, 'p1', { trialId: session.trials[1].id, action: 'target', targetPlayerId:'p0' }, at + 1000);
   for (let index = 0; index < 2; index++) for (const id of ['p2','p3','p4']) vote(session,id,'support',at+2000,index);
   applyJudgmentOutcomes(room.result,session);
   assert.equal(session.complete,true);
@@ -146,17 +151,17 @@ test('judgment diamonds are exact and do not inherit idle multiplier or change o
   assert.equal(calculateGameDiamondReward({gameMode:'pve',team:'idle',winnerTeam:'idle',judgmentReward:{amount:130}}).judgmentBonus,undefined);
 });
 
-test('server preserves final roster through departures, prevents premature persistence and finalizes exactly once', t => {
+test('server preserves final roster through departures, prevents premature persistence and finalizes exactly once', async t => {
   const room = fixture(4); attachDiamondRewards(room);
   assert.equal(game.beginRoomJudgment(room, at),true);
   const ctx=room.judgmentContext; t.after(()=>clearTimeout(ctx.timer));
   assert.throws(()=>buildGameRecord(room),/审判尚未完成/);
   assert.equal(game.finalizeNextRoundLobby(room),false);
   const body={gameId:room.gameRecordId,trialId:ctx.session.trials[0].id,action:'target',targetPlayerId:'p1'};
-  assert.equal(game.submitRoomJudgment(room,room.players[0],{...body,gameId:'stale'},at+1000).status,409);
-  assert.equal(game.submitRoomJudgment(room,room.players[0],body,at+1000).ok,true);
+  assert.equal((await game.submitRoomJudgment(room,room.players[0],{...body,gameId:'stale'},at+1000)).status,409);
+  assert.equal((await game.submitRoomJudgment(room,room.players[0],body,at+1000,async()=>({cost:200,balanceAfter:800}))).ok,true);
   assert.equal(game.beginRoomJudgment(room,at),true);
-  game.submitRoomJudgment(room,room.players[2],{...body,action:'vote',choice:'support'},at+2000);
+  await game.submitRoomJudgment(room,room.players[2],{...body,action:'vote',choice:'support'},at+2000);
   room.players.pop(); // A departure remains part of the frozen denominator and saved account roster.
   game.advanceRoomJudgment(ctx,at+31000);
   assert.equal(ctx.settled,true);

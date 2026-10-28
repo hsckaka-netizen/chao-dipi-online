@@ -7353,11 +7353,11 @@ function renderJudgmentPanel() {
     <div class="judgment-trials">${judgment.trials.map(trial => `<article class="judgment-trial" data-trial-id="${escapeHtml(trial.id)}">
       <header><strong>${escapeHtml(trial.ownerName)}${trial.targetName ? ` 审判 ${escapeHtml(trial.targetName)}` : ' · 神鹦鹉'}</strong>
       ${['choosing', 'voting'].includes(trial.status) ? setupCountdownTag(trial.deadlineAt, '', trial.status === 'voting' ? '投票剩余 ' : '选择剩余 ') : ''}</header>
-      <p>${trial.status === 'choosing' ? '选择本局另一名玩家发起审判，也可放弃。' : trial.status === 'voting' ? `需至少 ${trial.requiredSupport}/${trial.eligibleCount} 人支持，当前 ${trial.castCount} 人已提交；鹦鹉与被审判者不能投票。` : trial.status === 'skipped' ? '已放弃审判（含选择超时）。' : `审判${trial.passed ? '成立' : '不成立'} · 支持 ${trial.supportCount} / 反对 ${trial.opposeCount} / 弃权 ${trial.abstainCount}`}</p>
-      ${trial.canChoose ? `<div class="judgment-actions">${judgment.participants.filter(player => player.id !== trial.ownerId).map(player => `<button type="button" class="secondary" data-action="judgment-target" data-trial-id="${escapeHtml(trial.id)}" data-target-player-id="${escapeHtml(player.id)}" ${judgmentInFlight ? 'disabled' : ''}>审判 ${escapeHtml(player.name)}</button>`).join('')}<button type="button" class="secondary" data-action="judgment-pass" data-trial-id="${escapeHtml(trial.id)}" ${judgmentInFlight ? 'disabled' : ''}>放弃</button></div>` : ''}
+      <p>${trial.status === 'choosing' ? `选定后扣除${trial.entryFee}钻石；成立返还，不成立不返还。放弃或选择超时不扣费。` : trial.status === 'charging' ? `正在扣除${trial.entryFee}钻石发起费，请稍候。` : trial.status === 'voting' ? `需至少 ${trial.requiredSupport}/${trial.eligibleCount} 人支持，当前 ${trial.castCount} 人已提交；鹦鹉与被审判者不能投票。` : trial.status === 'skipped' ? '已放弃审判（含选择超时）。' : `审判${trial.passed ? '成立' : '不成立'} · 支持 ${trial.supportCount} / 反对 ${trial.opposeCount} / 弃权 ${trial.abstainCount}`}</p>
+      ${trial.canChoose ? `<div class="judgment-actions">${judgment.participants.filter(player => player.id !== trial.ownerId).map(player => `<button type="button" class="secondary" data-action="judgment-target" data-trial-id="${escapeHtml(trial.id)}" data-target-player-id="${escapeHtml(player.id)}" ${judgmentInFlight ? 'disabled' : ''}>审判 ${escapeHtml(player.name)} · ${trial.entryFee}💎</button>`).join('')}<button type="button" class="secondary" data-action="judgment-pass" data-trial-id="${escapeHtml(trial.id)}" ${judgmentInFlight ? 'disabled' : ''}>放弃</button></div>` : ''}
       ${trial.canVote && !isSpectating() ? `<div class="judgment-actions">${Object.entries(voteLabels).map(([choice, label]) => `<button type="button" class="${choice === 'support' ? '' : 'secondary'}" data-action="judgment-vote" data-trial-id="${escapeHtml(trial.id)}" data-choice="${choice}" ${judgmentInFlight ? 'disabled' : ''}>${label}</button>`).join('')}</div>` : ''}
       ${trial.viewerVote ? `<span class="tag">你已选择${voteLabels[trial.viewerVote]}</span>` : ''}
-      ${trial.status === 'completed' ? `<p class="judgment-outcome">${trial.passed ? `${escapeHtml(trial.ownerName)} 减免 ${trial.scoreReduction} 积分，额外获得 ${trial.successDiamonds} 钻石。` : '鹦鹉未获得减分及审判成立奖励。'}${trial.supportCount === trial.opposeCount ? ' 票数相同，无投票奖励。' : ` ${trial.supportCount > trial.opposeCount ? '支持' : '反对'}方投票者每人额外获得50钻石。`}</p>` : `<small>成立后：减免鹦鹉本局扣分的${Math.round(trial.reductionRate * 100)}%，额外获得${trial.successDiamonds}钻石；票数较多一方的投票者每人额外获得50钻石，平票无此奖励。</small>`}
+      ${trial.status === 'completed' ? `<p class="judgment-outcome">${trial.passed ? `${escapeHtml(trial.ownerName)} 减免 ${trial.scoreReduction} 积分，额外获得 ${trial.successDiamonds} 钻石，并返还发起费 ${trial.entryFeePaid} 钻石。` : `审判不成立，发起费 ${trial.entryFeePaid} 钻石不返还；鹦鹉未获得减分及成立奖励。`}${trial.supportCount === trial.opposeCount ? ' 票数相同，无投票奖励。' : ` ${trial.supportCount > trial.opposeCount ? '支持' : '反对'}方投票者每人额外获得50钻石。`}</p>` : `<small>发起费${trial.entryFee}钻石，成立返还、不成立不返还。成立后：减免鹦鹉本局扣分的${Math.round(trial.reductionRate * 100)}%，额外获得${trial.successDiamonds}钻石；票数较多一方的投票者每人额外获得50钻石，平票无此奖励。</small>`}
     </article>`).join('')}</div>
   </section>`;
 }
@@ -7372,7 +7372,7 @@ async function submitJudgmentAction(target, action) {
       targetPlayerId: target.dataset.targetPlayerId, choice: target.dataset.choice
     }) });
   } catch (error) { setMessage(error.message || '审判操作失败', true); }
-  finally { judgmentInFlight = false; render(); }
+  finally { judgmentInFlight = false; ensureDiamondWallet(true); render(); }
 }
 
 function renderResultPanel() {

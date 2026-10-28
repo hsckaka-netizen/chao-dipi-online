@@ -1,3 +1,4 @@
+import { chargeJudgmentEntryFromClient, refundSuccessfulJudgmentEntries } from "./judgment-payments.js";
 import { HERO_ADVANCEMENTS, advancementProgress, advancementGameDelta } from "./hero-advancement.js";
 import { chargeHeroHire, refundHeroHires, hiredSkillOwnership } from "./hero-hire.js";
 import { readFile } from "node:fs/promises";
@@ -2142,6 +2143,7 @@ async function saveGameRecord(record) {
       );
     }
     await settleHeroAdvancement(client, record);
+    await refundSuccessfulJudgmentEntries(client, record);
     const diamondRewards = await saveDiamondRewards(client, record);
     const warEffortRewards = await saveWarEffortGameRewards(client, record);
     await settleBoardHeroCooldown(client, record);
@@ -3364,6 +3366,21 @@ export async function collectHeroTask(accountId, taskIdValue, requestIdValue) {
   } finally {
     client.release();
   }
+}
+
+export async function chargeJudgmentEntry(accountId, gameId, trialId, targetPlayerId) {
+  const client = await requirePool().connect();
+  try {
+    await client.query("BEGIN");
+    await client.query("SET LOCAL statement_timeout = '5s'");
+    const payment = await chargeJudgmentEntryFromClient(client, { accountId, gameId, trialId, targetPlayerId });
+    await client.query("COMMIT");
+    return payment;
+  } catch (error) {
+    await client.query("ROLLBACK");
+    rememberError(error);
+    throw error;
+  } finally { client.release(); }
 }
 
 async function withHeroHireClient(action) {

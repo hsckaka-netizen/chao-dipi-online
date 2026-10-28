@@ -4,6 +4,8 @@ export const HERO_HOME_RULES = Object.freeze({
   boardSkillVersion: "2026-10-28-board-skill-v10",
   advancedScoreBonus: Object.freeze([1, 1.2, 1.5, 2, 3]),
   denghuangExchangeCount: Object.freeze([1, 1, 1, 1, 2]),
+  judgmentVersion: "2026-10-28-judgment-v2",
+  shenYingwuEntryFee: 200,
   shenYingwuReductionRates: Object.freeze([0.2, 0.3, 0.4, 0.5, 0.6]),
   shenYingwuSuccessDiamonds: Object.freeze([100, 120, 140, 160, 200]),
   maxProductionHours: 6,
@@ -91,7 +93,7 @@ export const HOME_UNITS = Object.freeze([
   Object.freeze({
     id: "shen-yingwu", name: "神 · 鹦鹉", namePrefix: "神", baseName: "鹦鹉", shortName: "鹦", type: "hero", rarity: "ssr", gender: "male", regionId: "stage", color: "#16845b",
     cardImage: "/assets/heroes/shen-yingwu-card-v2.png",
-    skillName: "战犯审判", skillDescription: "仅PVP真人局：本队落败后可审判另一名玩家，每局一次。除本人和被审判者外，支持票达到全体有资格玩家的50%即成立；本人按1～5星减免本局扣分的20%/30%/40%/50%/60%，并额外获得100/120/140/160/200钻石。投票限时30秒，超时弃权；支持或反对票数较多一方的投票者每人额外获得50钻石，平票无人获奖。"
+    skillName: "战犯审判", skillDescription: "仅PVP真人局：本队落败后可消耗200钻石审判另一名玩家，每局一次；成立返还200钻石，不成立不返还，放弃不扣费。除本人和被审判者外，支持票达到全体有资格玩家的50%即成立；本人按1～5星减免本局扣分的20%/30%/40%/50%/60%，并额外获得100/120/140/160/200钻石。投票限时30秒，超时弃权；支持或反对票数较多一方的投票者每人额外获得50钻石，平票无人获奖。"
   }),
   Object.freeze({ id: "boka-youth", name: "博卡青年", shortName: "博", type: "minion", rarity: "minion", gender: null, regionId: "boka", color: "#d6a936" }),
   Object.freeze({

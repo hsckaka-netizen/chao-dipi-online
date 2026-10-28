@@ -2,7 +2,7 @@ import { HERO_HOME_RULES } from './hero-home.js';
 import { isDiamondEligibleGame, isDiamondEligiblePlayer } from './diamond-rewards.js';
 
 const round = value => Math.round((Number(value) || 0) * 100) / 100;
-const pending = trial => trial.status === 'choosing' || trial.status === 'voting';
+const pending = trial => ['choosing', 'charging', 'voting'].includes(trial.status);
 
 export function createJudgmentSession(room, at = Date.now()) {
   if (room.gameMode !== 'pvp' || !room.result?.winnerTeam || !isDiamondEligibleGame(room)
@@ -15,7 +15,7 @@ export function createJudgmentSession(room, at = Date.now()) {
     return [{ id: `${room.gameRecordId}:${player.id}`, ownerId: player.id, ownerName: player.name,
       stars, reductionRate: HERO_HOME_RULES.shenYingwuReductionRates[stars - 1],
       successDiamonds: HERO_HOME_RULES.shenYingwuSuccessDiamonds[stars - 1],
-      loss: Math.max(0, -round(result.gameScore)), status: 'choosing',
+      loss: Math.max(0, -round(result.gameScore)), entryFee: HERO_HOME_RULES.shenYingwuEntryFee, entryFeePaid: 0, status: 'choosing',
       deadlineAt: new Date(at + 20000).toISOString(), targetId: null, voterIds: [], votes: {} }];
   });
   return trials.length ? { gameId: room.gameRecordId, participants, trials, complete: false } : null;
@@ -51,27 +51,48 @@ export function advanceJudgments(session, at = Date.now()) {
   return changed;
 }
 
-export function submitJudgment(session, actorId, { trialId, action, targetPlayerId, choice } = {}, at = Date.now()) {
+// The server reserves this phase before awaiting the wallet transaction. Other
+// requests and the selection timer cannot skip or alter a payment in progress.
+export function beginJudgmentTarget(session, actorId, { trialId, targetPlayerId } = {}, at = Date.now()) {
   if (!session) return { error: '本局没有可操作的战犯审判', status: 409 };
   advanceJudgments(session, at);
   const trial = session.trials.find(item => item.id === trialId);
   if (!trial) return { error: '审判不存在或已失效', status: 404 };
-  if (action === 'target' || action === 'pass') {
-    if (trial.ownerId !== actorId) return { error: '只有该神鹦鹉可以发起或放弃审判', status: 403 };
-    if (action === 'target' && trial.targetId === targetPlayerId) return { ok: true };
-    if (action === 'pass' && trial.status === 'skipped') return { ok: true };
-    if (trial.status !== 'choosing') return { error: '选择时间已结束，不能再次发起审判', status: 409 };
-    if (action === 'pass') {
-      trial.status = 'skipped'; trial.closedAt = new Date(at).toISOString();
-    } else {
-      if (targetPlayerId === actorId || !session.participants.some(player => player.id === targetPlayerId)) {
-        return { error: '请选择本局另一名玩家', status: 400 };
-      }
-      trial.targetId = targetPlayerId;
-      trial.targetName = session.participants.find(player => player.id === targetPlayerId).name;
-      trial.voterIds = session.participants.map(player => player.id).filter(id => id !== actorId && id !== targetPlayerId);
-      trial.status = 'voting'; trial.deadlineAt = new Date(at + 30000).toISOString();
-    }
+  if (trial.ownerId !== actorId) return { error: '只有该神鹦鹉可以发起审判', status: 403 };
+  if (trial.targetId === targetPlayerId && trial.entryFeePaid) return { ok: true, repeated: true };
+  if (trial.status !== 'choosing') return { error: '选择已结束或发起费正在处理中', status: 409 };
+  if (targetPlayerId === actorId || !session.participants.some(player => player.id === targetPlayerId)) {
+    return { error: '请选择本局另一名玩家', status: 400 };
+  }
+  trial.status = 'charging';
+  trial.targetId = targetPlayerId;
+  trial.targetName = session.participants.find(player => player.id === targetPlayerId).name;
+  return { ok: true, trial };
+}
+
+export function finishJudgmentTarget(session, trialId, payment, at = Date.now()) {
+  const trial = session.trials.find(item => item.id === trialId);
+  if (!trial || trial.status !== 'charging') throw new Error('审判扣费阶段已失效');
+  if (payment?.cost !== trial.entryFee) {
+    trial.status = 'choosing'; trial.targetId = null; trial.targetName = null;
+    advanceJudgments(session, at);
+    return;
+  }
+  trial.entryFeePaid = payment.cost;
+  trial.status = 'voting'; trial.deadlineAt = new Date(at + 30000).toISOString();
+  trial.voterIds = session.participants.map(player => player.id).filter(id => id !== trial.ownerId && id !== trial.targetId);
+}
+
+export function submitJudgment(session, actorId, { trialId, action, choice } = {}, at = Date.now()) {
+  if (!session) return { error: '本局没有可操作的战犯审判', status: 409 };
+  advanceJudgments(session, at);
+  const trial = session.trials.find(item => item.id === trialId);
+  if (!trial) return { error: '审判不存在或已失效', status: 404 };
+  if (action === 'pass') {
+    if (trial.ownerId !== actorId) return { error: '只有该神鹦鹉可以放弃审判', status: 403 };
+    if (trial.status === 'skipped') return { ok: true };
+    if (trial.status !== 'choosing') return { error: '选择时间已结束，不能放弃', status: 409 };
+    trial.status = 'skipped'; trial.closedAt = new Date(at).toISOString();
   } else if (action === 'vote') {
     if (!trial.voterIds.includes(actorId)) return { error: '你没有本次审判的投票资格', status: 403 };
     if (!['support', 'oppose', 'abstain'].includes(choice)) return { error: '请选择支持、反对或弃权', status: 400 };
@@ -91,6 +112,7 @@ export function judgmentSnapshot(session, viewerId) {
       id: trial.id, ownerId: trial.ownerId, ownerName: trial.ownerName, targetId: trial.targetId,
       targetName: trial.targetName, status: trial.status, deadlineAt: trial.deadlineAt,
       reductionRate: trial.reductionRate, successDiamonds: trial.successDiamonds,
+      entryFee: trial.entryFee, entryFeePaid: trial.entryFeePaid,
       eligibleCount: trial.voterIds.length, requiredSupport: Math.ceil(trial.voterIds.length / 2),
       castCount: Object.keys(trial.votes).length,
       canChoose: trial.status === 'choosing' && trial.ownerId === viewerId,
