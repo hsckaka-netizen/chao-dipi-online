@@ -10,5 +10,5 @@ export function doudouPointNotice(previous, next) {
       || !Number.isInteger(number) || number < 1 || number > 13) return "";
   if (previous?.roomId === next.roomId && previous?.startedAt === next.startedAt
       && previous?.viewer?.id === next.viewer.id && previous?.viewer?.doudouNumber === number) return "";
-  return `界·豆豆「随机点数」已确定：${doudouPointLabel(number)}。本局将按此点数计算技能奖励。`;
+  return `界·豆豆「守株待兔」已确定：${doudouPointLabel(number)}。本局将按此点数计算技能奖励。`;
 }

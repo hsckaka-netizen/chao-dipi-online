@@ -3,7 +3,7 @@ import { detectNewDraggedFiveEffects, detectNewLargePlayEffects } from "./gamepl
 import { ASSET_URLS, versionedAssetUrl } from "./asset-versions.js?v=5afc8803d168";
 import { createHistoryTrickEntry, filterHistoryTimelineEntries } from "./history-records.js?v=874ba3c97732";
 import { suitTractorOrderValue } from "./replacement-rank-rules.js?v=3b3650aa685e";
-import { doudouPointLabel, doudouPointNotice } from "./doudou-notice.js?v=3ded4697e374";
+import { doudouPointLabel, doudouPointNotice } from "./doudou-notice.js?v=4327fd9b2a77";
 
 const app = document.querySelector("#app");
 document.documentElement.style.setProperty("--joker-face-image", `url("${ASSET_URLS.jokerFace}")`);
@@ -549,13 +549,13 @@ function transitionNotice(previousState, nextState) {
   if (draggedNotices.length) return draggedNotices.join("，");
   if (previousState.stage === nextState.stage) return "";
   if (previousState.stage === RESTART_CARD_STAGE && nextState.stage === SHEN_BIESAN_SKILL_STAGE) {
-    return "重开卡阶段结束，进入玉面雷神发动阶段。";
+    return "重开卡阶段结束，进入偷梁换柱发动阶段。";
   }
   if ((previousState.stage === RESTART_CARD_STAGE || previousState.stage === SHEN_BIESAN_SKILL_STAGE) && nextState.stage === OTHER_CARDS_STAGE) {
     return "英雄技能选择结束，进入其他卡牌使用阶段。";
   }
   if (previousState.stage === SHEN_BIESAN_SKILL_STAGE && nextState.stage === "score-bidding") {
-    return "玉面雷神选择结束，开始叫庄。";
+    return "偷梁换柱选择结束，开始叫庄。";
   }
   if (previousState.stage === OTHER_CARDS_STAGE && nextState.stage === "score-bidding") {
     return "其他卡牌选择结束，开始叫庄。";
@@ -565,7 +565,7 @@ function transitionNotice(previousState, nextState) {
   }
   if (previousState.stage === "score-bidding" && nextState.stage === "yokoyama-skill") {
     const score = nextState.setup?.scoreBid?.currentScore || "";
-    return `叫分结束：${nextState.setup?.bankerName || "庄家"} ${score ? `以 ${score} 分` : ""}成为庄家，进入全能偶像发动阶段。`;
+    return `叫分结束：${nextState.setup?.bankerName || "庄家"} ${score ? `以 ${score} 分` : ""}成为庄家，进入斗转星移发动阶段。`;
   }
   if ((previousState.stage === "score-bidding" || previousState.stage === "yokoyama-skill") && nextState.stage === "trump-selecting") {
     const score = nextState.setup?.scoreBid?.currentScore || "";
@@ -575,10 +575,10 @@ function transitionNotice(previousState, nextState) {
     return `定主成功：${nextState.setup?.bankerName || "庄家"} 已拿底等待贴底。`;
   }
   if (previousState.stage === "burying" && nextState.stage === "shen-haohao-skill") {
-    return "贴底完成，进入神 · 浩浩的聪明伶俐发动阶段。";
+    return "贴底完成，进入神 · 浩浩的丹书铁券发动阶段。";
   }
   if (previousState.stage === "shen-haohao-skill" && nextState.stage === "frying") {
-    return "聪明伶俐发动阶段结束，开始炒底。";
+    return "丹书铁券发动阶段结束，开始炒底。";
   }
   if ((previousState.stage === "frying" || previousState.stage === "fry-burying") && nextState.stage === "dogleg") {
     const trump = nextState.setup?.currentTrumpSuitName || nextState.setup?.trumpSuitName || "随机花色";
@@ -2146,11 +2146,11 @@ async function submitBoardHeroSkill(action, investment = null) {
       : action === "yokoyama-activate"
         ? Number(costs.yokoyama?.cost) || 0
         : 0;
-  const skillName = action.startsWith("jie-ranchen") ? "命运投资"
-    : action.startsWith("shen-biesan") ? "玉面雷神"
-    : action.startsWith("shen-haohao") ? "聪明伶俐"
-    : action.startsWith("shen-jiangwen") ? "排骨之王"
-      : "全能偶像";
+  const skillName = action.startsWith("jie-ranchen") ? "奇货可居"
+    : action.startsWith("shen-biesan") ? "偷梁换柱"
+    : action.startsWith("shen-haohao") ? "丹书铁券"
+    : action.startsWith("shen-jiangwen") ? "釜底抽薪"
+      : "斗转星移";
   const cooldown = action === "shen-biesan-activate"
     ? Number(costs.shenBiesan?.cooldown) || 0
     : action === "shen-haohao-activate"
@@ -2178,12 +2178,12 @@ async function submitBoardHeroSkill(action, investment = null) {
       ensureShopState(true);
     }
     if (action.startsWith("shen-biesan") || action.startsWith("shen-haohao") || action.startsWith("shen-jiangwen")) ensureHeroHomeState(true);
-    const message = action === "jie-ranchen-pass" ? "已放弃命运投资"
-      : action === "jie-ranchen-invest" ? "命运投资已发动，身份已公开锁定"
-      : action === "shen-biesan-pass" ? "已放弃玉面雷神"
-      : action === "shen-haohao-pass" ? "已放弃聪明伶俐"
-        : action === "shen-haohao-activate" ? "聪明伶俐已发动，本局你不会拖到最终队友的红五/方五"
-      : action === "yokoyama-pass" ? (costs.yokoyama?.viewerCandidatePlayerIds ? "已锁定候选座位" : "已放弃全能偶像")
+    const message = action === "jie-ranchen-pass" ? "已放弃奇货可居"
+      : action === "jie-ranchen-invest" ? "奇货可居已发动，身份已公开锁定"
+      : action === "shen-biesan-pass" ? "已放弃偷梁换柱"
+      : action === "shen-haohao-pass" ? "已放弃丹书铁券"
+        : action === "shen-haohao-activate" ? "丹书铁券已发动，本局你不会拖到最终队友的红五/方五"
+      : action === "yokoyama-pass" ? (costs.yokoyama?.viewerCandidatePlayerIds ? "已锁定候选座位" : "已放弃斗转星移")
         : action === "yokoyama-activate" ? "已生成新的候选座位；最终抽取前不会改变全桌座位"
           : `已提交${skillName}`;
     setMessage(message);
@@ -6496,7 +6496,7 @@ function renderRoom() {
       : "人数已满足，等待所有玩家准备";
 
   renderShell(`
-    ${!spectating && gameInProgress && Number(state.viewer?.doudouNumber) ? `<div class="status good doudou-point-notice" role="status"><strong>界·豆豆「随机点数」：${escapeHtml(doudouPointLabel(state.viewer.doudouNumber))}</strong><span>本局技能按此点数结算</span></div>` : ""}
+    ${!spectating && gameInProgress && Number(state.viewer?.doudouNumber) ? `<div class="status good doudou-point-notice" role="status"><strong>界·豆豆「守株待兔」：${escapeHtml(doudouPointLabel(state.viewer.doudouNumber))}</strong><span>本局技能按此点数结算</span></div>` : ""}
     <div class="room-layout ${spectating ? "spectator-mode" : ""}">
       <div class="stack room-main">
         <section class="panel stack room-overview ${showTable ? "game-room-overview" : ""}">
@@ -6713,7 +6713,7 @@ function renderSetupCenter() {
     const isDeng = stage === "jie-denghuang-skill";
     const actor = state.players.find((player) => player.id === skill.currentPlayerId)?.name || "玩家";
     body = `${renderSetupLines([
-      { label: "英雄技能", value: isDeng ? "底牌易手" : "渣代天命" },
+      { label: "英雄技能", value: isDeng ? "探囊取物" : "择木而栖" },
       { label: "当前操作", value: escapeHtml(actor) },
       { label: "倒计时", value: setupCountdownTag(skill.deadlineAt, " 后自动完成") }
     ])}<p>${isDeng ? (skill.hasDrawn ? `已随机拿取${skill.exchangeCount}张底牌，请选择相同数量的手牌扣回；超时自动扣回刚拿取的牌。` : "可随机拿取底牌，再从手牌中扣回相同数量的牌。") : "选择手中一张非比牌作为专属狗腿牌，仅改变自己的狗腿判定；放弃则沿用庄家选择。"}</p>
@@ -6759,15 +6759,15 @@ function renderSetupCenter() {
       .filter(Boolean);
     body = `
       ${renderSetupLines([
-        { label: "当前阶段", value: "神 · 瘪三 · 玉面雷神" },
+        { label: "当前阶段", value: "神 · 瘪三 · 偷梁换柱" },
         { label: "倒计时", value: setupCountdownTag(biesan.deadlineAt, " 后自动放弃") },
         { label: "技能选择", value: `${completedIds.length}/${eligibleIds.length}` }
       ])}
       <div class="meta">多名神 · 瘪三可同时申请；全部完成后由服务端随机选 1 人成功。只有成功者在需要时支付 CD 重置费，技能结算完成后才进入其他卡牌阶段。</div>
-      ${applicantNames.length ? `<div class="game-item-use-summary"><span>${escapeHtml(applicantNames.join("、"))} 已申请玉面雷神</span></div>` : ""}
+      ${applicantNames.length ? `<div class="game-item-use-summary"><span>${escapeHtml(applicantNames.join("、"))} 已申请偷梁换柱</span></div>` : ""}
       <div class="row">
-        ${!isSpectating() && biesan.canChoose ? `<button type="button" data-action="shen-biesan-activate">${Number(biesan.cooldown) > 0 ? `花费 ${escapeHtml(biesan.cost || 0)} 钻石重置 CD 并申请` : "免费申请玉面雷神"}</button><button type="button" class="secondary" data-action="shen-biesan-pass">不发动玉面雷神</button>` : ""}
-        ${!isSpectating() && biesan.viewerCompleted ? `<span class="tag good">你已完成玉面雷神选择</span>` : ""}
+        ${!isSpectating() && biesan.canChoose ? `<button type="button" data-action="shen-biesan-activate">${Number(biesan.cooldown) > 0 ? `花费 ${escapeHtml(biesan.cost || 0)} 钻石重置 CD 并申请` : "免费申请偷梁换柱"}</button><button type="button" class="secondary" data-action="shen-biesan-pass">不发动偷梁换柱</button>` : ""}
+        ${!isSpectating() && biesan.viewerCompleted ? `<span class="tag good">你已完成偷梁换柱选择</span>` : ""}
         ${isSpectating() || !biesan.viewerEligible ? `<span class="tag">等待符合条件的玩家完成选择</span>` : ""}
       </div>
     `;
@@ -6778,7 +6778,7 @@ function renderSetupCenter() {
     const rolesAvailable = (skill.availableRoles || []).length > 0;
     body = `
       ${renderSetupLines([
-        { label: "当前阶段", value: "界 · 然陈 · 命运投资" },
+        { label: "当前阶段", value: "界 · 然陈 · 奇货可居" },
         { label: "倒计时", value: setupCountdownTag(skill.deadlineAt, " 后自动放弃") },
         { label: "完成进度", value: `${escapeHtml((skill.completedPlayerIds || []).length)} / ${escapeHtml((skill.eligiblePlayerIds || []).length)}` },
         skill.viewerEligible ? { label: "获胜倍率", value: `${escapeHtml(skill.winMultiplier || 0)} 倍投资额` } : null
@@ -6836,7 +6836,7 @@ function renderSetupCenter() {
     const eligibleCount = (skill.eligiblePlayerIds || []).length;
     body = `
       ${renderSetupLines([
-        { label: "当前阶段", value: "横山由依 · 全能偶像" },
+        { label: "当前阶段", value: "横山由依 · 斗转星移" },
         { label: "完成进度", value: `${escapeHtml(completedCount)} / ${escapeHtml(eligibleCount)}` },
         { label: "倒计时", value: setupCountdownTag(skill.deadlineAt, " 后自动锁定") },
         skill.viewerEligible ? { label: "我的次数", value: `${escapeHtml(skill.usedCount || 0)} / ${escapeHtml(skill.maxUses || 1)}（剩余 ${escapeHtml(skill.remainingUses || 0)} 次）` } : null
@@ -6879,7 +6879,7 @@ function renderSetupCenter() {
       : "免费发动";
     body = `
       ${renderSetupLines([
-        { label: "当前阶段", value: "神 · 浩浩 · 聪明伶俐" },
+        { label: "当前阶段", value: "神 · 浩浩 · 丹书铁券" },
         { label: "倒计时", value: setupCountdownTag(skill.deadlineAt, " 后自动放弃") },
         { label: "技能 CD", value: skill.viewerEligible ? `${escapeHtml(skill.cooldown || 0)} 轮` : "" },
         { label: "重置费用", value: skill.viewerEligible && Number(skill.cooldown) > 0 ? `${escapeHtml(skill.cost || 0)} 钻石` : "" }
@@ -7386,7 +7386,7 @@ function renderResultPanel() {
           <span class="tag">保底 ${signedScore(null, result.bottomDelta)}</span>
           <span class="tag">拖五 ${signedScore(null, result.draggedDelta)}</span>
           <span class="tag">甩牌 ${signedScore(null, result.throwFailureDelta || 0)}</span>
-          ${result.teammateFiveProtection?.active ? `<span class="tag good">聪明伶俐：发动者免除拖队友五 红${escapeHtml(result.teammateFiveProtection.redFives || 0)} / 方${escapeHtml(result.teammateFiveProtection.diamondFives || 0)}</span>` : ""}
+          ${result.teammateFiveProtection?.active ? `<span class="tag good">丹书铁券：发动者免除拖队友五 红${escapeHtml(result.teammateFiveProtection.redFives || 0)} / 方${escapeHtml(result.teammateFiveProtection.diamondFives || 0)}</span>` : ""}
           ${result.bottomDraggedRedFives || result.bottomDraggedDiamondFives ? `<span class="tag accent">底牌拖主：红五 ${result.bottomDraggedRedFives}，方五 ${result.bottomDraggedDiamondFives}</span>` : ""}
         </div>
         ${renderViewerDiamondSummary(result)}
@@ -7470,7 +7470,7 @@ function renderBidFryDialog(type) {
         </div>
         <div class="dialog-actions">
           ${renderGameItemControl()}
-          ${!isBid && shenJiangwenSkill.canActivate ? `<button type="button" data-action="shen-jiangwen-activate">英雄技能 · 排骨之王（${jiangwenActivationText}）</button>` : ""}
+          ${!isBid && shenJiangwenSkill.canActivate ? `<button type="button" data-action="shen-jiangwen-activate">英雄技能 · 釜底抽薪（${jiangwenActivationText}）</button>` : ""}
           ${canPass ? `<button type="button" class="secondary" data-action="${passAction}" ${passCountdownAttrs}>${escapeHtml(passLabel)}</button>` : `<button type="button" class="secondary" data-action="close-dialog">过</button>`}
           <button type="button" data-action="${isBid ? "bid-selected" : "fry-selected"}" ${validation.ok ? "" : "disabled"}>${escapeHtml(title)}</button>
           ${!validation.ok && validation.reason ? `<span class="action-reason">${escapeHtml(validation.reason)}</span>` : ""}
@@ -7723,15 +7723,15 @@ function renderSetupTable() {
   const setup = state.setup || {};
   const titleByStage = {
     [RESTART_CARD_STAGE]: "重开卡阶段",
-    [SHEN_BIESAN_SKILL_STAGE]: "玉面雷神阶段",
+    [SHEN_BIESAN_SKILL_STAGE]: "偷梁换柱阶段",
     [OTHER_CARDS_STAGE]: "其他卡牌阶段",
     bidding: "叫主牌桌",
     "score-bidding": "叫分牌桌",
-    [JIE_RANCHEN_SKILL_STAGE]: "命运投资阶段",
-    "yokoyama-skill": "全能偶像阶段",
+    [JIE_RANCHEN_SKILL_STAGE]: "奇货可居阶段",
+    "yokoyama-skill": "斗转星移阶段",
     "trump-selecting": "定主牌桌",
     burying: "贴底牌桌",
-    "shen-haohao-skill": "聪明伶俐阶段",
+    "shen-haohao-skill": "丹书铁券阶段",
     frying: "炒底牌桌",
     "fry-burying": "炒底贴底",
     "jie-denghuang-skill": "界·灯皇换底",
@@ -8419,7 +8419,7 @@ function setupHistoryEntries(source) {
         kind: "fry",
         label: "炒底",
         at: action.at || null,
-        text: `${action.playerName || historyPlayerName(source, action.playerId)} 使用神 · 姜文发动${action.skillName || "排骨之王"}炒底`
+        text: `${action.playerName || historyPlayerName(source, action.playerId)} 使用神 · 姜文发动${action.skillName || "釜底抽薪"}炒底`
       });
       return;
     }

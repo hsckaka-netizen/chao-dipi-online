@@ -96,7 +96,7 @@ test("出牌记录隐藏不炒过程，并按单玩家一行让牌面自动折�
 test("神姜文强制拿底按炒底动作进入牌桌轨迹与历史", async () => {
   const source = await readFile(appPath, "utf8");
 
-  assert.match(source, /if \(action\.directSkill\) \{[\s\S]*?使用神 · 姜文发动\$\{action\.skillName \|\| "排骨之王"\}炒底/);
+  assert.match(source, /if \(action\.directSkill\) \{[\s\S]*?使用神 · 姜文发动\$\{action\.skillName \|\| "釜底抽薪"\}炒底/);
   assert.match(source, /action\.directSkill[\s\S]*?"神姜文炒底"/);
   assert.match(source, /setup\.fry\?\.directSkillActionId \|\| setup\.fry\?\.pendingBid\?\.actionId/);
 });

@@ -1169,7 +1169,7 @@ function beginRanchenSkillStage(room) {
     deadlineAt: new Date(Date.now() + BOARD_HERO_SKILL_SECONDS * 1000).toISOString()
   };
   room.stage = JIE_RANCHEN_SKILL_STAGE;
-  room.phase = "命运投资选择阶段";
+  room.phase = "奇货可居选择阶段";
   addEvent(room, "界 · 然陈玩家可在叫庄前选择投资并公开锁定身份");
   return true;
 }
@@ -1184,9 +1184,9 @@ function finishRanchenSkillStage(room) {
 }
 
 async function submitRanchenSkillChoice(room, player, investment = null) {
-  if (room.stage !== JIE_RANCHEN_SKILL_STAGE) return { error: "当前不是命运投资阶段", status: 409 };
+  if (room.stage !== JIE_RANCHEN_SKILL_STAGE) return { error: "当前不是奇货可居阶段", status: 409 };
   const state = room.boardHeroSkills.jieRanchen;
-  if (!state.eligiblePlayerIds.includes(player.id)) return { error: "你不能发动命运投资", status: 403 };
+  if (!state.eligiblePlayerIds.includes(player.id)) return { error: "你不能发动奇货可居", status: 403 };
   if (state.completedPlayerIds.includes(player.id)) return { error: "你已经完成选择", status: 409 };
   if (investment != null) {
     const amount = Number(investment);
@@ -1204,9 +1204,9 @@ async function submitRanchenSkillChoice(room, player, investment = null) {
     room.ranchenRoleLocks[player.id] = lockedRole;
     if (lockedRole === "dogleg") room.doglegPlayerIds.push(player.id);
     recordBoardHeroSkillUse(room, player, "jie-ranchen", payment, { investment: amount, lockedRole });
-    addEvent(room, `${player.name} 投资 ${amount} 钻石发动命运投资，本局身份公开锁定为${lockedRole === "dogleg" ? "狗腿" : "闲家"}，跳过叫庄`);
+    addEvent(room, `${player.name} 投资 ${amount} 钻石发动奇货可居，本局身份公开锁定为${lockedRole === "dogleg" ? "狗腿" : "闲家"}，跳过叫庄`);
   } else {
-    addEvent(room, `${player.name} 放弃命运投资`);
+    addEvent(room, `${player.name} 放弃奇货可居`);
   }
   state.completedPlayerIds.push(player.id);
   finishRanchenSkillStage(room);
@@ -1305,7 +1305,7 @@ function beginShenBiesanSkillChoices(room, deadlineAt = null) {
     resolving: false,
     resolved: false
   };
-  if (eligiblePlayerIds.length) addEvent(room, "符合条件的神 · 瘪三玩家可同时选择是否申请发动玉面雷神");
+  if (eligiblePlayerIds.length) addEvent(room, "符合条件的神 · 瘪三玩家可同时选择是否申请发动偷梁换柱");
   return eligiblePlayerIds.length > 0;
 }
 
@@ -1325,7 +1325,7 @@ function beginShenBiesanSkillStage(room) {
     return false;
   }
   room.stage = SHEN_BIESAN_SKILL_STAGE;
-  room.phase = "玉面雷神发动阶段";
+  room.phase = "偷梁换柱发动阶段";
   return true;
 }
 
@@ -1398,10 +1398,10 @@ async function resolveShenBiesanSkillChoices(room) {
       );
       applyShenBiesanReplacement(room, replacementRank);
       recordBoardHeroSkillUse(room, player, "shen-biesan", payment, { replacementRank });
-      addEvent(room, `${player.name} 发动玉面雷神，本局以 ${replacementRank} 替代 2 参与叫主、炒底和牌力判定`);
+      addEvent(room, `${player.name} 发动偷梁换柱，本局以 ${replacementRank} 替代 2 参与叫主、炒底和牌力判定`);
       break;
     } catch (error) {
-      addEvent(room, `${player.name} 发动玉面雷神失败：${error.message}`);
+      addEvent(room, `${player.name} 发动偷梁换柱失败：${error.message}`);
     }
   }
   state.resolving = false;
@@ -1418,16 +1418,16 @@ async function finishShenBiesanSkillStage(room) {
 }
 
 async function submitShenBiesanSkillChoice(room, player, activate, resetCooldown = false) {
-  if (room.stage !== SHEN_BIESAN_SKILL_STAGE) return { error: "当前不是玉面雷神发动阶段", status: 409 };
+  if (room.stage !== SHEN_BIESAN_SKILL_STAGE) return { error: "当前不是偷梁换柱发动阶段", status: 409 };
   const state = room.boardHeroSkills.shenBiesan;
-  if (!state.eligiblePlayerIds.includes(player.id)) return { error: "你当前不满足玉面雷神发动条件", status: 403 };
+  if (!state.eligiblePlayerIds.includes(player.id)) return { error: "你当前不满足偷梁换柱发动条件", status: 403 };
   if (state.completedPlayerIds.includes(player.id)) return { error: "你已经完成选择", status: 409 };
   state.completedPlayerIds.push(player.id);
   if (activate) {
     state.applicantPlayerIds.push(player.id);
     state.resetCooldownByPlayerId[player.id] = Boolean(resetCooldown);
   }
-  addEvent(room, `${player.name}${activate ? "申请发动玉面雷神" : "放弃发动玉面雷神"}`);
+  addEvent(room, `${player.name}${activate ? "申请发动偷梁换柱" : "放弃发动偷梁换柱"}`);
   if (shenBiesanChoicesCompleted(room)) await finishShenBiesanSkillStage(room);
   return { ok: true };
 }
@@ -2717,7 +2717,7 @@ function applyTeammateFiveProtection(room, bankerIdSet) {
   });
   Object.assign(protection, protectedCounts);
   if (protectedCounts.redFives || protectedCounts.diamondFives) {
-    addEvent(room, `聪明伶俐生效：发动者按最终阵营免除拖队友红五 ${protectedCounts.redFives} 张、方五 ${protectedCounts.diamondFives} 张`);
+    addEvent(room, `丹书铁券生效：发动者按最终阵营免除拖队友红五 ${protectedCounts.redFives} 张、方五 ${protectedCounts.diamondFives} 张`);
   }
   return protection;
 }
@@ -3385,15 +3385,15 @@ function resolveYokoyamaSkillStage(room) {
 }
 
 async function activateYokoyamaSkill(room, player, requestId) {
-  if (room.stage !== "yokoyama-skill") return { error: "当前不是全能偶像发动阶段", status: 409 };
+  if (room.stage !== "yokoyama-skill") return { error: "当前不是斗转星移发动阶段", status: 409 };
   const state = room.boardHeroSkills.yokoyama;
-  if (!state.eligiblePlayerIds.includes(player.id)) return { error: "你不能发动全能偶像", status: 403 };
+  if (!state.eligiblePlayerIds.includes(player.id)) return { error: "你不能发动斗转星移", status: 403 };
   if (state.completedPlayerIds.includes(player.id)) return { error: "你已锁定本局选择", status: 409 };
   if (state.inFlightPlayerIds.includes(player.id)) return { error: "正在生成候选座位，请稍后", status: 409 };
   const maxUses = Number(player.battleHeroSnapshot?.paidSkill?.maxUsesPerGame) || 1;
   const usedCount = (room.boardHeroEffects?.uses || [])
     .filter((use) => use.playerId === player.id && use.heroId === "yokoyama-yui").length;
-  if (usedCount >= maxUses) return { error: "本局全能偶像发动次数已用完", status: 409 };
+  if (usedCount >= maxUses) return { error: "本局斗转星移发动次数已用完", status: 409 };
   const beforePlayerIds = [...state.basePlayerIds];
   const afterPlayerIds = shuffle(beforePlayerIds);
   if (afterPlayerIds.length > 1 && afterPlayerIds.every((playerId, index) => playerId === beforePlayerIds[index])) {
@@ -3428,15 +3428,15 @@ async function activateYokoyamaSkill(room, player, requestId) {
 }
 
 function passYokoyamaSkill(room, player) {
-  if (room.stage !== "yokoyama-skill") return { error: "当前不是全能偶像发动阶段", status: 409 };
+  if (room.stage !== "yokoyama-skill") return { error: "当前不是斗转星移发动阶段", status: 409 };
   const state = room.boardHeroSkills.yokoyama;
-  if (!state.eligiblePlayerIds.includes(player.id)) return { error: "你不能操作全能偶像", status: 403 };
+  if (!state.eligiblePlayerIds.includes(player.id)) return { error: "你不能操作斗转星移", status: 403 };
   if (state.completedPlayerIds.includes(player.id)) return { error: "你已锁定本局选择", status: 409 };
   if (state.inFlightPlayerIds.includes(player.id)) return { error: "正在生成候选座位，请稍后", status: 409 };
   state.completedPlayerIds.push(player.id);
   addEvent(room, state.candidateByPlayerId[player.id]
     ? `${player.name} 已锁定自己的候选座位`
-    : `${player.name} 放弃发动全能偶像`);
+    : `${player.name} 放弃发动斗转星移`);
   if (yokoyamaChoicesCompleted(room)) resolveYokoyamaSkillStage(room);
   return { ok: true };
 }
@@ -3455,7 +3455,7 @@ function finishScoreBidding(room) {
 
 function submitScoreBid(room, player, increment) {
   if (room.stage !== "score-bidding") return { error: "当前不能叫分抢庄", status: 409 };
-  if ((room.ranchenRoleLocks || {})[player.id]) return { error: "命运投资已锁定身份，本局跳过叫庄", status: 403 };
+  if ((room.ranchenRoleLocks || {})[player.id]) return { error: "奇货可居已锁定身份，本局跳过叫庄", status: 403 };
   const scoreBid = ensureScoreBidSetup(room);
   const current = scoreBid.current || null;
   if (current?.playerId === player.id) return { error: "你已经是当前最高叫分", status: 400 };
@@ -3492,7 +3492,7 @@ function submitScoreBid(room, player, increment) {
 
 function passScoreBid(room, player) {
   if (room.stage !== "score-bidding") return { error: "当前不能过叫分", status: 409 };
-  if ((room.ranchenRoleLocks || {})[player.id]) return { error: "命运投资已锁定身份，本局跳过叫庄", status: 403 };
+  if ((room.ranchenRoleLocks || {})[player.id]) return { error: "奇货可居已锁定身份，本局跳过叫庄", status: 403 };
   const scoreBid = ensureScoreBidSetup(room);
   if (!scoreBid.current) return { error: "还没有玩家叫分，暂不能过", status: 409 };
   if (scoreBid.current.playerId === player.id) return { error: "当前最高叫分玩家不需要过", status: 400 };
@@ -3569,15 +3569,15 @@ function beginShenHaohaoSkillStage(room) {
     return false;
   }
   room.stage = "shen-haohao-skill";
-  room.phase = "聪明伶俐发动阶段";
-  addEvent(room, "炒底开始前进入聪明伶俐发动阶段");
+  room.phase = "丹书铁券发动阶段";
+  addEvent(room, "炒底开始前进入丹书铁券发动阶段");
   return true;
 }
 
 async function submitShenHaohaoSkillChoice(room, player, activate, resetCooldown = false, requestId = "") {
-  if (room.stage !== "shen-haohao-skill") return { error: "当前不是聪明伶俐发动阶段", status: 409 };
+  if (room.stage !== "shen-haohao-skill") return { error: "当前不是丹书铁券发动阶段", status: 409 };
   const state = room.boardHeroSkills.shenHaohao;
-  if (!state.eligiblePlayerIds.includes(player.id)) return { error: "你当前不能发动聪明伶俐", status: 403 };
+  if (!state.eligiblePlayerIds.includes(player.id)) return { error: "你当前不能发动丹书铁券", status: 403 };
   if (state.completedPlayerIds.includes(player.id)) return { error: "你已经完成选择", status: 409 };
 
   if (activate) {
@@ -3598,9 +3598,9 @@ async function submitShenHaohaoSkillChoice(room, player, activate, resetCooldown
     const protection = room.boardHeroEffects.teammateFiveProtection;
     protection.active = true;
     if (!protection.playerIds.includes(player.id)) protection.playerIds.push(player.id);
-    addEvent(room, `${player.name} 发动聪明伶俐，本局本人将不会拖到最终队友的红五/方五`);
+    addEvent(room, `${player.name} 发动丹书铁券，本局本人将不会拖到最终队友的红五/方五`);
   } else {
-    addEvent(room, `${player.name} 放弃发动聪明伶俐`);
+    addEvent(room, `${player.name} 放弃发动丹书铁券`);
   }
 
   state.completedPlayerIds.push(player.id);
@@ -3625,7 +3625,7 @@ function completeShenJiangwenOffer(room, player) {
 }
 
 async function activateShenJiangwenSkill(room, player, requestId, resetCooldown = false) {
-  if (!shenJiangwenCanActivate(room, player)) return { error: "排骨之王只能在首次轮到本人炒底时发动", status: 409 };
+  if (!shenJiangwenCanActivate(room, player)) return { error: "釜底抽薪只能在首次轮到本人炒底时发动", status: 409 };
   const payment = await chargeRoomBoardHeroSkill(
     room,
     player.accountId,
@@ -3645,7 +3645,7 @@ async function activateShenJiangwenSkill(room, player, requestId, resetCooldown 
     playerId: player.id,
     directSkill: true,
     heroId: "shen-jiangwen",
-    skillName: player.battleHeroSnapshot?.skillName || "排骨之王",
+    skillName: player.battleHeroSnapshot?.skillName || "釜底抽薪",
     cards: [],
     at: now()
   };
@@ -3657,8 +3657,8 @@ async function activateShenJiangwenSkill(room, player, requestId, resetCooldown 
   room.setup.fry.deadlineAt = null;
   room.boardHeroSkills.shenJiangwen.directPlayerId = player.id;
   room.stage = "fry-burying";
-  room.phase = `${player.name} 发动排骨之王，等待贴底`;
-  addEvent(room, `${player.name} 使用神 · 姜文发动排骨之王炒底，直接拿入底牌；本次不提高炒底门槛`);
+  room.phase = `${player.name} 发动釜底抽薪，等待贴底`;
+  addEvent(room, `${player.name} 使用神 · 姜文发动釜底抽薪炒底，直接拿入底牌；本次不提高炒底门槛`);
   return { ok: true };
 }
 
@@ -3675,7 +3675,7 @@ function continueFryingAfterBury(room, player) {
     fry.deadlineAt = new Date(Date.now() + FRY_SECONDS * 1000).toISOString();
     room.stage = "frying";
     room.phase = `等待 ${playerName(room, fry.currentPlayerId)} 炒底或不炒`;
-    addEvent(room, `${player.name} 完成排骨之王贴底，炒底门槛保持不变`);
+    addEvent(room, `${player.name} 完成釜底抽薪贴底，炒底门槛保持不变`);
     return;
   }
   fry.lastBid = fry.pendingBid;
@@ -3732,7 +3732,7 @@ function finishAdvancedBottomStage(room) {
     room.hiddenDogleg = null;
     room.randomOrderDogleg = null;
     beginPlaying(room);
-    addEvent(room, "狗腿名额已由命运投资锁定，直接开始打牌");
+    addEvent(room, "狗腿名额已由奇货可居锁定，直接开始打牌");
     return;
   }
   if (normalizeDoglegMode(room.doglegMode) === DOGLEG_MODE_DYNAMIC) {
@@ -4937,7 +4937,7 @@ async function autoAdvanceExpiredBoardHeroSkill(room) {
     state.eligiblePlayerIds.forEach((playerId) => {
       if (!state.completedPlayerIds.includes(playerId)) state.completedPlayerIds.push(playerId);
     });
-    addEvent(room, "命运投资倒计时结束，未操作玩家视为放弃");
+    addEvent(room, "奇货可居倒计时结束，未操作玩家视为放弃");
     finishRanchenSkillStage(room);
     return true;
   }
@@ -4952,7 +4952,7 @@ async function autoAdvanceExpiredBoardHeroSkill(room) {
     state.eligiblePlayerIds.forEach((playerId) => {
       if (!state.completedPlayerIds.includes(playerId)) state.completedPlayerIds.push(playerId);
     });
-    addEvent(room, "玉面雷神倒计时结束，未操作玩家视为放弃");
+    addEvent(room, "偷梁换柱倒计时结束，未操作玩家视为放弃");
     await finishShenBiesanSkillStage(room);
     return true;
   }
@@ -4967,7 +4967,7 @@ async function autoAdvanceExpiredBoardHeroSkill(room) {
     state.eligiblePlayerIds.forEach((playerId) => {
       if (!state.completedPlayerIds.includes(playerId)) state.completedPlayerIds.push(playerId);
     });
-    addEvent(room, "全能偶像倒计时结束：已有候选自动锁定，未生成候选者视为放弃");
+    addEvent(room, "斗转星移倒计时结束：已有候选自动锁定，未生成候选者视为放弃");
     resolveYokoyamaSkillStage(room);
     return true;
   }
@@ -4978,7 +4978,7 @@ async function autoAdvanceExpiredBoardHeroSkill(room) {
     state.eligiblePlayerIds.forEach((playerId) => {
       if (!state.completedPlayerIds.includes(playerId)) state.completedPlayerIds.push(playerId);
     });
-    addEvent(room, "聪明伶俐倒计时结束，未操作玩家视为放弃");
+    addEvent(room, "丹书铁券倒计时结束，未操作玩家视为放弃");
     startFrying(room);
     return true;
   }
