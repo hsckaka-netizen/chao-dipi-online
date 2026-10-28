@@ -96,3 +96,35 @@ test("choosing another hero never redraws candidates or substitutes an owned her
   chooseDraftHero(draft, "p0", draft.entries.p0.choices[0]);
   for (const [id, entry] of Object.entries(draft.entries)) assert.deepEqual(entry.choices, before[id]);
 });
+
+test("unowned candidates require an explicit hire and always produce a one-star temporary snapshot", () => {
+  const draft = createHeroDraft(players(2), {});
+  draft.id = "round";
+  const choice = heroDraftSnapshot(draft, "p0").choices[0];
+  assert.equal(choice.canSelect, false);
+  assert.equal(choice.canHire, true);
+  assert.equal(choice.hireCost, 300);
+  assert.equal(chooseDraftHero(draft, "p0", choice.heroId).status, 403);
+  const hired = chooseDraftHero(draft, "p0", choice.heroId, { hire: true }).snapshot;
+  assert.equal(hired.stars, 1);
+  assert.equal(hired.hired, true);
+  assert.equal(hired.owned, false);
+  assert.equal(hired.hireGameId, "round");
+  assert.equal(draft.entries.p0.snapshots[choice.heroId].owned, false);
+});
+
+test("owned heroes cannot be hired, and duplicate prevention still prefers an available owned candidate", () => {
+  const owned = createHeroDraft(players(2), allOwned(2));
+  assert.equal(chooseDraftHero(owned, "p0", owned.entries.p0.choices[0], { hire: true }).status, 409);
+  assert.equal(chooseDraftHero(owned, "p0", null, { hire: true }).status, 409);
+  const draft = createHeroDraft(players(9), allOwned(9));
+  const duplicateId = draft.entries.p0.choices[0];
+  chooseDraftHero(draft, "p0", duplicateId);
+  const otherId = "p1";
+  const entry = draft.entries[otherId];
+  entry.choices = [duplicateId, ...entry.choices.filter((id) => id !== duplicateId)];
+  entry.snapshots[duplicateId].owned = false;
+  assert.equal(chooseDraftHero(draft, otherId, duplicateId, { hire: true }).status, 409);
+  entry.choices.filter((id) => id !== duplicateId).forEach((id) => { entry.snapshots[id].owned = false; });
+  assert.equal(chooseDraftHero(draft, otherId, duplicateId, { hire: true }).snapshot.stars, 1);
+});

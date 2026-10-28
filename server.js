@@ -109,6 +109,8 @@ import {
   getEnergyState,
   getPlayerShopState,
   getBattleHeroInventory,
+  hireBattleHero,
+  refundBattleHeroHires,
   getDiamondWallet,
   getHeroHomeState,
   getWarEffortState,
@@ -1364,13 +1366,17 @@ function recordBoardHeroSkillUse(room, player, heroId, payment, effect = {}) {
 }
 
 async function chargeRoomBoardHeroSkill(room, ...args) {
-  if (room.boardHeroSkillUseInFlight) {
+  if (room.boardHeroSkillUseInFlight || room.heroHireClosing) {
     const error = new Error("正在处理其他英雄技能，请稍后重试");
     error.status = 409;
     throw error;
   }
   room.boardHeroSkillUseInFlight = true;
   try {
+    const player = room.players.find((item) => item.accountId === args[0]);
+    if (player?.battleHeroSnapshot?.hired) {
+      args[4] = { ...args[4], hireGameId: player.battleHeroSnapshot.hireGameId, skillStars: 1 };
+    }
     return await chargeBoardHeroSkill(...args);
   } finally {
     room.boardHeroSkillUseInFlight = false;
@@ -1553,6 +1559,7 @@ async function beginHeroDraft(room, loadInventory = getBattleHeroInventory) {
     if (!player.test && player.accountId) player.advancementSrIds = eligibleAdvancementSrIds(inventory[player.accountId]);
   });
   room.heroDraft = createHeroDraft(room.players, inventory);
+  room.heroDraft.id = room.gameRecordId;
   room.status = "dealt";
   room.stage = HERO_DRAFT_STAGE;
   room.phase = "选择本局出战英雄";
@@ -1568,6 +1575,7 @@ function finishHeroDraftIfComplete(room) {
 }
 
 function expireHeroDraft(room) {
+  if (room.heroHireClosing) return false;
   if (room.stage !== HERO_DRAFT_STAGE || Date.parse(room.heroDraft.deadlineAt) > Date.now()) return false;
   room.players.forEach((player) => {
     const entry = room.heroDraft.entries[player.id];
@@ -1583,12 +1591,59 @@ function clearHeroDraftTimer(room) {
 
 function scheduleHeroDraftTimer(room) {
   clearHeroDraftTimer(room);
-  if (room.stage !== HERO_DRAFT_STAGE) return;
+  if (room.stage !== HERO_DRAFT_STAGE || (room.heroHireInFlight && Date.parse(room.heroDraft.deadlineAt) <= Date.now())) return;
   room.heroDraftTimer = setTimeout(() => {
     room.heroDraftTimer = null;
     if (rooms.get(room.id) === room && expireHeroDraft(room)) broadcastAndContinueAutomation(room);
   }, Math.max(0, Date.parse(room.heroDraft.deadlineAt) - Date.now()) + 50);
   room.heroDraftTimer.unref?.();
+}
+
+async function selectRoomHero(room, player, heroId, hire, draftId, charge = hireBattleHero) {
+  expireHeroDraft(room);
+  const snapshot = player.battleHeroSnapshot;
+  if (hire && snapshot?.hired && snapshot.heroId === heroId && snapshot.hireGameId === draftId) return { ok: true, repeated: true };
+  if (room.stage !== HERO_DRAFT_STAGE) return { error: "当前不在选将阶段", status: 409 };
+  if (room.heroHireInFlight || room.heroHireClosing) return { error: "雇佣正在处理，请稍后重试", status: 409 };
+  const draft = room.heroDraft;
+  if (hire && (!draftId || draftId !== draft.id || !player.accountId || player.test)) return { error: "雇佣资格或本局编号已失效", status: 403 };
+  const result = chooseDraftHero(draft, player.id, heroId, { hire });
+  if (result.error) return result;
+  const entry = draft.entries[player.id];
+  if (hire) {
+    entry.hiring = true;
+    room.heroHireInFlight = true;
+    try {
+      result.payment = await charge(player.accountId, draft.id, heroId);
+    } catch (error) {
+      entry.completed = false;
+      entry.selectedHeroId = null;
+      return { error: error.status === 409 ? error.message : "雇佣暂不可用，请稍后重试或选择不出战", status: error.status || 503 };
+    } finally {
+      entry.hiring = false;
+      room.heroHireInFlight = false;
+      // An explicitly submitted hire finishes before the draft timer advances the game.
+      if (!entry.completed) expireHeroDraft(room);
+    }
+  }
+  player.battleHeroSnapshot = result.snapshot;
+  if (result.snapshot?.hired) room.heroHireGameId = draft.id;
+  expireHeroDraft(room);
+  finishHeroDraftIfComplete(room);
+  return { ok: true, payment: result.payment };
+}
+
+async function refundRoomHeroHires(room, refund = refundBattleHeroHires) {
+  if (room.heroHireInFlight || room.heroHireClosing) return { error: "雇佣正在处理，请稍后重试", status: 409 };
+  room.heroHireClosing = true;
+  if (room.heroHireGameId && !room.result) {
+    try { await refund(room.heroHireGameId); }
+    catch (error) {
+      room.heroHireClosing = false;
+      return { error: "雇佣费用返还失败，请稍后重试", status: error.status || 503 };
+    }
+  }
+  return { ok: true };
 }
 
 async function preparePveEnergyForDeal(room, startId) {
@@ -1725,6 +1780,8 @@ function finalizeNextRoundLobby(room) {
 }
 
 function resetRoomToLobby(room, options = {}) {
+  room.heroHireGameId = null;
+  room.heroHireClosing = false;
   clearHeroDraftTimer(room);
   room.heroDraft = null;
   clearAiSetupTimer(room);
@@ -2568,6 +2625,10 @@ function viewerHandForSnapshot(room, viewer) {
 function requirePlayer(res, room, playerId, token) {
   const viewer = playerFor(room, playerId, token);
   if (!viewer) writeJson(res, 401, { error: "玩家身份已失效" });
+  if (viewer && room.heroHireClosing) {
+    writeJson(res, 409, { error: "本局雇佣费用正在返还，请稍后重试" });
+    return null;
+  }
   return viewer;
 }
 
@@ -8405,6 +8466,9 @@ async function handleApi(req, res, pathParts, url) {
       const viewer = requirePlayer(res, room, body.playerId, body.token);
       if (!viewer) return;
       if (!viewer.host) return writeJson(res, 403, { error: "只有房主可以解散房间" });
+      if (room.itemUseInFlight || room.boardHeroSkillUseInFlight) return writeJson(res, 409, { error: "本局资源正在处理，请稍后重试" });
+      const refund = await refundRoomHeroHires(room);
+      if (refund.error) return writeJson(res, refund.status, { error: refund.error });
       dissolveRoom(room, "房主已解散房间");
       return writeJson(res, 200, { ok: true, dissolved: true });
     }
@@ -8759,13 +8823,10 @@ async function handleApi(req, res, pathParts, url) {
       const viewer = requirePlayer(res, room, body.playerId, body.token);
       if (!viewer) return;
       if (expireHeroDraft(room)) broadcastAndContinueAutomation(room);
-      if (room.stage !== HERO_DRAFT_STAGE) return writeJson(res, 409, { error: "当前不在选将阶段" });
-      const result = chooseDraftHero(room.heroDraft, viewer.id, body.heroId || null);
-      if (result.error) return writeJson(res, result.status, { error: result.error });
-      viewer.battleHeroSnapshot = result.snapshot;
-      finishHeroDraftIfComplete(room);
+      const result = await selectRoomHero(room, viewer, body.heroId || null, body.hire === true, body.draftId);
       broadcastAndContinueAutomation(room);
-      return writeJson(res, 200, roomStateAck(room));
+      if (result.error) return writeJson(res, result.status, { error: result.error });
+      return writeJson(res, 200, { ...roomStateAck(room), heroHire: result.payment || null });
     }
 
     if (req.method === "POST" && pathParts[3] === "item-stage-complete") {
@@ -9005,7 +9066,7 @@ async function handleApi(req, res, pathParts, url) {
       if (!viewer) return writeJson(res, 401, { error: "玩家身份已失效" });
       if (!viewer.host) return writeJson(res, 403, { error: "只有房主可以重开" });
       if (room.result?.judgmentPending) return writeJson(res, 409, { error: "战犯审判尚未结束，请稍后重开" });
-      if (room.itemUseInFlight || room.boardHeroSkillUseInFlight) {
+      if (room.itemUseInFlight || room.boardHeroSkillUseInFlight || room.heroHireInFlight || room.heroHireClosing) {
         return writeJson(res, 409, { error: "本局资源正在结算，请稍后重试" });
       }
       if (room.gameRecordId && (room.gameItems?.uses?.length || room.boardHeroEffects?.uses?.length)) {
@@ -9016,6 +9077,8 @@ async function handleApi(req, res, pathParts, url) {
           return writeJson(res, error.status || 503, { error: "本局道具或英雄技能资源返还失败，暂不能重置房间" });
         }
       }
+      const hireRefund = await refundRoomHeroHires(room);
+      if (hireRefund.error) return writeJson(res, hireRefund.status, { error: hireRefund.error });
       resetRoomToLobby(room);
       addEvent(room, "房主把房间重置到等待状态");
       broadcast(room);
@@ -9197,6 +9260,7 @@ export const __aiPlayTesting = {
 };
 
 export const __heroDraftTesting = {
+  selectRoomHero, refundRoomHeroHires,
   beginHeroDraft, finishHeroDraftIfComplete, expireHeroDraft, resetRoomToLobby, deal,
   roomSnapshot, emptySetup, emptyGameItems, emptyBoardHeroSkills, emptyBoardHeroEffects
 };

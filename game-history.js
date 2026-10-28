@@ -1,4 +1,5 @@
 import { HERO_ADVANCEMENTS, advancementProgress, advancementGameDelta } from "./hero-advancement.js";
+import { chargeHeroHire, refundHeroHires, hiredSkillOwnership } from "./hero-hire.js";
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
@@ -231,6 +232,10 @@ const MIGRATIONS = [
   {
     version: 40,
     path: fileURLToPath(new URL("./db/migrations/040_sr_advancement.sql", import.meta.url))
+  },
+  {
+    version: 41,
+    path: fileURLToPath(new URL("./db/migrations/041_game_hero_hires.sql", import.meta.url))
   }
 ];
 const HISTORY_ENABLED = String(process.env.GAME_HISTORY_ENABLED || "").toLowerCase() === "true";
@@ -1968,7 +1973,7 @@ async function settleBoardHeroCooldown(client, record) {
     const unitId = player.battleHeroSnapshot?.heroId;
     const rewardIneligibleForNonEnergyReason = player.diamondReward?.status === "ineligible"
       && !["insufficient-energy", "energy-unavailable"].includes(player.diamondReward?.reason);
-    if (!player.accountId || rewardIneligibleForNonEnergyReason || !["shen-biesan", "shen-haohao", "shen-jiangwen"].includes(unitId)) continue;
+    if (!player.accountId || player.battleHeroSnapshot?.hired || rewardIneligibleForNonEnergyReason || !["shen-biesan", "shen-haohao", "shen-jiangwen"].includes(unitId)) continue;
     const existing = await client.query(
       `SELECT game_id FROM cdp_hero_cooldown_settlements
        WHERE game_id = $1::uuid AND account_id = $2::uuid AND unit_id = $3`,
@@ -2513,20 +2518,20 @@ export async function donateWarEffortResource(accountId, resourceTypeValue, amou
   }
 }
 
-async function connectPoolWithTimeout(database, timeoutMs = 1500) {
+async function connectPoolWithTimeout(database, timeoutMs = 1500, service = "体力服务") {
   let timedOut = false;
   let timer = null;
   const acquisition = database.connect().then((client) => {
     if (timedOut) {
       client.release();
-      throw commerceError("体力服务连接超时", 503);
+      throw commerceError(`${service}连接超时`, 503);
     }
     return client;
   });
   const timeout = new Promise((_, reject) => {
     timer = setTimeout(() => {
       timedOut = true;
-      reject(commerceError("体力服务连接超时", 503));
+      reject(commerceError(`${service}连接超时`, 503));
     }, timeoutMs);
     timer.unref?.();
   });
@@ -3361,14 +3366,32 @@ export async function collectHeroTask(accountId, taskIdValue, requestIdValue) {
   }
 }
 
-export async function chargeBoardHeroSkill(accountId, gameIdValue, unitIdValue, requestIdValue, effectData = {}) {
-  const database = requirePool();
+async function withHeroHireClient(action) {
+  const client = await connectPoolWithTimeout(requirePool(), 1500, "雇佣服务");
+  try { return await action(client); }
+  finally { client.release(); }
+}
+
+export async function hireBattleHero(accountId, gameId, unitId) {
+  return withHeroHireClient((client) => chargeHeroHire(client, accountId, gameId, unitId));
+}
+
+export async function refundBattleHeroHires(gameId) {
+  return withHeroHireClient((client) => refundHeroHires(client, gameId));
+}
+
+export async function chargeBoardHeroSkill(...args) {
+  const client = await requirePool().connect();
+  try { return await chargeBoardHeroSkillFromClient(client, ...args); }
+  finally { client.release(); }
+}
+
+async function chargeBoardHeroSkillFromClient(client, accountId, gameIdValue, unitIdValue, requestIdValue, effectData = {}) {
   const gameId = String(gameIdValue || "");
   const unitId = String(unitIdValue || "");
   const requestId = normalizedRequestId(requestIdValue);
   const unit = HOME_UNIT_BY_ID.get(unitId);
   if (!unit || unit.rarity !== "ssr") throw commerceError("SSR英雄技能不存在", 404);
-  const client = await database.connect();
   try {
     await client.query("BEGIN");
     await ensureHeroAccount(client, accountId);
@@ -3391,7 +3414,7 @@ export async function chargeBoardHeroSkill(accountId, gameIdValue, unitIdValue, 
         repeated: true
       };
     }
-    const owned = await client.query(
+    const owned = effectData.hireGameId ? { rows: [await hiredSkillOwnership(client, accountId, effectData.hireGameId, unitId)] } : await client.query(
       `SELECT stars, skill_cooldown FROM cdp_hero_units
        WHERE account_id = $1::uuid AND unit_id = $2
        FOR UPDATE`,
@@ -3432,7 +3455,12 @@ export async function chargeBoardHeroSkill(accountId, gameIdValue, unitIdValue, 
     if (!wallet.rows[0]) throw commerceError("钻石余额不足", 409);
     const cooldownBefore = isRanchenInvestment ? null : paidState.cooldown;
     const cooldownAfter = paidState.cooldownAfterUse;
-    if (!isRanchenInvestment) {
+    if (!isRanchenInvestment && effectData.hireGameId) {
+      await client.query(
+        `UPDATE cdp_game_hero_hires SET skill_cooldown = $3 WHERE game_id = $1::uuid AND account_id = $2::uuid`,
+        [effectData.hireGameId, accountId, cooldownAfter]
+      );
+    } else if (!isRanchenInvestment) {
       await client.query(
         `UPDATE cdp_hero_units SET skill_cooldown = $3, updated_at = now()
          WHERE account_id = $1::uuid AND unit_id = $2`,
@@ -3470,8 +3498,6 @@ export async function chargeBoardHeroSkill(accountId, gameIdValue, unitIdValue, 
     await client.query("ROLLBACK");
     rememberError(error);
     throw error;
-  } finally {
-    client.release();
   }
 }
 
@@ -3482,7 +3508,7 @@ export async function refundBoardHeroSkillUses(gameIdValue) {
   try {
     await client.query("BEGIN");
     const uses = await client.query(
-      `SELECT use_id, account_id, unit_id, cost, heat_before, cooldown_before
+      `SELECT use_id, account_id, unit_id, cost, heat_before, cooldown_before, effect_data
        FROM cdp_game_hero_skill_uses
        WHERE game_id = $1::uuid AND refunded_at IS NULL
        ORDER BY created_at DESC, use_id DESC
@@ -3492,7 +3518,12 @@ export async function refundBoardHeroSkillUses(gameIdValue) {
     let diamondsRefunded = 0;
     for (const use of uses.rows) {
       const cost = Number(use.cost) || 0;
-      if (use.cooldown_before != null) {
+      if (use.cooldown_before != null && use.effect_data?.hireGameId) {
+        await client.query(
+          `UPDATE cdp_game_hero_hires SET skill_cooldown = $3 WHERE game_id = $1::uuid AND account_id = $2::uuid`,
+          [use.effect_data.hireGameId, use.account_id, Number(use.cooldown_before) || 0]
+        );
+      } else if (use.cooldown_before != null) {
         const restored = await client.query(
           `UPDATE cdp_hero_units
            SET skill_cooldown = $3, updated_at = now()
@@ -5342,3 +5373,4 @@ async function claimHeroAdvancementFromClient(client, accountId, definition) {
 }
 
 export const __heroAdvancementStorageTesting = { settleHeroAdvancement, claimHeroAdvancementFromClient };
+export const __heroHireStorageTesting = { chargeBoardHeroSkillFromClient, settleBoardHeroCooldown };

@@ -13,7 +13,7 @@
 - 前端：原生 HTML、CSS、JavaScript，主文件为 `public/app.js` 与 `public/styles.css`。
 - 实时同步：SSE；优先发送状态差量，客户端用 `public/state-patch.js` 合并，异常时再拉全量。
 - 账号：Supabase Auth；服务端使用 Secret Key，前端不得接触密钥。
-- 数据库：Supabase PostgreSQL；迁移脚本在 `db/migrations`。SR 进阶使用 `040_sr_advancement.sql`，保留已上线的 039 全服任务冠军迁移。
+- 数据库：Supabase PostgreSQL；迁移脚本在 `db/migrations`。SR 进阶使用 `040_sr_advancement.sql`，本局英雄雇佣使用 `041_game_hero_hires.sql`，雇佣不写入永久英雄拥有表；保留已上线的 039 全服任务冠军迁移。
 - 头像：Supabase Storage 的 `player-avatars`；浏览器裁切压缩为 256×256，普通玩家 7 天最多更换一次。
 - 聊天生成的头像框：管理员从后台上传透明 PNG 前景图；服务端验证格式、尺寸和透明边距后存入 Supabase Storage `avatar-frame-assets`，以内容版本 URL 作为商城商品资产。
 - GitHub：`hsckaka-netizen/chao-dipi-online`。

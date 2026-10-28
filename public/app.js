@@ -5644,15 +5644,19 @@ async function claimDailyGameTask(taskId) {
   }
 }
 
-async function selectHeroForBattle(heroId) {
+async function selectHeroForBattle(heroId, hire = false) {
   if (heroActionInFlight || !state?.heroDraft?.canChoose || isSpectating()) return;
   heroActionInFlight = "draft";
   render();
   try {
     await roomAction(`/api/rooms/${session.roomId}/hero-select`, {
       method: "POST",
-      body: JSON.stringify({ playerId: session.playerId, token: session.token, heroId: heroId || null })
+      body: JSON.stringify({ playerId: session.playerId, token: session.token, heroId: heroId || null, hire, draftId: state.heroDraft.id })
     });
+    if (hire) {
+      ensureDiamondWallet(true);
+      heroHomeState = null;
+    }
   } catch (error) {
     setMessage(error.message || "选将失败，请重试", true);
   } finally {
@@ -6704,14 +6708,14 @@ function renderHeroDraftPanel() {
   const draft = state.heroDraft || {};
   const selected = state.viewer?.battleHeroSnapshot;
   return `<section class="panel hero-draft-panel" aria-label="选择出战英雄">
-    <div class="hero-draft-heading"><div><h2>选择本局英雄</h2><p>从全英雄池随机候选；仅已拥有的英雄可以选择，沿用实际星数。</p></div>${setupCountdownTag(draft.deadlineAt, " 后结束选将")}</div>
+    <div class="hero-draft-heading"><div><h2>选择本局英雄</h2><p>已拥有英雄按实际星数免费出战；未拥有候选可花300钻石雇佣1星，仅限本局。</p></div>${setupCountdownTag(draft.deadlineAt, " 后结束选将")}</div>
     ${draft.canChoose && !isSpectating() ? `<div class="hero-draft-grid">${(draft.choices || []).map((hero) => `<article class="hero-draft-choice ${hero.owned ? "" : "is-unowned"}">
       ${heroCardArtwork(hero, "hero-draft-art", `draft:${hero.heroId}`, "medium")}
-      <div class="hero-draft-details"><span class="tag ${hero.rarity === "ssr" ? "accent" : ""}">${escapeHtml(hero.rarity.toUpperCase())}</span><h3>${escapeHtml(hero.name)}</h3><div>${hero.owned ? heroStars(hero.stars) : "未拥有"}${hero.selectedElsewhere ? " · 本局已有人选择" : ""}</div>
+      <div class="hero-draft-details"><span class="tag ${hero.rarity === "ssr" ? "accent" : ""}">${escapeHtml(hero.rarity.toUpperCase())}</span><h3>${escapeHtml(hero.name)}</h3><div>${hero.owned ? heroStars(hero.stars) : "未拥有 · 可雇佣1星"}${hero.selectedElsewhere ? " · 本局已有人选择" : ""}</div>
       <strong>${escapeHtml(hero.skillName)}</strong><p>${escapeHtml(hero.skillDescription)}</p>
-      <button type="button" data-action="select-battle-hero" data-unit-id="${escapeHtml(hero.heroId)}" ${heroActionInFlight || !hero.canSelect ? "disabled" : ""}>${!hero.owned ? "未拥有，无法选择" : hero.selectedElsewhere && !hero.canSelect ? "请优先选择其他候选" : `选择 ${escapeHtml(hero.name)}`}</button></div>
+      <button type="button" data-action="select-battle-hero" data-unit-id="${escapeHtml(hero.heroId)}" data-hire="${!hero.owned}" ${heroActionInFlight || !(hero.canSelect || hero.canHire) ? "disabled" : ""}>${hero.selectedElsewhere && !(hero.canSelect || hero.canHire) ? "请优先选择其他候选" : !hero.owned ? `300💎 雇佣 · 1星` : `选择 ${escapeHtml(hero.name)}`}</button></div>
     </article>`).join("")}</div><div class="hero-draft-footer"><span>候选固定，不因拥有情况重抽；超时按本局不出战继续。</span><button type="button" class="secondary" data-action="select-battle-hero" data-unit-id="" ${heroActionInFlight ? "disabled" : ""}>本局不出战</button></div>`
-      : `<p role="status">${isSpectating() ? "等待玩家选择英雄" : selected ? `已选择 ${escapeHtml(selected.name)} · ${selected.stars} 星，等待其他玩家` : "本局不出战，等待其他玩家"}</p>`}
+      : `<p role="status">${isSpectating() ? "等待玩家选择英雄" : draft.hiring ? "正在雇佣英雄，请稍候…" : selected ? `${selected.hired ? "已雇佣" : "已选择"} ${escapeHtml(selected.name)} · ${selected.stars} 星，等待其他玩家` : "本局不出战，等待其他玩家"}</p>`}
     <div class="meta">已完成 ${draft.completedPlayerIds?.length || 0}/${state.players.length}</div>
   </section>`;
 }
@@ -9616,7 +9620,8 @@ document.addEventListener("click", (event) => {
     claimDailyGameTask(event.target.closest("[data-task-id]")?.dataset.taskId || "");
   }
   if (action === "select-battle-hero") {
-    selectHeroForBattle(event.target.closest("[data-unit-id]")?.dataset.unitId || "");
+    const button = event.target.closest("[data-unit-id]");
+    selectHeroForBattle(button?.dataset.unitId || "", button?.dataset.hire === "true");
   }
   if (action === "pull-hero-gacha") {
     pullHeroCards(Number(event.target.closest("[data-pull-count]")?.dataset.pullCount || 1));
