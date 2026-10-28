@@ -1708,6 +1708,7 @@ export function buildGameRecord(room) {
       evaluation: jsonValue(playerResult.evaluation, {}),
       tags,
       battleHeroSnapshot: jsonValue(roomPlayer?.battleHeroSnapshot, null),
+      advancementSrIds: jsonValue(roomPlayer?.advancementSrIds, []),
       heroSkillReward: jsonValue(playerResult.heroSkillReward, null),
       diamondReward: jsonValue(
         playerResult.diamondReward || calculateGameDiamondReward({
@@ -5284,22 +5285,23 @@ export async function listRecentGames(limit = 30) {
 async function settleHeroAdvancement(client, record) {
   if (!record.advancementEligible || record.gameMode === "pve") return;
   for (const player of [...record.players].sort((a, b) => String(a.accountId).localeCompare(String(b.accountId)))) {
-    const delta = advancementGameDelta(player, record);
-    if (!player.accountId || player.diamondReward?.reason === "spectator" || !delta) continue;
+    const deltas = advancementGameDelta(player, record);
+    if (!player.accountId || player.isAi || player.diamondReward?.reason === "spectator" || !Object.keys(deltas).length) continue;
     await ensureHeroAccount(client, player.accountId);
     await client.query(`SELECT account_id FROM cdp_hero_profiles WHERE account_id = $1::uuid FOR UPDATE`, [player.accountId]);
-    const srId = player.battleHeroSnapshot.heroId;
-    const receipt = await client.query(
-      `INSERT INTO cdp_hero_advancement_games (account_id, sr_unit_id, game_id)
-       VALUES ($1::uuid, $2, $3::uuid) ON CONFLICT DO NOTHING RETURNING game_id`, [player.accountId, srId, record.gameId]);
-    if (!receipt.rows.length) continue;
-    await client.query(`INSERT INTO cdp_hero_advancements (account_id, sr_unit_id) VALUES ($1::uuid, $2) ON CONFLICT DO NOTHING`, [player.accountId, srId]);
-    const row = await client.query(`SELECT progress, claimed_at FROM cdp_hero_advancements WHERE account_id = $1::uuid AND sr_unit_id = $2 FOR UPDATE`, [player.accountId, srId]);
-    if (row.rows[0].claimed_at) continue;
-    const definition = HERO_ADVANCEMENTS.find((item) => item.srId === srId);
-    const counts = { ...row.rows[0].progress };
-    definition.tasks.forEach((task) => { counts[task.key] = Math.min(task.target, (Number(counts[task.key]) || 0) + (delta[task.key] || 0)); });
-    await client.query(`UPDATE cdp_hero_advancements SET progress = $3::jsonb WHERE account_id = $1::uuid AND sr_unit_id = $2`, [player.accountId, srId, JSON.stringify(counts)]);
+    for (const [srId, delta] of Object.entries(deltas)) {
+      const receipt = await client.query(
+        `INSERT INTO cdp_hero_advancement_games (account_id, sr_unit_id, game_id)
+         VALUES ($1::uuid, $2, $3::uuid) ON CONFLICT DO NOTHING RETURNING game_id`, [player.accountId, srId, record.gameId]);
+      if (!receipt.rows.length) continue;
+      await client.query(`INSERT INTO cdp_hero_advancements (account_id, sr_unit_id) VALUES ($1::uuid, $2) ON CONFLICT DO NOTHING`, [player.accountId, srId]);
+      const row = await client.query(`SELECT progress, claimed_at FROM cdp_hero_advancements WHERE account_id = $1::uuid AND sr_unit_id = $2 FOR UPDATE`, [player.accountId, srId]);
+      if (row.rows[0].claimed_at) continue;
+      const definition = HERO_ADVANCEMENTS.find((item) => item.srId === srId);
+      const counts = { ...row.rows[0].progress };
+      definition.tasks.forEach((task) => { counts[task.key] = Math.min(task.target, (Number(counts[task.key]) || 0) + (delta[task.key] || 0)); });
+      await client.query(`UPDATE cdp_hero_advancements SET progress = $3::jsonb WHERE account_id = $1::uuid AND sr_unit_id = $2`, [player.accountId, srId, JSON.stringify(counts)]);
+    }
   }
 }
 

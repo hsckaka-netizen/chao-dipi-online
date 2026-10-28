@@ -86,6 +86,7 @@ import { createStatePatch } from "./public/state-patch.js";
 import { applyShenBiesanCardRules, suitTractorOrderValue } from "./public/replacement-rank-rules.js";
 import { calculateHeroSkillReward, cardRankNumber, HERO_HOME_RULES } from "./hero-home.js";
 import { createHeroDraft, chooseDraftHero, heroDraftComplete, heroDraftSnapshot, HERO_DRAFT_STAGE } from "./hero-draft.js";
+import { eligibleAdvancementSrIds } from "./hero-advancement.js";
 import { ACHIEVEMENT_TITLE_BY_ID } from "./achievements.js";
 import {
   assignHomeUnit,
@@ -1527,7 +1528,7 @@ function sortHand(hand) {
 }
 
 async function beginHeroDraft(room, loadInventory = getBattleHeroInventory) {
-  room.players.forEach((player) => { player.battleHeroSnapshot = null; });
+  room.players.forEach((player) => { player.battleHeroSnapshot = null; player.advancementSrIds = []; });
   const accountIds = humanPlayers(room).map((player) => player.accountId).filter(Boolean);
   let timer;
   let inventory;
@@ -1547,6 +1548,9 @@ async function beginHeroDraft(room, loadInventory = getBattleHeroInventory) {
   } finally {
     clearTimeout(timer);
   }
+  room.players.forEach((player) => {
+    if (!player.test && player.accountId) player.advancementSrIds = eligibleAdvancementSrIds(inventory[player.accountId]);
+  });
   room.heroDraft = createHeroDraft(room.players, inventory);
   room.status = "dealt";
   room.stage = HERO_DRAFT_STAGE;
@@ -1767,6 +1771,7 @@ function resetRoomToLobby(room, options = {}) {
   room.players.forEach((player) => {
     player.hand = [];
     player.battleHeroSnapshot = null;
+    player.advancementSrIds = [];
     player.autoPlayEnabled = false;
     player.score = 0;
     player.draggedRedFives = 0;

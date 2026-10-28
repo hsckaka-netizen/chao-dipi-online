@@ -1,8 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { HERO_ADVANCEMENTS, advancementGameDelta, advancementProgress } from "../hero-advancement.js";
+import { HERO_ADVANCEMENTS, advancementGameDelta, advancementProgress, eligibleAdvancementSrIds } from "../hero-advancement.js";
 import { calculateHeroSkillReward, createBattleHeroSnapshot, drawHomeUnit, drawHeroGachaResult } from "../hero-home.js";
 import { __heroAdvancementTesting as game } from "../server.js";
+import { __heroAdvancementStorageTesting as storage } from "../game-history.js";
 
 const card = (id, suit = "C", rank = "K") => ({ id, type: "normal", suit, rank, label: `${suit}${rank}`, color: suit === "D" || suit === "H" ? "red" : "black" });
 function room(heroId = "jie-denghuang", stars = 5) {
@@ -40,16 +41,26 @@ test("account SSR pool excludes advanced heroes until individually unlocked, inc
   assert.equal(drawHeroGachaResult({ unlockedSsrIds: ["jie-denghuang"], randomFloat: () => rolls.shift() }).unit.id, "jie-denghuang");
 });
 
-test("progress requires the corresponding frozen five-star SR and original hero-specific facts", () => {
-  const player = { roomPlayerId: "p", role: "狗腿", baseGameScore: 2, battleHeroSnapshot: createBattleHeroSnapshot("jiang-zha", 5) };
-  assert.deepEqual(advancementGameDelta(player, { wonTrickPlayerIds: ["p"] }), { doglegWins: 1 });
-  assert.deepEqual(advancementGameDelta(player, {}), { doglegWins: 1 });
-  player.battleHeroSnapshot.stars = 4;
-  assert.equal(advancementGameDelta(player), null);
-  player.battleHeroSnapshot = createBattleHeroSnapshot("deng-huang", 5);
-  player.tags = [];
-  assert.deepEqual(advancementGameDelta(player, { bottomWinnerRoomPlayerId: "p" }), { bottomWins: 1 });
-  assert.deepEqual(advancementGameDelta(player, { bottomWinnerRoomPlayerId: "other" }), { bottomWins: 0 });
+test("progress uses owned five-star SR eligibility independently of the battle hero", () => {
+  const inventory = { "jiang-zha": { stars: 5 }, "deng-huang": { stars: 5 }, "jie-doudou": { stars: 5 } };
+  const player = { roomPlayerId: "p", role: "狗腿", baseGameScore: 2, advancementSrIds: eligibleAdvancementSrIds(inventory) };
+  assert.deepEqual(player.advancementSrIds, ["jiang-zha", "deng-huang"]);
+  const expected = { "jiang-zha": { doglegWins: 1 }, "deng-huang": { bottomWins: 1 } };
+  for (const hero of [null, createBattleHeroSnapshot("jie-doudou", 2), createBattleHeroSnapshot("jiang-zha", 1)]) {
+    player.battleHeroSnapshot = hero;
+    assert.deepEqual(advancementGameDelta(player, { bottomWinnerRoomPlayerId: "p" }), expected);
+  }
+  inventory["jiang-zha"].stars = 1;
+  assert.deepEqual(advancementGameDelta(player, { bottomWinnerRoomPlayerId: "p" }), expected, "mid-game reset cannot change frozen eligibility");
+  assert.deepEqual(eligibleAdvancementSrIds(inventory), ["deng-huang"]);
+  assert.deepEqual(eligibleAdvancementSrIds({ "jiang-zha": { stars: 4 } }), []);
+  assert.deepEqual(eligibleAdvancementSrIds(), []);
+  assert.deepEqual(advancementGameDelta({ ...player, advancementSrIds: [] }), {});
+  assert.deepEqual(advancementGameDelta({ ...player, advancementSrIds: undefined }), {}, "equipping a hero alone cannot grant progress");
+  assert.deepEqual(advancementGameDelta(player, { bottomWinnerRoomPlayerId: "other" }), { "jiang-zha": { doglegWins: 1 }, "deng-huang": { bottomWins: 0 } });
+  for (const [role, score] of [["狗腿", 0], ["狗腿", -2], ["庄家", 2], ["闲家", 2]]) {
+    assert.equal(advancementGameDelta({ ...player, role, baseGameScore: score, gameScore: 10 })["jiang-zha"].doglegWins, 0);
+  }
   for (const [definition, key] of [[HERO_ADVANCEMENTS[0], "doglegWins"], [HERO_ADVANCEMENTS[1], "bottomWins"]]) {
     assert.equal(definition.tasks.length, 1);
     assert.equal(advancementProgress(definition, { [key]: 9 }).complete, false);
@@ -57,6 +68,63 @@ test("progress requires the corresponding frozen five-star SR and original hero-
     const legacy = advancementProgress(definition, { [key]: 12, activeDoglegWins: 0, precisionBottomWins: 0 });
     assert.equal(legacy.complete, true);
     assert.equal(legacy.tasks[0].progress, 10);
+  }
+});
+
+function advancementStore() {
+  const receipts = new Set();
+  const progress = new Map();
+  return {
+    progress,
+    async query(sql, args = []) {
+      const key = `${args[0]}:${args[1]}`;
+      if (sql.includes("INSERT INTO cdp_hero_advancement_games")) {
+        const receipt = `${key}:${args[2]}`;
+        if (receipts.has(receipt)) return { rows: [] };
+        receipts.add(receipt);
+        return { rows: [{ game_id: args[2] }] };
+      }
+      if (sql.includes("INSERT INTO cdp_hero_advancements")) {
+        if (!progress.has(key)) progress.set(key, { progress: {}, claimed_at: null });
+      } else if (sql.includes("SELECT progress, claimed_at")) {
+        return { rows: [progress.get(key)] };
+      } else if (sql.includes("UPDATE cdp_hero_advancements SET progress")) {
+        progress.get(key).progress = JSON.parse(args[2]);
+      } else if (!sql.includes("cdp_hero_profiles") && !sql.includes("cdp_home_regions")) {
+        assert.fail(`Unexpected storage query: ${sql}`);
+      }
+      return { rows: [] };
+    }
+  };
+}
+
+test("settlement advances both unequipped heroes once per game and preserves claimed progress", async () => {
+  const client = advancementStore();
+  const player = { accountId: "a", roomPlayerId: "p", role: "狗腿", baseGameScore: 2, battleHeroSnapshot: null, advancementSrIds: ["jiang-zha", "deng-huang"] };
+  const record = { gameId: "game1", advancementEligible: true, gameMode: "pvp", bottomWinnerRoomPlayerId: "p", players: [player] };
+  await storage.settleHeroAdvancement(client, record);
+  assert.deepEqual(client.progress.get("a:jiang-zha").progress, { doglegWins: 1 });
+  assert.deepEqual(client.progress.get("a:deng-huang").progress, { bottomWins: 1 });
+  await storage.settleHeroAdvancement(client, record);
+  assert.equal(client.progress.get("a:jiang-zha").progress.doglegWins, 1);
+  assert.equal(client.progress.get("a:deng-huang").progress.bottomWins, 1);
+  client.progress.get("a:jiang-zha").claimed_at = "claimed";
+  client.progress.get("a:deng-huang").progress.bottomWins = 9;
+  await storage.settleHeroAdvancement(client, { ...record, gameId: "game2" });
+  await storage.settleHeroAdvancement(client, { ...record, gameId: "game3" });
+  assert.equal(client.progress.get("a:jiang-zha").progress.doglegWins, 1);
+  assert.equal(client.progress.get("a:deng-huang").progress.bottomWins, 10);
+});
+
+test("ineligible games and players cannot write advancement progress", async () => {
+  const player = { accountId: "a", roomPlayerId: "p", role: "狗腿", baseGameScore: 2, advancementSrIds: ["jiang-zha", "deng-huang"] };
+  const record = { gameId: "game", advancementEligible: true, gameMode: "pvp", bottomWinnerRoomPlayerId: "p", players: [player] };
+  const noWrites = { async query() { assert.fail("ineligible progress must not access storage"); } };
+  for (const override of [{ advancementEligible: false }, { gameMode: "pve" }]) {
+    await storage.settleHeroAdvancement(noWrites, { ...record, ...override });
+  }
+  for (const override of [{ accountId: null }, { isAi: true }, { diamondReward: { reason: "spectator" } }, { advancementSrIds: [] }]) {
+    await storage.settleHeroAdvancement(noWrites, { ...record, players: [{ ...player, ...override }] });
   }
 });
 

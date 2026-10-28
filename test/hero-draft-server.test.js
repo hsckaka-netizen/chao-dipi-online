@@ -62,7 +62,29 @@ test("timeout never picks a hero for a human, including an entirely unowned cand
 
 test("inventory failures clear old preselection and continue the game without heroes", async () => {
   const current = room();
+  current.players.forEach((player) => { player.advancementSrIds = ["jiang-zha"]; });
   await game.beginHeroDraft(current, async () => { throw new Error("test inventory unavailable"); });
   assert.notEqual(current.stage, HERO_DRAFT_STAGE);
   assert.ok(current.players.every((player) => player.hand.length === 53 && player.battleHeroSnapshot === null));
+  assert.ok(current.players.every((player) => player.advancementSrIds.length === 0));
+});
+
+test("draft freezes all owned five-star advancement heroes even when skipping battle selection", async () => {
+  const current = room();
+  const owned = { a0: { "jiang-zha": { stars: 5 }, "deng-huang": { stars: 5 } }, a1: { "jiang-zha": { stars: 4 } } };
+  await game.beginHeroDraft(current, async () => owned);
+  assert.deepEqual(current.players[0].advancementSrIds, ["jiang-zha", "deng-huang"]);
+  assert.deepEqual(current.players[1].advancementSrIds, []);
+  owned.a0["jiang-zha"].stars = 1;
+  for (const player of current.players) chooseDraftHero(current.heroDraft, player.id, null);
+  game.finishHeroDraftIfComplete(current);
+  assert.equal(current.players[0].battleHeroSnapshot, null);
+  assert.deepEqual(current.players[0].advancementSrIds, ["jiang-zha", "deng-huang"]);
+  game.deal(current, { preserveRestartUsage: true });
+  assert.deepEqual(current.players[0].advancementSrIds, ["jiang-zha", "deng-huang"]);
+  game.resetRoomToLobby(current);
+  assert.ok(current.players.every((player) => player.advancementSrIds.length === 0));
+  await game.beginHeroDraft(current, async () => owned);
+  assert.deepEqual(current.players[0].advancementSrIds, ["deng-huang"], "next game reloads ownership");
+  game.resetRoomToLobby(current);
 });

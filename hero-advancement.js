@@ -15,15 +15,14 @@ export function advancementProgress(definition, counts = {}) {
 }
 
 export function advancementGameDelta(player, { bottomWinnerRoomPlayerId } = {}) {
-  const hero = player?.battleHeroSnapshot;
-  if (!hero || Number(hero.stars) !== 5) return null;
-  if (hero.heroId === "jiang-zha") {
-    const won = player.role === "狗腿" && Number(player.baseGameScore) > 0;
-    return { doglegWins: Number(won) };
-  }
-  if (hero.heroId === "deng-huang") {
-    const bottom = bottomWinnerRoomPlayerId === player.roomPlayerId;
-    return { bottomWins: Number(bottom) };
-  }
-  return null;
+  const eligible = new Set(player?.advancementSrIds || []);
+  return Object.fromEntries(HERO_ADVANCEMENTS.filter(({ srId }) => eligible.has(srId)).map(({ srId }) => [
+    srId, srId === "jiang-zha"
+      ? { doglegWins: Number(player.role === "狗腿" && Number(player.baseGameScore) > 0) }
+      : { bottomWins: Number(bottomWinnerRoomPlayerId === player.roomPlayerId) }
+  ]));
+}
+
+export function eligibleAdvancementSrIds(inventory = {}) {
+  return HERO_ADVANCEMENTS.filter(({ srId }) => Number(inventory[srId]?.stars) === 5).map(({ srId }) => srId);
 }

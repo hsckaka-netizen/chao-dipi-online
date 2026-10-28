@@ -285,6 +285,19 @@ test("history queue remains a no-op when the feature flag is disabled", () => {
   assert.deepEqual(queueGameRecord(settledRoom()), { status: "disabled" });
 });
 
+test("settlement record retains a separate immutable advancement eligibility snapshot", () => {
+  const room = settledRoom();
+  room.players[0].advancementSrIds = ["jiang-zha", "deng-huang"];
+  room.players[0].battleHeroSnapshot = null;
+  const record = buildGameRecord(room);
+  const player = record.players.find((item) => item.roomPlayerId === room.players[0].id);
+  assert.deepEqual(player.advancementSrIds, ["jiang-zha", "deng-huang"]);
+  room.players[0].advancementSrIds.length = 0;
+  assert.deepEqual(player.advancementSrIds, ["jiang-zha", "deng-huang"]);
+  assert.equal(player.battleHeroSnapshot, null);
+  assert.ok(record.players.slice(1).every((item) => item.advancementSrIds.length === 0));
+});
+
 test("only all-human games are eligible for history persistence", () => {
   const room = settledRoom();
   assert.equal(isHumanOnlyGame(room), false);
