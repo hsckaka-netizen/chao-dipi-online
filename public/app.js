@@ -1,11 +1,12 @@
 import { applyStatePatch } from "./state-patch.js?v=9330552c7e1e";
 import { detectNewDraggedFiveEffects, detectNewLargePlayEffects } from "./gameplay-effects.js?v=14791e626d30";
-import { ASSET_URLS, versionedAssetUrl } from "./asset-versions.js?v=5afc8803d168";
+import { ASSET_URLS, versionedAssetUrl } from "./asset-versions.js?v=41ce9f6c39d0";
 import { createHistoryTrickEntry, filterHistoryTimelineEntries } from "./history-records.js?v=874ba3c97732";
 import { suitTractorOrderValue } from "./replacement-rank-rules.js?v=3b3650aa685e";
 import { doudouPointLabel, doudouPointNotice } from "./doudou-notice.js?v=4327fd9b2a77";
 
 const app = document.querySelector("#app");
+let judgmentInFlight = false;
 document.documentElement.style.setProperty("--joker-face-image", `url("${ASSET_URLS.jokerFace}")`);
 document.documentElement.style.setProperty("--joker-face-small-image", `url("${ASSET_URLS.jokerFaceSmall}")`);
 Object.entries(ASSET_URLS.avatarFrames).forEach(([key, url]) => {
@@ -3783,6 +3784,7 @@ function renderShell(content) {
         </div>
       </header>
       ${message ? `<div class="status toast ${messageBad ? "bad" : ""}" role="status">${escapeHtml(message)}</div>` : ""}
+      ${state?.judgment && (activeDialog !== "result" || viewerEnteredNextRound()) ? renderJudgmentPanel() : ""}
       ${content}
     </div>
   `;
@@ -7273,6 +7275,7 @@ function diamondRewardTitle(reward) {
     const skill = reward.heroSkillReward;
     parts.push(`${skill.hero?.name || "英雄"}·${skill.skillName || "技能"} +${skill.amount || 0}（${skill.detail || "未触发"}）`);
   }
+  if (reward.judgmentBonus) parts.push(`战犯审判 +${reward.judgmentBonus}（含审判成立与投票奖励）`);
   return parts.join("，");
 }
 
@@ -7337,6 +7340,37 @@ function renderViewerDiamondSummary(result) {
   `;
 }
 
+function renderJudgmentPanel() {
+  const judgment = state?.judgment;
+  if (!judgment?.trials?.length) return '';
+  const voteLabels = { support: '支持', oppose: '反对', abstain: '弃权' };
+  return `<section class="judgment-panel panel" aria-label="战犯审判">
+    <div class="section-head"><div><h3>⚖ 战犯审判</h3><p>${judgment.complete ? '审判已结束，以下为本局最终结果。' : '投票限时30秒，超时未投票视为弃权。全部审判结束后确认最终积分与钻石。'}</p></div></div>
+    <div class="judgment-trials">${judgment.trials.map(trial => `<article class="judgment-trial" data-trial-id="${escapeHtml(trial.id)}">
+      <header><strong>${escapeHtml(trial.ownerName)}${trial.targetName ? ` 审判 ${escapeHtml(trial.targetName)}` : ' · 神鹦鹉'}</strong>
+      ${['choosing', 'voting'].includes(trial.status) ? setupCountdownTag(trial.deadlineAt, '', trial.status === 'voting' ? '投票剩余 ' : '选择剩余 ') : ''}</header>
+      <p>${trial.status === 'choosing' ? '选择本局另一名玩家发起审判，也可放弃。' : trial.status === 'voting' ? `需至少 ${trial.requiredSupport}/${trial.eligibleCount} 人支持，当前 ${trial.castCount} 人已提交；鹦鹉与被审判者不能投票。` : trial.status === 'skipped' ? '已放弃审判（含选择超时）。' : `审判${trial.passed ? '成立' : '不成立'} · 支持 ${trial.supportCount} / 反对 ${trial.opposeCount} / 弃权 ${trial.abstainCount}`}</p>
+      ${trial.canChoose ? `<div class="judgment-actions">${judgment.participants.filter(player => player.id !== trial.ownerId).map(player => `<button type="button" class="secondary" data-action="judgment-target" data-trial-id="${escapeHtml(trial.id)}" data-target-player-id="${escapeHtml(player.id)}" ${judgmentInFlight ? 'disabled' : ''}>审判 ${escapeHtml(player.name)}</button>`).join('')}<button type="button" class="secondary" data-action="judgment-pass" data-trial-id="${escapeHtml(trial.id)}" ${judgmentInFlight ? 'disabled' : ''}>放弃</button></div>` : ''}
+      ${trial.canVote && !isSpectating() ? `<div class="judgment-actions">${Object.entries(voteLabels).map(([choice, label]) => `<button type="button" class="${choice === 'support' ? '' : 'secondary'}" data-action="judgment-vote" data-trial-id="${escapeHtml(trial.id)}" data-choice="${choice}" ${judgmentInFlight ? 'disabled' : ''}>${label}</button>`).join('')}</div>` : ''}
+      ${trial.viewerVote ? `<span class="tag">你已选择${voteLabels[trial.viewerVote]}</span>` : ''}
+      ${trial.status === 'completed' ? `<p class="judgment-outcome">${trial.passed ? `${escapeHtml(trial.ownerName)} 减免 ${trial.scoreReduction} 积分，额外获得 ${trial.successDiamonds} 钻石。` : '鹦鹉未获得减分及审判成立奖励。'}${trial.supportCount === trial.opposeCount ? ' 票数相同，无投票奖励。' : ` ${trial.supportCount > trial.opposeCount ? '支持' : '反对'}方投票者每人额外获得30钻石。`}</p>` : `<small>成立后：减免鹦鹉本局扣分的${Math.round(trial.reductionRate * 100)}%，额外获得${trial.successDiamonds}钻石；票数较多一方的投票者每人额外获得30钻石，平票无此奖励。</small>`}
+    </article>`).join('')}</div>
+  </section>`;
+}
+
+async function submitJudgmentAction(target, action) {
+  if (!session || isSpectating() || judgmentInFlight) return;
+  judgmentInFlight = true; render();
+  try {
+    await roomAction(`/api/rooms/${session.roomId}/judgment`, { method: 'POST', body: JSON.stringify({
+      playerId: session.playerId, token: session.token, gameId: state.judgment?.gameId,
+      trialId: target.dataset.trialId, action: action.slice('judgment-'.length),
+      targetPlayerId: target.dataset.targetPlayerId, choice: target.dataset.choice
+    }) });
+  } catch (error) { setMessage(error.message || '审判操作失败', true); }
+  finally { judgmentInFlight = false; render(); }
+}
+
 function renderResultPanel() {
   const result = state.result;
   if (!result) return `
@@ -7363,6 +7397,7 @@ function renderResultPanel() {
             <button type="button" class="secondary compact-button" data-action="close-dialog">隐藏结算</button>
           </div>
         </div>
+        ${renderJudgmentPanel()}
         <div class="tags">
           <span class="tag accent">${escapeHtml(result.gameModeName || (result.gameMode === "pve" ? "PVE" : "PVP"))} · ${escapeHtml(result.playModeName || (result.playMode === "team" ? "战队模式" : "乱斗模式"))}</span>
           <span class="tag accent">${result.winnerTeam ? `牌局胜方：${escapeHtml(result.winnerTeamName)}` : "牌局结果：平局"}</span>
@@ -7435,6 +7470,7 @@ function renderResultPanel() {
               <span>方五 ${player.draggedDiamondFives}</span>
               <span>甩失 ${player.throwFailures || 0}</span>
               ${player.heroSkillReward ? `<span class="result-hero-skill" title="${escapeHtml(player.heroSkillReward.detail || "")}">${escapeHtml(player.heroSkillReward.hero?.name || "英雄")} +${escapeHtml(player.diamondReward?.heroBonus || 0)}💎</span>` : ""}
+              ${player.judgmentReward?.amount ? `<span class="result-hero-skill">战犯审判 +${escapeHtml(player.judgmentReward.amount)}💎</span>` : ""}
               ${renderDiamondReward(player.diamondReward)}
               <span class="result-final-score">
                 <b>${signedScore(player.gameScoreText, player.gameScore)}</b>
@@ -9445,6 +9481,7 @@ document.addEventListener("click", (event) => {
     "clear-selection"
   ]).has(action)) return;
   if (isRapidMutatingAction(action)) return;
+  if (action.startsWith("judgment-")) { submitJudgmentAction(event.target.closest("[data-action]"), action); return; }
   if (action === "leave") clearSession();
   if (action === "leave-spectating") leaveSpectating();
   if (action === "room-leave") leaveRoom();

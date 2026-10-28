@@ -1677,6 +1677,7 @@ async function recalculateStoredGameEvaluations(client) {
 
 export function buildGameRecord(room) {
   if (!room?.gameRecordId || !room?.result) throw new Error("牌局尚未生成可保存的结算结果");
+  if (room.result.judgmentPending) throw new Error("战犯审判尚未完成，不能提前保存结算");
   const result = room.result;
   const playersById = new Map(room.players.map((player) => [player.id, player]));
   const players = (result.playerResults || []).map((playerResult, seatIndex) => {
@@ -1718,7 +1719,8 @@ export function buildGameRecord(room) {
           winnerTeam: result.winnerTeam,
           gameScore: baseGameScore,
           tags,
-          heroSkillReward: playerResult.heroSkillReward
+          heroSkillReward: playerResult.heroSkillReward,
+          judgmentReward: playerResult.judgmentReward
         }),
         {}
       )
@@ -3909,6 +3911,7 @@ export async function getDiamondWallet(accountId, limit = 20) {
       winBonus: Number(row.win_bonus) || 0,
       titleBonus: Number(row.title_bonus) || 0,
       heroBonus: Number(row.hero_bonus) || 0,
+      judgmentBonus: Number(row.breakdown?.judgmentBonus) || 0,
       calculatedAmount: Number(row.calculated_amount) || 0,
       awardedAmount: Number(row.awarded_amount) || 0,
       balanceAfter: Number(row.balance_after) || 0,

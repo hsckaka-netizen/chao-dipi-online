@@ -1,5 +1,5 @@
 export const DIAMOND_REWARD_RULES = Object.freeze({
-  version: "2026-10-12-v7",
+  version: "2026-10-28-v8",
   baseAmount: 100,
   winBonus: 0,
   titleBonusCap: 50,
@@ -28,7 +28,7 @@ function uniqueTags(tags) {
   });
 }
 
-export function calculateDiamondReward({ gameScore = 0, tags = [], heroSkillReward = null } = {}) {
+export function calculateDiamondReward({ gameScore = 0, tags = [], heroSkillReward = null, judgmentReward = null } = {}) {
   const won = Number(gameScore) > 0;
   const titleRewards = uniqueTags(tags)
     .map((tag) => ({
@@ -42,7 +42,9 @@ export function calculateDiamondReward({ gameScore = 0, tags = [], heroSkillRewa
   const winBonus = won ? DIAMOND_REWARD_RULES.winBonus : 0;
   const heroBonus = Math.max(0, Math.trunc(Number(heroSkillReward?.amount) || 0));
 
+  const judgmentBonus = Math.max(0, Math.trunc(Number(judgmentReward?.amount) || 0));
   return {
+    ...(judgmentBonus ? { judgmentBonus, judgmentReward } : {}),
     rulesVersion: DIAMOND_REWARD_RULES.version,
     baseAmount: DIAMOND_REWARD_RULES.baseAmount,
     winBonus,
@@ -52,7 +54,7 @@ export function calculateDiamondReward({ gameScore = 0, tags = [], heroSkillRewa
     titleRewards,
     heroBonus,
     heroSkillReward: heroSkillReward || null,
-    totalAmount: DIAMOND_REWARD_RULES.baseAmount + winBonus + titleBonus + heroBonus,
+    totalAmount: DIAMOND_REWARD_RULES.baseAmount + winBonus + titleBonus + heroBonus + judgmentBonus,
     won
   };
 }
@@ -68,9 +70,10 @@ export function calculateGameDiamondReward({
   winnerTeam = null,
   gameScore = 0,
   tags = [],
-  heroSkillReward = null
+  heroSkillReward = null,
+  judgmentReward = null
 } = {}) {
-  const reward = calculateDiamondReward({ gameScore, tags, heroSkillReward });
+  const reward = calculateDiamondReward({ gameScore, tags, heroSkillReward, judgmentReward: gameMode === "pve" ? null : judgmentReward });
   if (gameMode !== "pve") {
     if (playMode !== "team" && team === "idle") {
       const rate = DIAMOND_REWARD_RULES.pvpDoglegIdleRewardRate;
@@ -96,7 +99,7 @@ export function calculateGameDiamondReward({
         titleRewards,
         heroBonus,
         heroSkillReward: reward.heroSkillReward ? { ...reward.heroSkillReward, amount: heroBonus } : null,
-        totalAmount: baseAmount + winBonus + titleBonus + heroBonus,
+        totalAmount: baseAmount + winBonus + titleBonus + heroBonus + (reward.judgmentBonus || 0),
         rewardRate: rate
       };
     }
@@ -131,7 +134,7 @@ export function calculateGameDiamondReward({
     titleRewards,
     heroBonus,
     heroSkillReward: scaledHeroSkillReward,
-    totalAmount: baseAmount + winBonus + titleBonus + heroBonus,
+    totalAmount: baseAmount + winBonus + titleBonus + heroBonus + (reward.judgmentBonus || 0),
     won,
     rewardRate: DIAMOND_REWARD_RULES.pveRewardRate,
     winRequired: DIAMOND_REWARD_RULES.pveWinRequired,
@@ -207,7 +210,8 @@ export function attachDiamondRewards(room) {
       winnerTeam: room.result.winnerTeam,
       gameScore: playerResult.baseGameScore ?? playerResult.gameScore,
       tags: playerResult.evaluationTags,
-      heroSkillReward: playerEligible ? playerResult.heroSkillReward : null
+      heroSkillReward: playerEligible ? playerResult.heroSkillReward : null,
+      judgmentReward: playerEligible ? playerResult.judgmentReward : null
     });
     playerResult.diamondReward = playerEligible
       ? {

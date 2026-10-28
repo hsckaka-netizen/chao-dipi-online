@@ -1,3 +1,4 @@
+import { createJudgmentSession, submitJudgment, advanceJudgments, judgmentSnapshot, applyJudgmentOutcomes } from "./shen-yingwu.js";
 import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
 import { createReadStream } from "node:fs";
@@ -1678,6 +1679,7 @@ function deal(room, options = {}) {
   room.randomOrderDogleg = null;
   room.doglegNeeded = isFixedTeamGame(room) ? 0 : clampDoglegCount(room.doglegNeeded, count);
   room.result = null;
+  room.judgmentContext = null;
   room.setup = emptySetup();
   room.currentTrick = null;
   room.trickHistory = [];
@@ -1710,7 +1712,7 @@ function allPlayersEnteredNextRound(room) {
 }
 
 function finalizeNextRoundLobby(room) {
-  if (room.stage !== "finished" || !allPlayersEnteredNextRound(room)) return false;
+  if (room.stage !== "finished" || room.result?.judgmentPending || !allPlayersEnteredNextRound(room)) return false;
   const randomizeTeams = Boolean(
     room.autoRandomTeams
     && normalizeGameMode(room.gameMode) === GAME_MODE_PVP
@@ -1753,6 +1755,7 @@ function resetRoomToLobby(room, options = {}) {
   room.randomOrderDogleg = null;
   syncLobbyDoglegCount(room);
   room.result = null;
+  room.judgmentContext = null;
   room.setup = emptySetup();
   room.currentTrick = null;
   room.trickHistory = [];
@@ -2337,6 +2340,7 @@ function roomSnapshot(room, viewer = null, options = {}) {
     currentTrick: trickSnapshot(room, room.currentTrick, secretViewer),
     trickHistory: [...(room.settledTrickHistory || [])],
     playedProtectedFives: playedProtectedFiveCounts(room),
+    judgment: judgmentSnapshot(room.judgmentContext?.session, secretViewer?.id),
     result: roomResultSnapshot(
       room,
       Object.hasOwn(options, "privatePlayerId") ? options.privatePlayerId : viewer?.id || null
@@ -2568,7 +2572,7 @@ function requirePlayer(res, room, playerId, token) {
 }
 
 function canChangeRoomPlayers(room) {
-  return room.status === "lobby";
+  return room.status === "lobby" && !room.result?.judgmentPending;
 }
 
 function disconnectPlayerClients(room, playerId, messageText) {
@@ -3066,6 +3070,68 @@ function finishGame(room, completedTrick) {
     : `本局结束：双方平局，闲家 ${idleScore}/${threshold} 牌分，闲家每人原始 0 分`);
 }
 
+function applyFinishedGamePersistence(recordRoom, liveRoom, gameId, persistence) {
+  if (recordRoom.gameRecordId !== gameId) return;
+  applyDiamondRewardPersistence(recordRoom, persistence);
+  if (rooms.get(liveRoom.id) === liveRoom && liveRoom.gameRecordId === gameId) broadcast(liveRoom);
+}
+
+function persistFinishedGame(recordRoom, liveRoom = recordRoom) {
+  const gameId = recordRoom.gameRecordId;
+  const persistence = queueGameRecord(recordRoom, (next) => {
+    applyFinishedGamePersistence(recordRoom, liveRoom, gameId, next);
+  });
+  applyDiamondRewardPersistence(recordRoom, persistence);
+}
+
+function scheduleJudgment(context) {
+  clearTimeout(context.timer);
+  if (context.settled) return;
+  const deadlines = context.session.trials.filter(trial => ['choosing', 'voting'].includes(trial.status)).map(trial => Date.parse(trial.deadlineAt));
+  if (!deadlines.length) return;
+  context.timer = setTimeout(() => {
+    advanceRoomJudgment(context);
+    if (rooms.get(context.room.id) === context.room) broadcast(context.room);
+  }, Math.max(1, Math.min(...deadlines) - Date.now() + 5));
+  context.timer.unref?.();
+}
+
+function advanceRoomJudgment(context, at = Date.now()) {
+  if (context.settled) return;
+  advanceJudgments(context.session, at);
+  applyJudgmentOutcomes(context.recordRoom.result, context.session);
+  if (context.session.complete) {
+    context.settled = true;
+    clearTimeout(context.timer);
+    attachDiamondRewards(context.recordRoom);
+    persistFinishedGame(context.recordRoom, context.room);
+    addEvent(context.room, '战犯审判全部结束，最终积分与钻石已确认');
+    if (rooms.get(context.room.id) === context.room) finalizeNextRoundLobby(context.room);
+  } else scheduleJudgment(context);
+}
+
+function beginRoomJudgment(room, at = Date.now()) {
+  if (room.judgmentContext) return !room.judgmentContext.settled;
+  const session = createJudgmentSession(room, at);
+  if (!session) return false;
+  // Preserve the finished roster even when someone leaves during the vote.
+  const recordRoom = { ...room, players: room.players.map(player => ({ ...player })),
+    spectators: new Map(roomSpectators(room)) };
+  room.judgmentContext = { room, recordRoom, session, settled: false, timer: null };
+  applyJudgmentOutcomes(room.result, session);
+  addEvent(room, '神鹦鹉可选择发起战犯审判；投票限时30秒，超时弃权');
+  scheduleJudgment(room.judgmentContext);
+  return true;
+}
+
+function submitRoomJudgment(room, viewer, body, at = Date.now()) {
+  const context = room.judgmentContext;
+  if (!context || body.gameId !== context.session.gameId) return { error: '本局审判已失效', status: 409 };
+  const result = submitJudgment(context.session, viewer.id, body, at);
+  advanceRoomJudgment(context, at);
+  return result;
+}
+
 function completeCurrentTrick(room) {
   const completed = room.currentTrick;
   const outcome = settleTrick(room, completed);
@@ -3084,13 +3150,7 @@ function completeCurrentTrick(room) {
         console.error(`[game-items] consume failed for ${finishedGameId}`, error.message);
       });
     }
-    const persistence = queueGameRecord(room, (nextPersistence) => {
-      const currentRoom = rooms.get(room.id);
-      if (!currentRoom || currentRoom.gameRecordId !== finishedGameId) return;
-      applyDiamondRewardPersistence(currentRoom, nextPersistence);
-      broadcast(currentRoom);
-    });
-    applyDiamondRewardPersistence(room, persistence);
+    if (!beginRoomJudgment(room)) persistFinishedGame(room);
     return;
   }
   room.currentTrick = createEmptyTrick(completed.number + 1, outcome.winnerId);
@@ -8298,6 +8358,7 @@ async function handleApi(req, res, pathParts, url) {
           snapshot: roomSnapshot(room, existingPlayer)
         });
       }
+      if (room.result?.judgmentPending) return writeJson(res, 409, { error: "本局战犯审判进行中，请结束后加入" });
       if (room.status !== "lobby") return writeJson(res, 409, { error: "牌局已经开始，暂不能加入" });
       if (!roomCanJoin(room)) return writeJson(res, 409, { error: "房间已满" });
 
@@ -8326,7 +8387,7 @@ async function handleApi(req, res, pathParts, url) {
       const body = await readJson(req);
       const viewer = requirePlayer(res, room, body.playerId, body.token);
       if (!viewer) return;
-      if (!canChangeRoomPlayers(room)) {
+      if (!canChangeRoomPlayers(room) && !room.result?.judgmentPending) {
         return writeJson(res, 409, { error: "牌局进行中暂不能退出房间，可以关闭页面或本机退出身份" });
       }
       const removed = removePlayerFromRoom(room, viewer.id, "你已退出房间");
@@ -8353,6 +8414,7 @@ async function handleApi(req, res, pathParts, url) {
       const viewer = requirePlayer(res, room, body.playerId, body.token);
       if (!viewer) return;
       if (!viewer.host) return writeJson(res, 403, { error: "只有房主可以踢出玩家" });
+      if (room.result?.judgmentPending) return writeJson(res, 409, { error: "战犯审判进行中，暂不能踢出玩家" });
       if (!canChangeRoomPlayers(room)) return writeJson(res, 409, { error: "牌局进行中暂不能踢出玩家" });
       const target = playerById(room, body.targetPlayerId);
       if (!target) return writeJson(res, 404, { error: "玩家不存在" });
@@ -8605,7 +8667,7 @@ async function handleApi(req, res, pathParts, url) {
       const viewer = requirePlayer(res, room, body.playerId, body.token);
       if (!viewer) return;
       if (!viewer.host) return writeJson(res, 403, { error: "只有房主可以添加机器人" });
-      if (room.status !== "lobby") return writeJson(res, 409, { error: "牌局已经开始，不能添加机器人" });
+      if (room.status !== "lobby" || room.result?.judgmentPending) return writeJson(res, 409, { error: "牌局或战犯审判进行中，不能添加机器人" });
       if (normalizeGameMode(room.gameMode) === GAME_MODE_PVE || isFixedTeamGame(room)) {
         return writeJson(res, 409, { error: "当前模式由系统管理对战成员" });
       }
@@ -8624,7 +8686,7 @@ async function handleApi(req, res, pathParts, url) {
       const viewer = requirePlayer(res, room, body.playerId, body.token);
       if (!viewer) return;
       if (!viewer.host) return writeJson(res, 403, { error: "只有房主可以添加机器人" });
-      if (room.status !== "lobby") return writeJson(res, 409, { error: "牌局已经开始，不能添加机器人" });
+      if (room.status !== "lobby" || room.result?.judgmentPending) return writeJson(res, 409, { error: "牌局或战犯审判进行中，不能添加机器人" });
       if (normalizeGameMode(room.gameMode) === GAME_MODE_PVE || isFixedTeamGame(room)) {
         return writeJson(res, 409, { error: "当前模式由系统管理对战成员" });
       }
@@ -8713,6 +8775,16 @@ async function handleApi(req, res, pathParts, url) {
       const result = await completeGameItemStageForPlayer(room, viewer);
       if (result.error) return writeJson(res, result.status, { error: result.error });
       broadcastAndContinueAutomation(room);
+      return writeJson(res, 200, roomStateAck(room));
+    }
+
+    if (req.method === "POST" && pathParts[3] === "judgment") {
+      const body = await readJson(req);
+      const viewer = requirePlayer(res, room, body.playerId, body.token);
+      if (!viewer) return;
+      const result = submitRoomJudgment(room, viewer, body);
+      broadcast(room);
+      if (result.error) return writeJson(res, result.status, { error: result.error });
       return writeJson(res, 200, roomStateAck(room));
     }
 
@@ -8932,6 +9004,7 @@ async function handleApi(req, res, pathParts, url) {
       const viewer = playerFor(room, body.playerId, body.token);
       if (!viewer) return writeJson(res, 401, { error: "玩家身份已失效" });
       if (!viewer.host) return writeJson(res, 403, { error: "只有房主可以重开" });
+      if (room.result?.judgmentPending) return writeJson(res, 409, { error: "战犯审判尚未结束，请稍后重开" });
       if (room.itemUseInFlight || room.boardHeroSkillUseInFlight) {
         return writeJson(res, 409, { error: "本局资源正在结算，请稍后重试" });
       }
@@ -9127,6 +9200,7 @@ export const __heroDraftTesting = {
   beginHeroDraft, finishHeroDraftIfComplete, expireHeroDraft, resetRoomToLobby, deal,
   roomSnapshot, emptySetup, emptyGameItems, emptyBoardHeroSkills, emptyBoardHeroEffects
 };
+export const __judgmentTesting = { beginRoomJudgment, submitRoomJudgment, advanceRoomJudgment, finalizeNextRoundLobby, roomSnapshot, applyFinishedGamePersistence };
 
 export const __heroAdvancementTesting = {
   emptyBoardHeroSkills, emptySetup, beginAdvancedHeroStage, submitAdvancedHeroChoice,

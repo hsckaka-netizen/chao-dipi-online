@@ -1,9 +1,11 @@
 export const HERO_HOME_RULES = Object.freeze({
-  version: "2026-10-27-v9",
+  version: "2026-10-28-v10",
   skillVersion: "2026-09-24-skill-v9",
-  boardSkillVersion: "2026-10-27-board-skill-v9",
+  boardSkillVersion: "2026-10-28-board-skill-v10",
   advancedScoreBonus: Object.freeze([1, 1.2, 1.5, 2, 3]),
   denghuangExchangeCount: Object.freeze([1, 1, 1, 1, 2]),
+  shenYingwuReductionRates: Object.freeze([0.2, 0.3, 0.4, 0.5, 0.6]),
+  shenYingwuSuccessDiamonds: Object.freeze([100, 120, 140, 160, 200]),
   maxProductionHours: 6,
   singlePullPrice: 300,
   tenPullPrice: 2700,
@@ -85,6 +87,11 @@ export const HOME_UNITS = Object.freeze([
     id: "shen-biesan", name: "神 · 瘪三", namePrefix: "神", baseName: "瘪三", shortName: "瘪", type: "hero", rarity: "ssr", gender: "male", regionId: "boka", color: "#9f742c",
     cardImage: "/assets/heroes/shen-biesan-card-v2.png",
     skillName: "偷梁换柱", skillDescription: "被动：对方阵营每被拖1点红五/方五积分，1～5星分别额外获得5/7/9/12/15钻石。主动：叫庄前若本人没有同花色成对2，可随机一个持有点数替代2成为本局比牌；CD为5/4/3/2/1轮。"
+  }),
+  Object.freeze({
+    id: "shen-yingwu", name: "神 · 鹦鹉", namePrefix: "神", baseName: "鹦鹉", shortName: "鹦", type: "hero", rarity: "ssr", gender: "male", regionId: "boka", color: "#16845b",
+    cardImage: "/assets/heroes/shen-yingwu-card-v1.png",
+    skillName: "战犯审判", skillDescription: "仅PVP真人局：本队落败后可审判另一名玩家，每局一次。除本人和被审判者外，支持票达到全体有资格玩家的50%即成立；本人按1～5星减免本局扣分的20%/30%/40%/50%/60%，并额外获得100/120/140/160/200钻石。投票限时30秒，超时弃权；支持或反对票数较多一方的投票者每人额外获得30钻石，平票无人获奖。"
   }),
   Object.freeze({ id: "boka-youth", name: "博卡青年", shortName: "博", type: "minion", rarity: "minion", gender: null, regionId: "boka", color: "#d6a936" }),
   Object.freeze({

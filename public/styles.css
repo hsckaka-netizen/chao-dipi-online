@@ -9310,3 +9310,15 @@ button.auto-play-toggle.active {
 
 .hero-draft-choice.is-unowned .hero-draft-art { filter: grayscale(1); opacity: .5; }
 .hero-draft-choice.is-unowned h3 { color: var(--muted); }
+/* Post-game judgment keeps voting actions separate from the score table. */
+.judgment-panel { border-color: #b8964c; background: linear-gradient(135deg, #faf7ec, #edf5ef); }
+.judgment-panel h3 { margin: 0; }
+.judgment-panel p { margin: 6px 0; overflow-wrap: anywhere; }
+.judgment-trials { display: grid; gap: 12px; }
+.judgment-trial { min-width: 0; padding: 12px; border: 1px solid #ccd9ce; border-radius: 8px; background: #fff; }
+.judgment-trial header { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
+.judgment-actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0; }
+.judgment-actions button { white-space: normal; overflow-wrap: anywhere; max-width: 100%; }
+.judgment-trial small { color: var(--muted); line-height: 1.6; }
+.judgment-outcome { font-weight: 700; color: var(--primary-dark); }
+@media (max-width: 620px) { .judgment-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); } .judgment-trial { padding: 10px; } }

@@ -1,4 +1,8 @@
 export const ASSET_VERSIONS = Object.freeze({
+  "/assets/heroes/shen-yingwu-card-v1.webp": "04c2f63b672f",
+  "/assets/heroes/shen-yingwu-card-v1.png": "f9832b262fa0",
+  "/assets/heroes/shen-yingwu-card-v1-thumb.webp": "7d5789aab5d5",
+  "/assets/heroes/shen-yingwu-card-v1-medium.webp": "29bd9de9fca9",
   "/assets/cosmetics/avatar-frame-blackstone-commander.png": "0eba99dab8ce",
   "/assets/heroes/jie-denghuang-card-v3-thumb.webp": "9e9fccbf5fb5",
   "/assets/heroes/jie-denghuang-card-v3-medium.webp": "e123b0b83cfb",
