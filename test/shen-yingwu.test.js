@@ -69,7 +69,7 @@ test('abstentions stay in the denominator and timeout at exactly 30 seconds reje
   assert.equal(session.trials[0].passed, false);
   assert.equal(session.trials[0].abstainCount, 2);
   assert.equal(room.result.playerResults[0].gameScore, -10);
-  assert.equal(room.result.playerResults[2].judgmentReward.amount, 30, 'larger voting side is paid even if judgment fails');
+  assert.equal(room.result.playerResults[2].judgmentReward.amount, 50, 'larger voting side is paid even if judgment fails');
 });
 
 test('opposing majority wins the fixed voting bonus; abstainers receive nothing', () => {
@@ -77,8 +77,8 @@ test('opposing majority wins the fixed voting bonus; abstainers receive nothing'
   vote(session, 'p2', 'oppose'); vote(session, 'p3', 'oppose'); vote(session, 'p4', 'abstain');
   applyJudgmentOutcomes(room.result, session);
   assert.equal(session.trials[0].passed, false);
-  assert.equal(room.result.playerResults[2].judgmentReward.amount, 30);
-  assert.equal(room.result.playerResults[3].judgmentReward.amount, 30);
+  assert.equal(room.result.playerResults[2].judgmentReward.amount, 50);
+  assert.equal(room.result.playerResults[3].judgmentReward.amount, 50);
   assert.equal(room.result.playerResults[4].judgmentReward, undefined);
 });
 
@@ -137,7 +137,7 @@ test('multiple parrots have independent concurrent trials and only apply each ou
   assert.equal(session.complete,true);
   assert.equal(room.result.playerResults[0].gameScore,-8);
   assert.equal(room.result.playerResults[1].gameScore,-4);
-  assert.equal(room.result.playerResults[2].judgmentReward.amount,60);
+  assert.equal(room.result.playerResults[2].judgmentReward.amount,100);
 });
 
 test('judgment diamonds are exact and do not inherit idle multiplier or change other hero rewards', () => {
@@ -165,7 +165,7 @@ test('server preserves final roster through departures, prevents premature persi
   assert.equal(record.players[0].baseGameScore,-10);
   assert.equal(record.players[0].gameScore,-8);
   assert.equal(record.players[0].won,false);
-  assert.equal(record.players[2].diamondReward.judgmentBonus,30);
+  assert.equal(record.players[2].diamondReward.judgmentBonus,50);
   const before=JSON.stringify(record);
   game.advanceRoomJudgment(ctx,at+99999);
   assert.equal(JSON.stringify(buildGameRecord(ctx.recordRoom)),before);

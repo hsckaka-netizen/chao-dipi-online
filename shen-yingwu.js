@@ -126,7 +126,7 @@ export function applyJudgmentOutcomes(result, session) {
       player.judgmentReward.entries.push({ trialId: trial.id, kind, amount });
     };
     if (trial.passed) add(trial.ownerId, trial.successDiamonds, 'judgment');
-    trial.rewardedVoterIds.forEach(playerId => add(playerId, 30, 'vote'));
+    trial.rewardedVoterIds.forEach(playerId => add(playerId, 50, 'vote'));
   }
   result.judgments = judgmentSnapshot(session, null);
   result.judgmentPending = !session.complete;

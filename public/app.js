@@ -1,6 +1,6 @@
 import { applyStatePatch } from "./state-patch.js?v=9330552c7e1e";
 import { detectNewDraggedFiveEffects, detectNewLargePlayEffects } from "./gameplay-effects.js?v=14791e626d30";
-import { ASSET_URLS, versionedAssetUrl } from "./asset-versions.js?v=41ce9f6c39d0";
+import { ASSET_URLS, versionedAssetUrl } from "./asset-versions.js?v=d5e2563b58e0";
 import { createHistoryTrickEntry, filterHistoryTimelineEntries } from "./history-records.js?v=874ba3c97732";
 import { suitTractorOrderValue } from "./replacement-rank-rules.js?v=3b3650aa685e";
 import { doudouPointLabel, doudouPointNotice } from "./doudou-notice.js?v=4327fd9b2a77";
@@ -7357,7 +7357,7 @@ function renderJudgmentPanel() {
       ${trial.canChoose ? `<div class="judgment-actions">${judgment.participants.filter(player => player.id !== trial.ownerId).map(player => `<button type="button" class="secondary" data-action="judgment-target" data-trial-id="${escapeHtml(trial.id)}" data-target-player-id="${escapeHtml(player.id)}" ${judgmentInFlight ? 'disabled' : ''}>审判 ${escapeHtml(player.name)}</button>`).join('')}<button type="button" class="secondary" data-action="judgment-pass" data-trial-id="${escapeHtml(trial.id)}" ${judgmentInFlight ? 'disabled' : ''}>放弃</button></div>` : ''}
       ${trial.canVote && !isSpectating() ? `<div class="judgment-actions">${Object.entries(voteLabels).map(([choice, label]) => `<button type="button" class="${choice === 'support' ? '' : 'secondary'}" data-action="judgment-vote" data-trial-id="${escapeHtml(trial.id)}" data-choice="${choice}" ${judgmentInFlight ? 'disabled' : ''}>${label}</button>`).join('')}</div>` : ''}
       ${trial.viewerVote ? `<span class="tag">你已选择${voteLabels[trial.viewerVote]}</span>` : ''}
-      ${trial.status === 'completed' ? `<p class="judgment-outcome">${trial.passed ? `${escapeHtml(trial.ownerName)} 减免 ${trial.scoreReduction} 积分，额外获得 ${trial.successDiamonds} 钻石。` : '鹦鹉未获得减分及审判成立奖励。'}${trial.supportCount === trial.opposeCount ? ' 票数相同，无投票奖励。' : ` ${trial.supportCount > trial.opposeCount ? '支持' : '反对'}方投票者每人额外获得30钻石。`}</p>` : `<small>成立后：减免鹦鹉本局扣分的${Math.round(trial.reductionRate * 100)}%，额外获得${trial.successDiamonds}钻石；票数较多一方的投票者每人额外获得30钻石，平票无此奖励。</small>`}
+      ${trial.status === 'completed' ? `<p class="judgment-outcome">${trial.passed ? `${escapeHtml(trial.ownerName)} 减免 ${trial.scoreReduction} 积分，额外获得 ${trial.successDiamonds} 钻石。` : '鹦鹉未获得减分及审判成立奖励。'}${trial.supportCount === trial.opposeCount ? ' 票数相同，无投票奖励。' : ` ${trial.supportCount > trial.opposeCount ? '支持' : '反对'}方投票者每人额外获得50钻石。`}</p>` : `<small>成立后：减免鹦鹉本局扣分的${Math.round(trial.reductionRate * 100)}%，额外获得${trial.successDiamonds}钻石；票数较多一方的投票者每人额外获得50钻石，平票无此奖励。</small>`}
     </article>`).join('')}</div>
   </section>`;
 }

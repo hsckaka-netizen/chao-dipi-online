@@ -89,9 +89,9 @@ export const HOME_UNITS = Object.freeze([
     skillName: "偷梁换柱", skillDescription: "被动：对方阵营每被拖1点红五/方五积分，1～5星分别额外获得5/7/9/12/15钻石。主动：叫庄前若本人没有同花色成对2，可随机一个持有点数替代2成为本局比牌；CD为5/4/3/2/1轮。"
   }),
   Object.freeze({
-    id: "shen-yingwu", name: "神 · 鹦鹉", namePrefix: "神", baseName: "鹦鹉", shortName: "鹦", type: "hero", rarity: "ssr", gender: "male", regionId: "boka", color: "#16845b",
-    cardImage: "/assets/heroes/shen-yingwu-card-v1.png",
-    skillName: "战犯审判", skillDescription: "仅PVP真人局：本队落败后可审判另一名玩家，每局一次。除本人和被审判者外，支持票达到全体有资格玩家的50%即成立；本人按1～5星减免本局扣分的20%/30%/40%/50%/60%，并额外获得100/120/140/160/200钻石。投票限时30秒，超时弃权；支持或反对票数较多一方的投票者每人额外获得30钻石，平票无人获奖。"
+    id: "shen-yingwu", name: "神 · 鹦鹉", namePrefix: "神", baseName: "鹦鹉", shortName: "鹦", type: "hero", rarity: "ssr", gender: "male", regionId: "stage", color: "#16845b",
+    cardImage: "/assets/heroes/shen-yingwu-card-v2.png",
+    skillName: "战犯审判", skillDescription: "仅PVP真人局：本队落败后可审判另一名玩家，每局一次。除本人和被审判者外，支持票达到全体有资格玩家的50%即成立；本人按1～5星减免本局扣分的20%/30%/40%/50%/60%，并额外获得100/120/140/160/200钻石。投票限时30秒，超时弃权；支持或反对票数较多一方的投票者每人额外获得50钻石，平票无人获奖。"
   }),
   Object.freeze({ id: "boka-youth", name: "博卡青年", shortName: "博", type: "minion", rarity: "minion", gender: null, regionId: "boka", color: "#d6a936" }),
   Object.freeze({
