@@ -3816,7 +3816,7 @@ function shenJiangwenCanTransfer(room, player) {
 }
 
 function transferShenJiangwenLead(room, player, targetPlayerId) {
-  if (!shenJiangwenCanTransfer(room, player)) return { error: "须先赢得过一轮，且只能在本人领出新一轮牌之前移交首出权；每局一次", status: 409 };
+  if (!shenJiangwenCanTransfer(room, player)) return { error: "须先在他人领出的一轮中获胜取得首出权（庄家须丢失后重新赢回），且只能在本人领出新一轮牌之前移交首出权；每局一次", status: 409 };
   const target = room.players.find((candidate) => candidate.id === targetPlayerId);
   if (!target || target.id === player.id || !target.hand?.length) return { error: "请选择一名仍有手牌的其他玩家", status: 400 };
   clearAiPlayTimer(room);

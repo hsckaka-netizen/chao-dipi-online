@@ -32,6 +32,60 @@ test('Jiangwen cannot transfer opening lead or a lead before actually winning a 
   assert.equal(game.shenJiangwenCanTransfer(r, hero), false);
 });
 
+test('banker must lose and regain the lead, rather than retain it through consecutive wins', () => {
+  const r = makeRoom(); const hero = r.players[1];
+  r.bankerId = hero.id;
+  // Enough cards to exercise several real rounds without triggering final-follow.
+  for (const player of r.players) {
+    player.hand = Array.from({ length: 6 }, (_, i) => card(`${player.id}-${i}`, '4'));
+  }
+  function playRound(winnerId) {
+    const start = r.players.findIndex((player) => player.id === r.currentTrick.leaderId);
+    for (let i = 0; i < r.players.length; i++) {
+      const player = r.players[(start + i) % r.players.length];
+      const played = player.hand[0];
+      Object.assign(played, card(played.id, player.id === winnerId ? 'A' : '4'));
+      assert.equal(game.playCards(r, player, [played.id]).ok, true);
+    }
+    assert.equal(r.trickHistory.at(-1).winnerId, winnerId);
+    assert.equal(r.currentTrick.leaderId, winnerId);
+  }
+  function assertBlocked() {
+    const leaderBefore = r.currentTrick.leaderId;
+    assert.equal(game.shenJiangwenCanTransfer(r, hero), false);
+    assert.equal(game.boardHeroSkillsSnapshot(r, hero).shenJiangwen.canActivate, false);
+    assert.equal(game.transferShenJiangwenLead(r, hero, 'other').status, 409);
+    assert.equal(r.currentTrick.leaderId, leaderBefore);
+    assert.equal(r.boardHeroEffects.uses.length, 0);
+  }
+  assertBlocked();
+  playRound(hero.id); assertBlocked();
+  playRound(hero.id); assertBlocked();
+  playRound('other'); assertBlocked();
+  playRound(hero.id);
+  assert.equal(game.shenJiangwenCanTransfer(r, hero), true);
+  assert.equal(game.boardHeroSkillsSnapshot(r, hero).shenJiangwen.canActivate, true);
+  // Eligibility remains available when the acquired lead is subsequently retained.
+  playRound(hero.id);
+  assert.equal(game.transferShenJiangwenLead(r, hero, 'other').ok, true);
+  assert.equal(r.currentTrick.leaderId, 'other');
+  assert.equal(r.boardHeroEffects.uses.length, 1);
+});
+
+test('temporary following wins and history without a leader do not establish acquired lead', () => {
+  const r = makeRoom(); const hero = r.players[1];
+  r.bankerId = hero.id;
+  r.trickHistory = [{ number: 1, winnerId: hero.id }];
+  assert.equal(canTransferLead(r, hero.id), false);
+  r.currentTrick = { number: 2, leaderId: 'other', winnerId: hero.id,
+    plays: [{ playerId: 'other', cards: [card('lead', '4')] },
+      { playerId: hero.id, cards: [card('follow', 'A')] }] };
+  assert.equal(game.shenJiangwenCanTransfer(r, hero), false);
+  // Only completed history counts, even if the next lead has been set prematurely.
+  r.currentTrick = { number: 3, leaderId: hero.id, plays: [] };
+  assert.equal(game.shenJiangwenCanTransfer(r, hero), false);
+});
+
 test('transfer validates hero, target and turn, changes only the next lead, and cannot repeat', () => {
   const r = makeRoom(); const hero = r.players[1]; wonRound(r);
   for (const target of ['hero','missing',null]) assert.equal(game.transferShenJiangwenLead(r, hero, target).status, 400);

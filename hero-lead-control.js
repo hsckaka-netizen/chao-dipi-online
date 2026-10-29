@@ -13,7 +13,10 @@ export function canTransferLead(room, playerId) {
   return Boolean(playerId && room.status === "dealt" && room.stage === "playing"
     && trick?.leaderId === playerId && trick.plays?.length === 0
     && !(Date.parse(room.playPauseUntil) > Date.now())
-    && (room.trickHistory || []).some((completed) => completed.winnerId === playerId)
+    // Winning one's own lead retains control; only winning another leader's
+    // completed trick acquires it (including a banker's regain after losing it).
+    && (room.trickHistory || []).some((completed) => completed.leaderId
+      && completed.leaderId !== playerId && completed.winnerId === playerId)
     && !(room.boardHeroEffects?.uses || []).some((use) => use.playerId === playerId
       && use.heroId === "shen-jiangwen" && use.effect?.leadTransfer));
 }
