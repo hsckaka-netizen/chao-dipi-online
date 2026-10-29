@@ -125,7 +125,15 @@ export const ASSET_VERSIONS = Object.freeze({
   "/assets/heroes/yokoyama-yui-card-v2.png": "accb546e6ffa",
   "/assets/heroes/yokoyama-yui-card-v2.webp": "b7fcd80c9ca8",
   "/assets/joker-face-small.png": "f16ffbe9a2eb",
-  "/assets/joker-face.png": "298272a943e8"
+  "/assets/joker-face.png": "298272a943e8",
+  "/assets/heroes/shen-gelu-card-v1.png": "5011df4dfc6a",
+  "/assets/heroes/shen-gelu-card-v1.webp": "a05010bef241",
+  "/assets/heroes/shen-gelu-card-v1-medium.webp": "c75d054a4162",
+  "/assets/heroes/shen-gelu-card-v1-thumb.webp": "70cbbd82fe7b",
+  "/assets/heroes/shen-jiangwen-card-v3.png": "93fec03243f4",
+  "/assets/heroes/shen-jiangwen-card-v3.webp": "4aec485e9c0a",
+  "/assets/heroes/shen-jiangwen-card-v3-medium.webp": "0a45e908cd37",
+  "/assets/heroes/shen-jiangwen-card-v3-thumb.webp": "b61028080e08"
 });
 
 export function versionedAssetUrl(value) {

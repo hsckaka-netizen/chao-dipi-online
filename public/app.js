@@ -1,6 +1,6 @@
 import { applyStatePatch } from "./state-patch.js?v=9330552c7e1e";
 import { detectNewDraggedFiveEffects, detectNewLargePlayEffects } from "./gameplay-effects.js?v=14791e626d30";
-import { ASSET_URLS, versionedAssetUrl } from "./asset-versions.js?v=fb66df5ff17a";
+import { ASSET_URLS, versionedAssetUrl } from "./asset-versions.js?v=b6279d6ac4bf";
 import { createHistoryTrickEntry, filterHistoryTimelineEntries } from "./history-records.js?v=874ba3c97732";
 import { suitTractorOrderValue, isShenBenleiTrump, shenBenleiTractorOrderValue } from "./replacement-rank-rules.js?v=d9c12d800a5b";
 import { doudouPointLabel, doudouPointNotice } from "./doudou-notice.js?v=4327fd9b2a77";
@@ -3432,13 +3432,13 @@ function renderAutoPlayMark(player) {
 
 function renderJiangwenTransferControl() {
   if (isSpectating() || !state?.boardHeroSkills?.shenJiangwen?.canActivate) return "";
-  return `<button type="button" class="secondary" data-action="open-jiangwen-transfer">推贤让能 · 移交首出权</button>`;
+  return `<button type="button" class="secondary" data-action="open-jiangwen-transfer">诈疾藏锋 · 移交首出权</button>`;
 }
 
 function renderJiangwenTransferDialog() {
   const targets = new Set(state.boardHeroSkills?.shenJiangwen?.targetPlayerIds || []);
   return `<div class="modal-backdrop"><section class="modal-card" role="dialog" aria-modal="true" aria-label="移交首出权">
-    <div class="section-head"><h2>推贤让能</h2><button type="button" class="secondary" data-action="close-dialog">取消</button></div>
+    <div class="section-head"><h2>诈疾藏锋</h2><button type="button" class="secondary" data-action="close-dialog">取消</button></div>
     <p>选择一名其他玩家，由其领出本轮第一手牌。每局只能移交一次，本次计入丢失首出权次数。</p>
     <div class="dialog-actions">${(state.players || []).filter((player) => targets.has(player.id)).map((player) =>
       `<button type="button" data-action="shen-jiangwen-transfer" data-target-player-id="${escapeHtml(player.id)}">移交给 ${escapeHtml(player.name)}</button>`).join("")}</div>

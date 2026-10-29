@@ -3824,7 +3824,7 @@ function transferShenJiangwenLead(room, player, targetPlayerId) {
     leadTransfer: true, targetPlayerId: target.id, trickNumber: room.currentTrick.number
   });
   room.currentTrick.leaderId = target.id;
-  addEvent(room, `${player.name} 发动推贤让能，将第${room.currentTrick.number}轮首出权移交给${target.name}`);
+  addEvent(room, `${player.name} 发动诈疾藏锋，将第${room.currentTrick.number}轮首出权移交给${target.name}`);
   return { ok: true };
 }
 

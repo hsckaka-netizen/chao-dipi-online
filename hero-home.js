@@ -118,13 +118,13 @@ export const HOME_UNITS = Object.freeze([
   }),
   Object.freeze({
     id: "shen-gelu", name: "神 · 格鲁", namePrefix: "神", baseName: "格鲁", shortName: "格", type: "hero", rarity: "ssr", gender: "male", regionId: "brick", color: "#7958a5", advancementFrom: "gelu",
-    cardImage: "/assets/heroes/gelu-card-v2.png",
+    cardImage: "/assets/heroes/shen-gelu-card-v1.png",
     skillName: "釜底抽薪", skillDescription: "被动：本人每完成一次普通炒底或技能炒底，按1～5星额外获得15/20/25/30/40钻石，次数不限。主动：首次轮到本人炒底时，可免费直接拿底并扣回等量手牌；每局一次，不提高炒底门槛。"
   }),
   Object.freeze({
     id: "shen-jiangwen", name: "神 · 姜文", namePrefix: "神", baseName: "姜文", shortName: "姜", type: "hero", rarity: "ssr", gender: "male", regionId: "brick", color: "#4f5e52",
-    cardImage: "/assets/heroes/shen-jiangwen-card-v2.png",
-    skillName: "推贤让能", skillDescription: "主动：本局至少赢得过一轮后，在你领出新一轮牌之前，可将本轮首出权移交给一名其他玩家；每局一次、免费。被动：本局原始积分大于0时，每丢失一次首出权（领出一轮后未赢得该轮，或主动移交），按1～5星额外获得0.1/0.12/0.15/0.2/0.25积分和10/12/15/20/25钻石，最多计5次。庄家开局自带的首出权不满足主动发动条件。"
+    cardImage: "/assets/heroes/shen-jiangwen-card-v3.png",
+    skillName: "诈疾藏锋", skillDescription: "主动：本局至少赢得过一轮后，在你领出新一轮牌之前，可将本轮首出权移交给一名其他玩家；每局一次、免费。被动：本局原始积分大于0时，每丢失一次首出权（领出一轮后未赢得该轮，或主动移交），按1～5星额外获得0.1/0.12/0.15/0.2/0.25积分和10/12/15/20/25钻石，最多计5次。庄家开局自带的首出权不满足主动发动条件。"
   }),
   Object.freeze({
     id: "shen-haohao", name: "神 · 浩浩", namePrefix: "神", baseName: "浩浩", shortName: "浩", type: "hero", rarity: "ssr", gender: "male", regionId: "boka", color: "#557b9c",

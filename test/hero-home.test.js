@@ -591,7 +591,7 @@ test("SSR roster, probabilities, production, and retired cooldowns use the settl
   assert.equal(shenHaohao.skillName, "丹书铁券");
   assert.match(shenHaohao.skillDescription, /整局累计最多免除2\/4\/6\/8\/10分扣分/);
   assert.equal(shenHaohao.paidSkill, undefined);
-  assert.equal(shenJiangwen.skillName, "推贤让能");
+  assert.equal(shenJiangwen.skillName, "诈疾藏锋");
   assert.equal(shenJiangwen.paidSkill.cost, 0);
   assert.equal(createBattleHeroSnapshot("shen-jiangwen", 1, 0).paidSkill.cost, 0);
   assert.equal(createBattleHeroSnapshot("shen-jiangwen", 5, 3).paidSkill.cost, 0);
