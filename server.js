@@ -84,7 +84,7 @@ import {
 } from "./shop-and-items.js";
 import { versionedAssetUrl } from "./public/asset-versions.js";
 import { createStatePatch } from "./public/state-patch.js";
-import { applyShenBiesanCardRules, suitTractorOrderValue } from "./public/replacement-rank-rules.js";
+import { applyShenBiesanCardRules, applyShenBenleiCardRules, isShenBenleiTrump, shenBenleiTractorOrderValue, suitTractorOrderValue } from "./public/replacement-rank-rules.js";
 import { calculateHeroSkillReward, cardRankNumber, HERO_HOME_RULES } from "./hero-home.js";
 import { createHeroDraft, chooseDraftHero, heroDraftComplete, heroDraftSnapshot, HERO_DRAFT_STAGE } from "./hero-draft.js";
 import { eligibleAdvancementSrIds } from "./hero-advancement.js";
@@ -1858,6 +1858,7 @@ function publicCard(card) {
     rank: card.rank,
     rulesRank: card.rulesRank || null,
     rulesReplacementRank: card.rulesReplacementRank || null,
+    ...(card.rulesShenBenlei ? { rulesShenBenlei: true } : {}),
     deck: card.deck,
     type: card.type,
     joker: card.joker || null
@@ -3107,7 +3108,7 @@ function finishGame(room, completedTrick) {
         : [];
     }),
     personalBonuses: room.result.playerResults.flatMap((playerResult) => (
-      playerResult.heroSkillReward?.scoreBonus && ["jie-doudou", "jie-jiangzha", "jie-denghuang"].includes(playerResult.heroSkillReward?.hero?.heroId)
+      playerResult.heroSkillReward?.scoreBonus && ["jie-doudou", "jie-jiangzha", "jie-denghuang", "shen-benlei"].includes(playerResult.heroSkillReward?.hero?.heroId)
         ? [{ playerId: playerResult.playerId, amount: playerResult.heroSkillReward.scoreBonus }]
         : []
     ))
@@ -3255,7 +3256,7 @@ function uniqueFollowSuits(cards) {
 
 function isMainPlayCard(card, trumpSuit) {
   if (!card) return false;
-  if (isCompareCard(card, trumpSuit)) return true;
+  if (isCompareCard(card, trumpSuit) || isShenBenleiTrump(card, trumpSuit)) return true;
   return card.type === "normal" && trumpSuit && card.suit === trumpSuit;
 }
 
@@ -3269,6 +3270,7 @@ function uniquePlaySuits(cards, trumpSuit) {
 }
 
 function mainCardPower(card, trumpSuit) {
+  if (isShenBenleiTrump(card, trumpSuit)) return 30;
   if (card.type === "normal" && card.suit === "H" && card.rank === "5") return 0;
   if (card.type === "normal" && card.suit === "D" && card.rank === "5") return 1;
   if (card.joker === "big") return 2;
@@ -3829,6 +3831,8 @@ async function activateShenJiangwenSkill(room, player, requestId, resetCooldown 
       skillStars: player.battleHeroSnapshot?.stars || 1
     }
   );
+  // A concurrent retry may have completed the effect while payment was awaited.
+  if (!shenJiangwenCanActivate(room, player)) return { error: "本局已完成釜底抽薪操作", status: 409 };
   completeShenJiangwenOffer(room, player);
   recordBoardHeroSkillUse(room, player, "shen-jiangwen", payment, { directFry: true });
   const skillAction = {
@@ -3885,6 +3889,10 @@ function beginPlaying(room) {
   clearAiSetupTimer(room);
   clearScoreBidTimer(room);
   clearFryTimer(room);
+  room.players.forEach((player) => {
+    const enabled = playerHasBoardHero(room, player, "shen-benlei");
+    player.hand.forEach((card) => applyShenBenleiCardRules(card, enabled));
+  });
   room.stage = "playing";
   room.phase = `打牌中，主牌为${suitName(room.trumpSuit)}`;
   room.currentTrick = createEmptyTrick(1, room.bankerId);
@@ -5291,6 +5299,7 @@ function nonMainRankOrderValue(card, trumpSuit) {
 
 function mainTractorOrderValue(card, trumpSuit) {
   if (!card) return 99;
+  if (isShenBenleiTrump(card, trumpSuit)) return shenBenleiTractorOrderValue(card, trumpSuit);
   if (card.type === "normal" && trumpSuit && card.suit === trumpSuit && !isCompareCard(card, trumpSuit)) {
     const index = suitTractorOrderValue(card, trumpSuit);
     return index < 99 ? 8 + index : 99;
@@ -6912,6 +6921,7 @@ function aiSampleHiddenHands(room, player, context, random) {
     .filter((target) => target.id !== player.id)
     .map((target) => ({
       id: target.id,
+      benlei: playerHasBoardHero(room, target, "shen-benlei"),
       count: target.hand.length,
       voidRoutes: context.knowledge.voidRoutesByPlayerId.get(target.id) || new Set()
     }))
@@ -6922,7 +6932,8 @@ function aiSampleHiddenHands(room, player, context, random) {
     const hands = new Map();
     let failed = false;
     for (const target of targets) {
-      const allowed = remaining.filter((card) => !target.voidRoutes.has(playSuit(card, room.trumpSuit)));
+      const allowed = remaining.map((card) => applyShenBenleiCardRules({ ...card }, target.benlei))
+        .filter((card) => !target.voidRoutes.has(playSuit(card, room.trumpSuit)));
       if (allowed.length < target.count) {
         failed = true;
         break;
@@ -9287,6 +9298,13 @@ export const __heroDraftTesting = {
   roomSnapshot, emptySetup, emptyGameItems, emptyBoardHeroSkills, emptyBoardHeroEffects
 };
 export const __judgmentTesting = { beginRoomJudgment, submitRoomJudgment, advanceRoomJudgment, finalizeNextRoundLobby, roomSnapshot, applyFinishedGamePersistence };
+
+export const __heroCardRulesTesting = {
+  beginPlaying, detectPlayPattern, playPower, mainCardPower, mainTractorOrderValue,
+  playSuit, playCards, leadInfo, playComparisonAgainstLead, exactPatternCandidates,
+  validatePlay, publicCard, currentWinningState, settleTrick, finishGame,
+  prepareThrowLeadPlay, applyShenBiesanReplacement
+};
 
 export const __heroAdvancementTesting = {
   emptyBoardHeroSkills, emptySetup, beginAdvancedHeroStage, submitAdvancedHeroChoice,

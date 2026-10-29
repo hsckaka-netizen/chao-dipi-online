@@ -29,6 +29,37 @@ export function applyShenBiesanCardRules(card, replacementRank) {
   return card;
 }
 
+// The marker belongs to the current owner, and is copied into played-card facts.
+export function applyShenBenleiCardRules(card, enabled) {
+  if (!card) return card;
+  delete card.rulesShenBenlei;
+  if (enabled && card.type === "normal") card.rulesShenBenlei = true;
+  return card;
+}
+
+export function isShenBenleiTrump(card, trumpSuit) {
+  return Boolean(card?.rulesShenBenlei && card.type === "normal" && card.rank === "6"
+    && gameRank(card) !== "2" && trumpSuit && card.suit !== trumpSuit
+    && cardColor(card) === cardColor({ suit: trumpSuit }));
+}
+
+function availableSuitRanks(card, trumpSuit) {
+  return effectiveRankOrder(card).filter((rank) => {
+    const sample = {
+      ...card,
+      type: "normal",
+      rank,
+      rulesRank: rank
+    };
+    return !isCompareCardForTractorOrder(sample, trumpSuit) && !isShenBenleiTrump(sample, trumpSuit);
+  });
+}
+
+export function shenBenleiTractorOrderValue(card, trumpSuit) {
+  // Immediately below the last ordinary trump; never compress comparison strength.
+  return 8 + availableSuitRanks({ ...card, suit: trumpSuit }, trumpSuit).length;
+}
+
 export function effectiveRankOrder(card) {
   const replacementRank = card?.rulesReplacementRank || null;
   if (!replacementRank) return STANDARD_RANK_ORDER;
@@ -39,16 +70,7 @@ export function effectiveRankOrder(card) {
 
 export function suitTractorOrderValue(card, trumpSuit) {
   if (!card || card.type !== "normal") return 99;
-  const availableRanks = effectiveRankOrder(card).filter((rank) => {
-    const sample = {
-      type: "normal",
-      suit: card.suit,
-      rank,
-      rulesRank: rank,
-      rulesReplacementRank: card.rulesReplacementRank || null
-    };
-    return !isCompareCardForTractorOrder(sample, trumpSuit);
-  });
+  const availableRanks = availableSuitRanks(card, trumpSuit);
   const index = availableRanks.indexOf(gameRank(card));
   return index >= 0 ? index : 99;
 }

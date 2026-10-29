@@ -152,6 +152,7 @@ test('judgment diamonds are exact and do not inherit idle multiplier or change o
 });
 
 test('server preserves final roster through departures, prevents premature persistence and finalizes exactly once', async t => {
+  t.mock.timers.enable({ apis: ["Date", "setTimeout"], now: at });
   const room = fixture(4); attachDiamondRewards(room);
   assert.equal(game.beginRoomJudgment(room, at),true);
   const ctx=room.judgmentContext; t.after(()=>clearTimeout(ctx.timer));

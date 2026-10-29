@@ -53,7 +53,7 @@ test("owned stars and cooldowns freeze for this deal without requiring home plac
   const frozen = draft.entries.p0.snapshots["shen-biesan"];
   owned.a0["shen-biesan"].stars = 1;
   assert.equal(frozen.stars, 4);
-  assert.equal(frozen.paidSkill.cooldown, 3);
+  assert.equal(frozen.paidSkill.cooldown, 0);
   assert.equal(draft.entries.p0.snapshots["jiang-zha"].owned, false);
   assert.equal(draft.entries.p0.snapshots["jiang-zha"].stars, 0);
   assert.equal(draft.entries.p1.completed, false);
@@ -84,7 +84,7 @@ test("candidate lottery is identical regardless of inventory, including a single
     assert.deepEqual(full.entries[player.id].choices, empty.entries[player.id].choices);
     assert.deepEqual(full.entries[player.id].choices, single.entries[player.id].choices);
   }
-  assert.equal(heroDraftSnapshot(empty, "p0").choices.length, 2);
+  assert.equal(heroDraftSnapshot(empty, "p0").choices.length, empty.entries.p0.choices.length);
   assert.ok(heroDraftSnapshot(empty, "p0").choices.every((hero) => !hero.owned && !hero.canSelect));
   assert.equal(chooseDraftHero(empty, "p0", empty.entries.p0.choices[0]).status, 403);
   assert.equal(chooseDraftHero(empty, "p0", null).snapshot, null);

@@ -28,7 +28,8 @@ test("server waits before dealing, restores the same private candidates, and dea
   const first = game.roomSnapshot(current, current.players[0]);
   const refreshed = game.roomSnapshot(current, current.players[0]);
   assert.deepEqual(first.heroDraft, refreshed.heroDraft);
-  assert.equal(first.heroDraft.choices.length, 2);
+  assert.ok([2, 3].includes(first.heroDraft.choices.length));
+  assert.equal(first.heroDraft.choices.filter((hero) => hero.rarity === "sr").length, 1);
   assert.deepEqual(game.roomSnapshot(current, current.players[0], { hideViewerSecrets: true }).heroDraft.choices, []);
   for (const [index, player] of current.players.entries()) {
     const choice = game.roomSnapshot(current, player).heroDraft.choices.find((hero) => hero.canSelect);

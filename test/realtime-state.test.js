@@ -594,7 +594,8 @@ test("hero draft keeps unowned random candidates fixed and rejects unavailable o
   const first = await jsonRequest(stateUrl);
   assert.equal(first.stage, "hero-selecting");
   assert.equal(first.hand.length, 0);
-  assert.equal(first.heroDraft.choices.length, 2);
+  assert.ok([2, 3].includes(first.heroDraft.choices.length));
+  assert.equal(first.heroDraft.choices.filter((hero) => hero.rarity === "sr").length, 1);
   assert.ok(first.heroDraft.choices.every((hero) => !hero.owned && !hero.canSelect));
   assert.deepEqual((await jsonRequest(stateUrl)).heroDraft.choices, first.heroDraft.choices);
   const spectator = await jsonRequest(`${base}/spectate`, {

@@ -14,7 +14,11 @@ function store(balance = 1000) {
       if (sql === "BEGIN") checkpoint = structuredClone({ balance: data.balance, hires: data.hires, ledger: data.ledger, skillUses: data.skillUses });
       else if (sql === "ROLLBACK") Object.assign(data, checkpoint);
       else if (sql.startsWith("SET LOCAL") || sql === "COMMIT" || sql.includes("cdp_hero_profiles") || sql.includes("cdp_home_regions") || sql.includes("INSERT INTO cdp_diamond_wallets")) { /* transaction or account lock */ }
-      else if (sql.includes("FROM cdp_game_hero_skill_uses")) return { rows: [] };
+      else if (sql.includes("count(*) AS used_count")) return { rows: [{ used_count: data.skillUses.filter((row) => row[1] === args[0] && row[2] === args[1] && row[3] === args[2]).length }] };
+      else if (sql.includes("FROM cdp_game_hero_skill_uses")) {
+        const row=data.skillUses.find((row)=>row[2]===args[0] && row[4]===args[1]);
+        return {rows:row?[{unit_id:row[3],cost:row[5],balance_after:row[6],cooldown_before:row[7],cooldown_after:row[8],effect_data:JSON.parse(row[9])}]:[]};
+      }
       else if (sql.includes("INSERT INTO cdp_game_hero_skill_uses")) data.skillUses.push(args);
       else if (sql.includes("SET skill_cooldown")) data.hires[key].skill_cooldown = args[2];
       else if (sql.includes("SELECT unit_id, cost")) return { rows: data.hires[key] ? [data.hires[key]] : [] };
@@ -92,19 +96,42 @@ test("void refund is atomic and idempotent, and the refunded rental cannot autho
   await assert.rejects(chargeHeroHire(client, "account", "round", "shen-biesan"), /已锁定/);
 });
 
-test("a hired SSR can activate its one-star skill using isolated rental cooldown, even if the permanent card is absent", async () => {
+test("a hired SSR can activate its one-star skill without cross-game cooldown, even if the permanent card is absent", async () => {
   const client = store();
   await chargeHeroHire(client, "account", "round", "shen-biesan");
   const effect = { hireGameId: "round", skillStars: 5 };
   const paid = await storage.chargeBoardHeroSkillFromClient(client, "account", "new-restart-game", "shen-biesan", "hire-skill-1", effect);
   assert.equal(paid.effectData.skillStars, 1);
   assert.equal(paid.cost, 0);
-  assert.equal(paid.cooldownAfter, 5);
+  assert.equal(paid.cooldownAfter, 0);
   assert.equal(client.data.balance, 700);
-  assert.equal(client.data.hires["round:account"].skill_cooldown, 5);
-  await assert.rejects(storage.chargeBoardHeroSkillFromClient(client, "account", "new-restart-game", "shen-biesan", "hire-skill-2", effect), /冷却/);
-  assert.equal(client.data.skillUses.length, 1);
+  assert.equal(client.data.hires["round:account"].skill_cooldown, 0);
+  const retry = await storage.chargeBoardHeroSkillFromClient(client, "account", "new-restart-game", "shen-biesan", "hire-skill-1", effect);
+  assert.equal(retry.repeated, true);
+  await assert.rejects(storage.chargeBoardHeroSkillFromClient(client, "account", "new-restart-game", "shen-biesan", "different-id", effect), /次数已用完/);
+  await storage.chargeBoardHeroSkillFromClient(client, "account", "next-game", "shen-biesan", "hire-skill-2", effect);
+  assert.equal(client.data.skillUses.length, 2);
   assert.ok(client.data.queries.every((sql) => !sql.includes("cdp_hero_units")));
-  const noWrites = { async query() { assert.fail("settling a rental must not alter permanent cooldown"); } };
-  await storage.settleBoardHeroCooldown(noWrites, { players: [{ accountId: "account", battleHeroSnapshot: { heroId: "shen-biesan", hired: true } }] });
+});
+
+test("owned SSR ignores legacy CD without extra fees, while same-game uses stay bounded", async () => {
+  const client=store();
+  const original=client.query.bind(client);
+  let cooldown=5;
+  client.query=async (sql,args=[]) => {
+    if(sql.includes("SELECT stars, skill_cooldown FROM cdp_hero_units")) return {rows:[{stars:5,skill_cooldown:cooldown}]};
+    if(sql.includes("UPDATE cdp_hero_units SET skill_cooldown")) { cooldown=args[2]; return {rows:[]}; }
+    return original(sql,args);
+  };
+  for(const [game,request] of [["g1","r1"],["g2","r2"]]) {
+    const paid=await storage.chargeBoardHeroSkillFromClient(client,"account",game,"shen-jiangwen",request,{skillStars:1});
+    assert.equal(paid.cost,0);
+    assert.equal(paid.cooldownAfter,0);
+  }
+  assert.equal(cooldown,0);
+  assert.equal(client.data.balance,1000);
+  assert.equal(client.data.ledger.length,0);
+  await assert.rejects(storage.chargeBoardHeroSkillFromClient(client,"account","g2","shen-jiangwen","r3",{skillStars:1}),/次数已用完/);
+  const repeat=await storage.chargeBoardHeroSkillFromClient(client,"account","g2","shen-jiangwen","r2",{skillStars:1});
+  assert.equal(repeat.repeated,true);
 });

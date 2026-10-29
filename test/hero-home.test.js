@@ -575,7 +575,7 @@ test("shen haohao rewards undragged teammates and reduces teammate red-five loss
   assert.equal(reward.scoreBonus, 4);
 });
 
-test("SSR roster, probabilities, production, and cooldown reset costs use the settled values", () => {
+test("SSR roster, probabilities, production, and retired cooldowns use the settled values", () => {
   const shenBiesan = createBattleHeroSnapshot("shen-biesan", 5, 2);
   const shenHaohao = createBattleHeroSnapshot("shen-haohao", 4, 3);
   const shenJiangwen = createBattleHeroSnapshot("shen-jiangwen", 1, 1);
@@ -584,16 +584,16 @@ test("SSR roster, probabilities, production, and cooldown reset costs use the se
   assert.equal(shenBiesan.namePrefix, "神");
   assert.equal(shenBiesan.baseName, "瘪三");
   assert.equal(shenBiesan.skillName, "偷梁换柱");
-  assert.equal(shenBiesan.paidSkill.cost, 1000);
-  assert.equal(shenBiesan.paidSkill.cooldownAfterUse, 1);
+  assert.equal(shenBiesan.paidSkill.cost, 0);
+  assert.equal(shenBiesan.paidSkill.cooldownAfterUse, 0);
   assert.equal(shenHaohao.name, "神 · 浩浩");
   assert.equal(shenHaohao.skillName, "丹书铁券");
   assert.match(shenHaohao.skillDescription, /整局累计最多免除2\/4\/6\/8\/10分扣分/);
   assert.equal(shenHaohao.paidSkill, undefined);
   assert.equal(shenJiangwen.skillName, "釜底抽薪");
-  assert.equal(shenJiangwen.paidSkill.cost, 500);
+  assert.equal(shenJiangwen.paidSkill.cost, 0);
   assert.equal(createBattleHeroSnapshot("shen-jiangwen", 1, 0).paidSkill.cost, 0);
-  assert.equal(createBattleHeroSnapshot("shen-jiangwen", 5, 3).paidSkill.cost, 1500);
+  assert.equal(createBattleHeroSnapshot("shen-jiangwen", 5, 3).paidSkill.cost, 0);
   assert.equal(yokoyama.skillName, "斗转星移");
   assert.equal(yokoyama.paidSkill.cost, 0);
   assert.equal(yokoyama.paidSkill.maxUsesPerGame, 2);
@@ -606,15 +606,15 @@ test("SSR roster, probabilities, production, and cooldown reset costs use the se
   assert.equal(drawHomeUnit({ randomFloat: () => 0.5 }).rarity, "minion");
   assert.deepEqual(boardHeroSkillState(5, 3), {
     stars: 5,
-    cooldown: 3,
-    cooldownAfterUse: 1,
-    resetCostPerRound: 500,
-    resetCost: 1500,
-    cost: 1500,
+    cooldown: 0,
+    cooldownAfterUse: 0,
+    resetCostPerRound: 0,
+    resetCost: 0,
+    cost: 0,
     maxUsesPerGame: 1
   });
-  assert.deepEqual(HERO_HOME_RULES.boardSkillCooldowns, [5, 4, 3, 2, 1]);
-  assert.equal(HERO_HOME_RULES.boardSkillResetCostPerRound, 500);
+  assert.deepEqual(HERO_HOME_RULES.boardSkillCooldowns, [0, 0, 0, 0, 0]);
+  assert.equal(HERO_HOME_RULES.boardSkillResetCostPerRound, 0);
   assert.deepEqual(HERO_HOME_RULES.yokoyamaUsesPerGame, [1, 1, 2, 2, 3]);
 });
 
@@ -780,7 +780,7 @@ test("server and table UI expose the redesigned SSR board skill timing", async (
   assert.match(appSource, /!isBid && shenJiangwenSkill\.canActivate/);
   assert.match(appSource, /英雄技能 · 釜底抽薪/);
   assert.match(appSource, /神姜文炒底/);
-  assert.match(appSource, /英雄技能钻石和 CD 变化会返还/);
+  assert.match(appSource, /实际扣除的英雄技能钻石会返还/);
   assert.match(gameHistorySource, /hero_skill_refund/);
   assert.match(gameHistorySource, /SET skill_cooldown = \$3/);
   assert.match(appSource, /每天北京时间06:00生成最多3个新任务；当天完成或领取后不补位/);

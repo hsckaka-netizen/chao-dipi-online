@@ -2,7 +2,7 @@ import { applyStatePatch } from "./state-patch.js?v=9330552c7e1e";
 import { detectNewDraggedFiveEffects, detectNewLargePlayEffects } from "./gameplay-effects.js?v=14791e626d30";
 import { ASSET_URLS, versionedAssetUrl } from "./asset-versions.js?v=1f769aa92182";
 import { createHistoryTrickEntry, filterHistoryTimelineEntries } from "./history-records.js?v=874ba3c97732";
-import { suitTractorOrderValue } from "./replacement-rank-rules.js?v=3b3650aa685e";
+import { suitTractorOrderValue, isShenBenleiTrump, shenBenleiTractorOrderValue } from "./replacement-rank-rules.js?v=d9c12d800a5b";
 import { doudouPointLabel, doudouPointNotice } from "./doudou-notice.js?v=4327fd9b2a77";
 
 const app = document.querySelector("#app");
@@ -2136,33 +2136,11 @@ async function completeGameItemStage() {
 async function submitBoardHeroSkill(action, investment = null) {
   if (!session || isSpectating()) return;
   const costs = state?.boardHeroSkills || {};
-  const cost = action === "jie-ranchen-invest"
-    ? Number(investment) || 0
-    : action === "shen-biesan-activate"
-    ? Number(costs.shenBiesan?.cost) || 0
-    : action === "shen-haohao-activate"
-      ? Number(costs.shenHaohao?.cost) || 0
-    : action === "shen-jiangwen-activate"
-      ? Number(costs.shenJiangwen?.cost) || 0
-      : action === "yokoyama-activate"
-        ? Number(costs.yokoyama?.cost) || 0
-        : 0;
-  const skillName = action.startsWith("jie-ranchen") ? "奇货可居"
-    : action.startsWith("shen-biesan") ? "偷梁换柱"
-    : action.startsWith("shen-haohao") ? "丹书铁券"
-    : action.startsWith("shen-jiangwen") ? "釜底抽薪"
-      : "斗转星移";
-  const cooldown = action === "shen-biesan-activate"
-    ? Number(costs.shenBiesan?.cooldown) || 0
-    : action === "shen-haohao-activate"
-      ? Number(costs.shenHaohao?.cooldown) || 0
-    : action === "shen-jiangwen-activate"
-      ? Number(costs.shenJiangwen?.cooldown) || 0
-      : 0;
+  const cost = action === "jie-ranchen-invest" ? Number(investment) || 0 : 0;
   if (action === "jie-ranchen-invest") {
     const multiplier = Number(costs.jieRanchen?.winMultiplier) || 0;
     if (!window.confirm(`投资 ${cost} 钻石将公开锁定狗腿或闲家身份，并跳过叫庄。获胜额外获得 ${Math.round(cost * multiplier)} 钻石，确认投资吗？`)) return;
-  } else if (cost && !window.confirm(`重置${cooldown}轮冷却并发动${skillName}将消耗 ${cost} 钻石，确定继续吗？`)) return;
+  }
   try {
     await roomAction(`/api/rooms/${session.roomId}/board-hero-skill`, {
       method: "POST",
@@ -2171,7 +2149,6 @@ async function submitBoardHeroSkill(action, investment = null) {
         token: session.token,
         action,
         investment,
-        resetCooldown: action !== "jie-ranchen-invest" && cost > 0,
         requestId: requestId()
       })
     });
@@ -3102,7 +3079,7 @@ function uniqueFollowSuits(cards) {
 
 function isMainPlayCard(card, trumpSuit = currentTrumpSuit()) {
   if (!card) return false;
-  if (isComparePlayCard(card, trumpSuit)) return true;
+  if (isComparePlayCard(card, trumpSuit) || isShenBenleiTrump(card, trumpSuit)) return true;
   return card.type === "normal" && trumpSuit && card.suit === trumpSuit;
 }
 
@@ -3125,6 +3102,7 @@ function uniquePlaySuits(cards, trumpSuit = currentTrumpSuit()) {
 }
 
 function mainCardPower(card, trumpSuit = currentTrumpSuit()) {
+  if (isShenBenleiTrump(card, trumpSuit)) return 30;
   if (card.type === "normal" && card.suit === "H" && card.rank === "5") return 0;
   if (card.type === "normal" && card.suit === "D" && card.rank === "5") return 1;
   if (card.joker === "big") return 2;
@@ -3229,6 +3207,7 @@ function nonMainRankOrderValue(card, trumpSuit = currentTrumpSuit()) {
 
 function mainTractorOrderValue(card, trumpSuit = currentTrumpSuit()) {
   if (!card) return 99;
+  if (isShenBenleiTrump(card, trumpSuit)) return shenBenleiTractorOrderValue(card, trumpSuit);
   if (card.type === "normal" && trumpSuit && card.suit === trumpSuit && !isComparePlayCard(card, trumpSuit)) {
     const index = suitTractorOrderValue(card, trumpSuit);
     return index < 99 ? 8 + index : 99;
@@ -5060,7 +5039,6 @@ function renderHeroCardPreview(unit) {
               <h3>${escapeHtml(unit.skillName || "暂无技能")}</h3>
               <p>${escapeHtml(unit.skillDescription || "暂无技能说明")}</p>
             </div>
-            ${unit.rarity === "ssr" && owned ? `<p class="meta">当前技能 CD ${escapeHtml(owned.skillCooldown || 0)} 轮</p>` : ""}
             <p class="meta">开局从随机候选中选择英雄，不影响家园产出；已拥有英雄沿用实际星级。</p>
           </div>
         </div>
@@ -5403,7 +5381,6 @@ function renderCatalogUnit(unit) {
         <div class="hero-fragment-line">
           <span>专属碎片 <b>${owned ? escapeHtml(owned.exclusiveFragments || 0) : "—"}</b></span>
           ${unit.type === "hero" ? `<span>通用碎片 <b>${escapeHtml(heroHomeState.universalFragments || 0)}</b></span>` : ""}
-          ${unit.rarity === "ssr" && owned ? `<span>技能 CD <b>${escapeHtml(owned.skillCooldown || 0)} 轮</b></span>` : ""}
         </div>
       </div>
       ${renderAdvancementTasks(unit)}
@@ -6785,10 +6762,10 @@ function renderSetupCenter() {
         { label: "倒计时", value: setupCountdownTag(biesan.deadlineAt, " 后自动放弃") },
         { label: "技能选择", value: `${completedIds.length}/${eligibleIds.length}` }
       ])}
-      <div class="meta">多名神 · 瘪三可同时申请；全部完成后由服务端随机选 1 人成功。只有成功者在需要时支付 CD 重置费，技能结算完成后才进入其他卡牌阶段。</div>
+      <div class="meta">多名神 · 瘪三可同时申请；全部完成后由服务端随机选 1 人成功。所有人免费申请，技能结算完成后才进入其他卡牌阶段。</div>
       ${applicantNames.length ? `<div class="game-item-use-summary"><span>${escapeHtml(applicantNames.join("、"))} 已申请偷梁换柱</span></div>` : ""}
       <div class="row">
-        ${!isSpectating() && biesan.canChoose ? `<button type="button" data-action="shen-biesan-activate">${Number(biesan.cooldown) > 0 ? `花费 ${escapeHtml(biesan.cost || 0)} 钻石重置 CD 并申请` : "免费申请偷梁换柱"}</button><button type="button" class="secondary" data-action="shen-biesan-pass">不发动偷梁换柱</button>` : ""}
+        ${!isSpectating() && biesan.canChoose ? `<button type="button" data-action="shen-biesan-activate">免费申请偷梁换柱</button><button type="button" class="secondary" data-action="shen-biesan-pass">不发动偷梁换柱</button>` : ""}
         ${!isSpectating() && biesan.viewerCompleted ? `<span class="tag good">你已完成偷梁换柱选择</span>` : ""}
         ${isSpectating() || !biesan.viewerEligible ? `<span class="tag">等待符合条件的玩家完成选择</span>` : ""}
       </div>
@@ -6896,15 +6873,11 @@ function renderSetupCenter() {
 
   if (stage === "shen-haohao-skill") {
     const skill = state.boardHeroSkills?.shenHaohao || {};
-    const activationText = Number(skill.cooldown) > 0
-      ? `花费 ${escapeHtml(skill.cost || 0)} 钻石重置 CD 并发动`
-      : "免费发动";
+    const activationText = "免费发动";
     body = `
       ${renderSetupLines([
         { label: "当前阶段", value: "神 · 浩浩 · 丹书铁券" },
         { label: "倒计时", value: setupCountdownTag(skill.deadlineAt, " 后自动放弃") },
-        { label: "技能 CD", value: skill.viewerEligible ? `${escapeHtml(skill.cooldown || 0)} 轮` : "" },
-        { label: "重置费用", value: skill.viewerEligible && Number(skill.cooldown) > 0 ? `${escapeHtml(skill.cost || 0)} 钻石` : "" }
       ])}
       <div class="meta">发动后，本局按结算时的最终阵营回看整局拖五；只有你本人拖到最终队友的红五/方五不计入积分和统计。未被拖五友方的钻石属于独立被动，无需发动也会结算。</div>
       <div class="row">
@@ -7032,7 +7005,7 @@ function renderRoomActionConfirmDialog() {
   const resetting = pendingRoomAction === "reset";
   const title = resetting ? "确认重开房间？" : "确认解散房间？";
   const description = resetting
-    ? "当前牌局会立即作废，本局已使用的对局道具、英雄技能钻石和 CD 变化会返还；PVE 已消耗的体力不返还。所有玩家回到房间等待状态。"
+    ? "当前牌局会立即作废，本局已使用的对局道具和实际扣除的英雄技能钻石会返还；PVE 已消耗的体力不返还。所有玩家回到房间等待状态。"
     : "房间会立即解散，所有玩家和观战者都会离开，之后无法返回本房间。";
   return `
     <div class="modal-backdrop">
@@ -7503,9 +7476,7 @@ function renderBidFryDialog(type) {
   const fryDeadline = state.setup?.fry?.deadlineAt || "";
   const passLabel = isBid ? "过" : (setupCountdownText(fryDeadline, "）", "不炒（") || "不炒");
   const passCountdownAttrs = isBid ? "" : setupCountdownAttributes(fryDeadline, "）", "不炒（");
-  const jiangwenActivationText = Number(shenJiangwenSkill.cooldown) > 0
-    ? `花费 ${escapeHtml(shenJiangwenSkill.cost || 0)} 钻石重置 ${escapeHtml(shenJiangwenSkill.cooldown)} 轮 CD 并发动`
-    : "免费发动";
+  const jiangwenActivationText = "免费发动";
   return `
     <div class="modal-backdrop">
       <section class="modal-card" role="dialog" aria-modal="true" aria-label="${escapeHtml(title)}">
@@ -8848,7 +8819,7 @@ function isFixedRankCard(card) {
   if (card.type === "joker") return true;
   if (gameCardRank(card) === "2") return true;
   if (usesFinalTrumpOrder && isCounselor(card, trumpSuit)) return true;
-  if (usesFinalTrumpOrder && trumpSuit && card.suit === trumpSuit) return true;
+  if (usesFinalTrumpOrder && trumpSuit && (card.suit === trumpSuit || isShenBenleiTrump(card, trumpSuit))) return true;
   return (card.suit === "H" && card.rank === "5") || (card.suit === "D" && card.rank === "5");
 }
 
@@ -8945,7 +8916,7 @@ function cardCorner(card) {
       <span class="card-rank">${escapeHtml(card.rank)}</span>
       ${renderCardSuit(card)}
     </span>
-    ${card.rulesRank === "2" ? `<span class="card-rules-rank">代2</span>` : card.rulesRank === "LOW_2" ? `<span class="card-rules-rank muted">原2</span>` : ""}
+    ${isShenBenleiTrump(card, currentTrumpSuit()) ? `<span class="card-rules-rank">主6</span>` : card.rulesRank === "2" ? `<span class="card-rules-rank">代2</span>` : card.rulesRank === "LOW_2" ? `<span class="card-rules-rank muted">原2</span>` : ""}
   `;
 }
 
@@ -8968,7 +8939,7 @@ function displayCardSymbol(card) {
 function displayCardLabel(card) {
   if (!card) return "";
   if (card.type === "normal") {
-    const mark = card.rulesRank === "2" ? "（代2）" : card.rulesRank === "LOW_2" ? "（普通2）" : "";
+    const mark = isShenBenleiTrump(card, currentTrumpSuit()) ? "（最小主牌）" : card.rulesRank === "2" ? "（代2）" : card.rulesRank === "LOW_2" ? "（普通2）" : "";
     return `${displayCardSymbol(card)}${card.rank || ""}${mark}`;
   }
   return card.label || `${card.symbol || ""}${card.rank || ""}`;

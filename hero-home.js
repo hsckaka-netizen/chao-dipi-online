@@ -1,7 +1,7 @@
 export const HERO_HOME_RULES = Object.freeze({
-  version: "2026-10-28-v10",
+  version: "2026-10-29-v11",
   skillVersion: "2026-09-24-skill-v9",
-  boardSkillVersion: "2026-10-28-board-skill-v10",
+  boardSkillVersion: "2026-10-29-board-skill-v11",
   advancedScoreBonus: Object.freeze([1, 1.2, 1.5, 2, 3]),
   denghuangExchangeCount: Object.freeze([1, 1, 1, 1, 2]),
   judgmentVersion: "2026-10-28-judgment-v2",
@@ -39,9 +39,11 @@ export const HERO_HOME_RULES = Object.freeze({
   maxHoursPerTenLevels: 0.5,
   extraSlotUnlockLevel: 100,
   extraSlotProductionEfficiency: 0.5,
-  boardSkillCooldowns: Object.freeze([5, 4, 3, 2, 1]),
-  boardSkillResetCostPerRound: 500,
+  boardSkillCooldowns: Object.freeze([0, 0, 0, 0, 0]),
+  boardSkillResetCostPerRound: 0,
   yokoyamaUsesPerGame: Object.freeze([1, 1, 2, 2, 3]),
+  shenBenleiScoreBonus: Object.freeze([0.1, 0.2, 0.3, 0.4, 0.5]),
+  shenBenleiDiamonds: Object.freeze([20, 40, 60, 80, 100]),
   shenHaohaoFiveScoreReductionCap: Object.freeze([2, 4, 6, 8, 10]),
   shenHaohaoUndraggedTeammateDiamonds: Object.freeze([10, 15, 20, 25, 40]),
   jieDoudouDiamondsPerMatchingCard: Object.freeze([10, 15, 20, 25, 35]),
@@ -88,7 +90,11 @@ export const HOME_UNITS = Object.freeze([
   Object.freeze({
     id: "shen-biesan", name: "神 · 瘪三", namePrefix: "神", baseName: "瘪三", shortName: "瘪", type: "hero", rarity: "ssr", gender: "male", regionId: "boka", color: "#9f742c",
     cardImage: "/assets/heroes/shen-biesan-card-v2.png",
-    skillName: "偷梁换柱", skillDescription: "被动：对方阵营每被拖1点红五/方五积分，1～5星分别额外获得5/7/9/12/15钻石。主动：叫庄前若本人没有同花色成对2，可随机一个持有点数替代2成为本局比牌；CD为5/4/3/2/1轮。"
+    skillName: "偷梁换柱", skillDescription: "被动：对方阵营每被拖1点红五/方五积分，1～5星分别额外获得5/7/9/12/15钻石。主动：叫庄前若本人没有同花色成对2，可随机一个持有点数替代2成为本局比牌；无跨局CD，每局一次。"
+  }),
+  Object.freeze({
+    id: "shen-benlei", name: "神 · 奔雷", namePrefix: "神", baseName: "奔雷", shortName: "雷", type: "hero", rarity: "ssr", gender: "male", regionId: "boka", color: "#5968b0",
+    skillName: "雷动九天", skillDescription: "当6不是比牌时，与最终主花色同色的另一花色6仅对本人视为最小主牌，可参与拖拉机。本人本局用含6的牌赢过至少一轮时，1～5星额外获得0.1/0.2/0.3/0.4/0.5积分和20/40/60/80/100钻石，每局一次。"
   }),
   Object.freeze({
     id: "shen-yingwu", name: "神 · 鹦鹉", namePrefix: "神", baseName: "鹦鹉", shortName: "鹦", type: "hero", rarity: "ssr", gender: "male", regionId: "stage", color: "#16845b",
@@ -109,7 +115,7 @@ export const HOME_UNITS = Object.freeze([
   Object.freeze({
     id: "shen-jiangwen", name: "神 · 姜文", namePrefix: "神", baseName: "姜文", shortName: "姜", type: "hero", rarity: "ssr", gender: "male", regionId: "brick", color: "#4f5e52",
     cardImage: "/assets/heroes/shen-jiangwen-card-v2.png",
-    skillName: "釜底抽薪", skillDescription: "被动：本局每进行1次炒底，1～5星分别额外获得15/20/25/30/40钻石。主动：首次轮到本人炒底时可强制炒底1次，不提高炒底门槛；CD为5/4/3/2/1轮。"
+    skillName: "釜底抽薪", skillDescription: "被动：本局每进行1次炒底，1～5星分别额外获得15/20/25/30/40钻石。主动：首次轮到本人炒底时可强制炒底1次，不提高炒底门槛；无跨局CD，每局一次。"
   }),
   Object.freeze({
     id: "shen-haohao", name: "神 · 浩浩", namePrefix: "神", baseName: "浩浩", shortName: "浩", type: "hero", rarity: "ssr", gender: "male", regionId: "boka", color: "#557b9c",
@@ -135,7 +141,7 @@ export const HOME_UNITS = Object.freeze([
   Object.freeze({
     id: "yokoyama-yui", name: "横山由依", shortName: "横", type: "hero", rarity: "ssr", gender: "female", regionId: "stage", color: "#bd4d83",
     cardImage: "/assets/heroes/yokoyama-yui-card-v2.png",
-    skillName: "斗转星移", skillDescription: "被动：本局每为友方贴出40分，1～5星分别额外获得15/20/25/30/40钻石。主动：叫庄结束后可将全桌座位重新随机，每局可发动1/1/2/2/3次，CD为0轮。"
+    skillName: "斗转星移", skillDescription: "被动：本局每为友方贴出40分，1～5星分别额外获得15/20/25/30/40钻石。主动：叫庄结束后可将全桌座位重新随机，每局可发动1/1/2/2/3次，无跨局CD。"
   }),
   Object.freeze({
     id: "jie-ranchen", name: "界 · 然陈", namePrefix: "界", baseName: "然陈", shortName: "然", type: "hero", rarity: "ssr", gender: "female", regionId: "stage", color: "#b75078",
@@ -220,7 +226,8 @@ export function missingDailyHeroTaskSlots(existingTasks = []) {
 
 export function boardHeroSkillState(stars = 1, cooldownValue = 0, unitId = "shen-biesan") {
   const normalizedStarValue = normalizedStars(stars);
-  const cooldown = Math.max(0, Math.trunc(Number(cooldownValue) || 0));
+  // Legacy cooldown values never block a current SSR skill.
+  const cooldown = 0;
   const isYokoyama = unitId === "yokoyama-yui";
   const cooldownAfterUse = isYokoyama ? 0 : HERO_HOME_RULES.boardSkillCooldowns[normalizedStarValue - 1];
   const resetCost = cooldown * HERO_HOME_RULES.boardSkillResetCostPerRound;
@@ -461,7 +468,7 @@ export function createBattleHeroSnapshot(unitId, stars = 1, cooldownValue = 0) {
     stars: normalizedStars(stars),
     skillVersion: unit.rarity === "ssr" ? HERO_HOME_RULES.boardSkillVersion : HERO_HOME_RULES.skillVersion
   };
-  if (unit.rarity === "ssr" && unit.id !== "jie-doudou" && unit.id !== "shen-haohao" && unit.id !== "jie-ranchen" && !unit.advancementFrom) {
+  if (unit.rarity === "ssr" && unit.id !== "jie-doudou" && unit.id !== "shen-haohao" && unit.id !== "jie-ranchen" && unit.id !== "shen-benlei" && !unit.advancementFrom) {
     snapshot.paidSkill = boardHeroSkillState(stars, cooldownValue, unit.id);
   }
   return snapshot;
@@ -525,6 +532,20 @@ export function calculateHeroSkillReward({
   if (!snapshot?.heroId || !playerId || !playerResult) return null;
   const stars = normalizedStars(snapshot.stars);
   const history = Array.isArray(trickHistory) ? trickHistory : [];
+
+  if (snapshot.heroId === "shen-benlei") {
+    const matched = history.some((trick) => trick?.winnerId === playerId
+      && (trick.plays || []).some((play) => play?.playerId === playerId
+        && (play.cards || []).some((card) => card?.type === "normal" && card.rank === "6")));
+    const amount = matched ? HERO_HOME_RULES.shenBenleiDiamonds[stars - 1] : 0;
+    const scoreBonus = matched ? HERO_HOME_RULES.shenBenleiScoreBonus[stars - 1] : 0;
+    return {
+      ...baseSkillResult(snapshot, Number(matched), 1, amount,
+        `${matched ? "本人用含6的牌赢过一轮" : "本人未用含6的牌赢过一轮"}；额外${scoreBonus}积分、${amount}钻石，整局最多一次`),
+      rulesVersion: HERO_HOME_RULES.boardSkillVersion,
+      scoreBonus
+    };
+  }
 
   if (snapshot.heroId === "jie-ranchen") {
     const use = (Array.isArray(boardHeroUses) ? boardHeroUses : []).find((item) => item.playerId === playerId && item.heroId === "jie-ranchen");

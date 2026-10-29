@@ -1,3 +1,5 @@
+import { isShenBenleiTrump } from "./public/replacement-rank-rules.js";
+
 function cardColor(card) {
   if (card?.suit === "H" || card?.suit === "D") return "red";
   if (card?.suit === "S" || card?.suit === "C") return "black";
@@ -7,7 +9,7 @@ function cardColor(card) {
 function isMainPlayCard(card, trumpSuit) {
   if (!card) return false;
   if (card.type === "joker") return true;
-  if (card.rank === "2") return true;
+  if (isShenBenleiTrump(card, trumpSuit) || (card.rulesRank || card.rank) === "2") return true;
   if ((card.suit === "H" || card.suit === "D") && card.rank === "5") return true;
   if (card.rank === "3" && trumpSuit && cardColor(card) === cardColor({ suit: trumpSuit })) return true;
   return Boolean(card.type === "normal" && trumpSuit && card.suit === trumpSuit);

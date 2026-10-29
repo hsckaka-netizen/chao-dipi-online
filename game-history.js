@@ -237,6 +237,10 @@ const MIGRATIONS = [
   {
     version: 41,
     path: fileURLToPath(new URL("./db/migrations/041_game_hero_hires.sql", import.meta.url))
+  },
+  {
+    version: 42,
+    path: fileURLToPath(new URL("./db/migrations/042_remove_ssr_cooldowns.sql", import.meta.url))
   }
 ];
 const HISTORY_ENABLED = String(process.env.GAME_HISTORY_ENABLED || "").toLowerCase() === "true";
@@ -1968,45 +1972,6 @@ async function saveWarEffortGameRewards(client, record) {
   return outcomes;
 }
 
-async function settleBoardHeroCooldown(client, record) {
-  const uses = Array.isArray(record.boardHeroEffects?.uses) ? record.boardHeroEffects.uses : [];
-  for (const player of record.players) {
-    const unitId = player.battleHeroSnapshot?.heroId;
-    const rewardIneligibleForNonEnergyReason = player.diamondReward?.status === "ineligible"
-      && !["insufficient-energy", "energy-unavailable"].includes(player.diamondReward?.reason);
-    if (!player.accountId || player.battleHeroSnapshot?.hired || rewardIneligibleForNonEnergyReason || !["shen-biesan", "shen-haohao", "shen-jiangwen"].includes(unitId)) continue;
-    const existing = await client.query(
-      `SELECT game_id FROM cdp_hero_cooldown_settlements
-       WHERE game_id = $1::uuid AND account_id = $2::uuid AND unit_id = $3`,
-      [record.gameId, player.accountId, unitId]
-    );
-    if (existing.rows[0]) continue;
-    const owned = await client.query(
-      `SELECT skill_cooldown FROM cdp_hero_units
-       WHERE account_id = $1::uuid AND unit_id = $2
-       FOR UPDATE`,
-      [player.accountId, unitId]
-    );
-    if (!owned.rows[0]) continue;
-    const cooldownBefore = Math.max(0, Number(owned.rows[0].skill_cooldown) || 0);
-    const usedInGame = uses.some((use) => use?.accountId === player.accountId && use?.heroId === unitId);
-    const cooldownAfter = usedInGame ? cooldownBefore : Math.max(0, cooldownBefore - 1);
-    if (cooldownAfter !== cooldownBefore) {
-      await client.query(
-        `UPDATE cdp_hero_units SET skill_cooldown = $3, updated_at = now()
-         WHERE account_id = $1::uuid AND unit_id = $2`,
-        [player.accountId, unitId, cooldownAfter]
-      );
-    }
-    await client.query(
-      `INSERT INTO cdp_hero_cooldown_settlements (
-        game_id, account_id, unit_id, cooldown_before, cooldown_after, used_in_game
-      ) VALUES ($1::uuid, $2::uuid, $3, $4, $5, $6)`,
-      [record.gameId, player.accountId, unitId, cooldownBefore, cooldownAfter, usedInGame]
-    );
-  }
-}
-
 async function saveGameRecord(record) {
   if (!pool) throw new Error("数据库尚未连接");
   const client = await pool.connect();
@@ -2146,7 +2111,6 @@ async function saveGameRecord(record) {
     await refundSuccessfulJudgmentEntries(client, record);
     const diamondRewards = await saveDiamondRewards(client, record);
     const warEffortRewards = await saveWarEffortGameRewards(client, record);
-    await settleBoardHeroCooldown(client, record);
     await client.query("COMMIT");
     status.connected = true;
     status.lastSavedAt = new Date().toISOString();
@@ -2604,7 +2568,7 @@ function publicOwnedHeroUnit(row) {
     ...unit,
     stars,
     exclusiveFragments: Number(row.exclusive_fragments) || 0,
-    skillCooldown: Math.max(0, Number(row.skill_cooldown) || 0),
+    skillCooldown: 0,
     upgradeCost: starUpgradeCost(unit.id, stars),
     obtainedAt: row.obtained_at ? new Date(row.obtained_at).toISOString() : null
   };
@@ -3448,8 +3412,15 @@ async function chargeBoardHeroSkillFromClient(client, accountId, gameIdValue, un
     const paidState = isRanchenInvestment
       ? { cooldown: 0, cooldownAfterUse: null, cost: investment }
       : boardHeroSkillState(snapshotStars, owned.rows[0].skill_cooldown, unitId);
-    if (!isRanchenInvestment && paidState.cooldown > 0 && !effectData.resetCooldown) {
-      throw commerceError(`技能还需冷却${paidState.cooldown}轮，可花费${paidState.resetCost}钻石重置`, 409);
+    // The ownership/account lock also serializes attempts using different request IDs.
+    const used = await client.query(
+      `SELECT count(*) AS used_count FROM cdp_game_hero_skill_uses
+       WHERE game_id = $1::uuid AND account_id = $2::uuid AND unit_id = $3 AND refunded_at IS NULL`,
+      [gameId, accountId, unitId]
+    );
+    const maxUses = isRanchenInvestment ? 1 : paidState.maxUsesPerGame;
+    if ((Number(used.rows[0]?.used_count) || 0) >= maxUses) {
+      throw commerceError("本局技能发动次数已用完", 409);
     }
     const storedEffectData = {
       ...effectData,
@@ -3538,7 +3509,7 @@ export async function refundBoardHeroSkillUses(gameIdValue) {
       if (use.cooldown_before != null && use.effect_data?.hireGameId) {
         await client.query(
           `UPDATE cdp_game_hero_hires SET skill_cooldown = $3 WHERE game_id = $1::uuid AND account_id = $2::uuid`,
-          [use.effect_data.hireGameId, use.account_id, Number(use.cooldown_before) || 0]
+          [use.effect_data.hireGameId, use.account_id, 0]
         );
       } else if (use.cooldown_before != null) {
         const restored = await client.query(
@@ -3546,7 +3517,7 @@ export async function refundBoardHeroSkillUses(gameIdValue) {
            SET skill_cooldown = $3, updated_at = now()
            WHERE account_id = $1::uuid AND unit_id = $2
            RETURNING skill_cooldown`,
-          [use.account_id, use.unit_id, Number(use.cooldown_before) || 0]
+          [use.account_id, use.unit_id, 0]
         );
         if (!restored.rows[0]) throw commerceError("英雄技能冷却恢复失败", 409);
       } else if (use.heat_before != null) {
@@ -5390,4 +5361,4 @@ async function claimHeroAdvancementFromClient(client, accountId, definition) {
 }
 
 export const __heroAdvancementStorageTesting = { settleHeroAdvancement, claimHeroAdvancementFromClient };
-export const __heroHireStorageTesting = { chargeBoardHeroSkillFromClient, settleBoardHeroCooldown };
+export const __heroHireStorageTesting = { chargeBoardHeroSkillFromClient };
