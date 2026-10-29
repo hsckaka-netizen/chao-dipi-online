@@ -94,6 +94,7 @@ export const HOME_UNITS = Object.freeze([
   }),
   Object.freeze({
     id: "shen-benlei", name: "神 · 奔雷", namePrefix: "神", baseName: "奔雷", shortName: "雷", type: "hero", rarity: "ssr", gender: "male", regionId: "boka", color: "#5968b0",
+    cardImage: "/assets/heroes/shen-benlei-card-v1.png",
     skillName: "雷动九天", skillDescription: "当6不是比牌时，与最终主花色同色的另一花色6仅对本人视为最小主牌，可参与拖拉机。本人本局用含6的牌赢过至少一轮时，1～5星额外获得0.1/0.2/0.3/0.4/0.5积分和20/40/60/80/100钻石，每局一次。"
   }),
   Object.freeze({

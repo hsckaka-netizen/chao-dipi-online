@@ -1,4 +1,8 @@
 export const ASSET_VERSIONS = Object.freeze({
+  "/assets/heroes/shen-benlei-card-v1.png": "31dbb9971b3b",
+  "/assets/heroes/shen-benlei-card-v1.webp": "0fe545c57279",
+  "/assets/heroes/shen-benlei-card-v1-medium.webp": "f4fdfb7436c1",
+  "/assets/heroes/shen-benlei-card-v1-thumb.webp": "5fa18cb72138",
   "/assets/heroes/shen-yingwu-card-v2.webp": "6da404bbaa67",
   "/assets/heroes/shen-yingwu-card-v2.png": "dba052387849",
   "/assets/heroes/shen-yingwu-card-v2-thumb.webp": "42adff9579d4",
