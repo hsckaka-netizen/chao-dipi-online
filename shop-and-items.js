@@ -225,13 +225,13 @@ export function applyHeroBoardScoreAdjustments(playerResults, { teamTransfers = 
   }));
   const byId = new Map(normalized.map((player) => [player.playerId, player]));
   const adjustments = [];
-  teamTransfers.forEach(({ sourcePlayerId, sourceTeam, amount }) => {
+  teamTransfers.forEach(({ sourcePlayerId, sourceTeam, amount, playerScoreDeltas }) => {
     const source = byId.get(sourcePlayerId);
     const cents = Math.max(0, Math.round((Number(amount) || 0) * 100));
     if (!source || !cents) return;
     const ownIds = normalized.filter((player) => player.team === sourceTeam).sort((a, b) => a.seatIndex - b.seatIndex).map((player) => player.playerId);
     const opponentIds = normalized.filter((player) => player.team !== sourceTeam).sort((a, b) => a.seatIndex - b.seatIndex).map((player) => player.playerId);
-    [...distributeCents(cents, ownIds), ...distributeCents(-cents, opponentIds)].forEach(({ recipientId, cents: delta }) => {
+    (playerScoreDeltas || [...distributeCents(cents, ownIds), ...distributeCents(-cents, opponentIds)]).forEach(({ recipientId, cents: delta }) => {
       const recipient = byId.get(recipientId);
       if (!recipient) return;
       recipient.gameScore = Math.round((recipient.gameScore + delta / 100) * 100) / 100;

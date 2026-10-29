@@ -2133,7 +2133,7 @@ async function completeGameItemStage() {
   }
 }
 
-async function submitBoardHeroSkill(action, investment = null) {
+async function submitBoardHeroSkill(action, investment = null, targetPlayerId = null) {
   if (!session || isSpectating()) return;
   const costs = state?.boardHeroSkills || {};
   const cost = action === "jie-ranchen-invest" ? Number(investment) || 0 : 0;
@@ -2149,21 +2149,28 @@ async function submitBoardHeroSkill(action, investment = null) {
         token: session.token,
         action,
         investment,
+        targetPlayerId,
         requestId: requestId()
       })
     });
     if (cost) {
       ensureShopState(true);
     }
-    if (action.startsWith("shen-biesan") || action.startsWith("shen-haohao") || action.startsWith("shen-jiangwen")) ensureHeroHomeState(true);
-    const message = action === "jie-ranchen-pass" ? "已放弃奇货可居"
+    if (action.startsWith("shen-biesan") || action.startsWith("shen-haohao") || action.startsWith("shen-jiangwen") || action.startsWith("shen-gelu")) ensureHeroHomeState(true);
+    if (action === "shen-jiangwen-transfer") {
+      activeDialog = null;
+      selectedCardIds.clear();
+      throwDraftComponents = null;
+    }
+    const message = action === "shen-jiangwen-transfer" ? "已移交本轮首出权" : action === "shen-gelu-activate" ? "釜底抽薪已发动，请扣回底牌"
+      : action === "jie-ranchen-pass" ? "已放弃奇货可居"
       : action === "jie-ranchen-invest" ? "奇货可居已发动，身份已公开锁定"
       : action === "shen-biesan-pass" ? "已放弃偷梁换柱"
       : action === "shen-haohao-pass" ? "已放弃丹书铁券"
         : action === "shen-haohao-activate" ? "丹书铁券已发动，本局你不会拖到最终队友的红五/方五"
       : action === "yokoyama-pass" ? (costs.yokoyama?.viewerCandidatePlayerIds ? "已锁定候选座位" : "已放弃斗转星移")
         : action === "yokoyama-activate" ? "已生成新的候选座位；最终抽取前不会改变全桌座位"
-          : `已提交${skillName}`;
+          : "已提交英雄技能操作";
     setMessage(message);
   } catch (error) {
     setMessage(error.message, true);
@@ -3423,6 +3430,21 @@ function renderAutoPlayMark(player) {
     : "";
 }
 
+function renderJiangwenTransferControl() {
+  if (isSpectating() || !state?.boardHeroSkills?.shenJiangwen?.canActivate) return "";
+  return `<button type="button" class="secondary" data-action="open-jiangwen-transfer">推贤让能 · 移交首出权</button>`;
+}
+
+function renderJiangwenTransferDialog() {
+  const targets = new Set(state.boardHeroSkills?.shenJiangwen?.targetPlayerIds || []);
+  return `<div class="modal-backdrop"><section class="modal-card" role="dialog" aria-modal="true" aria-label="移交首出权">
+    <div class="section-head"><h2>推贤让能</h2><button type="button" class="secondary" data-action="close-dialog">取消</button></div>
+    <p>选择一名其他玩家，由其领出本轮第一手牌。每局只能移交一次，本次计入丢失首出权次数。</p>
+    <div class="dialog-actions">${(state.players || []).filter((player) => targets.has(player.id)).map((player) =>
+      `<button type="button" data-action="shen-jiangwen-transfer" data-target-player-id="${escapeHtml(player.id)}">移交给 ${escapeHtml(player.name)}</button>`).join("")}</div>
+  </section></div>`;
+}
+
 function renderTauntControl() {
   if (isSpectating() || state?.stage !== "playing") return "";
   return `
@@ -3480,6 +3502,7 @@ function renderHandControls(action) {
           <button type="button" data-action="confirm-throw" ${action.throwEnabled ? "" : "disabled"}>确认甩牌</button>
           <button type="button" class="secondary" data-action="cancel-throw">取消</button>
           ${renderAutoPlayControl()}
+          ${renderJiangwenTransferControl()}
           ${renderTauntControl()}
           ${renderGameItemControl()}
           <span class="action-reason">${escapeHtml(reason)}</span>
@@ -3498,6 +3521,7 @@ function renderHandControls(action) {
         <button type="button" data-action="${action.action}" ${action.enabled ? "" : "disabled"}>${escapeHtml(action.label)}</button>
         ${throwButton}
         ${renderAutoPlayControl()}
+        ${renderJiangwenTransferControl()}
         ${renderTauntControl()}
         ${renderGameItemControl()}
         <span class="action-reason">${escapeHtml(reason)}</span>
@@ -6980,6 +7004,7 @@ function temporarilyDismissActionDialog(delay = 900) {
 }
 
 function renderActiveDialog() {
+  if (activeDialog === "jiangwen-transfer" && !state.boardHeroSkills?.shenJiangwen?.canActivate) activeDialog = null;
   if (activeDialog === "items" && (!state.gameItems?.canUse || isSpectating())) activeDialog = null;
   if (activeDialog === "battle-hero") {
     const preview = renderBattleHeroPreview();
@@ -6991,6 +7016,7 @@ function renderActiveDialog() {
   if (activeDialog === "fry" && viewerCanFry()) return renderBidFryDialog("fry");
   if (activeDialog === "room-action-confirm" && pendingRoomAction) return renderRoomActionConfirmDialog();
   if (activeDialog === "items" && state.gameItems?.canUse && !isSpectating()) return renderGameItemsDialog();
+  if (activeDialog === "jiangwen-transfer" && !isSpectating()) return renderJiangwenTransferDialog();
   if (activeDialog === "taunts" && state.stage === "playing" && !isSpectating()) return renderTauntDialog();
   if (activeDialog === "kitty" && state.canViewKitty) return renderKittyDialog();
   if (activeDialog === "history") return renderHistoryDialog();
@@ -7465,7 +7491,7 @@ function renderResultPanel() {
 
 function renderBidFryDialog(type) {
   const isBid = type === "bid";
-  const shenJiangwenSkill = state.boardHeroSkills?.shenJiangwen || {};
+  const shenGeluSkill = state.boardHeroSkills?.shenGelu || {};
   const title = isBid ? (state.setup?.bid ? "抢主" : "叫主") : "炒底";
   const colorfulOrder = isBid ? "" : colorfulFryOrderText();
   const validation = validateBidLikeSelection(type);
@@ -7476,7 +7502,7 @@ function renderBidFryDialog(type) {
   const fryDeadline = state.setup?.fry?.deadlineAt || "";
   const passLabel = isBid ? "过" : (setupCountdownText(fryDeadline, "）", "不炒（") || "不炒");
   const passCountdownAttrs = isBid ? "" : setupCountdownAttributes(fryDeadline, "）", "不炒（");
-  const jiangwenActivationText = "免费发动";
+  const geluActivationText = "免费发动";
   return `
     <div class="modal-backdrop">
       <section class="modal-card" role="dialog" aria-modal="true" aria-label="${escapeHtml(title)}">
@@ -7497,7 +7523,7 @@ function renderBidFryDialog(type) {
         </div>
         <div class="dialog-actions">
           ${renderGameItemControl()}
-          ${!isBid && shenJiangwenSkill.canActivate ? `<button type="button" data-action="shen-jiangwen-activate">英雄技能 · 釜底抽薪（${jiangwenActivationText}）</button>` : ""}
+          ${!isBid && shenGeluSkill.canActivate ? `<button type="button" data-action="shen-gelu-activate">英雄技能 · 釜底抽薪（${geluActivationText}）</button>` : ""}
           ${canPass ? `<button type="button" class="secondary" data-action="${passAction}" ${passCountdownAttrs}>${escapeHtml(passLabel)}</button>` : `<button type="button" class="secondary" data-action="close-dialog">过</button>`}
           <button type="button" data-action="${isBid ? "bid-selected" : "fry-selected"}" ${validation.ok ? "" : "disabled"}>${escapeHtml(title)}</button>
           ${!validation.ok && validation.reason ? `<span class="action-reason">${escapeHtml(validation.reason)}</span>` : ""}
@@ -7940,7 +7966,7 @@ function renderSetupActionTrail(actions, cardSkin = "") {
           <span>${escapeHtml(action.kind === "score"
             ? `${action.score}分`
             : action.directSkill
-              ? "神姜文炒底"
+              ? `${action.heroId === "shen-gelu" ? "神格鲁" : "神姜文"}炒底`
               : action.direct
                 ? `${action.suitName}主`
                 : `${action.count}张${action.suitName}2${action.random ? " 随机" : ""}`)}</span>
@@ -8448,7 +8474,7 @@ function setupHistoryEntries(source) {
         kind: "fry",
         label: "炒底",
         at: action.at || null,
-        text: `${action.playerName || historyPlayerName(source, action.playerId)} 使用神 · 姜文发动${action.skillName || "釜底抽薪"}炒底`
+        text: `${action.playerName || historyPlayerName(source, action.playerId)} 使用${action.heroId === "shen-gelu" ? "神 · 格鲁" : "神 · 姜文"}发动${action.skillName || "釜底抽薪"}炒底`
       });
       return;
     }
@@ -9313,7 +9339,7 @@ const mutatingActions = new Set([
   "claim-hero-advancement", "jie-denghuang-draw", "jie-denghuang-bury", "jie-denghuang-pass", "jie-jiangzha-select", "jie-jiangzha-pass",
   "purchase-energy", "claim-achievement", "equip-title",
   "shen-biesan-activate", "shen-biesan-pass", "jie-ranchen-invest", "jie-ranchen-pass", "yokoyama-activate", "yokoyama-pass",
-  "shen-haohao-activate", "shen-haohao-pass", "shen-jiangwen-activate"
+  "shen-haohao-activate", "shen-haohao-pass", "shen-gelu-activate", "shen-jiangwen-transfer"
 ]);
 
 function isRapidMutatingAction(action) {
@@ -9755,7 +9781,12 @@ document.addEventListener("click", (event) => {
   if (action === "yokoyama-pass") submitBoardHeroSkill(action);
   if (action === "shen-haohao-activate") submitBoardHeroSkill(action);
   if (action === "shen-haohao-pass") submitBoardHeroSkill(action);
-  if (action === "shen-jiangwen-activate") submitBoardHeroSkill(action);
+  if (action === "shen-gelu-activate") submitBoardHeroSkill(action);
+  if (action === "open-jiangwen-transfer") {
+    activeDialog = "jiangwen-transfer";
+    render();
+  }
+  if (action === "shen-jiangwen-transfer") submitBoardHeroSkill(action, null, event.target.closest("[data-target-player-id]")?.dataset.targetPlayerId);
   if (action === "send-taunt") {
     sendTaunt(event.target.closest("[data-preset-id]")?.dataset.presetId || "");
   }

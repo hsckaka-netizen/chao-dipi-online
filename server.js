@@ -1,3 +1,4 @@
+import { canTransferLead, countLeadLosses } from "./hero-lead-control.js";
 import { createJudgmentSession, beginJudgmentTarget, finishJudgmentTarget, submitJudgment, advanceJudgments, judgmentSnapshot, applyJudgmentOutcomes } from "./shen-yingwu.js";
 import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
@@ -56,6 +57,7 @@ import {
 import { availableRanchenRoles, lockedDoglegIds, lockedNonBankerIds } from "./hero-role-lock.js";
 import {
   allocateBankerTeamScores,
+  draggedFiveReductionTransfers,
   BANKER_SCORE_MODE_AVERAGE,
   BANKER_SCORE_MODE_REMAINDER,
   bankerScoreModeName,
@@ -1085,7 +1087,7 @@ function emptyBoardHeroSkills() {
       activatedPlayerIds: [],
       deadlineAt: null
     },
-    shenJiangwen: {
+    shenGelu: {
       offeredPlayerIds: [],
       directPlayerId: null
     },
@@ -2063,7 +2065,7 @@ function boardHeroSkillsSnapshot(room, viewer = null) {
   const viewerCompletedYokoyama = Boolean(viewer && yokoyamaCompletedPlayerIds.includes(viewer.id));
   const biesanSkill = viewer?.battleHeroSnapshot?.heroId === "shen-biesan" ? viewer.battleHeroSnapshot.paidSkill : null;
   const haohaoSkill = viewer?.battleHeroSnapshot?.heroId === "shen-haohao" ? viewer.battleHeroSnapshot.paidSkill : null;
-  const jiangwenSkill = viewer?.battleHeroSnapshot?.heroId === "shen-jiangwen" ? viewer.battleHeroSnapshot.paidSkill : null;
+  const geluSkill = viewer?.battleHeroSnapshot?.heroId === "shen-gelu" ? viewer.battleHeroSnapshot.paidSkill : null;
   const yokoyamaSkill = viewerIsYokoyamaEligible ? viewer?.battleHeroSnapshot?.paidSkill : null;
   const yokoyamaUsedCount = (room.boardHeroEffects?.uses || [])
     .filter((use) => use.playerId === viewer?.id && use.heroId === "yokoyama-yui").length;
@@ -2135,10 +2137,17 @@ function boardHeroSkillsSnapshot(room, viewer = null) {
       activatedPlayerIds: [...shenHaohao.activatedPlayerIds]
     },
     shenJiangwen: {
-      canActivate: shenJiangwenCanActivate(room, viewer),
-      cost: jiangwenSkill?.cost || 0,
-      cooldown: jiangwenSkill?.cooldown || 0,
-      cooldownAfterUse: jiangwenSkill?.cooldownAfterUse || 0
+      canActivate: shenJiangwenCanTransfer(room, viewer),
+      targetPlayerIds: shenJiangwenCanTransfer(room, viewer)
+        ? room.players.filter((target) => target.id !== viewer.id && target.hand?.length).map((target) => target.id) : [],
+      lossCount: viewer?.battleHeroSnapshot?.heroId === "shen-jiangwen"
+        ? countLeadLosses(room.trickHistory, room.boardHeroEffects?.uses, viewer.id) : 0
+    },
+    shenGelu: {
+      canActivate: shenGeluCanActivate(room, viewer),
+      cost: geluSkill?.cost || 0,
+      cooldown: geluSkill?.cooldown || 0,
+      cooldownAfterUse: geluSkill?.cooldownAfterUse || 0
     },
     uses: (room.boardHeroEffects?.uses || []).map((use) => ({
       playerId: use.playerId,
@@ -3094,21 +3103,19 @@ function finishGame(room, completedTrick) {
       doudouNumber: doudouState?.number,
       doudouMatchingCards: doudouState?.matchingCards,
       doudouBottomMatches,
-      shenJiangwenUseCount: (room.boardHeroEffects?.uses || []).filter((use) => use.heroId === "shen-jiangwen").length,
+      shenJiangwenUseCount: (room.boardHeroEffects?.uses || []).filter((use) => use.heroId === "shen-jiangwen" && use.effect?.leadTransfer).length,
+      shenJiangwenLeadLosses: countLeadLosses(room.trickHistory, room.boardHeroEffects?.uses, playerResult.playerId),
       haohaoDraggedTeammateFives: draggedTeammateFives.count,
       haohaoDraggedTeammateFivePenalty: draggedTeammateFives.penalty,
       haohaoUndraggedTeammates: undraggedTeammates
     });
   });
   const heroScoreAdjusted = applyHeroBoardScoreAdjustments(room.result.playerResults, {
-    teamTransfers: room.result.playerResults.flatMap((playerResult) => {
-      const roomPlayer = room.players.find((player) => player.id === playerResult.playerId);
-      return roomPlayer?.battleHeroSnapshot?.heroId === "shen-haohao" && playerResult.heroSkillReward?.scoreBonus
-        ? [{ sourcePlayerId: playerResult.playerId, sourceTeam: playerResult.team, amount: playerResult.heroSkillReward.scoreBonus }]
-        : [];
+    teamTransfers: draggedFiveReductionTransfers(room.result.playerResults, {
+      idleEachScore, bankerId: room.bankerId, mode: bankerScores.mode
     }),
     personalBonuses: room.result.playerResults.flatMap((playerResult) => (
-      playerResult.heroSkillReward?.scoreBonus && ["jie-doudou", "jie-jiangzha", "jie-denghuang", "shen-benlei"].includes(playerResult.heroSkillReward?.hero?.heroId)
+      playerResult.heroSkillReward?.scoreBonus && ["jie-doudou", "jie-jiangzha", "jie-denghuang", "shen-benlei", "shen-jiangwen"].includes(playerResult.heroSkillReward?.hero?.heroId)
         ? [{ playerId: playerResult.playerId, amount: playerResult.heroSkillReward.scoreBonus }]
         : []
     ))
@@ -3801,30 +3808,50 @@ async function submitShenHaohaoSkillChoice(room, player, activate, resetCooldown
   return { ok: true };
 }
 
-function shenJiangwenCanActivate(room, player) {
-  const state = room.boardHeroSkills.shenJiangwen;
+// Eligibility and the single use are checked synchronously against the frozen deal.
+// This free play action has no wallet dependency and cannot stall a trick.
+function shenJiangwenCanTransfer(room, player) {
+  return Boolean(playerHasBoardHero(room, player, "shen-jiangwen")
+    && canTransferLead(room, player.id));
+}
+
+function transferShenJiangwenLead(room, player, targetPlayerId) {
+  if (!shenJiangwenCanTransfer(room, player)) return { error: "须先赢得过一轮，且只能在本人领出新一轮牌之前移交首出权；每局一次", status: 409 };
+  const target = room.players.find((candidate) => candidate.id === targetPlayerId);
+  if (!target || target.id === player.id || !target.hand?.length) return { error: "请选择一名仍有手牌的其他玩家", status: 400 };
+  clearAiPlayTimer(room);
+  recordBoardHeroSkillUse(room, player, "shen-jiangwen", { cost: 0, cooldownBefore: 0, cooldownAfter: 0 }, {
+    leadTransfer: true, targetPlayerId: target.id, trickNumber: room.currentTrick.number
+  });
+  room.currentTrick.leaderId = target.id;
+  addEvent(room, `${player.name} 发动推贤让能，将第${room.currentTrick.number}轮首出权移交给${target.name}`);
+  return { ok: true };
+}
+
+function shenGeluCanActivate(room, player) {
+  const state = room.boardHeroSkills.shenGelu;
   return Boolean(
     room.stage === "frying"
     && room.setup.fry?.currentPlayerId === player?.id
-    && playerHasBoardHero(room, player, "shen-jiangwen")
+    && playerHasBoardHero(room, player, "shen-gelu")
     && !state.offeredPlayerIds.includes(player.id)
   );
 }
 
-function completeShenJiangwenOffer(room, player) {
-  if (!playerHasBoardHero(room, player, "shen-jiangwen")) return;
-  const offered = room.boardHeroSkills.shenJiangwen.offeredPlayerIds;
+function completeShenGeluOffer(room, player) {
+  if (!playerHasBoardHero(room, player, "shen-gelu")) return;
+  const offered = room.boardHeroSkills.shenGelu.offeredPlayerIds;
   if (!offered.includes(player.id)) offered.push(player.id);
 }
 
-async function activateShenJiangwenSkill(room, player, requestId, resetCooldown = false) {
-  if (!shenJiangwenCanActivate(room, player)) return { error: "釜底抽薪只能在首次轮到本人炒底时发动", status: 409 };
-  const payment = await chargeRoomBoardHeroSkill(
+async function activateShenGeluSkill(room, player, requestId, resetCooldown = false, charge = chargeRoomBoardHeroSkill) {
+  if (!shenGeluCanActivate(room, player)) return { error: "釜底抽薪只能在首次轮到本人炒底时发动", status: 409 };
+  const payment = await charge(
     room,
     player.accountId,
     room.gameRecordId,
-    "shen-jiangwen",
-    requestId || `shen-jiangwen:${room.gameRecordId}:${player.id}`,
+    "shen-gelu",
+    requestId || `shen-gelu:${room.gameRecordId}:${player.id}`,
     {
       directFry: true,
       resetCooldown: Boolean(resetCooldown),
@@ -3832,14 +3859,14 @@ async function activateShenJiangwenSkill(room, player, requestId, resetCooldown 
     }
   );
   // A concurrent retry may have completed the effect while payment was awaited.
-  if (!shenJiangwenCanActivate(room, player)) return { error: "本局已完成釜底抽薪操作", status: 409 };
-  completeShenJiangwenOffer(room, player);
-  recordBoardHeroSkillUse(room, player, "shen-jiangwen", payment, { directFry: true });
+  if (!shenGeluCanActivate(room, player)) return { error: "本局已完成釜底抽薪操作", status: 409 };
+  completeShenGeluOffer(room, player);
+  recordBoardHeroSkillUse(room, player, "shen-gelu", payment, { directFry: true });
   const skillAction = {
     actionId: id(6),
     playerId: player.id,
     directSkill: true,
-    heroId: "shen-jiangwen",
+    heroId: "shen-gelu",
     skillName: player.battleHeroSnapshot?.skillName || "釜底抽薪",
     cards: [],
     at: now()
@@ -3850,10 +3877,10 @@ async function activateShenJiangwenSkill(room, player, requestId, resetCooldown 
   room.kitty = [];
   room.setup.fry.directSkillPendingPlayerId = player.id;
   room.setup.fry.deadlineAt = null;
-  room.boardHeroSkills.shenJiangwen.directPlayerId = player.id;
+  room.boardHeroSkills.shenGelu.directPlayerId = player.id;
   room.stage = "fry-burying";
   room.phase = `${player.name} 发动釜底抽薪，等待贴底`;
-  addEvent(room, `${player.name} 使用神 · 姜文发动釜底抽薪炒底，直接拿入底牌；本次不提高炒底门槛`);
+  addEvent(room, `${player.name} 使用神 · 格鲁发动釜底抽薪炒底，直接拿入底牌；本次不提高炒底门槛`);
   return { ok: true };
 }
 
@@ -4003,7 +4030,7 @@ function passFry(room, player, options = {}) {
   if (fry.currentPlayerId !== player.id) {
     return { error: `现在轮到 ${playerName(room, fry.currentPlayerId)} 炒底或不炒`, status: 409 };
   }
-  completeShenJiangwenOffer(room, player);
+  completeShenGeluOffer(room, player);
   fry.passesSinceLast += 1;
   if (!fry.passIds) fry.passIds = [];
   if (!fry.passIds.includes(player.id)) fry.passIds.push(player.id);
@@ -4040,7 +4067,7 @@ function submitFry(room, player, cardIds) {
     return { error: `选择的 ${currentBidRankName(room)} 不能压过当前炒底`, status: 400 };
   }
 
-  completeShenJiangwenOffer(room, player);
+  completeShenGeluOffer(room, player);
   player.hand = sortHand([...player.hand, ...room.kitty]);
   room.kitty = [];
   fry.pendingBid = bid;
@@ -8898,7 +8925,8 @@ async function handleApi(req, res, pathParts, url) {
       else if (body.action === "yokoyama-pass") result = passYokoyamaSkill(room, viewer);
       else if (body.action === "shen-haohao-activate") result = await submitShenHaohaoSkillChoice(room, viewer, true, body.resetCooldown, body.requestId);
       else if (body.action === "shen-haohao-pass") result = await submitShenHaohaoSkillChoice(room, viewer, false);
-      else if (body.action === "shen-jiangwen-activate") result = await activateShenJiangwenSkill(room, viewer, body.requestId, body.resetCooldown);
+      else if (body.action === "shen-jiangwen-transfer") result = transferShenJiangwenLead(room, viewer, body.targetPlayerId);
+      else if (body.action === "shen-gelu-activate") result = await activateShenGeluSkill(room, viewer, body.requestId, body.resetCooldown);
       else return writeJson(res, 400, { error: "未知的英雄技能操作" });
       if (result.error) return writeJson(res, result.status, { error: result.error });
       broadcastAndContinueAutomation(room);
@@ -9291,6 +9319,10 @@ export const __aiPlayTesting = {
   setupBottomControlScore,
   setupBottomTransferForecast
 };
+
+export const __heroLeadTesting = { shenJiangwenCanTransfer, transferShenJiangwenLead,
+  shenGeluCanActivate, completeShenGeluOffer, activateShenGeluSkill, boardHeroSkillsSnapshot,
+  emptyBoardHeroSkills, emptyBoardHeroEffects, emptySetup, playCards, completeCurrentTrick, finishGame };
 
 export const __heroDraftTesting = {
   selectRoomHero, refundRoomHeroHires,

@@ -4,6 +4,9 @@ export const HERO_ADVANCEMENTS = Object.freeze([
   ] },
   { srId: "deng-huang", ssrId: "jie-denghuang", tasks: [
     { key: "bottomWins", label: "本人赢得最后一轮（保底）", target: 10 }
+  ] },
+  { srId: "gelu", ssrId: "shen-gelu", tasks: [
+    { key: "wonTrickPoints", label: "累计获得牌分（不含底牌）", target: 5000 }
   ] }
 ]);
 
@@ -19,7 +22,9 @@ export function advancementGameDelta(player, { bottomWinnerRoomPlayerId } = {}) 
   return Object.fromEntries(HERO_ADVANCEMENTS.filter(({ srId }) => eligible.has(srId)).map(({ srId }) => [
     srId, srId === "jiang-zha"
       ? { doglegWins: Number(player.role === "狗腿" && Number(player.baseGameScore) > 0) }
-      : { bottomWins: Number(bottomWinnerRoomPlayerId === player.roomPlayerId) }
+      : srId === "deng-huang"
+        ? { bottomWins: Number(bottomWinnerRoomPlayerId === player.roomPlayerId) }
+        : { wonTrickPoints: Math.max(0, Number(player.wonTrickPoints) || 0) }
   ]));
 }
 

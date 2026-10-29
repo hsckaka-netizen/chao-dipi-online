@@ -223,3 +223,50 @@ test("no bot, guest or duplicate-account setup can activate advanced preparation
     assert.equal(game.beginAdvancedHeroStage(r, "denghuang"), false);
   }
 });
+
+
+test("Gelu advancement counts earned trick points with frozen eligibility and a 5000-point target", async () => {
+  const definition = HERO_ADVANCEMENTS.find((item) => item.srId === "gelu");
+  assert.equal(definition.ssrId, "shen-gelu");
+  assert.equal(advancementProgress(definition, { wonTrickPoints: 4999 }).complete, false);
+  assert.equal(advancementProgress(definition, { wonTrickPoints: 5000 }).complete, true);
+  assert.deepEqual(eligibleAdvancementSrIds({ gelu: { stars: 5 } }), ["gelu"]);
+  const player = { accountId: "a", roomPlayerId: "p", wonTrickPoints: 125, trickScore: 999, advancementSrIds: ["gelu"] };
+  assert.deepEqual(advancementGameDelta(player), { gelu: { wonTrickPoints: 125 } });
+  assert.deepEqual(advancementGameDelta({ ...player, advancementSrIds: [] }), {});
+  const client = advancementStore();
+  const record = { gameId: "gelu-game", advancementEligible: true, gameMode: "pvp", players: [player] };
+  await storage.settleHeroAdvancement(client, record);
+  await storage.settleHeroAdvancement(client, record);
+  assert.equal(client.progress.get("a:gelu").progress.wonTrickPoints, 125);
+  client.progress.get("a:gelu").progress.wonTrickPoints = 4990;
+  await storage.settleHeroAdvancement(client, { ...record, gameId: "next" });
+  assert.equal(client.progress.get("a:gelu").progress.wonTrickPoints, 5000);
+});
+
+test("Gelu SSR stays outside the account gacha subpool until its advancement is claimed", () => {
+  let included = false;
+  for (let i = 0; i < 200; i++) {
+    assert.notEqual(drawHomeUnit({ forceRarity: "ssr", randomFloat: () => i / 200 }).id, "shen-gelu");
+    if (drawHomeUnit({ forceRarity: "ssr", unlockedSsrIds: ["shen-gelu"], randomFloat: () => i / 200 }).id === "shen-gelu") included = true;
+  }
+  assert.equal(included, true);
+});
+
+test('Gelu claims its separate SSR and forty fragments exactly once, preserving the SR', async () => {
+  const definition = HERO_ADVANCEMENTS.find((item) => item.srId === 'gelu');
+  const row = { progress: { wonTrickPoints: 5000 }, claimed_at: null };
+  let mints = 0;
+  const client = { async query(sql, args = []) {
+    if (sql.includes('SELECT stars FROM cdp_hero_units')) return { rows: [{ stars: args[1] === 'gelu' ? 5 : 1 }] };
+    if (sql.includes('SELECT progress, claimed_at')) return { rows: [row] };
+    if (sql.includes('INSERT INTO cdp_hero_units')) { assert.equal(args[1], 'shen-gelu'); assert.match(sql, /VALUES \(\$1::uuid, \$2, 40\)/); mints++; }
+    else if (sql.includes('UPDATE cdp_hero_advancements SET claimed_at')) row.claimed_at = 'claimed';
+    else assert.match(sql, /cdp_hero_profiles|cdp_home_regions/);
+    return { rows: [] };
+  } };
+  await storage.claimHeroAdvancementFromClient(client, 'a', definition);
+  await storage.claimHeroAdvancementFromClient(client, 'a', definition);
+  assert.equal(mints, 1);
+  assert.equal(row.claimed_at, 'claimed');
+});

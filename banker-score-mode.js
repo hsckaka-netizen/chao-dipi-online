@@ -49,3 +49,27 @@ export function allocateBankerTeamScores({
     doglegEachScore
   };
 }
+
+// Restore the original dragged-five unit before applying role allocation. A unit
+// changes each idle player's score, rather than representing one team-total point.
+export function draggedFiveReductionTransfers(playerResults, { idleEachScore, bankerId, mode } = {}) {
+  let currentIdleScore = Number(idleEachScore) || 0;
+  const idleCount = playerResults.filter((player) => player.team === "idle").length;
+  const doglegCount = playerResults.filter((player) => player.team === "banker").length - 1;
+  return playerResults.flatMap((source) => {
+    if (source.heroSkillReward?.hero?.heroId !== "shen-haohao") return [];
+    const reduction = Math.max(0, Number(source.heroSkillReward.scoreBonus) || 0);
+    if (!reduction) return [];
+    const previous = allocateBankerTeamScores({ idleEachScore: currentIdleScore, idleCount, doglegCount, mode });
+    const idleDelta = source.team === "idle" ? reduction : -reduction;
+    const next = allocateBankerTeamScores({ idleEachScore: currentIdleScore + idleDelta, idleCount, doglegCount, mode });
+    const playerScoreDeltas = playerResults.map((player) => ({
+      recipientId: player.playerId,
+      cents: Math.round((player.team === "idle" ? idleDelta
+        : player.playerId === bankerId ? next.bankerScore - previous.bankerScore
+          : next.doglegEachScore - previous.doglegEachScore) * 100)
+    }));
+    currentIdleScore = roundScore(currentIdleScore + idleDelta);
+    return [{ sourcePlayerId: source.playerId, sourceTeam: source.team, amount: reduction, playerScoreDeltas }];
+  });
+}

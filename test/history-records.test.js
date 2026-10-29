@@ -93,10 +93,10 @@ test("出牌记录隐藏不炒过程，并按单玩家一行让牌面自动折�
   assert.doesNotMatch(styles, /\.history-trick-play \.mini-cards\s*\{[\s\S]*overflow-x:\s*auto/);
 });
 
-test("神姜文强制拿底按炒底动作进入牌桌轨迹与历史", async () => {
+test("神格鲁强制拿底使用新归属展示，既有神姜文历史保持原名", async () => {
   const source = await readFile(appPath, "utf8");
 
-  assert.match(source, /if \(action\.directSkill\) \{[\s\S]*?使用神 · 姜文发动\$\{action\.skillName \|\| "釜底抽薪"\}炒底/);
-  assert.match(source, /action\.directSkill[\s\S]*?"神姜文炒底"/);
+  assert.match(source, /if \(action\.directSkill\) \{[\s\S]*?action\.heroId === "shen-gelu" \? "神 · 格鲁" : "神 · 姜文"/);
+  assert.match(source, /action\.directSkill[\s\S]*?action\.heroId === "shen-gelu" \? "神格鲁" : "神姜文"/);
   assert.match(source, /setup\.fry\?\.directSkillActionId \|\| setup\.fry\?\.pendingBid\?\.actionId/);
 });

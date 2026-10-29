@@ -1,7 +1,10 @@
 export const HERO_HOME_RULES = Object.freeze({
-  version: "2026-10-29-v11",
+  version: "2026-10-29-v12",
   skillVersion: "2026-09-24-skill-v9",
-  boardSkillVersion: "2026-10-29-board-skill-v11",
+  boardSkillVersion: "2026-10-29-board-skill-v12",
+  shenJiangwenScorePerLoss: Object.freeze([0.1, 0.12, 0.15, 0.2, 0.25]),
+  shenJiangwenDiamondsPerLoss: Object.freeze([10, 12, 15, 20, 25]),
+  shenJiangwenLossCap: 5,
   advancedScoreBonus: Object.freeze([1, 1.2, 1.5, 2, 3]),
   denghuangExchangeCount: Object.freeze([1, 1, 1, 1, 2]),
   judgmentVersion: "2026-10-28-judgment-v2",
@@ -70,84 +73,89 @@ export const HOME_UNITS = Object.freeze([
   Object.freeze({
     id: "jiang-zha", name: "蒋渣", shortName: "渣", type: "hero", rarity: "sr", gender: "male", regionId: "boka", color: "#285b93",
     cardImage: "/assets/heroes/jiang-zha-card-v2.png",
-    skillName: "渣代思维", skillDescription: "最终身份为狗腿且原始最终积分为正时触发；1～5星分别额外获得150/185/220/255/290钻石。"
+    skillName: "渣代思维", skillDescription: "结算时，若最终身份为狗腿且原始积分大于0，按1～5星额外获得150/185/220/255/290钻石。"
   }),
   Object.freeze({
     id: "deng-huang", name: "灯皇", shortName: "灯", type: "hero", rarity: "sr", gender: "male", regionId: "boka", color: "#16858a",
     cardImage: "/assets/heroes/deng-huang-card-v2.png",
-    skillName: "倒买倒卖", skillDescription: "本人赢得最后一轮时触发；1～5星分别额外获得120/150/180/210/240钻石。"
+    skillName: "倒买倒卖", skillDescription: "本人赢得最后一轮时，按1～5星额外获得120/150/180/210/240钻石；不要求本局获胜。"
   }),
   Object.freeze({
     id: "jie-jiangzha", name: "界 · 蒋渣", namePrefix: "界", baseName: "蒋渣", shortName: "渣", type: "hero", rarity: "ssr", gender: "male", regionId: "boka", color: "#285b93", advancementFrom: "jiang-zha",
     cardImage: "/assets/heroes/jie-jiangzha-card-v3.png",
-    skillName: "择木而栖", skillDescription: "传统狗腿模式定完狗腿牌后，可为自己重选一张非比牌作为专属狗腿牌。以狗腿身份获胜时获得150/185/220/255/290钻石；若本局至少赢过一轮，再获得1/1.2/1.5/2/3积分。"
+    skillName: "择木而栖", skillDescription: "主动：传统狗腿模式确定公共狗腿牌后，若本人不是庄家且未锁定身份，可选择手中一张非比牌，替换仅对本人生效的狗腿牌；每局一次，不保证获得狗腿名额。被动：以狗腿身份且原始积分大于0结束本局时，按1～5星额外获得150/185/220/255/290钻石；若本人还赢得过至少一轮，再额外获得1/1.2/1.5/2/3积分。"
   }),
   Object.freeze({
     id: "jie-denghuang", name: "界 · 灯皇", namePrefix: "界", baseName: "灯皇", shortName: "灯", type: "hero", rarity: "ssr", gender: "male", regionId: "boka", color: "#16858a", advancementFrom: "deng-huang",
     cardImage: "/assets/heroes/jie-denghuang-card-v3.png",
-    skillName: "探囊取物", skillDescription: "炒底结束后，可随机拿取1/1/1/1/2张底牌并扣回相同数量手牌，每局一次。本人赢得最后一轮时，获得120/150/180/210/240钻石及1/1.2/1.5/2/3积分。"
+    skillName: "探囊取物", skillDescription: "主动：炒底结束后，可随机拿取1/1/1/1/2张底牌，再选择等量手牌扣回；数量按1～5星对应，每局一次。被动：本人赢得最后一轮时，按1～5星额外获得120/150/180/210/240钻石和1/1.2/1.5/2/3积分，不要求本局获胜。"
   }),
   Object.freeze({
     id: "shen-biesan", name: "神 · 瘪三", namePrefix: "神", baseName: "瘪三", shortName: "瘪", type: "hero", rarity: "ssr", gender: "male", regionId: "boka", color: "#9f742c",
     cardImage: "/assets/heroes/shen-biesan-card-v2.png",
-    skillName: "偷梁换柱", skillDescription: "被动：对方阵营每被拖1点红五/方五积分，1～5星分别额外获得5/7/9/12/15钻石。主动：叫庄前若本人没有同花色成对2，可随机一个持有点数替代2成为本局比牌；无跨局CD，每局一次。"
+    skillName: "偷梁换柱", skillDescription: "主动：叫庄前，若手中没有同花色的一对2，可申请随机选取本人持有的一个合法点数，替代2成为本局全场比牌；每局一次、免费，多人申请时随机选一人生效。被动：对方阵营每被拖1点红五或方五积分，按1～5星额外获得5/7/9/12/15钻石；红五计2点、方五计1点，底牌沿用双倍规则。"
   }),
   Object.freeze({
     id: "shen-benlei", name: "神 · 奔雷", namePrefix: "神", baseName: "奔雷", shortName: "雷", type: "hero", rarity: "ssr", gender: "male", regionId: "boka", color: "#5968b0",
     cardImage: "/assets/heroes/shen-benlei-card-v1.png",
-    skillName: "雷动九天", skillDescription: "当6不是比牌时，与最终主花色同色的另一花色6仅对本人视为最小主牌，可参与拖拉机。本人本局用含6的牌赢过至少一轮时，1～5星额外获得0.1/0.2/0.3/0.4/0.5积分和20/40/60/80/100钻石，每局一次。"
+    skillName: "雷动九天", skillDescription: "牌力：当6不是本局比牌时，与主花色同色的另一花色6，仅对本人视为最小主牌，并可参与拖拉机。奖励：本人至少有一轮用含6的牌获胜时，按1～5星额外获得0.1/0.2/0.3/0.4/0.5积分和20/40/60/80/100钻石；每局只奖励一次，不要求整局获胜。"
   }),
   Object.freeze({
     id: "shen-yingwu", name: "神 · 鹦鹉", namePrefix: "神", baseName: "鹦鹉", shortName: "鹦", type: "hero", rarity: "ssr", gender: "male", regionId: "stage", color: "#16845b",
     cardImage: "/assets/heroes/shen-yingwu-card-v2.png",
-    skillName: "战犯审判", skillDescription: "仅PVP真人局：本队落败后可消耗200钻石审判另一名玩家，每局一次；成立返还200钻石，不成立不返还，放弃不扣费。除本人和被审判者外，支持票达到全体有资格玩家的50%即成立；本人按1～5星减免本局扣分的20%/30%/40%/50%/60%，并额外获得100/120/140/160/200钻石。投票限时30秒，超时弃权；支持或反对票数较多一方的投票者每人额外获得50钻石，平票无人获奖。"
+    skillName: "战犯审判", skillDescription: "仅限有效PVP真人局。本队落败后，可花费200钻石审判另一名玩家，每局一次。除本人和被审判者外，其余有资格玩家投票，30秒未投视为弃权；支持票达到有资格人数的50%即成立。成立时返还200钻石，按1～5星减免本人本局扣分的20%/30%/40%/50%/60%，再获得100/120/140/160/200钻石；不成立不返还。支持或反对票数较多一方的投票者，每人另获50钻石，平票不奖励。"
   }),
   Object.freeze({ id: "boka-youth", name: "博卡青年", shortName: "博", type: "minion", rarity: "minion", gender: null, regionId: "boka", color: "#d6a936" }),
   Object.freeze({
     id: "xiaoxu", name: "小旭", shortName: "旭", type: "hero", rarity: "sr", gender: "male", regionId: "brick", color: "#c45e51",
     cardImage: "/assets/heroes/xiaoxu-card-v2.png",
-    skillName: "八方来财", skillDescription: "每从1名不同其他玩家打出的计分牌中赢得过牌分，1～5星分别额外获得7/9/11/12/14钻石，不另设上限。"
+    skillName: "八方来财", skillDescription: "本人赢得一轮时，统计该轮其他玩家打出的计分牌（5、10、K）。每名不同的来源玩家整局只计一次，按1～5星额外获得7/9/11/12/14钻石；不计本人和底牌。"
   }),
   Object.freeze({
     id: "gelu", name: "格鲁", shortName: "格", type: "hero", rarity: "sr", gender: "male", regionId: "brick", color: "#7958a5",
     cardImage: "/assets/heroes/gelu-card-v2.png",
-    skillName: "多劳多得", skillDescription: "1～5星时，个人赢墩牌分每满100/90/80/70/60分额外获得32钻石，触发次数和单局奖励均无上限；不计底牌与团队加分。"
+    skillName: "多劳多得", skillDescription: "累计本人赢得各轮的牌分，按1～5星每满100/90/80/70/60分，额外获得32钻石；不足一次的余分不奖励，次数和奖励无上限，不计底牌与团队加分。"
+  }),
+  Object.freeze({
+    id: "shen-gelu", name: "神 · 格鲁", namePrefix: "神", baseName: "格鲁", shortName: "格", type: "hero", rarity: "ssr", gender: "male", regionId: "brick", color: "#7958a5", advancementFrom: "gelu",
+    cardImage: "/assets/heroes/gelu-card-v2.png",
+    skillName: "釜底抽薪", skillDescription: "被动：本人每完成一次普通炒底或技能炒底，按1～5星额外获得15/20/25/30/40钻石，次数不限。主动：首次轮到本人炒底时，可免费直接拿底并扣回等量手牌；每局一次，不提高炒底门槛。"
   }),
   Object.freeze({
     id: "shen-jiangwen", name: "神 · 姜文", namePrefix: "神", baseName: "姜文", shortName: "姜", type: "hero", rarity: "ssr", gender: "male", regionId: "brick", color: "#4f5e52",
     cardImage: "/assets/heroes/shen-jiangwen-card-v2.png",
-    skillName: "釜底抽薪", skillDescription: "被动：本局每进行1次炒底，1～5星分别额外获得15/20/25/30/40钻石。主动：首次轮到本人炒底时可强制炒底1次，不提高炒底门槛；无跨局CD，每局一次。"
+    skillName: "推贤让能", skillDescription: "主动：本局至少赢得过一轮后，在你领出新一轮牌之前，可将本轮首出权移交给一名其他玩家；每局一次、免费。被动：本局原始积分大于0时，每丢失一次首出权（领出一轮后未赢得该轮，或主动移交），按1～5星额外获得0.1/0.12/0.15/0.2/0.25积分和10/12/15/20/25钻石，最多计5次。庄家开局自带的首出权不满足主动发动条件。"
   }),
   Object.freeze({
     id: "shen-haohao", name: "神 · 浩浩", namePrefix: "神", baseName: "浩浩", shortName: "浩", type: "hero", rarity: "ssr", gender: "male", regionId: "boka", color: "#557b9c",
     cardImage: "/assets/heroes/shen-haohao-card-v1.png",
-    skillName: "丹书铁券", skillDescription: "本人拖下队友红方五（红桃5或方块5）时，1～5星整局累计最多免除2/4/6/8/10分扣分，且不超过实际拖五扣分；本队每有一名玩家没有被拖红方五（包括本人），按星级额外获得10/15/20/25/40钻石。"
+    skillName: "丹书铁券", skillDescription: "积分：本人拖下最终队友的红五或方五时，红五每张计2分、方五每张计1分；按1～5星整局累计最多免除2/4/6/8/10分扣分，实际不超过命中扣分，并按本局闲家每人、庄队分配规则恢复积分。钻石：最终本队每有一名玩家未被拖红五或方五（包括本人），按1～5星额外获得10/15/20/25/40钻石；积分减免不改变被拖记录。"
   }),
   Object.freeze({
     id: "jie-doudou", name: "界 · 豆豆", namePrefix: "界", baseName: "豆豆", shortName: "豆", type: "hero", rarity: "ssr", gender: "male", regionId: "brick", color: "#8b6a9f",
     cardImage: "/assets/heroes/jie-doudou-card-v2.png",
-    skillName: "守株待兔", skillDescription: "发牌后随机获得1～13点数；本局获胜时，每张同点数手牌额外获得10/15/20/25/35钻石；最终底牌含该点数时额外获得1/1.5/2/2.5/3.5积分。每次神·姜文发动技能，额外获得30钻石。"
+    skillName: "守株待兔", skillDescription: "发牌后随机锁定1～13点数（A=1，J=11，Q=12，K=13）。本局原始积分大于0时，发牌手牌每有一张同点数牌，按1～5星额外获得10/15/20/25/35钻石。最终底牌含该点数时，额外获得1/1.5/2/2.5/3.5积分，不要求获胜。本局每有一次神·姜文成功移交首出权，另获30钻石。"
   }),
   Object.freeze({ id: "brick-worker", name: "搬砖工", shortName: "砖", type: "minion", rarity: "minion", gender: null, regionId: "brick", color: "#a67445" }),
   Object.freeze({
     id: "maeda-atsuko", name: "前田敦子", shortName: "敦", type: "hero", rarity: "sr", gender: "female", regionId: "stage", color: "#d25d86",
     cardImage: "/assets/heroes/maeda-atsuko-card-v2.png",
-    skillName: "中心光芒", skillDescription: "本人是庄家且原始最终积分为正时触发；1～5星分别额外获得185/230/280/325/370钻石。"
+    skillName: "中心光芒", skillDescription: "结算时，若最终身份为庄家且原始积分大于0，按1～5星额外获得185/230/280/325/370钻石。"
   }),
   Object.freeze({
     id: "watanabe-mayu", name: "渡边麻友", shortName: "麻", type: "hero", rarity: "sr", gender: "female", regionId: "stage", color: "#d879b4",
     cardImage: "/assets/heroes/watanabe-mayu-card-v2.png",
-    skillName: "荣誉舞台", skillDescription: "每获得1个正向称号（MVP、辅、精、神、天之上、尽、擎），1～5星分别额外获得55/70/85/100/115钻石，不设总上限。"
+    skillName: "荣誉舞台", skillDescription: "本局每获得一个正向称号（MVP、辅、精、神、天之上、尽、擎），按1～5星额外获得55/70/85/100/115钻石；相同称号只计一次，奖励无上限。"
   }),
   Object.freeze({
     id: "yokoyama-yui", name: "横山由依", shortName: "横", type: "hero", rarity: "ssr", gender: "female", regionId: "stage", color: "#bd4d83",
     cardImage: "/assets/heroes/yokoyama-yui-card-v2.png",
-    skillName: "斗转星移", skillDescription: "被动：本局每为友方贴出40分，1～5星分别额外获得15/20/25/30/40钻石。主动：叫庄结束后可将全桌座位重新随机，每局可发动1/1/2/2/3次，无跨局CD。"
+    skillName: "斗转星移", skillDescription: "主动：叫庄结束后，可免费生成全桌随机座位候选，按1～5星每局可生成1/1/2/2/3次；确认后参与最终随机抽取，全桌只执行一名申请者的候选。被动：按最终阵营回看全局，本人打出的计分牌被其他队友赢得时计为贴分；每满40分，按1～5星额外获得15/20/25/30/40钻石。"
   }),
   Object.freeze({
     id: "jie-ranchen", name: "界 · 然陈", namePrefix: "界", baseName: "然陈", shortName: "然", type: "hero", rarity: "ssr", gender: "female", regionId: "stage", color: "#b75078",
     cardImage: "/assets/heroes/jie-ranchen-card-v2.png",
-    skillName: "奇货可居", skillDescription: "叫庄前可投资100/200/300钻石并跳过本人叫庄，随机公开锁定狗腿或闲家身份；名额已满时无法发动。若本局最终获胜，按投资额额外获得1～5星对应的2.1/2.3/2.6/3/3.5倍钻石。"
+    skillName: "奇货可居", skillDescription: "主动：仅限PVP乱斗且设有狗腿的牌局，叫庄前可投资100、200或300钻石，随机公开锁定狗腿或闲家身份，并跳过本人叫庄；每局一次，身份名额已满时不可发动。结算：本局原始积分大于0时，按1～5星额外获得投资额的2.1/2.3/2.6/3/3.5倍钻石；未获胜则无投资奖励。"
   }),
   Object.freeze({ id: "trainee", name: "练习生", shortName: "练", type: "minion", rarity: "minion", gender: null, regionId: "stage", color: "#7197bd" })
 ]);
@@ -177,7 +185,7 @@ const XIAOXU_DIAMONDS_PER_SOURCE = Object.freeze([7, 9, 11, 12, 14]);
 const GELU_POINTS_PER_TRIGGER = Object.freeze([100, 90, 80, 70, 60]);
 const GELU_DIAMONDS_PER_TRIGGER = 32;
 const WATANABE_DIAMONDS_PER_TITLE = Object.freeze([55, 70, 85, 100, 115]);
-const SHEN_JIANGWEN_DIAMONDS_PER_FRY = Object.freeze([15, 20, 25, 30, 40]);
+const SHEN_GELU_DIAMONDS_PER_FRY = Object.freeze([15, 20, 25, 30, 40]);
 const SHEN_BIESAN_DIAMONDS_PER_DRAG_POINT = Object.freeze([5, 7, 9, 12, 15]);
 const SHEN_HAOHAO_DIAMONDS_PER_PROTECTED_ALLY = Object.freeze([5, 7, 9, 12, 15]);
 const YOKOYAMA_DIAMONDS_PER_ASSIST = Object.freeze([15, 20, 25, 30, 40]);
@@ -526,6 +534,7 @@ export function calculateHeroSkillReward({
   doudouMatchingCards = 0,
   doudouBottomMatches = false,
   shenJiangwenUseCount = 0,
+  shenJiangwenLeadLosses = 0,
   haohaoDraggedTeammateFives = 0,
   haohaoDraggedTeammateFivePenalty = 0,
   haohaoUndraggedTeammates = 0
@@ -633,12 +642,26 @@ export function calculateHeroSkillReward({
   }
 
   if (snapshot.heroId === "shen-jiangwen") {
+    const losses = Math.max(0, Math.trunc(Number(shenJiangwenLeadLosses) || 0));
+    const won = Number(playerResult.baseGameScore ?? playerResult.gameScore) > 0;
+    const matched = won ? Math.min(losses, HERO_HOME_RULES.shenJiangwenLossCap) : 0;
+    const scoreBonus = Math.round(matched * HERO_HOME_RULES.shenJiangwenScorePerLoss[stars - 1] * 100) / 100;
+    const amount = matched * HERO_HOME_RULES.shenJiangwenDiamondsPerLoss[stars - 1];
+    return {
+      ...baseSkillResult(snapshot, matched, HERO_HOME_RULES.shenJiangwenLossCap, amount,
+        `本局丢失首出权${losses}次（含主动移交）；${won ? `获胜计入${matched}次，额外${scoreBonus}积分、${amount}钻石` : "未获胜，不追加奖励"}`),
+      rulesVersion: HERO_HOME_RULES.boardSkillVersion,
+      scoreBonus
+    };
+  }
+
+  if (snapshot.heroId === "shen-gelu") {
     const normalFryCount = (Array.isArray(fryHistory) ? fryHistory : [])
       .filter((fry) => fry?.playerId === playerId).length;
     const forcedFryCount = (Array.isArray(boardHeroUses) ? boardHeroUses : [])
-      .filter((use) => use?.playerId === playerId && use?.heroId === "shen-jiangwen").length;
+      .filter((use) => use?.playerId === playerId && use?.heroId === "shen-gelu").length;
     const fryCount = normalFryCount + forcedFryCount;
-    const diamondsPerFry = SHEN_JIANGWEN_DIAMONDS_PER_FRY[stars - 1];
+    const diamondsPerFry = SHEN_GELU_DIAMONDS_PER_FRY[stars - 1];
     return baseSkillResult(snapshot, fryCount, null, fryCount * diamondsPerFry, `本局炒底${fryCount}次，每次奖励${diamondsPerFry}钻`);
   }
 
@@ -679,7 +702,7 @@ export function calculateHeroSkillReward({
     const reduced = Math.min(penalty, reductionCap);
     return {
       ...baseSkillResult(snapshot, haohaoUndraggedTeammates, null, diamonds,
-        `本队${haohaoUndraggedTeammates}名玩家未被拖红方五，奖励${diamonds}钻；本人拖下队友${haohaoDraggedTeammateFives}张红方五，实际扣分${penalty}分，本局最多免除${reductionCap}分，本队少扣${reduced}分`),
+        `本队${haohaoUndraggedTeammates}名玩家未被拖红方五，奖励${diamonds}钻；本人拖下队友${haohaoDraggedTeammateFives}张红方五，实际扣分${penalty}分，本局最多免除${reductionCap}分，按原拖五结算口径减免${reduced}分（闲家每人、庄队按本局分配规则折算）`),
       rulesVersion: HERO_HOME_RULES.boardSkillVersion,
       scoreBonus: reduced
     };

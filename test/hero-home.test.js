@@ -176,7 +176,8 @@ test("all hero skill descriptions expose concrete per-star diamond values", () =
     "watanabe-mayu": "55/70/85/100/115",
     "shen-biesan": "5/7/9/12/15",
     "shen-haohao": "10/15/20/25/40",
-    "shen-jiangwen": "15/20/25/30/40",
+    "shen-gelu": "15/20/25/30/40",
+    "shen-jiangwen": "10/12/15/20/25",
     "yokoyama-yui": "15/20/25/30/40",
     "jie-doudou": "10/15/20/25/35",
     "jie-ranchen": "2.1/2.3/2.6/3/3.5"
@@ -480,15 +481,15 @@ test("watanabe mayu scales each positive title without a total cap", () => {
 });
 
 test("SSR passive diamond skills follow frozen stars and original game facts", () => {
-  const shenJiangwen = calculateHeroSkillReward({
-    snapshot: createBattleHeroSnapshot("shen-jiangwen", 1),
+  const shenGelu = calculateHeroSkillReward({
+    snapshot: createBattleHeroSnapshot("shen-gelu", 1),
     playerId: "jiangwen",
     playerResult: { team: "banker", evaluation: {} },
     fryHistory: [{ playerId: "jiangwen" }, { playerId: "other" }, { playerId: "jiangwen" }],
-    boardHeroUses: [{ playerId: "jiangwen", heroId: "shen-jiangwen" }]
+    boardHeroUses: [{ playerId: "jiangwen", heroId: "shen-gelu" }]
   });
-  assert.equal(shenJiangwen.matchedCount, 3);
-  assert.equal(shenJiangwen.amount, 45);
+  assert.equal(shenGelu.matchedCount, 3);
+  assert.equal(shenGelu.amount, 45);
 
   const shenBiesan = calculateHeroSkillReward({
     snapshot: createBattleHeroSnapshot("shen-biesan", 5),
@@ -590,7 +591,7 @@ test("SSR roster, probabilities, production, and retired cooldowns use the settl
   assert.equal(shenHaohao.skillName, "丹书铁券");
   assert.match(shenHaohao.skillDescription, /整局累计最多免除2\/4\/6\/8\/10分扣分/);
   assert.equal(shenHaohao.paidSkill, undefined);
-  assert.equal(shenJiangwen.skillName, "釜底抽薪");
+  assert.equal(shenJiangwen.skillName, "推贤让能");
   assert.equal(shenJiangwen.paidSkill.cost, 0);
   assert.equal(createBattleHeroSnapshot("shen-jiangwen", 1, 0).paidSkill.cost, 0);
   assert.equal(createBattleHeroSnapshot("shen-jiangwen", 5, 3).paidSkill.cost, 0);
@@ -749,7 +750,7 @@ test("server and table UI expose the redesigned SSR board skill timing", async (
   assert.match(serverSource, /beginYokoyamaSkillStage/);
   assert.match(serverSource, /beginShenHaohaoSkillStage/);
   assert.match(serverSource, /submitShenHaohaoSkillChoice/);
-  assert.match(serverSource, /activateShenJiangwenSkill/);
+  assert.match(serverSource, /activateShenGeluSkill/);
   assert.match(serverSource, /pathParts\[3\] === "board-hero-skill"/);
   assert.match(replacementRankRulesSource, /rulesRank = "LOW_2"/);
   assert.match(serverSource, /replacementRankByPlayerId/);
@@ -764,10 +765,10 @@ test("server and table UI expose the redesigned SSR board skill timing", async (
   assert.match(serverSource, /state\.candidateByPlayerId\[player\.id\] = afterPlayerIds/);
   assert.match(serverSource, /use\.heroId === "yokoyama-yui" && use\.playerId !== viewer\?\.id/);
   assert.doesNotMatch(serverSource, /state\.queuePlayerIds\.push\(player\.id\)/);
-  assert.match(serverSource, /directSkill: true,[\s\S]*?heroId: "shen-jiangwen"/);
+  assert.match(serverSource, /directSkill: true,[\s\S]*?heroId: "shen-gelu"/);
   assert.match(serverSource, /room\.setup\.fry\.skillHistory\.push\(skillAction\)/);
   assert.doesNotMatch(serverSource, /room\.setup\.fry\.history\.push\(skillAction\)/);
-  assert.match(serverSource, /使用神 · 姜文发动釜底抽薪炒底/);
+  assert.match(serverSource, /使用神 · 格鲁发动釜底抽薪炒底/);
   assert.match(appSource, /data-action="shen-biesan-activate"/);
   assert.match(appSource, /技能结算完成后才进入其他卡牌阶段/);
   assert.match(appSource, /\[OTHER_CARDS_STAGE\]: "其他卡牌阶段"/);
@@ -776,10 +777,10 @@ test("server and table UI expose the redesigned SSR board skill timing", async (
   assert.match(appSource, /我的候选/);
   assert.match(appSource, /data-action="shen-haohao-activate"/);
   assert.match(appSource, /按结算时的最终阵营回看整局拖五/);
-  assert.match(appSource, /data-action="shen-jiangwen-activate"/);
-  assert.match(appSource, /!isBid && shenJiangwenSkill\.canActivate/);
+  assert.match(appSource, /data-action="shen-gelu-activate"/);
+  assert.match(appSource, /!isBid && shenGeluSkill\.canActivate/);
   assert.match(appSource, /英雄技能 · 釜底抽薪/);
-  assert.match(appSource, /神姜文炒底/);
+  assert.match(appSource, /神格鲁/);
   assert.match(appSource, /实际扣除的英雄技能钻石会返还/);
   assert.match(gameHistorySource, /hero_skill_refund/);
   assert.match(gameHistorySource, /SET skill_cooldown = \$3/);
