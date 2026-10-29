@@ -285,7 +285,7 @@ test("hero artwork uses compact WebP variants and mobile preview remains a read-
     assert.ok(medium.size < 250_000, `${stem} 中等图应小于 250 KB`);
     assert.ok(full.size < 700_000, `${stem} 完整图应小于 700 KB`);
   }
-  assert.ok(thumbBytes < 100_000);
+  assert.ok(thumbBytes < cardImages.length * 6_667, "英雄缩略图平均大小应小于6.7KB");
   assert.ok(mediumBytes < cardImages.length * 166_667);
   assert.ok(fullBytes < cardImages.length * 500_000);
   assert.match(appSource, /size === "thumb" \? "-thumb\.webp"/);
