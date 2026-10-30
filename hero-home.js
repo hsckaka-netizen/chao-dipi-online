@@ -121,12 +121,12 @@ export const HOME_UNITS = Object.freeze([
   }),
   Object.freeze({
     id: "shen-xiaoxu", name: "神 · 小旭", namePrefix: "神", baseName: "小旭", shortName: "旭", type: "hero", rarity: "ssr", gender: "male", regionId: "brick", color: "#257e73", advancementFrom: "xiaoxu",
-    cardImage: "/assets/heroes/shen-xiaoxu-card-v1.png",
+    cardImage: "/assets/heroes/shen-xiaoxu-card-v2.png",
     skillName: "蓄势待发", skillDescription: "炒底结束、正式出牌前，可横置最多1/2/3/4/5张手牌；横置牌不参与任何出牌规则判定，首次赢得出牌权或手牌不足本轮跟牌张数时全部收回。获胜后，收回前每打出满10张牌，按1～5星额外获得0.1/0.2/0.3/0.4/0.5积分。"
   }),
   Object.freeze({
     id: "shen-lafang", name: "神 · 拉芳", namePrefix: "神", baseName: "拉芳", shortName: "芳", type: "hero", rarity: "ssr", gender: "male", regionId: "stage", color: "#a53632",
-    cardImage: "/assets/heroes/shen-lafang-card-v1.png",
+    cardImage: "/assets/heroes/shen-lafang-card-v2.png",
     skillName: "庄志凌云", skillDescription: "本人坐庄且叫庄分数达到全局总牌分50%时，获胜按1～5星额外获得0.5/1/1.5/2/3积分。达到60%时可用与上一手同等大小的比牌炒底（同张数、同花色，例如一对黑桃2炒一对黑桃2），仍须轮到本人炒底。传统狗腿模式达到70%时可从自己手牌任选狗腿牌（允许王、2、红方五等比牌）。"
   }),
   Object.freeze({

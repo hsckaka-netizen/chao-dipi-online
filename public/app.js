@@ -1,6 +1,6 @@
 import { applyStatePatch } from "./state-patch.js?v=9330552c7e1e";
 import { detectNewDraggedFiveEffects, detectNewLargePlayEffects } from "./gameplay-effects.js?v=14791e626d30";
-import { ASSET_URLS, versionedAssetUrl } from "./asset-versions.js?v=32ec19f4b828";
+import { ASSET_URLS, versionedAssetUrl } from "./asset-versions.js?v=dc5862d4ad05";
 import { createHistoryTrickEntry, filterHistoryTimelineEntries } from "./history-records.js?v=874ba3c97732";
 import { suitTractorOrderValue, isShenBenleiTrump, shenBenleiTractorOrderValue } from "./replacement-rank-rules.js?v=d9c12d800a5b";
 import { doudouPointLabel, doudouPointNotice } from "./doudou-notice.js?v=4327fd9b2a77";

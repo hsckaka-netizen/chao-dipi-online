@@ -1,4 +1,12 @@
 export const ASSET_VERSIONS = Object.freeze({
+  "/assets/heroes/shen-lafang-card-v2-medium.webp": "f1c98f6a3238",
+  "/assets/heroes/shen-lafang-card-v2-thumb.webp": "66cea8b7e78e",
+  "/assets/heroes/shen-lafang-card-v2.png": "77f01fa76d9a",
+  "/assets/heroes/shen-lafang-card-v2.webp": "8f398fa3a2c4",
+  "/assets/heroes/shen-xiaoxu-card-v2-medium.webp": "ad077e4f4fb1",
+  "/assets/heroes/shen-xiaoxu-card-v2-thumb.webp": "73a17097fa9c",
+  "/assets/heroes/shen-xiaoxu-card-v2.png": "3ed77589ad40",
+  "/assets/heroes/shen-xiaoxu-card-v2.webp": "9f1bb902ffad",
   "/assets/heroes/shen-lafang-card-v1-medium.webp": "bdcf3a56dba8",
   "/assets/heroes/shen-lafang-card-v1-thumb.webp": "8981ce51c3aa",
   "/assets/heroes/shen-lafang-card-v1.png": "a2c4237215e4",
