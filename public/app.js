@@ -1,6 +1,6 @@
 import { applyStatePatch } from "./state-patch.js?v=9330552c7e1e";
 import { detectNewDraggedFiveEffects, detectNewLargePlayEffects } from "./gameplay-effects.js?v=14791e626d30";
-import { ASSET_URLS, versionedAssetUrl } from "./asset-versions.js?v=b6279d6ac4bf";
+import { ASSET_URLS, versionedAssetUrl } from "./asset-versions.js?v=32ec19f4b828";
 import { createHistoryTrickEntry, filterHistoryTimelineEntries } from "./history-records.js?v=874ba3c97732";
 import { suitTractorOrderValue, isShenBenleiTrump, shenBenleiTractorOrderValue } from "./replacement-rank-rules.js?v=d9c12d800a5b";
 import { doudouPointLabel, doudouPointNotice } from "./doudou-notice.js?v=4327fd9b2a77";
@@ -2867,7 +2867,7 @@ function scheduleScoreBidAutoPass() {
 
 function currentSetupCountdownDeadline() {
   if (state?.stage === "hero-selecting") return state.heroDraft?.deadlineAt || null;
-  if (["jie-denghuang-skill", "jie-jiangzha-skill"].includes(state?.stage)) return state.boardHeroSkills?.advanced?.deadlineAt || null;
+  if (["jie-denghuang-skill", "jie-jiangzha-skill", "shen-xiaoxu-skill"].includes(state?.stage)) return state.boardHeroSkills?.advanced?.deadlineAt || null;
   if (state?.stage === RESTART_CARD_STAGE || state?.stage === OTHER_CARDS_STAGE) {
     return state.gameItems?.deadlineAt || null;
   }
@@ -2939,7 +2939,7 @@ function viewerCanRevealTrump() {
 
 function viewerCanChooseAdvancedCards() {
   const skill = state?.boardHeroSkills?.advanced;
-  return Boolean(skill?.canChoose && (state.stage === "jie-jiangzha-skill" || (state.stage === "jie-denghuang-skill" && skill.hasDrawn)));
+  return Boolean(skill?.canChoose && (state.stage === "shen-xiaoxu-skill" || state.stage === "jie-jiangzha-skill" || (state.stage === "jie-denghuang-skill" && skill.hasDrawn)));
 }
 
 function viewerCanSelectCards() {
@@ -3196,7 +3196,9 @@ function validateBidLikeSelection(type) {
   const bid = { count: cards.length, suit: suits[0] };
   const current = type === "bid" ? state.setup?.bid : type === "fry" ? state.setup?.fry?.lastBid : null;
   const frySuitStrength = type === "fry" ? currentFrySuitStrength() : null;
-  if (!bidBeats(current, bid, frySuitStrength || undefined)) {
+  const equalFry = type === "fry" && state.setup?.lafang?.canEqualFry && current && !current.direct
+    && current.count >= 2 && bid.count === current.count && bid.suit === current.suit;
+  if (!bidBeats(current, bid, frySuitStrength || undefined) && !equalFry) {
     if (current?.direct) return { ok: false, reason: `定主后首轮炒底至少需要 2 张同花色 ${currentBidRankName()}` };
     if (current?.count === 1) return { ok: false, reason: `当前是 1 张叫主，至少 2 张 ${currentBidRankName()} 才能抢` };
     return { ok: false, reason: `需要比 ${bidText(current)} 更大` };
@@ -3351,6 +3353,11 @@ function viewerCanThrowLead() {
 
 function selectionAction() {
   if (viewerCanChooseAdvancedCards()) {
+    if (state.stage === "shen-xiaoxu-skill") {
+      const max = state.boardHeroSkills.advanced.reserveCount;
+      const enabled = selectedCardIds.size > 0 && selectedCardIds.size <= max;
+      return { action: "shen-xiaoxu-reserve", label: "横置选中的牌", enabled, reason: enabled ? "" : `请选择1～${max}张手牌` };
+    }
     const isDeng = state.stage === "jie-denghuang-skill";
     const count = isDeng ? state.boardHeroSkills.advanced.exchangeCount : 1;
     return { action: isDeng ? "jie-denghuang-bury" : "jie-jiangzha-select", label: isDeng ? "扣回选中的牌" : "选为专属狗腿牌", enabled: selectedCardIds.size === count, reason: selectedCardIds.size === count ? "" : `请选择 ${count} 张${isDeng ? "手牌" : "非比牌"}` };
@@ -3377,7 +3384,7 @@ function selectionAction() {
       action: "dogleg-selected",
       label: "选为狗腿牌",
       enabled: selectedCardIds.size === 1,
-      reason: selectedCardIds.size === 1 ? "" : "请选择 1 张非比牌"
+      reason: selectedCardIds.size === 1 ? "" : (state.setup?.lafang?.canChooseAnyCard ? "请选择1张手牌（允许比牌）" : "请选择1张非比牌")
     };
   }
   if (viewerCanPlayCurrent()) {
@@ -6731,6 +6738,19 @@ function renderSetupCenter() {
 
   if (stage === "hero-selecting") body = `<p>所有玩家选将完成后发牌</p><span class="tag">已完成 ${state.heroDraft?.completedPlayerIds?.length || 0}/${state.players.length}</span>`;
 
+  if (stage === "shen-xiaoxu-skill") {
+    const skill = state.boardHeroSkills?.advanced || {};
+    const actor = state.players.find((player) => player.id === skill.currentPlayerId)?.name || "玩家";
+    body = `${renderSetupLines([
+      { label: "英雄技能", value: "蓄势待发" },
+      { label: "当前操作", value: escapeHtml(actor) },
+      { label: "倒计时", value: setupCountdownTag(skill.deadlineAt, " 后自动放弃") }
+    ])}<p>可选择最多${skill.reserveCount || "对应星级数量的"}张手牌横置；横置牌不参与出牌规则判定。赢得出牌权或手牌不足时全部收回。</p>
+      <div class="row">${!isSpectating() && skill.canChoose
+        ? `<button type="button" data-action="shen-xiaoxu-reserve">确认横置</button><button type="button" class="secondary" data-action="shen-xiaoxu-pass">不横置</button>`
+        : `<span class="tag">等待 ${escapeHtml(actor)} 操作</span>`}</div>`;
+  }
+
   if (stage === "jie-denghuang-skill" || stage === "jie-jiangzha-skill") {
     const skill = state.boardHeroSkills?.advanced || {};
     const isDeng = stage === "jie-denghuang-skill";
@@ -6949,7 +6969,7 @@ function renderSetupCenter() {
         { label: "主牌", value: escapeHtml(setup.currentTrumpSuitName || setup.trumpSuitName) },
         { label: "狗腿", value: `${escapeHtml(setup.doglegNeeded)} 个` }
       ])}
-      <div class="meta">庄家需要选择 1 张非比牌作为狗腿牌；打牌中最先打出该牌的玩家成为狗腿。</div>
+      <div class="meta">${setup.lafang?.canChooseAnyCard ? "庄志凌云已解锁：可从自己手牌任选1张狗腿牌，包含王、2、红方五等比牌。" : "庄家需要选择1张非比牌作为狗腿牌。"}打牌中最先打出该牌的其他玩家成为狗腿。</div>
     `;
   }
 
@@ -7513,6 +7533,7 @@ function renderBidFryDialog(type) {
           </div>
           <button type="button" class="secondary compact-button" data-action="close-dialog">关闭</button>
         </div>
+        ${!isBid && state.setup?.lafang?.canEqualFry ? `<p class="meta">庄志凌云：可用与上一手同张数、同花色的比牌炒底。</p>` : ""}
         ${colorfulOrder ? `<div class="colorful-order">花色 ${escapeHtml(currentBidRankName())} 大小（大 → 小）：<strong>${escapeHtml(colorfulOrder)}</strong></div>` : ""}
         <div class="choice-panel">
           <div class="choice-title">
@@ -7790,6 +7811,7 @@ function renderSetupTable() {
     "fry-burying": "炒底贴底",
     "jie-denghuang-skill": "界·灯皇换底",
     "jie-jiangzha-skill": "界·蒋渣专属狗腿牌",
+    "shen-xiaoxu-skill": "神·小旭横置",
     dogleg: "狗腿牌"
   };
   const seats = state.players.map((player) => {
@@ -7833,7 +7855,7 @@ function renderSetupTable() {
 
 function setupSeatStatus(player) {
   if (state.stage === "hero-selecting") return { text: state.heroDraft?.completedPlayerIds?.includes(player.id) ? "已完成选将" : "正在选将", tone: state.heroDraft?.completedPlayerIds?.includes(player.id) ? "good" : "" };
-  if (["jie-denghuang-skill", "jie-jiangzha-skill"].includes(state.stage)) return {
+  if (["jie-denghuang-skill", "jie-jiangzha-skill", "shen-xiaoxu-skill"].includes(state.stage)) return {
     text: state.boardHeroSkills?.advanced?.currentPlayerId === player.id ? "技能操作" : "等待技能", tone: state.boardHeroSkills?.advanced?.currentPlayerId === player.id ? "good" : ""
   };
   const setup = state.setup || {};
@@ -8009,6 +8031,7 @@ function renderSeatHand(action, play, trick, index, options = {}) {
             ${renderHandControls(action)}
           </div>
           ${renderThrowDraft()}
+          ${(state.setup?.reservedCards || []).length ? `<div class="hero-reserved-cards" aria-label="横置牌"><span>横置 ${(state.setup.reservedCards || []).length} 张 · 收回前已出 ${state.setup.reservedPlayedCount || 0} 张</span><div>${state.setup.reservedCards.map((card) => `<span class="hero-reserved-card ${escapeHtml(card.color || "black")}">${escapeHtml(card.label)}</span>`).join("")}</div></div>` : ""}
           ${renderHand(state.hand, { compact: true })}
         </div>
       </div>
@@ -8832,7 +8855,7 @@ function currentTrumpSuit() {
 }
 
 function handUsesFinalTrumpOrder() {
-  return state?.stage === "dogleg" || state?.stage === "playing" || state?.stage === "jie-denghuang-skill" || state?.stage === "jie-jiangzha-skill";
+  return state?.stage === "dogleg" || state?.stage === "playing" || state?.stage === "jie-denghuang-skill" || state?.stage === "jie-jiangzha-skill" || state?.stage === "shen-xiaoxu-skill";
 }
 
 function isCounselor(card, trumpSuit) {
@@ -9006,6 +9029,7 @@ function isDoglegHandCard(card) {
     if (doglegCard.type === "joker") return card?.type === "joker";
     return card?.type === "normal" && card.rank === doglegCard.rank && card.color === doglegCard.color;
   }
+  if (doglegCard.type === "joker") return card?.type === "joker" && card.joker === doglegCard.joker;
   return card?.type === "normal" && card.suit === doglegCard.suit && card.rank === doglegCard.rank;
 }
 
@@ -9336,6 +9360,7 @@ const mutatingActions = new Set([
   "send-taunt", "delete-taunt", "kick-player", "buy-shop-product", "equip-avatar-frame", "use-game-item",
   "complete-item-stage", "collect-home", "assign-home-unit", "select-battle-hero",
   "pull-hero-gacha", "upgrade-hero-unit", "upgrade-home-region", "dispatch-hero-task", "collect-hero-task", "claim-daily-task",
+  "shen-xiaoxu-reserve", "shen-xiaoxu-pass",
   "claim-hero-advancement", "jie-denghuang-draw", "jie-denghuang-bury", "jie-denghuang-pass", "jie-jiangzha-select", "jie-jiangzha-pass",
   "purchase-energy", "claim-achievement", "equip-title",
   "shen-biesan-activate", "shen-biesan-pass", "jie-ranchen-invest", "jie-ranchen-pass", "yokoyama-activate", "yokoyama-pass",
@@ -9626,7 +9651,7 @@ document.addEventListener("click", (event) => {
   if (action === "claim-hero-advancement") {
     claimAdvancedHero(event.target.closest("[data-unit-id]")?.dataset.unitId || "");
   }
-  if (["jie-denghuang-draw", "jie-denghuang-bury", "jie-denghuang-pass", "jie-jiangzha-select", "jie-jiangzha-pass"].includes(action)) {
+  if (["jie-denghuang-draw", "jie-denghuang-bury", "jie-denghuang-pass", "jie-jiangzha-select", "jie-jiangzha-pass", "shen-xiaoxu-reserve", "shen-xiaoxu-pass"].includes(action)) {
     submitAdvancedHeroAction(action);
   }
   if (action === "upgrade-hero-unit") {

@@ -5,6 +5,9 @@ export const HERO_ADVANCEMENTS = Object.freeze([
   { srId: "deng-huang", ssrId: "jie-denghuang", tasks: [
     { key: "bottomWins", label: "本人赢得最后一轮（保底）", target: 10 }
   ] },
+  { srId: "xiaoxu", ssrId: "shen-xiaoxu", tasks: [
+    { key: "scoringSources", label: "累计获得100名玩家的计分牌（每局每名玩家计一次）", target: 100 }
+  ] },
   { srId: "gelu", ssrId: "shen-gelu", tasks: [
     { key: "wonTrickPoints", label: "累计获得牌分（不含底牌）", target: 5000 }
   ] }
@@ -24,7 +27,9 @@ export function advancementGameDelta(player, { bottomWinnerRoomPlayerId } = {}) 
       ? { doglegWins: Number(player.role === "狗腿" && Number(player.baseGameScore) > 0) }
       : srId === "deng-huang"
         ? { bottomWins: Number(bottomWinnerRoomPlayerId === player.roomPlayerId) }
-        : { wonTrickPoints: Math.max(0, Number(player.wonTrickPoints) || 0) }
+        : srId === "xiaoxu"
+          ? { scoringSources: new Set((player.scoringSourcePlayerIds || []).filter((id) => id && id !== player.roomPlayerId)).size }
+          : { wonTrickPoints: Math.max(0, Number(player.wonTrickPoints) || 0) }
   ]));
 }
 

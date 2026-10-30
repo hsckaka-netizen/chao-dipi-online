@@ -66,6 +66,7 @@ import {
   publicHeroCatalog,
   regionUpgradeCost,
   selectHeroTaskUnits,
+  scoringSourcePlayerIds,
   starUpgradeCost
 } from "./hero-home.js";
 
@@ -245,6 +246,10 @@ const MIGRATIONS = [
   {
     version: 43,
     path: fileURLToPath(new URL("./db/migrations/043_gelu_advancement.sql", import.meta.url))
+  },
+  {
+    version: 44,
+    path: fileURLToPath(new URL("./db/migrations/044_xiaoxu_advancement.sql", import.meta.url))
   }
 ];
 const HISTORY_ENABLED = String(process.env.GAME_HISTORY_ENABLED || "").toLowerCase() === "true";
@@ -1711,6 +1716,7 @@ export function buildGameRecord(room) {
       team: playerResult.team,
       won: baseGameScore > 0 ? true : baseGameScore < 0 ? false : null,
       trickScore: Number(playerResult.trickScore) || 0,
+      scoringSourcePlayerIds: scoringSourcePlayerIds(room.trickHistory, playerResult.playerId),
       wonTrickPoints: (room.trickHistory || []).filter((trick) => trick.winnerId === playerResult.playerId)
         .reduce((total, trick) => total + (Number(trick.points) || 0), 0),
       gameScore,

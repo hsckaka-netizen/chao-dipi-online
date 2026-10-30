@@ -9322,3 +9322,9 @@ button.auto-play-toggle.active {
 .judgment-trial small { color: var(--muted); line-height: 1.6; }
 .judgment-outcome { font-weight: 700; color: var(--primary-dark); }
 @media (max-width: 620px) { .judgment-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); } .judgment-trial { padding: 10px; } }
+
+/* Separate, read-only cards: never part of the selectable hand. */
+.hero-reserved-cards { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; padding: 5px 8px; color: #755215; font-size: 12px; }
+.hero-reserved-cards > div { display: flex; flex-wrap: wrap; gap: 5px; }
+.hero-reserved-card { display: inline-block; min-width: 44px; padding: 3px 8px; border: 1px solid #b99a55; border-radius: 4px; background: #f4efdf; color: #292621; text-align: center; }
+.hero-reserved-card.red { color: #b52c28; }

@@ -1,7 +1,10 @@
 export const HERO_HOME_RULES = Object.freeze({
-  version: "2026-10-29-v13",
+  version: "2026-10-30-v14",
   skillVersion: "2026-09-24-skill-v9",
-  boardSkillVersion: "2026-10-29-board-skill-v13",
+  boardSkillVersion: "2026-10-30-board-skill-v14",
+  shenLafangScoreBonus: Object.freeze([0.5, 1, 1.5, 2, 3]),
+  shenXiaoxuReserveCount: Object.freeze([1, 2, 3, 4, 5]),
+  shenXiaoxuScorePerTen: Object.freeze([0.1, 0.2, 0.3, 0.4, 0.5]),
   shenJiangwenScorePerLoss: Object.freeze([0.1, 0.12, 0.15, 0.2, 0.25]),
   shenJiangwenDiamondsPerLoss: Object.freeze([10, 12, 15, 20, 25]),
   shenJiangwenLossCap: 5,
@@ -115,6 +118,16 @@ export const HOME_UNITS = Object.freeze([
     id: "gelu", name: "格鲁", shortName: "格", type: "hero", rarity: "sr", gender: "male", regionId: "brick", color: "#7958a5",
     cardImage: "/assets/heroes/gelu-card-v2.png",
     skillName: "多劳多得", skillDescription: "累计本人赢得各轮的牌分，按1～5星每满100/90/80/70/60分，额外获得32钻石；不足一次的余分不奖励，次数和奖励无上限，不计底牌与团队加分。"
+  }),
+  Object.freeze({
+    id: "shen-xiaoxu", name: "神 · 小旭", namePrefix: "神", baseName: "小旭", shortName: "旭", type: "hero", rarity: "ssr", gender: "male", regionId: "brick", color: "#257e73", advancementFrom: "xiaoxu",
+    cardImage: "/assets/heroes/shen-xiaoxu-card-v1.png",
+    skillName: "蓄势待发", skillDescription: "炒底结束、正式出牌前，可横置最多1/2/3/4/5张手牌；横置牌不参与任何出牌规则判定，首次赢得出牌权或手牌不足本轮跟牌张数时全部收回。获胜后，收回前每打出满10张牌，按1～5星额外获得0.1/0.2/0.3/0.4/0.5积分。"
+  }),
+  Object.freeze({
+    id: "shen-lafang", name: "神 · 拉芳", namePrefix: "神", baseName: "拉芳", shortName: "芳", type: "hero", rarity: "ssr", gender: "male", regionId: "stage", color: "#a53632",
+    cardImage: "/assets/heroes/shen-lafang-card-v1.png",
+    skillName: "庄志凌云", skillDescription: "本人坐庄且叫庄分数达到全局总牌分50%时，获胜按1～5星额外获得0.5/1/1.5/2/3积分。达到60%时可用与上一手同等大小的比牌炒底（同张数、同花色，例如一对黑桃2炒一对黑桃2），仍须轮到本人炒底。传统狗腿模式达到70%时可从自己手牌任选狗腿牌（允许王、2、红方五等比牌）。"
   }),
   Object.freeze({
     id: "shen-gelu", name: "神 · 格鲁", namePrefix: "神", baseName: "格鲁", shortName: "格", type: "hero", rarity: "ssr", gender: "male", regionId: "brick", color: "#7958a5", advancementFrom: "gelu",
@@ -477,7 +490,7 @@ export function createBattleHeroSnapshot(unitId, stars = 1, cooldownValue = 0) {
     stars: normalizedStars(stars),
     skillVersion: unit.rarity === "ssr" ? HERO_HOME_RULES.boardSkillVersion : HERO_HOME_RULES.skillVersion
   };
-  if (unit.rarity === "ssr" && unit.id !== "jie-doudou" && unit.id !== "shen-haohao" && unit.id !== "jie-ranchen" && unit.id !== "shen-benlei" && !unit.advancementFrom) {
+  if (unit.rarity === "ssr" && unit.id !== "jie-doudou" && unit.id !== "shen-haohao" && unit.id !== "jie-ranchen" && unit.id !== "shen-benlei" && unit.id !== "shen-lafang" && !unit.advancementFrom) {
     snapshot.paidSkill = boardHeroSkillState(stars, cooldownValue, unit.id);
   }
   return snapshot;
@@ -521,6 +534,17 @@ function baseSkillResult(snapshot, matched, cap, amount, detail) {
   };
 }
 
+export function scoringSourcePlayerIds(trickHistory = [], playerId) {
+  const sources = new Set();
+  for (const trick of trickHistory || []) {
+    if (trick?.winnerId !== playerId) continue;
+    for (const play of trick.plays || []) {
+      if (play?.playerId && play.playerId !== playerId && (play.cards || []).some(cardHasPoints)) sources.add(play.playerId);
+    }
+  }
+  return [...sources];
+}
+
 export function calculateHeroSkillReward({
   snapshot,
   playerId,
@@ -533,6 +557,9 @@ export function calculateHeroSkillReward({
   doudouNumber = null,
   doudouMatchingCards = 0,
   doudouBottomMatches = false,
+  bankerBidScore = 0,
+  totalGamePoints = 0,
+  xiaoxuPlayedBeforeReturn = 0,
   shenJiangwenUseCount = 0,
   shenJiangwenLeadLosses = 0,
   haohaoDraggedTeammateFives = 0,
@@ -542,6 +569,18 @@ export function calculateHeroSkillReward({
   if (!snapshot?.heroId || !playerId || !playerResult) return null;
   const stars = normalizedStars(snapshot.stars);
   const history = Array.isArray(trickHistory) ? trickHistory : [];
+
+  if (snapshot.heroId === "shen-lafang" || snapshot.heroId === "shen-xiaoxu") {
+    const won = Number(playerResult.baseGameScore ?? playerResult.gameScore) > 0;
+    const isLafang = snapshot.heroId === "shen-lafang";
+    const units = isLafang
+      ? Number(playerResult.role === "庄家" && totalGamePoints > 0 && bankerBidScore * 100 >= totalGamePoints * 50)
+      : Math.floor(Math.max(0, Number(xiaoxuPlayedBeforeReturn) || 0) / 10);
+    const scoreBonus = won ? Math.round(units * (isLafang ? HERO_HOME_RULES.shenLafangScoreBonus[stars - 1] : HERO_HOME_RULES.shenXiaoxuScorePerTen[stars - 1]) * 100) / 100 : 0;
+    return { ...baseSkillResult(snapshot, won ? units : 0, null, 0,
+      `${isLafang ? "叫庄达到50%的庄家获胜奖励" : `横置牌收回前打出${xiaoxuPlayedBeforeReturn}张，每满10张计一次`}；额外${scoreBonus}积分`),
+      rulesVersion: HERO_HOME_RULES.boardSkillVersion, scoreBonus };
+  }
 
   if (snapshot.heroId === "shen-benlei") {
     const matched = history.some((trick) => trick?.winnerId === playerId
@@ -576,12 +615,7 @@ export function calculateHeroSkillReward({
   }
 
   if (snapshot.heroId === "xiaoxu") {
-    const sources = new Set();
-    history.filter((trick) => trick?.winnerId === playerId).forEach((trick) => {
-      (trick.plays || []).forEach((play) => {
-        if (play?.playerId !== playerId && (play.cards || []).some(cardHasPoints)) sources.add(play.playerId);
-      });
-    });
+    const sources = new Set(scoringSourcePlayerIds(history, playerId));
     const diamondsPerSource = XIAOXU_DIAMONDS_PER_SOURCE[stars - 1];
     const amount = sources.size * diamondsPerSource;
     return baseSkillResult(snapshot, sources.size, null, amount, `从${sources.size}名其他玩家的计分牌中赢得过牌分，每名奖励${diamondsPerSource}钻，不另设上限`);
