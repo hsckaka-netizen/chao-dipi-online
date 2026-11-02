@@ -127,7 +127,7 @@ export const HOME_UNITS = Object.freeze([
   }),
   Object.freeze({
     id: "shen-kaxiang", name: "神 · 卡翔", namePrefix: "神", baseName: "卡翔", shortName: "翔", type: "hero", rarity: "ssr", gender: "male", regionId: "brick", color: "#267f78",
-    cardImage: "/assets/heroes/shen-kaxiang-card-v1.png",
+    cardImage: "/assets/heroes/shen-kaxiang-card-v2.png",
     skillName: "逆转未来", skillDescription: "主动：每局一次，可在炒底阶段或出牌阶段免费发动。炒底时逆转本阶段后续顺序，当前操作玩家不变；出牌时逆转本轮剩余玩家顺序，已出牌者不重复出牌，下轮恢复正常。被动：本局至少一次由本人领出、最终由队友赢得该轮时，结算按1～5星额外获得0.3/0.6/0.9/1.2/1.5积分，整局只奖励一次，不要求获胜。"
   }),
   Object.freeze({

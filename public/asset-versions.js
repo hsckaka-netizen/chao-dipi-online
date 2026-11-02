@@ -1,4 +1,8 @@
 export const ASSET_VERSIONS = Object.freeze({
+  "/assets/heroes/shen-kaxiang-card-v2-medium.webp": "d8debf792e34",
+  "/assets/heroes/shen-kaxiang-card-v2-thumb.webp": "dc2d73267f10",
+  "/assets/heroes/shen-kaxiang-card-v2.png": "189e8a36d145",
+  "/assets/heroes/shen-kaxiang-card-v2.webp": "a7e1c7119133",
   "/assets/heroes/shen-kaxiang-card-v1-medium.webp": "5379787d73ea",
   "/assets/heroes/shen-kaxiang-card-v1-thumb.webp": "33dfa6b9d9c9",
   "/assets/heroes/shen-kaxiang-card-v1.png": "6d83028c2e6f",
