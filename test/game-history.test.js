@@ -331,6 +331,12 @@ test("official PVE games are eligible and keep AI participants in the record", (
   const record = buildGameRecord(room);
   assert.equal(record.gameMode, "pve");
   assert.equal(record.players.filter((player) => player.isAi).length, 2);
+  assert.equal(record.advancementEligible, true);
+  room.players[0].pveEnergyEligible = false;
+  room.players[1].advancementSrIds = ["deng-huang", "gelu"];
+  const energyRecord = buildGameRecord(room);
+  assert.equal(energyRecord.players.find((player) => player.roomPlayerId === room.players[0].id).pveEnergyEligible, false);
+  assert.deepEqual(energyRecord.players.find((player) => player.roomPlayerId === room.players[1].id).advancementSrIds, ["deng-huang", "gelu"]);
 });
 
 test("game mode migration and leaderboard filters separate PVP from PVE", async () => {

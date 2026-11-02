@@ -5404,8 +5404,9 @@ export async function listRecentGames(limit = 30) {
 }
 
 async function settleHeroAdvancement(client, record) {
-  if (!record.advancementEligible || record.gameMode === "pve") return;
+  if (!record.advancementEligible) return;
   for (const player of [...record.players].sort((a, b) => String(a.accountId).localeCompare(String(b.accountId)))) {
+    if (record.gameMode === "pve" && player.pveEnergyEligible !== true) continue;
     const deltas = advancementGameDelta(player, record);
     if (!player.accountId || player.isAi || player.diamondReward?.reason === "spectator" || !Object.keys(deltas).length) continue;
     await ensureHeroAccount(client, player.accountId);
@@ -5420,7 +5421,10 @@ async function settleHeroAdvancement(client, record) {
       if (row.rows[0].claimed_at) continue;
       const definition = HERO_ADVANCEMENTS.find((item) => item.srId === srId);
       const counts = { ...row.rows[0].progress };
-      definition.tasks.forEach((task) => { counts[task.key] = Math.min(task.target, (Number(counts[task.key]) || 0) + (delta[task.key] || 0)); });
+      definition.tasks.forEach((task) => {
+        const total = (Number(counts[task.key]) || 0) + (delta[task.key] || 0);
+        counts[task.key] = Math.min(task.target, Math.round(total * 10) / 10);
+      });
       await client.query(`UPDATE cdp_hero_advancements SET progress = $3::jsonb WHERE account_id = $1::uuid AND sr_unit_id = $2`, [player.accountId, srId, JSON.stringify(counts)]);
     }
   }

@@ -1,6 +1,8 @@
+export const PVE_ADVANCEMENT_PROGRESS_RATE = 0.2;
+
 export const HERO_ADVANCEMENTS = Object.freeze([
   { srId: "jiang-zha", ssrId: "jie-jiangzha", tasks: [
-    { key: "doglegWins", label: "以狗腿身份获胜", target: 10 }
+    { key: "doglegWins", label: "以狗腿身份获胜（PVE为庄家队友）", target: 10 }
   ] },
   { srId: "deng-huang", ssrId: "jie-denghuang", tasks: [
     { key: "bottomWins", label: "本人赢得最后一轮（保底）", target: 10 }
@@ -20,16 +22,21 @@ export function advancementProgress(definition, counts = {}) {
   return { ...definition, tasks, complete: tasks.every((task) => task.progress >= task.target) };
 }
 
-export function advancementGameDelta(player, { bottomWinnerRoomPlayerId } = {}) {
+export function advancementGameDelta(player, { bottomWinnerRoomPlayerId, gameMode = "pvp" } = {}) {
+  const isPve = gameMode === "pve";
+  const rate = isPve ? PVE_ADVANCEMENT_PROGRESS_RATE : 1;
   const eligible = new Set(player?.advancementSrIds || []);
-  return Object.fromEntries(HERO_ADVANCEMENTS.filter(({ srId }) => eligible.has(srId)).map(({ srId }) => [
+  const deltas = Object.fromEntries(HERO_ADVANCEMENTS.filter(({ srId }) => eligible.has(srId)).map(({ srId }) => [
     srId, srId === "jiang-zha"
-      ? { doglegWins: Number(player.role === "狗腿" && Number(player.baseGameScore) > 0) }
+      ? { doglegWins: Number(player.role === (isPve ? "庄家队友" : "狗腿") && Number(player.baseGameScore) > 0) }
       : srId === "deng-huang"
         ? { bottomWins: Number(bottomWinnerRoomPlayerId === player.roomPlayerId) }
         : srId === "xiaoxu"
           ? { scoringSources: new Set((player.scoringSourcePlayerIds || []).filter((id) => id && id !== player.roomPlayerId)).size }
           : { wonTrickPoints: Math.max(0, Number(player.wonTrickPoints) || 0) }
+  ]));
+  return Object.fromEntries(Object.entries(deltas).map(([srId, delta]) => [srId,
+    Object.fromEntries(Object.entries(delta).map(([key, value]) => [key, Math.round(value * rate * 10) / 10]))
   ]));
 }
 

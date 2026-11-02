@@ -270,3 +270,73 @@ test('Gelu claims its separate SSR and forty fragments exactly once, preserving 
   assert.equal(mints, 1);
   assert.equal(row.claimed_at, 'claimed');
 });
+
+test("PVE applies 20 percent to each original task and maps Jiangzha to a winning banker teammate", () => {
+  const player = {
+    roomPlayerId: 'p', role: '庄家队友', baseGameScore: 2,
+    advancementSrIds: ['jiang-zha', 'deng-huang', 'xiaoxu', 'gelu'],
+    scoringSourcePlayerIds: ['p', 'human', 'robot1', 'robot1', 'robot2'], wonTrickPoints: 125
+  };
+  const record = { gameMode: 'pve', bottomWinnerRoomPlayerId: 'p' };
+  assert.deepEqual(advancementGameDelta(player, record), {
+    'jiang-zha': { doglegWins: 0.2 }, 'deng-huang': { bottomWins: 0.2 },
+    xiaoxu: { scoringSources: 0.6 }, gelu: { wonTrickPoints: 25 }
+  });
+  for (const role of ['庄家', '闲家', '狗腿']) assert.equal(advancementGameDelta({ ...player, role }, record)['jiang-zha'].doglegWins, 0);
+  for (const baseGameScore of [0, -2]) {
+    const delta = advancementGameDelta({ ...player, baseGameScore }, record);
+    assert.equal(delta['jiang-zha'].doglegWins, 0);
+    assert.equal(delta['deng-huang'].bottomWins, 0.2, 'a loss does not cancel a completed bottom win');
+    assert.equal(delta.gelu.wonTrickPoints, 25);
+  }
+  const pvp = advancementGameDelta({ ...player, role: '狗腿' }, { ...record, gameMode: 'pvp' });
+  assert.equal(pvp['jiang-zha'].doglegWins, 1);
+  assert.equal(pvp.xiaoxu.scoringSources, 3);
+  assert.equal(pvp.gelu.wonTrickPoints, 125);
+});
+
+test("PVE fractions survive persistence, mix with PVP and reach exactly ten without float drift", async () => {
+  const client = advancementStore();
+  const player = { accountId: 'a', roomPlayerId: 'p', role: '庄家队友', baseGameScore: 2, pveEnergyEligible: true, advancementSrIds: ['jiang-zha', 'deng-huang'] };
+  const record = { advancementEligible: true, gameMode: 'pve', bottomWinnerRoomPlayerId: 'p', players: [player] };
+  for (let index = 0; index < 5; index++) await storage.settleHeroAdvancement(client, { ...record, gameId: `pve-${index}` });
+  assert.equal(client.progress.get('a:jiang-zha').progress.doglegWins, 1);
+  assert.equal(client.progress.get('a:deng-huang').progress.bottomWins, 1);
+  await storage.settleHeroAdvancement(client, { ...record, gameId: 'pve-0' });
+  assert.equal(client.progress.get('a:deng-huang').progress.bottomWins, 1, 'replayed games do not grant fractions twice');
+  await storage.settleHeroAdvancement(client, { ...record, gameId: 'pvp', gameMode: 'pvp', players: [{ ...player, role: '狗腿' }] });
+  assert.equal(client.progress.get('a:deng-huang').progress.bottomWins, 2);
+  for (let index = 5; index < 45; index++) await storage.settleHeroAdvancement(client, { ...record, gameId: `pve-${index}` });
+  assert.equal(client.progress.get('a:jiang-zha').progress.doglegWins, 10);
+  assert.equal(client.progress.get('a:deng-huang').progress.bottomWins, 10);
+  assert.equal(advancementProgress(HERO_ADVANCEMENTS[1], { bottomWins: 9.8 }).complete, false);
+  assert.equal(advancementProgress(HERO_ADVANCEMENTS[1], client.progress.get('a:deng-huang').progress).complete, true);
+  await storage.settleHeroAdvancement(client, { ...record, gameId: 'extra' });
+  assert.equal(client.progress.get('a:deng-huang').progress.bottomWins, 10);
+});
+
+test("PVE source and score progress persist fractions and claimed advancements remain unchanged", async () => {
+  const client = advancementStore();
+  const record = { gameId: 'sources', gameMode: 'pve', advancementEligible: true, players: [{
+    accountId: 'a', roomPlayerId: 'p', pveEnergyEligible: true, advancementSrIds: ['xiaoxu', 'gelu'],
+    scoringSourcePlayerIds: ['robot1', 'robot2', 'robot1'], wonTrickPoints: 5
+  }] };
+  await storage.settleHeroAdvancement(client, record);
+  assert.equal(client.progress.get('a:xiaoxu').progress.scoringSources, 0.4);
+  assert.equal(client.progress.get('a:gelu').progress.wonTrickPoints, 1);
+  client.progress.get('a:xiaoxu').claimed_at = 'claimed';
+  client.progress.get('a:gelu').progress.wonTrickPoints = 4999;
+  await storage.settleHeroAdvancement(client, { ...record, gameId: 'next' });
+  assert.equal(client.progress.get('a:xiaoxu').progress.scoringSources, 0.4);
+  assert.equal(client.progress.get('a:gelu').progress.wonTrickPoints, 5000);
+});
+
+test("PVE advancement rejects insufficient energy, missing eligibility, robots, spectators and invalid games", async () => {
+  const noWrites = { async query() { assert.fail('ineligible PVE must not access progress storage'); } };
+  const player = { accountId: 'a', roomPlayerId: 'p', isAi: false, pveEnergyEligible: true, role: '庄家队友', baseGameScore: 2, advancementSrIds: ['jiang-zha'] };
+  const record = { gameId: 'pve', gameMode: 'pve', advancementEligible: true, players: [player] };
+  await storage.settleHeroAdvancement(noWrites, { ...record, advancementEligible: false });
+  for (const override of [{ pveEnergyEligible: false }, { pveEnergyEligible: undefined }, { isAi: true }, { accountId: null }, { diamondReward: { reason: 'spectator' } }, { advancementSrIds: [] }]) {
+    await storage.settleHeroAdvancement(noWrites, { ...record, players: [{ ...player, ...override }] });
+  }
+});
