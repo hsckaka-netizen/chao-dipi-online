@@ -97,6 +97,7 @@ import {
   chargeJudgmentEntry,
   claimAchievement,
   claimDailyTask,
+  claimDailyTaskBonus,
   collectHomeProduction,
   gameHistoryStatus,
   avatarFrameProductExists,
@@ -8208,6 +8209,10 @@ async function handleApi(req, res, pathParts, url) {
     if (req.method === "POST" && pathParts[2] === "tasks" && pathParts[3] === "collect") {
       const body = await readJson(req);
       return writeJson(res, 200, await collectHeroTask(account.id, body.taskId, body.requestId));
+    }
+    if (req.method === "POST" && pathParts[2] === "daily-tasks" && pathParts[3] === "bonus" && pathParts.length === 4) {
+      const body = await readJson(req);
+      return writeJson(res, 200, await claimDailyTaskBonus(account.id, body.requestId));
     }
     if (req.method === "POST" && pathParts[2] === "daily-tasks" && pathParts[3] === "claim") {
       const body = await readJson(req);

@@ -9,7 +9,7 @@ import {
 } from "../daily-tasks.js";
 
 test("daily task definitions keep refresh, targets, and rewards in one configuration", () => {
-  assert.equal(DAILY_TASK_RULES.version, "2026-08-27-v1");
+  assert.equal(DAILY_TASK_RULES.version, "2026-11-02-v2");
   assert.equal(DAILY_TASK_RULES.refreshHourBeijing, 6);
   assert.deepEqual(DAILY_TASK_RULES.tasks.map((task) => ({
     id: task.id,
@@ -72,4 +72,19 @@ test("daily task persistence, claim endpoint, and UI are server-authoritative", 
   assert.match(appSource, /data-action="claim-daily-task"/);
   assert.match(migration, /PRIMARY KEY \(account_id, refresh_key, task_id\)/);
   assert.match(migration, /ENABLE ROW LEVEL SECURITY/);
+});
+
+
+test("completion bonus follows completion independently of claims and resets with the daily window", () => {
+  const summary = { gamesCompleted: 3, gamesWon: 1, bankerGames: 1, bottomWins: 1, trickScore: 500 };
+  const ready = buildDailyTaskState(summary, [], "2026-11-02T00:00:00Z");
+  assert.equal(ready.completionBonus.completed, true);
+  assert.equal(ready.completionBonus.completedCount, 6);
+  assert.equal(ready.completionBonus.claimed, false);
+  const claimed = buildDailyTaskState(summary, [], "2026-11-02T00:00:00Z", { item_id: "restart-card" });
+  assert.equal(claimed.completionBonus.claimed, true);
+  assert.equal(claimed.completionBonus.rewardItemName, "重开卡");
+  const nextDay = buildDailyTaskState({}, [], "2026-11-02T22:00:00Z");
+  assert.equal(nextDay.completionBonus.completedCount, 0);
+  assert.equal(nextDay.completionBonus.claimed, false);
 });

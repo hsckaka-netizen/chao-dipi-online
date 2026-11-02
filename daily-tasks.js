@@ -2,8 +2,13 @@ const BEIJING_OFFSET_MS = 8 * 60 * 60 * 1000;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 export const DAILY_TASK_RULES = Object.freeze({
-  version: "2026-08-27-v1",
+  version: "2026-11-02-v2",
   refreshHourBeijing: 6,
+  completionBonusItems: Object.freeze([
+    Object.freeze({ id: "colorful-card", name: "缤纷卡" }),
+    Object.freeze({ id: "war-god-card", name: "战神卡" }),
+    Object.freeze({ id: "restart-card", name: "重开卡" })
+  ]),
   tasks: Object.freeze([
     Object.freeze({
       id: "complete-game-1",
@@ -75,22 +80,29 @@ export function beijingDailyTaskWindow(at = new Date()) {
   };
 }
 
-export function buildDailyTaskState(summary = {}, claimedTaskIds = [], at = new Date()) {
+export function buildDailyTaskState(summary = {}, claimedTaskIds = [], at = new Date(), bonusClaim = null) {
   const window = beijingDailyTaskWindow(at);
   if (!window) return null;
   const claimed = new Set(claimedTaskIds);
+  const tasks = DAILY_TASK_RULES.tasks.map((task) => {
+    const progress = Math.max(0, Math.trunc(Number(summary[task.metric]) || 0));
+    return { ...task, progress, completed: progress >= task.target, claimed: claimed.has(task.id) };
+  });
+  const completedCount = tasks.filter((task) => task.completed).length;
+  const reward = DAILY_TASK_RULES.completionBonusItems.find((item) => item.id === bonusClaim?.item_id);
   return {
     rulesVersion: DAILY_TASK_RULES.version,
     refreshHourBeijing: DAILY_TASK_RULES.refreshHourBeijing,
     ...window,
-    tasks: DAILY_TASK_RULES.tasks.map((task) => {
-      const progress = Math.max(0, Math.trunc(Number(summary[task.metric]) || 0));
-      return {
-        ...task,
-        progress,
-        completed: progress >= task.target,
-        claimed: claimed.has(task.id)
-      };
-    })
+    tasks,
+    completionBonus: {
+      requiredCount: tasks.length,
+      completedCount,
+      completed: completedCount === tasks.length,
+      claimed: Boolean(bonusClaim),
+      rewardItemId: reward?.id || null,
+      rewardItemName: reward?.name || null,
+      quantity: 1
+    }
   };
 }

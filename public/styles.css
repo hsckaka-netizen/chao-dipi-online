@@ -714,6 +714,29 @@
   font-size: 10px;
 }
 
+.daily-game-task-bonus {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 14px;
+  margin-top: 14px;
+  padding: 16px;
+  border: 1px solid #ead9ab;
+  border-radius: 14px;
+  background: #fff9e9;
+}
+
+.daily-game-task-bonus p {
+  margin: 6px 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.daily-game-task-bonus button {
+  flex: 0 0 auto;
+}
+
 .daily-game-task-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));

@@ -5156,7 +5156,8 @@ function renderHeroLoadingPage(active) {
 function renderHomeRegionCard(region) {
   const placed = region.ownedUnit || null;
   const extraPlaced = region.extraOwnedUnit || null;
-  const assignedIds = new Set((heroHomeState?.regions || []).flatMap((item) => [item.unitId, item.extraUnitId]).filter(Boolean));
+  const secondExtraPlaced = region.secondExtraOwnedUnit || null;
+  const assignedIds = new Set((heroHomeState?.regions || []).flatMap((item) => [item.unitId, item.extraUnitId, item.secondExtraUnitId]).filter(Boolean));
   const candidates = (heroHomeState?.ownedUnits || []).filter((unit) => unit.regionId === region.id);
   const maxProductionHours = Number(region.maxProductionHours || 6);
   const productionMultiplier = Number(region.productionMultiplier);
@@ -5166,6 +5167,7 @@ function renderHomeRegionCard(region) {
   const ratePerHour = formatHeroProductionNumber(region.ratePerHour);
   const primaryRatePerHour = formatHeroProductionNumber(region.primaryRatePerHour);
   const extraRatePerHour = formatHeroProductionNumber(region.extraRatePerHour);
+  const secondExtraRatePerHour = formatHeroProductionNumber(region.secondExtraRatePerHour);
   const progress = Math.max(0, Math.min(100, Number(region.productionHours || 0) / maxProductionHours * 100));
   return `
     <article class="home-region-card region-${escapeHtml(region.id)}">
@@ -5222,6 +5224,11 @@ function renderHomeRegionCard(region) {
         const unavailable = assignedIds.has(unit.id) && !active;
         return `<button type="button" class="home-unit-choice ${active ? "active" : "secondary"}" data-action="assign-home-unit" data-slot="extra" data-region-id="${escapeHtml(region.id)}" data-unit-id="${escapeHtml(unit.id)}" ${active || unavailable || heroActionInFlight ? "disabled" : ""}>${heroUnitBadge(unit, "tiny")}<span>${escapeHtml(unit.name)}</span></button>`;
       }).join("")}${extraPlaced ? `<button type="button" class="secondary home-unit-choice" data-action="assign-home-unit" data-slot="extra" data-region-id="${escapeHtml(region.id)}" data-unit-id="" ${heroActionInFlight ? "disabled" : ""}><span class="hero-unit-badge tiny empty">空</span><span>移除</span></button>` : ""}</div>${extraPlaced ? `<div class="home-region-actions"><span>${escapeHtml(extraPlaced.name)} ${heroStars(extraPlaced.stars)} · 每小时 ${escapeHtml(extraRatePerHour)} 钻石</span></div>` : ""}</div>` : ""}
+      ${region.secondExtraSlotUnlocked ? `<div class="home-assignment-list"><span class="meta">200级附加英雄栏位（50%效率产出）</span><div>${candidates.filter((unit) => unit.type === "hero").map((unit) => {
+        const active = secondExtraPlaced?.id === unit.id;
+        const unavailable = assignedIds.has(unit.id) && !active;
+        return `<button type="button" class="home-unit-choice ${active ? "active" : "secondary"}" data-action="assign-home-unit" data-slot="extra2" data-region-id="${escapeHtml(region.id)}" data-unit-id="${escapeHtml(unit.id)}" ${active || unavailable || heroActionInFlight ? "disabled" : ""}>${heroUnitBadge(unit, "tiny")}<span>${escapeHtml(unit.name)}</span></button>`;
+      }).join("")}${secondExtraPlaced ? `<button type="button" class="secondary home-unit-choice" data-action="assign-home-unit" data-slot="extra2" data-region-id="${escapeHtml(region.id)}" data-unit-id="" ${heroActionInFlight ? "disabled" : ""}><span class="hero-unit-badge tiny empty">空</span><span>移除</span></button>` : ""}</div>${secondExtraPlaced ? `<div class="home-region-actions"><span>${escapeHtml(secondExtraPlaced.name)} ${heroStars(secondExtraPlaced.stars)} · 每小时 ${escapeHtml(secondExtraRatePerHour)} 钻石</span></div>` : ""}</div>` : `<div class="home-assignment-list"><span class="meta">区域达到200级解锁第二个附加英雄栏位（50%效率产出）</span></div>`}
     </article>
   `;
 }
@@ -5355,6 +5362,10 @@ function renderDailyGameTasks() {
     <section class="panel daily-game-task-section">
       <div class="section-head"><div><span class="eyebrow">DAILY QUESTS</span><h2>每日任务</h2><p>每天北京时间06:00刷新；进度统计自然完成的有效 PVP 与正式 PVE，奖励需在刷新前领取。</p></div><div class="daily-game-task-total"><small>今日领取</small><b>${escapeHtml(claimedCount)} / ${escapeHtml(tasks.length)}</b></div></div>
       <div class="daily-game-task-grid">${tasks.map(renderDailyGameTask).join("")}</div>
+      ${dailyTasks?.completionBonus ? `<div class="daily-game-task-bonus">
+        <div><strong>六任务完成奖励 · ${escapeHtml(dailyTasks.completionBonus.completedCount)} / ${escapeHtml(dailyTasks.completionBonus.requiredCount)}</strong><p>完成全部6个每日任务，额外获得1张随机道具卡：缤纷、战神、重开各1/3概率。</p>${dailyTasks.completionBonus.claimed ? `<span class="meta">已领取：${escapeHtml(dailyTasks.completionBonus.rewardItemName)} ×1，已放入背包</span>` : `<span class="meta">每天限领一次，请在次日06:00刷新前领取。</span>`}</div>
+        <button type="button" data-action="claim-daily-task-bonus" ${!dailyTasks.completionBonus.completed || dailyTasks.completionBonus.claimed || heroActionInFlight ? "disabled" : ""}>${dailyTasks.completionBonus.claimed ? "已领取" : dailyTasks.completionBonus.completed ? "领取随机道具卡" : "完成6个任务后领取"}</button>
+      </div>` : ""}
     </section>
   `;
 }
@@ -5660,6 +5671,24 @@ async function claimDailyGameTask(taskId) {
     setMessage(`已领取 ${data.rewardDiamonds} 钻石和 ${data.rewardMaterials} 建材`);
   } catch (error) {
     setMessage(error.message || "领取每日任务奖励失败", true);
+  } finally {
+    heroActionInFlight = "";
+    render();
+  }
+}
+
+async function claimDailyGameTaskBonus() {
+  if (heroActionInFlight) return;
+  heroActionInFlight = "daily-task-bonus";
+  render();
+  try {
+    const data = await api("/api/heroes/daily-tasks/bonus", { method: "POST", body: JSON.stringify({ requestId: requestId() }) });
+    applyHeroMutationState(data.state);
+    resetShopState();
+    ensureShopState(true);
+    setMessage(`已领取 ${data.rewardItemName} ×${data.quantity}，已放入背包`);
+  } catch (error) {
+    setMessage(error.message || "领取额外奖励失败，请重试", true);
   } finally {
     heroActionInFlight = "";
     render();
@@ -9377,7 +9406,7 @@ const mutatingActions = new Set([
   "fry-pass", "dogleg-selected", "play-selected", "confirm-throw", "play-again",
   "send-taunt", "delete-taunt", "kick-player", "buy-shop-product", "equip-avatar-frame", "use-game-item",
   "complete-item-stage", "collect-home", "assign-home-unit", "select-battle-hero",
-  "pull-hero-gacha", "upgrade-hero-unit", "upgrade-home-region", "dispatch-hero-task", "collect-hero-task", "claim-daily-task",
+  "pull-hero-gacha", "upgrade-hero-unit", "upgrade-home-region", "dispatch-hero-task", "collect-hero-task", "claim-daily-task", "claim-daily-task-bonus",
   "shen-xiaoxu-reserve", "shen-xiaoxu-pass",
   "claim-hero-advancement", "jie-denghuang-draw", "jie-denghuang-bury", "jie-denghuang-pass", "jie-jiangzha-select", "jie-jiangzha-pass",
   "purchase-energy", "claim-achievement", "equip-title",
@@ -9655,6 +9684,9 @@ document.addEventListener("click", (event) => {
   }
   if (action === "collect-hero-task") {
     collectDailyHeroTask(event.target.closest("[data-task-id]")?.dataset.taskId || "");
+  }
+  if (action === "claim-daily-task-bonus") {
+    claimDailyGameTaskBonus();
   }
   if (action === "claim-daily-task") {
     claimDailyGameTask(event.target.closest("[data-task-id]")?.dataset.taskId || "");

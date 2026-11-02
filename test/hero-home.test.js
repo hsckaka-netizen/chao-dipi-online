@@ -979,3 +979,30 @@ test("Haohao caps the whole-game reduction at each star and pays per undragged t
   assert.equal(noUndragged.amount, 0);
   assert.equal(noUndragged.scoreBonus, 1);
 });
+
+
+test("level 200 unlocks a second independent 50 percent production slot", () => {
+  const region = {
+    regionId: "boka", unitId: "shen-biesan", stars: 5,
+    extraUnitId: "jiang-zha", extraStars: 5,
+    secondExtraUnitId: "deng-huang", secondExtraStars: 5,
+    settledAt: "2026-11-01T00:00:00Z"
+  };
+  const before = previewHomeRegion({ ...region, level: 199 }, "2026-11-01T01:00:00Z");
+  assert.equal(before.secondExtraSlotUnlocked, false);
+  assert.equal(before.secondExtraRatePerHour, 0);
+  assert.equal(before.secondExtraUnitId, null);
+  const full = previewHomeRegion({ ...region, level: 200 }, "2026-11-02T00:00:00Z");
+  assert.equal(full.secondExtraSlotUnlocked, true);
+  assert.equal(full.primaryRatePerHour, 160);
+  assert.equal(full.extraRatePerHour, 46);
+  assert.equal(full.secondExtraRatePerHour, 46);
+  assert.equal(full.ratePerHour, 252);
+  assert.equal(full.productionHours, 16);
+  assert.equal(full.productionValue, 4032);
+  const isolated = previewHomeRegion({ ...region, level: 200, unitId: null, extraUnitId: null }, "2026-11-01T01:00:00Z");
+  assert.equal(isolated.ratePerHour, 46);
+  assert.equal(isolated.collectableDiamonds, 46);
+  const leveled = previewHomeRegion({ ...region, level: 200, secondExtraStars: 4 }, "2026-11-01T01:00:00Z");
+  assert.equal(leveled.secondExtraRatePerHour, 34);
+});

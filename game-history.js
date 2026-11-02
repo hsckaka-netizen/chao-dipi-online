@@ -3,7 +3,7 @@ import { HERO_ADVANCEMENTS, advancementProgress, advancementGameDelta } from "./
 import { chargeHeroHire, refundHeroHires, hiredSkillOwnership } from "./hero-hire.js";
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
-import { randomUUID } from "node:crypto";
+import { randomUUID, randomInt } from "node:crypto";
 
 import pg from "pg";
 import { mutateWarEffort } from "./war-effort-commerce.js";
@@ -258,6 +258,10 @@ const MIGRATIONS = [
   {
     version: 46,
     path: fileURLToPath(new URL("./db/migrations/046_season_free_hero_hire.sql", import.meta.url))
+  },
+  {
+    version: 47,
+    path: fileURLToPath(new URL("./db/migrations/047_second_extra_slot_and_daily_bonus.sql", import.meta.url))
   }
 ];
 const HISTORY_ENABLED = String(process.env.GAME_HISTORY_ENABLED || "").toLowerCase() === "true";
@@ -2547,7 +2551,7 @@ async function ensureHeroAccount(client, accountId) {
 async function dailyTaskStateFromClient(client, accountId, at = new Date()) {
   const emptyState = buildDailyTaskState({}, [], at);
   if (!emptyState) throw commerceError("每日任务刷新时间无效", 500);
-  const [summaryResult, claimsResult] = await Promise.all([
+  const [summaryResult, claimsResult, bonusResult] = await Promise.all([
     client.query(
       `SELECT
          count(*)::bigint AS games_completed,
@@ -2568,6 +2572,10 @@ async function dailyTaskStateFromClient(client, accountId, at = new Date()) {
        FROM cdp_daily_task_claims
        WHERE account_id = $1::uuid AND refresh_key = $2::date`,
       [accountId, emptyState.refreshKey]
+    ),
+    client.query(
+      `SELECT item_id FROM cdp_daily_task_bonus_claims WHERE account_id = $1::uuid AND refresh_key = $2::date`,
+      [accountId, emptyState.refreshKey]
     )
   ]);
   const summary = summaryResult.rows[0] || {};
@@ -2577,7 +2585,7 @@ async function dailyTaskStateFromClient(client, accountId, at = new Date()) {
     bankerGames: summary.banker_games,
     bottomWins: summary.bottom_wins,
     trickScore: summary.trick_score
-  }, claimsResult.rows.map((row) => row.task_id), at);
+  }, claimsResult.rows.map((row) => row.task_id), at, bonusResult.rows[0]);
 }
 
 function publicOwnedHeroUnit(row) {
@@ -2710,14 +2718,16 @@ async function heroHomeStateFromClient(client, accountId) {
       [accountId]
     ),
     client.query(
-      `SELECT region.region_id, region.unit_id, region.extra_unit_id, region.level,
+      `SELECT region.region_id, region.unit_id, region.extra_unit_id, region.second_extra_unit_id, region.level,
               region.production_value, region.production_seconds, region.settled_at,
-              unit.stars, extra_unit.stars AS extra_stars
+              unit.stars, extra_unit.stars AS extra_stars, second_extra_unit.stars AS second_extra_stars
        FROM cdp_home_regions region
        LEFT JOIN cdp_hero_units unit
          ON unit.account_id = region.account_id AND unit.unit_id = region.unit_id
        LEFT JOIN cdp_hero_units extra_unit
          ON extra_unit.account_id = region.account_id AND extra_unit.unit_id = region.extra_unit_id
+       LEFT JOIN cdp_hero_units second_extra_unit
+         ON second_extra_unit.account_id = region.account_id AND second_extra_unit.unit_id = region.second_extra_unit_id
        WHERE region.account_id = $1::uuid
        ORDER BY CASE region.region_id WHEN 'boka' THEN 1 WHEN 'brick' THEN 2 ELSE 3 END`,
       [accountId]
@@ -2735,6 +2745,8 @@ async function heroHomeStateFromClient(client, accountId) {
       stars: row.stars,
       extraUnitId: row.extra_unit_id,
       extraStars: row.extra_stars,
+      secondExtraUnitId: row.second_extra_unit_id,
+      secondExtraStars: row.second_extra_stars,
       level: row.level,
       productionValue: row.production_value,
       productionSeconds: row.production_seconds,
@@ -2745,7 +2757,9 @@ async function heroHomeStateFromClient(client, accountId) {
       ...preview,
       ownedUnit: row.unit_id ? ownedById.get(row.unit_id) || null : null,
       extraUnitId: row.extra_unit_id || null,
-      extraOwnedUnit: row.extra_unit_id ? ownedById.get(row.extra_unit_id) || null : null
+      extraOwnedUnit: row.extra_unit_id ? ownedById.get(row.extra_unit_id) || null : null,
+      secondExtraUnitId: row.second_extra_unit_id || null,
+      secondExtraOwnedUnit: row.second_extra_unit_id ? ownedById.get(row.second_extra_unit_id) || null : null
     };
   });
   const pityCount = Number(profile.non_hero_pity_count) || 0;
@@ -2926,16 +2940,79 @@ export async function claimDailyTask(accountId, taskIdValue, requestIdValue) {
   }
 }
 
+async function claimDailyTaskBonusFromClient(client, accountId, requestId, at = new Date(), random = randomInt) {
+  const window = buildDailyTaskState({}, [], at);
+  if (!window) throw commerceError("每日任务刷新时间无效", 400);
+  await client.query("BEGIN");
+  try {
+    await ensureHeroAccount(client, accountId);
+    await client.query(`SELECT account_id FROM cdp_hero_profiles WHERE account_id = $1::uuid FOR UPDATE`, [accountId]);
+    const existing = await client.query(
+      `SELECT item_id, refresh_key FROM cdp_daily_task_bonus_claims
+       WHERE account_id = $1::uuid AND (refresh_key = $2::date OR request_id = $3)
+       ORDER BY CASE WHEN request_id = $3 THEN 0 ELSE 1 END LIMIT 1`,
+      [accountId, window.refreshKey, requestId]
+    );
+    if (existing.rows[0]) {
+      const reward = DAILY_TASK_RULES.completionBonusItems.find((item) => item.id === existing.rows[0].item_id);
+      await client.query("COMMIT");
+      return { repeated: true, rewardItemId: reward.id, rewardItemName: reward.name, quantity: 1 };
+    }
+    const taskState = await dailyTaskStateFromClient(client, accountId, at);
+    if (!taskState.completionBonus.completed) throw commerceError("请先完成今天的全部6个每日任务", 409);
+    const reward = DAILY_TASK_RULES.completionBonusItems[random(DAILY_TASK_RULES.completionBonusItems.length)];
+    const inventory = await client.query(
+      `INSERT INTO cdp_consumable_inventory (account_id, item_id, available_quantity, reserved_quantity)
+       VALUES ($1::uuid, $2, 1, 0)
+       ON CONFLICT (account_id, item_id) DO UPDATE SET
+         available_quantity = cdp_consumable_inventory.available_quantity + 1, updated_at = now()
+       RETURNING available_quantity, reserved_quantity`,
+      [accountId, reward.id]
+    );
+    await client.query(
+      `INSERT INTO cdp_daily_task_bonus_claims (account_id, refresh_key, request_id, item_id, rules_version)
+       VALUES ($1::uuid, $2::date, $3, $4, $5)`,
+      [accountId, window.refreshKey, requestId, reward.id, DAILY_TASK_RULES.version]
+    );
+    await client.query(
+      `INSERT INTO cdp_consumable_ledger
+       (account_id, item_id, available_delta, reserved_delta, available_after, reserved_after, reason, idempotency_key, detail)
+       VALUES ($1::uuid, $2, 1, 0, $3, $4, 'daily_task_bonus', $5, $6::jsonb)`,
+      [accountId, reward.id, Number(inventory.rows[0].available_quantity), Number(inventory.rows[0].reserved_quantity),
+        `daily_bonus:${accountId}:${window.refreshKey}`, JSON.stringify({ refreshKey: window.refreshKey, completedTaskCount: taskState.tasks.length })]
+    );
+    await client.query("COMMIT");
+    return { rewardItemId: reward.id, rewardItemName: reward.name, quantity: 1 };
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  }
+}
+
+export async function claimDailyTaskBonus(accountId, requestIdValue) {
+  const requestId = normalizedRequestId(requestIdValue);
+  const client = await requirePool().connect();
+  let result;
+  try {
+    result = await claimDailyTaskBonusFromClient(client, accountId, requestId);
+  } finally {
+    client.release();
+  }
+  return { ...result, state: await getHeroHomeState(accountId) };
+}
+
 async function settleHomeRegion(client, accountId, regionId) {
   const result = await client.query(
-    `SELECT region.region_id, region.unit_id, region.extra_unit_id, region.level,
+    `SELECT region.region_id, region.unit_id, region.extra_unit_id, region.second_extra_unit_id, region.level,
             region.production_value, region.production_seconds, region.settled_at,
-            unit.stars, extra_unit.stars AS extra_stars
+            unit.stars, extra_unit.stars AS extra_stars, second_extra_unit.stars AS second_extra_stars
      FROM cdp_home_regions region
      LEFT JOIN cdp_hero_units unit
        ON unit.account_id = region.account_id AND unit.unit_id = region.unit_id
      LEFT JOIN cdp_hero_units extra_unit
        ON extra_unit.account_id = region.account_id AND extra_unit.unit_id = region.extra_unit_id
+     LEFT JOIN cdp_hero_units second_extra_unit
+       ON second_extra_unit.account_id = region.account_id AND second_extra_unit.unit_id = region.second_extra_unit_id
      WHERE region.account_id = $1::uuid AND region.region_id = $2
      FOR UPDATE OF region`,
     [accountId, regionId]
@@ -2948,6 +3025,8 @@ async function settleHomeRegion(client, accountId, regionId) {
     stars: row.stars,
     extraUnitId: row.extra_unit_id,
     extraStars: row.extra_stars,
+    secondExtraUnitId: row.second_extra_unit_id,
+    secondExtraStars: row.second_extra_stars,
     level: row.level,
     productionValue: row.production_value,
     productionSeconds: row.production_seconds,
@@ -3031,18 +3110,28 @@ export async function collectHomeProduction(accountId, regionIdValue, requestIdV
 }
 
 export async function assignHomeUnit(accountId, regionIdValue, unitIdValue, requestIdValue, slotValue = "primary") {
-  const database = requirePool();
+  const client = await requirePool().connect();
+  try {
+    return await assignHomeUnitFromClient(client, accountId, regionIdValue, unitIdValue, requestIdValue, slotValue);
+  } finally {
+    client.release();
+  }
+}
+
+async function assignHomeUnitFromClient(client, accountId, regionIdValue, unitIdValue, requestIdValue, slotValue = "primary") {
   const regionId = String(regionIdValue || "");
   const unitId = unitIdValue ? String(unitIdValue) : null;
-  const slot = slotValue === "extra" ? "extra" : "primary";
+  const slot = String(slotValue);
+  const columns = { primary: "unit_id", extra: "extra_unit_id", extra2: "second_extra_unit_id" };
+  const column = Object.hasOwn(columns, slot) ? columns[slot] : null;
+  if (!column) throw commerceError("家园栏位不存在", 400);
   const requestId = normalizedRequestId(requestIdValue);
   const region = HOME_REGION_BY_ID.get(regionId);
   const unit = unitId ? HOME_UNIT_BY_ID.get(unitId) : null;
   if (!region) throw commerceError("家园区域不存在", 404);
   if (unitId && !unit) throw commerceError("角色不存在", 404);
   if (unit && unit.regionId !== regionId) throw commerceError(`${unit.name}只能放入${HOME_REGION_BY_ID.get(unit.regionId).name}`, 409);
-  if (slot === "extra" && unit && unit.type !== "hero") throw commerceError("附加栏位只能安排英雄", 409);
-  const client = await database.connect();
+  if (slot !== "primary" && unit && unit.type !== "hero") throw commerceError("附加栏位只能安排英雄", 409);
   try {
     await client.query("BEGIN");
     await ensureHeroAccount(client, accountId);
@@ -3051,15 +3140,16 @@ export async function assignHomeUnit(accountId, regionIdValue, unitIdValue, requ
       [accountId]
     );
     const regionState = await client.query(
-      `SELECT level, unit_id, extra_unit_id
+      `SELECT level, unit_id, extra_unit_id, second_extra_unit_id
        FROM cdp_home_regions
        WHERE account_id = $1::uuid AND region_id = $2
        FOR UPDATE`,
       [accountId, regionId]
     );
     if (!regionState.rows[0]) throw commerceError("家园区域不存在", 404);
-    if (slot === "extra" && Number(regionState.rows[0].level) < HERO_HOME_RULES.extraSlotUnlockLevel) {
-      throw commerceError("区域达到100级后才解锁附加英雄栏位", 409);
+    const unlockLevel = slot === "extra2" ? HERO_HOME_RULES.secondExtraSlotUnlockLevel : slot === "extra" ? HERO_HOME_RULES.extraSlotUnlockLevel : 0;
+    if (Number(regionState.rows[0].level) < unlockLevel) {
+      throw commerceError(`区域达到${unlockLevel}级后才解锁附加英雄栏位`, 409);
     }
     if (unit) {
       const owned = await client.query(
@@ -3068,17 +3158,17 @@ export async function assignHomeUnit(accountId, regionIdValue, unitIdValue, requ
       );
       if (!owned.rows[0]) throw commerceError("尚未拥有这个角色", 403);
       const assigned = await client.query(
-        `SELECT region_id, unit_id, extra_unit_id FROM cdp_home_regions
-         WHERE account_id = $1::uuid AND (unit_id = $2 OR extra_unit_id = $2)
+        `SELECT region_id, unit_id, extra_unit_id, second_extra_unit_id FROM cdp_home_regions
+         WHERE account_id = $1::uuid AND (unit_id = $2 OR extra_unit_id = $2 OR second_extra_unit_id = $2)
          FOR UPDATE`,
         [accountId, unit.id]
       );
       const alreadyInTarget = assigned.rows[0]
         && assigned.rows[0].region_id === regionId
-        && (slot === "primary" ? assigned.rows[0].unit_id === unit.id : assigned.rows[0].extra_unit_id === unit.id);
+        && assigned.rows[0][column] === unit.id;
       if (assigned.rows[0] && !alreadyInTarget) throw commerceError("这个角色已经安排在其他栏位", 409);
     }
-    const previousUnitId = slot === "primary" ? regionState.rows[0].unit_id : regionState.rows[0].extra_unit_id;
+    const previousUnitId = regionState.rows[0][column];
     const preview = await settleHomeRegion(client, accountId, regionId);
     const balanceAfter = await creditHomeProduction(
       client,
@@ -3087,23 +3177,13 @@ export async function assignHomeUnit(accountId, regionIdValue, unitIdValue, requ
       requestId,
       { reason: "reassign", regionId, slot, previousUnitId }
     );
-    if (slot === "primary") {
-      await client.query(
-        `UPDATE cdp_home_regions
-         SET unit_id = $3, production_value = $4, production_seconds = 0,
-             settled_at = now(), updated_at = now()
-         WHERE account_id = $1::uuid AND region_id = $2`,
-        [accountId, regionId, unitId, preview.fractionalValue]
-      );
-    } else {
-      await client.query(
-        `UPDATE cdp_home_regions
-         SET extra_unit_id = $3, production_value = $4, production_seconds = 0,
-             settled_at = now(), updated_at = now()
-         WHERE account_id = $1::uuid AND region_id = $2`,
-        [accountId, regionId, unitId, preview.fractionalValue]
-      );
-    }
+    await client.query(
+      `UPDATE cdp_home_regions
+       SET ${column} = $3, production_value = $4, production_seconds = 0,
+           settled_at = now(), updated_at = now()
+       WHERE account_id = $1::uuid AND region_id = $2`,
+      [accountId, regionId, unitId, preview.fractionalValue]
+    );
     if (previousUnitId && previousUnitId !== unitId) {
       await client.query(
         `UPDATE cdp_hero_profiles
@@ -3119,8 +3199,6 @@ export async function assignHomeUnit(accountId, regionIdValue, unitIdValue, requ
     await client.query("ROLLBACK");
     rememberError(error);
     throw error;
-  } finally {
-    client.release();
   }
 }
 
@@ -3178,7 +3256,8 @@ export async function upgradeHomeRegion(accountId, regionIdValue, requestIdValue
       level,
       cost,
       buildingMaterials,
-      extraSlotUnlocked: level >= HERO_HOME_RULES.extraSlotUnlockLevel
+      extraSlotUnlocked: level >= HERO_HOME_RULES.extraSlotUnlockLevel,
+      secondExtraSlotUnlocked: level >= HERO_HOME_RULES.secondExtraSlotUnlockLevel
     };
     await client.query(
       `INSERT INTO cdp_hero_region_upgrade_requests (account_id, request_id, region_id, result_data)
@@ -3825,7 +3904,7 @@ export async function upgradeHeroUnit(accountId, unitIdValue, requestIdValue) {
     if (!cost) throw commerceError("角色已经达到5星", 409);
     const placed = await client.query(
       `SELECT region_id FROM cdp_home_regions
-       WHERE account_id = $1::uuid AND (unit_id = $2 OR extra_unit_id = $2)`,
+       WHERE account_id = $1::uuid AND (unit_id = $2 OR extra_unit_id = $2 OR second_extra_unit_id = $2)`,
       [accountId, unitId]
     );
     if (placed.rows[0]) await settleHomeRegion(client, accountId, placed.rows[0].region_id);
@@ -5382,3 +5461,7 @@ async function claimHeroAdvancementFromClient(client, accountId, definition) {
 
 export const __heroAdvancementStorageTesting = { settleHeroAdvancement, claimHeroAdvancementFromClient };
 export const __heroHireStorageTesting = { chargeBoardHeroSkillFromClient };
+
+export const __dailyTaskBonusTesting = { claimDailyTaskBonusFromClient };
+
+export const __homeSlotStorageTesting = { assignHomeUnitFromClient, settleHomeRegion };

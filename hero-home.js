@@ -1,5 +1,5 @@
 export const HERO_HOME_RULES = Object.freeze({
-  version: "2026-11-02-v16",
+  version: "2026-11-02-v17",
   skillVersion: "2026-09-24-skill-v9",
   boardSkillVersion: "2026-11-02-board-skill-v15",
   shenKaxiangScoreBonus: Object.freeze([0.3, 0.6, 0.9, 1.2, 1.5]),
@@ -46,6 +46,7 @@ export const HERO_HOME_RULES = Object.freeze({
   productionBonusPerLevel: 0.005,
   maxHoursPerTenLevels: 0.5,
   extraSlotUnlockLevel: 100,
+  secondExtraSlotUnlockLevel: 200,
   extraSlotProductionEfficiency: 0.5,
   boardSkillCooldowns: Object.freeze([0, 0, 0, 0, 0]),
   boardSkillResetCostPerRound: 0,
@@ -274,16 +275,20 @@ export function boardHeroSkillState(stars = 1, cooldownValue = 0, unitId = "shen
 export function previewHomeRegion(region = {}, at = new Date()) {
   const unit = HOME_UNIT_BY_ID.get(String(region.unitId || region.unit_id || "")) || null;
   const extraUnit = HOME_UNIT_BY_ID.get(String(region.extraUnitId || region.extra_unit_id || "")) || null;
+  const secondExtraUnit = HOME_UNIT_BY_ID.get(String(region.secondExtraUnitId || region.second_extra_unit_id || "")) || null;
   const stars = normalizedStars(region.stars);
   const extraStars = normalizedStars(region.extraStars ?? region.extra_stars);
+  const secondExtraStars = normalizedStars(region.secondExtraStars ?? region.second_extra_stars);
   const storedValue = Math.max(0, Number(region.productionValue ?? region.production_value) || 0);
   const storedSeconds = Math.max(0, Number(region.productionSeconds ?? region.production_seconds) || 0);
   const level = normalizedRegionLevel(region.level ?? region.region_level);
   const extraSlotUnlocked = level >= HERO_HOME_RULES.extraSlotUnlockLevel;
   const productiveExtraUnit = extraSlotUnlocked ? extraUnit : null;
+  const secondExtraSlotUnlocked = level >= HERO_HOME_RULES.secondExtraSlotUnlockLevel;
+  const productiveSecondExtraUnit = secondExtraSlotUnlocked ? secondExtraUnit : null;
   const settledAt = new Date(region.settledAt || region.settled_at || at);
   const nowAt = new Date(at);
-  const hasProduction = Boolean(unit || productiveExtraUnit);
+  const hasProduction = Boolean(unit || productiveExtraUnit || productiveSecondExtraUnit);
   const elapsedSeconds = hasProduction && !Number.isNaN(settledAt.getTime()) && !Number.isNaN(nowAt.getTime())
     ? Math.max(0, Math.floor((nowAt.getTime() - settledAt.getTime()) / 1000))
     : 0;
@@ -295,10 +300,14 @@ export function previewHomeRegion(region = {}, at = new Date()) {
   const extraBaseRatePerHour = productiveExtraUnit
     ? unitProductionRate(productiveExtraUnit.id, extraStars) * HERO_HOME_RULES.extraSlotProductionEfficiency
     : 0;
-  const baseRatePerHour = primaryBaseRatePerHour + extraBaseRatePerHour;
+  const secondExtraBaseRatePerHour = productiveSecondExtraUnit
+    ? unitProductionRate(productiveSecondExtraUnit.id, secondExtraStars) * HERO_HOME_RULES.extraSlotProductionEfficiency
+    : 0;
+  const baseRatePerHour = primaryBaseRatePerHour + extraBaseRatePerHour + secondExtraBaseRatePerHour;
   const productionMultiplier = 1 + level * HERO_HOME_RULES.productionBonusPerLevel;
   const primaryRatePerHour = primaryBaseRatePerHour * productionMultiplier;
   const extraRatePerHour = extraBaseRatePerHour * productionMultiplier;
+  const secondExtraRatePerHour = secondExtraBaseRatePerHour * productionMultiplier;
   const ratePerHour = baseRatePerHour * productionMultiplier;
   const productionValue = storedValue + newlyProducedSeconds / 3600 * ratePerHour;
   const collectableDiamonds = Math.max(0, Math.floor(productionValue + 1e-9));
@@ -310,6 +319,9 @@ export function previewHomeRegion(region = {}, at = new Date()) {
     extraUnitId: productiveExtraUnit?.id || null,
     extraUnit: productiveExtraUnit ? publicHomeUnit(productiveExtraUnit.id) : null,
     extraStars: productiveExtraUnit ? extraStars : null,
+    secondExtraUnitId: productiveSecondExtraUnit?.id || null,
+    secondExtraUnit: productiveSecondExtraUnit ? publicHomeUnit(productiveSecondExtraUnit.id) : null,
+    secondExtraStars: productiveSecondExtraUnit ? secondExtraStars : null,
     level,
     upgradeCost: regionUpgradeCost(level),
     productionMultiplier,
@@ -317,10 +329,13 @@ export function previewHomeRegion(region = {}, at = new Date()) {
     primaryRatePerHour,
     extraBaseRatePerHour,
     extraRatePerHour,
+    secondExtraBaseRatePerHour,
+    secondExtraRatePerHour,
     baseRatePerHour,
     ratePerHour,
     maxProductionHours: maxHours,
     extraSlotUnlocked,
+    secondExtraSlotUnlocked,
     productionSeconds,
     productionHours: productionSeconds / 3600,
     productionValue,
