@@ -802,6 +802,7 @@ function resetHeroHomeState() {
   heroHomeAccountId = "";
   heroActionInFlight = "";
   heroGachaResults = [];
+  pendingHeroPointExchanges.clear();
 }
 
 function resetWarEffortState() {
@@ -5518,6 +5519,27 @@ function updateHeroFreePullCountdown() {
   heroFreePullCountdownTimer = window.setTimeout(updateHeroFreePullCountdown, Math.min(1000, remainingMs));
 }
 
+function renderHeroPointExchange() {
+  const points = Number(heroHomeState.gachaPoints || 0);
+  const cost = Number(heroHomeState.rules?.ssrChoicePointCost) || 1000;
+  const heroes = (heroHomeState.units || []).filter((unit) => unit.rarity === "ssr");
+  return `<section class="panel stack">
+    <div class="section-head"><div><h2>积分自选 SSR</h2><p>每抽获得 1 积分，免费抽也计入；已补计历史抽卡。每 ${cost} 积分兑换 1 张，可多次兑换。</p></div><span class="tag">可用 ${points} 积分</span></div>
+    <p class="meta">兑换不计抽卡次数、不增加积分、不改变保底。进阶专属 SSR 需先完成并领取进阶。</p>
+    <details class="hero-point-choice"><summary>选择要兑换的 SSR · ${heroes.length} 名</summary><div class="gacha-result-grid">${heroes.map((hero) => {
+      const owned = ownedHeroUnit(hero.id);
+      const unlocked = !hero.advancementFrom || (heroHomeState.advancements || []).some((item) => item.ssrId === hero.id && item.claimed);
+      const received = !owned ? "解锁 1 星英雄" : Number(owned.stars) >= 5 ? "获得 200 通用碎片" : "获得 40 专属碎片";
+      return `<article class="gacha-result-card hero">
+        ${heroCardArtwork(hero, "gacha-card-art", "", "medium")}
+        <strong>${escapeHtml(hero.name)}</strong><span>${owned ? heroStars(owned.stars) : "尚未拥有"}</span>
+        <small>${escapeHtml(received)}</small>
+        <button type="button" data-action="exchange-hero-points" data-unit-id="${escapeHtml(hero.id)}" ${heroActionInFlight || !unlocked || points < cost ? "disabled" : ""}>${!unlocked ? "需先领取 SR 进阶" : points < cost ? `还差 ${cost - points} 积分` : `${cost} 积分兑换`}</button>
+      </article>`;
+    }).join("")}</div></details>
+  </section>`;
+}
+
 function renderHeroGachaPage() {
   if (authState.account?.role !== "player") {
     homeView = "login";
@@ -5542,6 +5564,7 @@ function renderHeroGachaPage() {
         <span><small>${escapeHtml(heroPityPulls)}抽保底</small><b>还剩 ${escapeHtml(heroHomeState.pityRemaining)} 抽</b></span>
         <span><small>${escapeHtml(ssrPityPulls)}抽SSR保底</small><b>还剩 ${escapeHtml(heroHomeState.ssrPityRemaining)} 抽</b></span>
         <span><small>首次抽卡</small><b>${heroHomeState.firstPullGuaranteed ? "必得未拥有SR" : "已使用"}</b></span>
+        <span><small>抽卡积分</small><b>${escapeHtml(heroHomeState.gachaPoints || 0)} 积分</b></span>
         <span><small>当前建材</small><b>▰ ${escapeHtml(heroHomeState.buildingMaterials || 0)}</b></span>
         <span class="gacha-free-pull-status"><small>免费单抽</small><b>${freePullAvailable ? "现在可用" : "今日已使用"}</b><em>距北京时间 06:00 更新 <time data-hero-free-pull-countdown data-deadline-at="${escapeHtml(nextFreePullAt)}">${escapeHtml(heroFreePullCountdownText(nextFreePullAt))}</time></em></span>
       </div>
@@ -5553,12 +5576,14 @@ function renderHeroGachaPage() {
       <div class="gacha-probability"><span>建材 40%（50个）</span><span>小兵 50%</span><span>SR 9%</span><span>SSR 1%</span><span>首抽必出未拥有SR且不会是SSR</span><span>第${escapeHtml(heroPityPulls)}抽至少SR</span><span>第${escapeHtml(ssrPityPulls)}抽必出SSR</span><span>十连、百连固定9折</span><span>免费单抽每天北京时间6点更新</span></div>
     </section>
     ${heroGachaResults.length ? `<section class="panel stack"><div class="section-head"><div><h2>本次结果</h2><div class="meta">抽卡结果已由服务端入账</div></div></div><div class="gacha-result-grid">${heroGachaResults.map(renderGachaResult).join("")}</div></section>` : `<section class="panel"><div class="empty">抽卡结果会显示在这里</div></section>`}
+    ${renderHeroPointExchange()}
   `);
 }
 
 function applyHeroMutationState(nextState) {
   if (!nextState) return;
   heroHomeState = nextState;
+  achievementState = null;
   if (diamondWallet) diamondWallet.balance = nextState.balance;
 }
 
@@ -5730,9 +5755,31 @@ async function pullHeroCards(pullCount) {
     });
     heroGachaResults = data.results || [];
     applyHeroMutationState(data.state);
-    setMessage(`${pullCount === 100 ? "百连" : pullCount === 10 ? "十连" : "单抽"}完成`);
+    setMessage(`${pullCount === 100 ? "百连" : pullCount === 10 ? "十连" : "单抽"}完成，获得 ${data.pointsAwarded} 积分`);
   } catch (error) {
     setMessage(error.message || "抽卡失败", true);
+  } finally {
+    heroActionInFlight = "";
+    render();
+  }
+}
+
+const pendingHeroPointExchanges = new Map();
+async function exchangeHeroPoints(unitId) {
+  if (heroActionInFlight) return;
+  if (!pendingHeroPointExchanges.has(unitId)) pendingHeroPointExchanges.set(unitId, requestId());
+  heroActionInFlight = `points:${unitId}`;
+  render();
+  try {
+    const data = await api("/api/heroes/points/exchange", {
+      method: "POST", body: JSON.stringify({ unitId, requestId: pendingHeroPointExchanges.get(unitId) })
+    });
+    pendingHeroPointExchanges.delete(unitId);
+    heroGachaResults = [{ index: 1, type: "unit", unit: data.unit, conversion: data.conversion }];
+    applyHeroMutationState(data.state);
+    setMessage(`已兑换 ${data.unit.name}，${data.conversion.label}`);
+  } catch (error) {
+    setMessage(error.message || "积分兑换失败，请重试", true);
   } finally {
     heroActionInFlight = "";
     render();
@@ -9407,7 +9454,7 @@ const mutatingActions = new Set([
   "fry-pass", "dogleg-selected", "play-selected", "confirm-throw", "play-again",
   "send-taunt", "delete-taunt", "kick-player", "buy-shop-product", "equip-avatar-frame", "use-game-item",
   "complete-item-stage", "collect-home", "assign-home-unit", "select-battle-hero",
-  "pull-hero-gacha", "upgrade-hero-unit", "upgrade-home-region", "dispatch-hero-task", "collect-hero-task", "claim-daily-task", "claim-daily-task-bonus",
+  "pull-hero-gacha", "exchange-hero-points", "upgrade-hero-unit", "upgrade-home-region", "dispatch-hero-task", "collect-hero-task", "claim-daily-task", "claim-daily-task-bonus",
   "shen-xiaoxu-reserve", "shen-xiaoxu-pass",
   "claim-hero-advancement", "jie-denghuang-draw", "jie-denghuang-bury", "jie-denghuang-pass", "jie-jiangzha-select", "jie-jiangzha-pass",
   "purchase-energy", "claim-achievement", "equip-title",
@@ -9695,6 +9742,10 @@ document.addEventListener("click", (event) => {
   if (action === "select-battle-hero") {
     const button = event.target.closest("[data-unit-id]");
     selectHeroForBattle(button?.dataset.unitId || "", button?.dataset.hire === "true");
+  }
+  if (action === "exchange-hero-points") {
+    exchangeHeroPoints(event.target.closest("[data-unit-id]")?.dataset.unitId);
+    return;
   }
   if (action === "pull-hero-gacha") {
     pullHeroCards(Number(event.target.closest("[data-pull-count]")?.dataset.pullCount || 1));

@@ -1,7 +1,8 @@
+import { HERO_UNITS, HOME_UNIT_BY_ID } from "./hero-home.js";
 import { WAR_EFFORT_CHAMPION } from "./server-war-effort.js";
 
 export const ACHIEVEMENT_RULES = Object.freeze({
-  version: "2026-09-23-v3"
+  version: "2026-11-02-v4"
 });
 
 export const ACHIEVEMENT_CATEGORIES = Object.freeze([
@@ -13,7 +14,9 @@ export const ACHIEVEMENT_CATEGORIES = Object.freeze([
   { id: "pve-performance", name: "PVE 高光" },
   { id: "pve-special", name: "PVE 挑战" },
   { id: "pve-collection", name: "PVE 收藏" },
-  { id: "hero-growth", name: "英雄收藏" }
+  { id: "hero-growth", name: "英雄收藏" },
+  { id: "home-growth", name: "家园成长" },
+  { id: "hero-mastery", name: "英雄专属" }
 ]);
 
 function achievementSeries(category, idPrefix, metric, rows) {
@@ -216,14 +219,56 @@ export const ACHIEVEMENTS = Object.freeze([
   ...achievementSeries("hero-growth", "hero-unique", "heroUniqueHeroes", [
     [3, "英雄小队", "拥有 3 名不同英雄", 200],
     [6, "三区新秀", "拥有 6 名不同英雄", 500],
-    [9, "全英雄集结", "拥有全部 9 名英雄", 3000, ["hero-full-roster", "全英雄集结"]]
+    [9, "九杰集结", "拥有 9 名不同英雄", 3000, ["hero-full-roster", "全英雄集结"]]
   ]),
   ...achievementSeries("hero-growth", "hero-five-star", "heroFiveStarHeroes", [
     [1, "五星初成", "拥有 1 名五星英雄", 300],
     [3, "五星三杰", "拥有 3 名五星英雄", 800],
     [6, "五星军团", "拥有 6 名五星英雄", 1800, ["hero-five-star-six", "五星军团"]],
-    [9, "全员满星", "全部 9 名英雄达到五星", 6000, ["hero-all-five-star", "满星统帅"]]
+    [9, "九星军团", "拥有 9 名五星英雄", 6000, ["hero-all-five-star", "满星统帅"]]
   ]),
+
+  ...achievementSeries("hero-growth", "hero-roster", "heroUniqueHeroes", [
+    [12, "十二英杰", "拥有 12 名不同英雄", 1500],
+    [16, "群英荟萃", "拥有 16 名不同英雄", 2500],
+    [20, "二十英杰", "拥有 20 名不同英雄", 5000, ["hero-roster-twenty", "群英典藏家"]]
+  ]),
+  ...achievementSeries("hero-growth", "hero-stars", "heroFiveStarHeroes", [
+    [12, "十二星将", "拥有 12 名五星英雄", 3000],
+    [16, "星耀军团", "拥有 16 名五星英雄", 4500],
+    [20, "二十星将", "拥有 20 名五星英雄", 8000, ["hero-stars-twenty", "群星统帅"]]
+  ]),
+  ...achievementSeries("hero-growth", "hero-ssr-roster", "heroUniqueSsrs", [
+    [6, "六耀齐聚", "拥有 6 名不同 SSR 英雄", 500],
+    [10, "十耀同辉", "拥有 10 名不同 SSR 英雄", 1500],
+    [14, "十四星辉", "拥有 14 名不同 SSR 英雄", 4000, ["hero-ssr-fourteen", "十四星辉"]]
+  ]),
+  ...achievementSeries("hero-growth", "hero-advancements", "heroAdvancementClaims", [
+    [1, "跨越星阶", "完成并领取 1 名 SR 英雄进阶", 500],
+    [4, "四杰登神", "完成并领取 4 名 SR 英雄进阶", 2000, ["hero-ascension-four", "进阶先驱"]]
+  ]),
+  ...achievementSeries("hero-growth", "hero-point-exchanges", "heroPointExchanges", [
+    [1, "心愿成真", "使用抽卡积分兑换 SSR 1 次", 300],
+    [5, "群星自选", "使用抽卡积分兑换 SSR 5 次", 1000],
+    [10, "心愿典藏", "使用抽卡积分兑换 SSR 10 次", 2000, ["hero-wish-collector", "心愿典藏家"]]
+  ]),
+  ...achievementSeries("home-growth", "home-level-100", "heroRegionsLevel100", [
+    [1, "百级家园", "1 个家园区域达到 100 级", 500],
+    [3, "三区繁荣", "3 个家园区域达到 100 级", 1500]
+  ]),
+  ...achievementSeries("home-growth", "home-level-200", "heroRegionsLevel200", [
+    [1, "极盛之地", "1 个家园区域达到 200 级", 1500],
+    [3, "家园大成", "3 个家园区域达到 200 级", 5000, ["home-master-builder", "家园大管家"]]
+  ]),
+  ...achievementSeries("home-growth", "home-filled-slots", "heroFilledHomeSlots", [
+    [9, "九席满堂", "家园同时派驻满全部 9 个有效生产槽", 1000]
+  ]),
+  ...milestoneAchievementSeries({ category: "home-growth", idPrefix: "hero-tasks-collected", metric: "heroTasksCollected", name: "派遣专家", description: "累计领取英雄派遣任务奖励", unit: " 次", targets: [10, 100, 500], rewards: [200, 800, 2000] }),
+  ...milestoneAchievementSeries({ category: "home-growth", idPrefix: "hero-daily-bonus", metric: "heroDailyBonusClaims", name: "每日全勤", description: "累计领取每日任务全部完成额外奖励", unit: " 次", targets: [1, 30, 100], rewards: [100, 800, 2000] }),
+  ...HERO_UNITS.flatMap((hero) => achievementSeries("hero-mastery", `hero-mastery-${hero.id}`, `heroWins:${hero.id}`, [
+    [10, `${hero.name} · 初露锋芒`, `使用自有英雄「${hero.name}」累计赢得 10 局有效 PVP/PVE（不含雇佣）`, 200],
+    [100, `${hero.name} · 百胜名将`, `使用自有英雄「${hero.name}」累计赢得 100 局有效 PVP/PVE（不含雇佣）`, 800, [`hero-master-${hero.id}`, `${hero.name} · 百胜`]]
+  ])),
 
   ...milestoneAchievementSeries({ category: "pvp-career", idPrefix: "pvp-games-marathon", metric: "pvpGamesPlayed", name: "PVP征途", description: "累计完成 PVP", unit: " 局", targets: [3000, 5000, 10000, 20000], rewards: [2500, 4000, 7000, 12000] }),
   ...milestoneAchievementSeries({ category: "pve-career", idPrefix: "pve-games-marathon", metric: "pveGamesPlayed", name: "PVE征途", description: "累计完成有效 PVE", unit: " 局", targets: [3000, 5000, 10000, 20000], rewards: [2500, 4000, 7000, 12000] }),
@@ -351,6 +396,33 @@ export function buildModeAchievementMetrics(games = [], tags = [], mode = "pvp")
       (game) => game.won && (Number(game.trick_score) || 0) === 0
     ).length
   };
+}
+
+export function buildHeroAchievementMetrics(games = [], units = [], regions = [], counts = {}) {
+  const heroes = units.filter((unit) => HOME_UNIT_BY_ID.get(unit.unit_id)?.type === "hero");
+  const metrics = {
+    heroUniqueHeroes: heroes.length,
+    heroFiveStarHeroes: heroes.filter((hero) => Number(hero.stars) >= 5).length,
+    heroUniqueSsrs: heroes.filter((hero) => HOME_UNIT_BY_ID.get(hero.unit_id).rarity === "ssr").length,
+    heroRegionsLevel100: regions.filter((region) => Number(region.level) >= 100).length,
+    heroRegionsLevel200: regions.filter((region) => Number(region.level) >= 200).length,
+    heroFilledHomeSlots: regions.reduce((total, region) => total + Number(Boolean(region.unit_id))
+      + Number(Number(region.level) >= 100 && Boolean(region.extra_unit_id))
+      + Number(Number(region.level) >= 200 && Boolean(region.second_extra_unit_id)), 0),
+    heroAdvancementClaims: Number(counts.advancement_claims) || 0,
+    heroTasksCollected: Number(counts.tasks_collected) || 0,
+    heroDailyBonusClaims: Number(counts.daily_bonus_claims) || 0,
+    heroPointExchanges: Number(counts.point_exchanges) || 0
+  };
+  for (const game of games) {
+    if (!game.won || game.is_ai || !["pvp", "pve"].includes(game.game_mode)
+      || (game.game_mode === "pve" && game.pve_energy_eligible === false)) continue;
+    const snapshot = game.battle_hero_snapshot;
+    if (!snapshot || snapshot.hired || snapshot.owned === false || HOME_UNIT_BY_ID.get(snapshot.heroId)?.type !== "hero") continue;
+    const key = `heroWins:${snapshot.heroId}`;
+    metrics[key] = (metrics[key] || 0) + 1;
+  }
+  return metrics;
 }
 
 export function buildAchievementState(metrics = {}, claimedRows = [], equippedTitleId = "", activityTitleIds = []) {

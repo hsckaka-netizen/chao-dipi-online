@@ -7,6 +7,7 @@ import {
   ACHIEVEMENT_CATEGORIES,
   ACHIEVEMENT_TITLE_BY_ID,
   buildModeAchievementMetrics,
+  buildHeroAchievementMetrics,
   buildAchievementState,
   calculateStreaks,
   fryActionCount,
@@ -21,10 +22,10 @@ test("career streaks track best winning and losing runs independently", () => {
 });
 
 test("achievement catalogue has separate long-term PVP, PVE, and hero growth goals", () => {
-  assert.equal(ACHIEVEMENTS.length, 209);
+  assert.equal(ACHIEVEMENTS.length, 274);
   assert.deepEqual(ACHIEVEMENT_CATEGORIES.map((category) => category.id), [
     "pvp-career", "pvp-performance", "pvp-special", "pvp-collection",
-    "pve-career", "pve-performance", "pve-special", "pve-collection", "hero-growth"
+    "pve-career", "pve-performance", "pve-special", "pve-collection", "hero-growth", "home-growth", "hero-mastery"
   ]);
   assert.deepEqual(
     new Set(ACHIEVEMENTS.map((item) => item.category)),
@@ -190,4 +191,57 @@ test("achievement claims and title equipment are server-authoritative and idempo
   assert.match(appSource, /data-action="claim-achievement"/);
   assert.match(appSource, /data-action="equip-title"/);
   assert.match(appSource, /data-action="filter-achievements"/);
+});
+
+test('hero mastery uses the frozen hero per winning eligible game and excludes hired, AI, invalid modes and losses', () => {
+  const win = { won: true, game_mode: 'pvp', battle_hero_snapshot: { heroId: 'shen-lafang' } };
+  const games = [win, { ...win, game_mode: 'pve', pve_energy_eligible: true },
+    { ...win, won: false }, { ...win, is_ai: true },
+    { ...win, game_mode: 'pve', pve_energy_eligible: false },
+    { ...win, game_mode: 'practice' },
+    { ...win, battle_hero_snapshot: { heroId: 'shen-lafang', hired: true } },
+    { ...win, battle_hero_snapshot: { heroId: 'shen-lafang', owned: false } },
+    { ...win, battle_hero_snapshot: { heroId: 'unknown' } },
+    { ...win, battle_hero_snapshot: null },
+    { ...win, battle_hero_snapshot: { heroId: 'xiaoxu' } }];
+  const metrics = buildHeroAchievementMetrics(games);
+  assert.equal(metrics['heroWins:shen-lafang'], 2);
+  assert.equal(metrics['heroWins:xiaoxu'], 1);
+  assert.equal(metrics['heroWins:unknown'], undefined);
+  const achievements = buildAchievementState({ 'heroWins:shen-lafang': 100 });
+  assert.equal(achievements.achievements.filter((a) => a.category === 'hero-mastery' && a.completed).length, 2);
+  assert.equal(achievements.ownedTitles.length, 0);
+});
+
+test('collection and growth metrics use actual heroes and unlocked production slots, and durable claimed counts', () => {
+  const metrics = buildHeroAchievementMetrics([], [
+    { unit_id: 'shen-lafang', stars: 5 }, { unit_id: 'xiaoxu', stars: 4 },
+    { unit_id: 'brick-minion', stars: 5 }, { unit_id: 'unknown', stars: 5 }
+  ], [
+    { level: 99, unit_id: 'one', extra_unit_id: 'locked', second_extra_unit_id: 'locked' },
+    { level: 100, unit_id: 'two', extra_unit_id: 'three', second_extra_unit_id: 'locked' },
+    { level: 200, unit_id: 'four', extra_unit_id: 'five', second_extra_unit_id: 'six' }
+  ], { advancement_claims: '4', tasks_collected: '500', daily_bonus_claims: '30', point_exchanges: '5' });
+  assert.equal(metrics.heroUniqueHeroes, 2);
+  assert.equal(metrics.heroFiveStarHeroes, 1);
+  assert.equal(metrics.heroUniqueSsrs, 1);
+  assert.equal(metrics.heroRegionsLevel100, 2);
+  assert.equal(metrics.heroRegionsLevel200, 1);
+  assert.equal(metrics.heroFilledHomeSlots, 6);
+  assert.equal(metrics.heroAdvancementClaims, 4);
+  assert.equal(metrics.heroTasksCollected, 500);
+  assert.equal(metrics.heroDailyBonusClaims, 30);
+  assert.equal(metrics.heroPointExchanges, 5);
+});
+
+test('legacy nine-hero claims and titles survive expanded milestones with fixed targets', () => {
+  const claims = [{ achievementId: 'hero-unique-9' }, { achievementId: 'hero-five-star-9' }];
+  const state = buildAchievementState({ heroUniqueHeroes: 9, heroFiveStarHeroes: 9 }, claims, 'hero-full-roster');
+  assert.equal(state.claimedCount, 2);
+  assert.equal(state.equippedTitleId, 'hero-full-roster');
+  assert.equal(state.achievements.find((a) => a.id === 'hero-unique-9').target, 9);
+  assert.equal(state.achievements.find((a) => a.id === 'hero-roster-20').completed, false);
+  assert.equal(state.achievements.find((a) => a.id === 'hero-stars-20').target, 20);
+  assert.equal(state.achievements.find((a) => a.id === 'hero-ssr-roster-14').target, 14);
+  assert.ok(ACHIEVEMENTS.every((a) => a.id.length <= 80 && (!a.title || a.title.id.length <= 48)));
 });

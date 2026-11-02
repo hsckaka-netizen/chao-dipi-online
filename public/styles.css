@@ -9405,3 +9405,13 @@ button.auto-play-toggle.active {
   .my-turn-prompt > span:last-child { font-size: 11px; }
   .seat-hand .my-turn-controls button:is([data-action="play-selected"], [data-action="confirm-throw"]) { min-height: 42px; min-width: 84px; padding-inline: 16px; }
 }
+
+.hero-point-choice summary {
+  cursor: pointer;
+  padding: 12px 0;
+  font-weight: 800;
+}
+
+.hero-point-choice[open] summary {
+  margin-bottom: 10px;
+}

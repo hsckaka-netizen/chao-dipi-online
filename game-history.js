@@ -28,6 +28,7 @@ import {
   ACHIEVEMENT_RULES,
   ACHIEVEMENT_TITLE_BY_ID,
   buildModeAchievementMetrics,
+  buildHeroAchievementMetrics,
   buildAchievementState
 } from "./achievements.js";
 import {
@@ -262,6 +263,10 @@ const MIGRATIONS = [
   {
     version: 47,
     path: fileURLToPath(new URL("./db/migrations/047_second_extra_slot_and_daily_bonus.sql", import.meta.url))
+  },
+  {
+    version: 48,
+    path: fileURLToPath(new URL("./db/migrations/048_hero_gacha_points.sql", import.meta.url))
   }
 ];
 const HISTORY_ENABLED = String(process.env.GAME_HISTORY_ENABLED || "").toLowerCase() === "true";
@@ -2705,7 +2710,7 @@ async function heroHomeStateFromClient(client, accountId) {
     client.query(
       `SELECT universal_fragments, non_hero_pity_count, non_ssr_pity_count,
               building_materials, first_pull_completed, free_pull_used_at,
-              battle_unit_id, updated_at
+              battle_unit_id, gacha_points, updated_at
        FROM cdp_hero_profiles
        WHERE account_id = $1::uuid`,
       [accountId]
@@ -2777,6 +2782,7 @@ async function heroHomeStateFromClient(client, accountId) {
     accountId,
     balance: Number(walletResult.rows[0]?.balance) || 0,
     universalFragments: Number(profile.universal_fragments) || 0,
+    gachaPoints: Number(profile.gacha_points) || 0,
     buildingMaterials: Number(profile.building_materials) || 0,
     pityCount,
     pityRemaining: HERO_HOME_RULES.pityPulls - pityCount,
@@ -3673,17 +3679,21 @@ export async function refundBoardHeroSkillUses(gameIdValue) {
 
 
 export async function pullHeroGacha(accountId, pullCountValue, requestIdValue) {
-  const database = requirePool();
+  const client = await requirePool().connect();
+  try { return await pullHeroGachaFromClient(client, accountId, pullCountValue, requestIdValue); }
+  finally { client.release(); }
+}
+
+async function pullHeroGachaFromClient(client, accountId, pullCountValue, requestIdValue) {
   const pullCount = Number(pullCountValue);
   if (!heroGachaCharge(pullCount)) throw commerceError("抽卡次数只能是1次、10次或100次");
   const requestId = normalizedRequestId(requestIdValue);
-  const client = await database.connect();
   try {
     await client.query("BEGIN");
     await ensureHeroAccount(client, accountId);
     const profileResult = await client.query(
       `SELECT universal_fragments, non_hero_pity_count, non_ssr_pity_count,
-              building_materials, first_pull_completed, free_pull_used_at
+              building_materials, first_pull_completed, free_pull_used_at, gacha_points
        FROM cdp_hero_profiles WHERE account_id = $1::uuid FOR UPDATE`,
       [accountId]
     );
@@ -3693,6 +3703,7 @@ export async function pullHeroGacha(accountId, pullCountValue, requestIdValue) {
       [accountId, requestId]
     );
     if (repeated.rows[0]) {
+      if (Number(repeated.rows[0].result_data.pullCount) !== pullCount) throw commerceError("请求编号已用于其他抽卡次数", 409);
       await client.query("COMMIT");
       return { ...repeated.rows[0].result_data, repeated: true };
     }
@@ -3820,17 +3831,20 @@ export async function pullHeroGacha(accountId, pullCountValue, requestIdValue) {
        SET universal_fragments = $2, non_hero_pity_count = $3,
            non_ssr_pity_count = $4, building_materials = $5,
            first_pull_completed = true,
+           gacha_points = gacha_points + $7,
            free_pull_used_at = CASE WHEN $6 THEN now() ELSE free_pull_used_at END,
            updated_at = now()
        WHERE account_id = $1::uuid
-       RETURNING free_pull_used_at`,
-      [accountId, universalFragments, pityCount, ssrPityCount, buildingMaterials, freePullUsed]
+       RETURNING free_pull_used_at, gacha_points`,
+      [accountId, universalFragments, pityCount, ssrPityCount, buildingMaterials, freePullUsed, pullCount * HERO_HOME_RULES.gachaPointsPerPull]
     );
     const balanceAfter = Number(wallet.rows[0].balance) || 0;
     const freePullAfter = freeHeroPullState(updatedProfile.rows[0]?.free_pull_used_at);
     const response = {
       rulesVersion: HERO_HOME_RULES.version,
       pullCount,
+      pointsAwarded: pullCount * HERO_HOME_RULES.gachaPointsPerPull,
+      gachaPoints: Number(updatedProfile.rows[0]?.gacha_points) || 0,
       price,
       balanceAfter,
       pityCount,
@@ -3864,10 +3878,76 @@ export async function pullHeroGacha(accountId, pullCountValue, requestIdValue) {
     await client.query("ROLLBACK");
     rememberError(error);
     throw error;
-  } finally {
-    client.release();
   }
 }
+
+export async function exchangeHeroPoints(accountId, unitIdValue, requestIdValue) {
+  const client = await requirePool().connect();
+  try { return await exchangeHeroPointsFromClient(client, accountId, unitIdValue, requestIdValue); }
+  finally { client.release(); }
+}
+
+async function exchangeHeroPointsFromClient(client, accountId, unitIdValue, requestIdValue) {
+  const unitId = String(unitIdValue || "");
+  const unit = HOME_UNIT_BY_ID.get(unitId);
+  if (unit?.rarity !== "ssr") throw commerceError("请选择 SSR 英雄");
+  const requestId = normalizedRequestId(requestIdValue);
+  try {
+    await client.query("BEGIN");
+    await ensureHeroAccount(client, accountId);
+    await client.query(`SELECT account_id FROM cdp_hero_profiles WHERE account_id = $1::uuid FOR UPDATE`, [accountId]);
+    const repeated = await client.query(`SELECT unit_id, result_data FROM cdp_hero_point_exchanges
+      WHERE account_id = $1::uuid AND request_id = $2`, [accountId, requestId]);
+    if (repeated.rows[0]) {
+      if (repeated.rows[0].unit_id !== unitId) throw commerceError("请求编号已用于其他英雄兑换", 409);
+      await client.query("COMMIT");
+      return { ...repeated.rows[0].result_data, repeated: true };
+    }
+    if (unit.advancementFrom) {
+      const unlocked = await client.query(`SELECT claimed_at FROM cdp_hero_advancements
+        WHERE account_id = $1::uuid AND sr_unit_id = $2`, [accountId, unit.advancementFrom]);
+      if (!unlocked.rows[0]?.claimed_at) throw commerceError("请先完成并领取对应 SR 进阶", 409);
+    }
+    const spent = await client.query(`UPDATE cdp_hero_profiles
+      SET gacha_points = gacha_points - $2, updated_at = now()
+      WHERE account_id = $1::uuid AND gacha_points >= $2 RETURNING gacha_points`,
+      [accountId, HERO_HOME_RULES.ssrChoicePointCost]);
+    if (!spent.rows[0]) throw commerceError("抽卡积分不足，需要1000积分", 409);
+    const owned = await client.query(`SELECT stars FROM cdp_hero_units
+      WHERE account_id = $1::uuid AND unit_id = $2 FOR UPDATE`, [accountId, unitId]);
+    let conversion;
+    if (!owned.rows[0]) {
+      await client.query(`INSERT INTO cdp_hero_units (account_id, unit_id) VALUES ($1::uuid, $2)`, [accountId, unitId]);
+      conversion = { type: "new", amount: 1, label: "首次获得，解锁1星" };
+    } else if (Number(owned.rows[0].stars) < 5) {
+      const amount = HERO_HOME_RULES.ssrDuplicateFragments;
+      await client.query(`UPDATE cdp_hero_units SET exclusive_fragments = exclusive_fragments + $3, updated_at = now()
+        WHERE account_id = $1::uuid AND unit_id = $2`, [accountId, unitId, amount]);
+      conversion = { type: "exclusive-fragments", amount, label: `转为${amount}专属碎片` };
+    } else {
+      const amount = HERO_HOME_RULES.maxSsrDuplicateUniversalFragments;
+      await client.query(`UPDATE cdp_hero_profiles SET universal_fragments = universal_fragments + $2, updated_at = now()
+        WHERE account_id = $1::uuid`, [accountId, amount]);
+      conversion = { type: "universal-fragments", amount, label: `转为${amount}通用碎片` };
+    }
+    const response = {
+      unit: { ...unit }, conversion, pointsSpent: HERO_HOME_RULES.ssrChoicePointCost,
+      gachaPoints: Number(spent.rows[0].gacha_points), rulesVersion: HERO_HOME_RULES.version
+    };
+    await client.query(`INSERT INTO cdp_hero_point_exchanges
+      (account_id, request_id, unit_id, cost_points, points_after, rules_version, result_data)
+      VALUES ($1::uuid, $2, $3, $4, $5, $6, $7::jsonb)`,
+      [accountId, requestId, unitId, response.pointsSpent, response.gachaPoints, response.rulesVersion, JSON.stringify(response)]);
+    await client.query("COMMIT");
+    return response;
+  } catch (error) {
+    await client.query("ROLLBACK");
+    rememberError(error);
+    throw error;
+  }
+}
+
+export const __heroGachaStorageTesting = { pullHeroGachaFromClient, exchangeHeroPointsFromClient };
 
 export async function upgradeHeroUnit(accountId, unitIdValue, requestIdValue) {
   const database = requirePool();
@@ -4253,11 +4333,13 @@ export async function purchasePlayerEnergy(accountId, requestIdValue) {
 }
 
 async function achievementMetricsFromClient(client, accountId) {
-  const [gamesResult, tagResult, gachaResult, heroResult] = await Promise.all([
+  const [gamesResult, tagResult, gachaResult, heroResult, regionResult, growthResult] = await Promise.all([
     client.query(
       `SELECT
          game.game_id,
          player.won,
+         player.battle_hero_snapshot,
+         player.pve_energy_eligible,
          player.role,
          player.room_player_id,
          game.game_mode,
@@ -4312,25 +4394,28 @@ async function achievementMetricsFromClient(client, accountId) {
       [accountId]
     ),
     client.query(
+      `SELECT unit_id, stars FROM cdp_hero_units WHERE account_id = $1::uuid`, [accountId]
+    ),
+    client.query(
+      `SELECT level, unit_id, extra_unit_id, second_extra_unit_id FROM cdp_home_regions WHERE account_id = $1::uuid`, [accountId]
+    ),
+    client.query(
       `SELECT
-         count(*) FILTER (WHERE unit_id = ANY($2::text[]))::integer AS unique_heroes,
-         count(*) FILTER (WHERE unit_id = ANY($2::text[]) AND stars >= 5)::integer AS five_star_heroes
-       FROM cdp_hero_units
-       WHERE account_id = $1::uuid`,
-      [accountId, HERO_UNITS.map((unit) => unit.id)]
+        (SELECT count(*) FROM cdp_hero_advancements WHERE account_id = $1::uuid AND claimed_at IS NOT NULL) AS advancement_claims,
+        (SELECT count(*) FROM cdp_hero_tasks WHERE account_id = $1::uuid AND status = 'collected') AS tasks_collected,
+        (SELECT count(*) FROM cdp_daily_task_bonus_claims WHERE account_id = $1::uuid) AS daily_bonus_claims,
+        (SELECT count(*) FROM cdp_hero_point_exchanges WHERE account_id = $1::uuid) AS point_exchanges`, [accountId]
     )
   ]);
   const games = gamesResult.rows;
   const tags = tagResult.rows;
   const gacha = gachaResult.rows[0] || {};
-  const heroes = heroResult.rows[0] || {};
   return {
     ...buildModeAchievementMetrics(games, tags, "pvp"),
     ...buildModeAchievementMetrics(games, tags, "pve"),
     heroTotalPulls: Number(gacha.total_pulls) || 0,
     heroPremiumPulls: Number(gacha.premium_pulls) || 0,
-    heroUniqueHeroes: Number(heroes.unique_heroes) || 0,
-    heroFiveStarHeroes: Number(heroes.five_star_heroes) || 0
+    ...buildHeroAchievementMetrics(games, heroResult.rows, regionResult.rows, growthResult.rows[0])
   };
 }
 

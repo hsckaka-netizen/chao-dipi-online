@@ -1,5 +1,5 @@
 export const HERO_HOME_RULES = Object.freeze({
-  version: "2026-11-02-v17",
+  version: "2026-11-02-v18",
   skillVersion: "2026-09-24-skill-v9",
   boardSkillVersion: "2026-11-02-board-skill-v15",
   shenKaxiangScoreBonus: Object.freeze([0.3, 0.6, 0.9, 1.2, 1.5]),
@@ -16,6 +16,8 @@ export const HERO_HOME_RULES = Object.freeze({
   shenYingwuReductionRates: Object.freeze([0.2, 0.3, 0.4, 0.5, 0.6]),
   shenYingwuSuccessDiamonds: Object.freeze([100, 120, 140, 160, 200]),
   maxProductionHours: 6,
+  gachaPointsPerPull: 1,
+  ssrChoicePointCost: 1000,
   singlePullPrice: 300,
   tenPullPrice: 2700,
   hundredPullPrice: 27000,

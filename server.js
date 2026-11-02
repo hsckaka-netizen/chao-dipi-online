@@ -134,6 +134,7 @@ import {
   purchaseShopProduct,
   purchasePlayerEnergy,
   pullHeroGacha,
+  exchangeHeroPoints,
   recordStoredAccountLogin,
   refundOrphanedGameItemUses,
   refundBoardHeroSkillUses,
@@ -8191,6 +8192,11 @@ async function handleApi(req, res, pathParts, url) {
     if (req.method === "POST" && pathParts[2] === "gacha" && pathParts.length === 3) {
       const body = await readJson(req);
       const result = await pullHeroGacha(account.id, body.pullCount, body.requestId);
+      return writeJson(res, 200, { ...result, state: await getHeroHomeState(account.id) });
+    }
+    if (req.method === "POST" && pathParts[2] === "points" && pathParts[3] === "exchange" && pathParts.length === 4) {
+      const body = await readJson(req);
+      const result = await exchangeHeroPoints(account.id, body.unitId, body.requestId);
       return writeJson(res, 200, { ...result, state: await getHeroHomeState(account.id) });
     }
     if (req.method === "POST" && pathParts[2] === "advancement" && pathParts[3] === "claim" && pathParts.length === 4) {
