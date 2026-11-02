@@ -5203,7 +5203,7 @@ function renderHomeRegionCard(region) {
         <div class="home-region-actions">
           <button type="button" data-action="collect-home" data-region-id="${escapeHtml(region.id)}" ${heroActionInFlight ? "disabled" : ""}>领取 ${region.collectableDiamonds || 0} 💎</button>
 
-          <button type="button" class="secondary" data-action="upgrade-home-region" data-region-id="${escapeHtml(region.id)}" ${!region.upgradeCost || Number(heroHomeState?.buildingMaterials || 0) < Number(region.upgradeCost) || heroActionInFlight ? "disabled" : ""}>${region.upgradeCost ? `升级 · ${escapeHtml(region.upgradeCost)}建材` : "已满100级"}</button>
+          <button type="button" class="secondary" data-action="upgrade-home-region" data-region-id="${escapeHtml(region.id)}" ${!region.upgradeCost || Number(heroHomeState?.buildingMaterials || 0) < Number(region.upgradeCost) || heroActionInFlight ? "disabled" : ""}>${region.upgradeCost ? `升级 · ${escapeHtml(region.upgradeCost)}建材` : `已满${escapeHtml(heroHomeState?.rules?.maxRegionLevel || 200)}级`}</button>
         </div>
       </div>
       <div class="home-assignment-list">
@@ -5516,6 +5516,7 @@ function renderHeroGachaPage() {
   const freePullAvailable = Boolean(heroHomeState.freePullAvailable);
   const singlePullPrice = Number(heroHomeState.rules?.singlePullPrice) || 300;
   const tenPullPrice = Number(heroHomeState.rules?.tenPullPrice) || 2700;
+  const hundredPullPrice = Number(heroHomeState.rules?.hundredPullPrice) || 27000;
   const heroPityPulls = Number(heroHomeState.rules?.pityPulls) || 50;
   const ssrPityPulls = Number(heroHomeState.rules?.ssrPityPulls) || 200;
   const singlePullDisabled = heroActionInFlight || (!freePullAvailable && Number(heroHomeState.balance || 0) < singlePullPrice);
@@ -5535,8 +5536,9 @@ function renderHeroGachaPage() {
       <div class="gacha-actions">
         <button type="button" data-action="pull-hero-gacha" data-pull-count="1" ${singlePullDisabled ? "disabled" : ""}>${freePullAvailable ? "免费单抽" : `单抽 · ${singlePullPrice}💎`}</button>
         <button type="button" class="accent" data-action="pull-hero-gacha" data-pull-count="10" ${heroActionInFlight || Number(heroHomeState.balance || 0) < tenPullPrice ? "disabled" : ""}>十连 · ${tenPullPrice}💎 <small>9折</small></button>
+        <button type="button" class="accent" data-action="pull-hero-gacha" data-pull-count="100" ${heroActionInFlight || Number(heroHomeState.balance || 0) < hundredPullPrice ? "disabled" : ""}>百连 · ${hundredPullPrice}💎 <small>9折</small></button>
       </div>
-      <div class="gacha-probability"><span>建材 40%（50个）</span><span>小兵 50%</span><span>SR 9%</span><span>SSR 1%</span><span>首抽必出未拥有SR且不会是SSR</span><span>第${escapeHtml(heroPityPulls)}抽至少SR</span><span>第${escapeHtml(ssrPityPulls)}抽必出SSR</span><span>十连固定9折</span><span>免费单抽每天北京时间6点更新</span></div>
+      <div class="gacha-probability"><span>建材 40%（50个）</span><span>小兵 50%</span><span>SR 9%</span><span>SSR 1%</span><span>首抽必出未拥有SR且不会是SSR</span><span>第${escapeHtml(heroPityPulls)}抽至少SR</span><span>第${escapeHtml(ssrPityPulls)}抽必出SSR</span><span>十连、百连固定9折</span><span>免费单抽每天北京时间6点更新</span></div>
     </section>
     ${heroGachaResults.length ? `<section class="panel stack"><div class="section-head"><div><h2>本次结果</h2><div class="meta">抽卡结果已由服务端入账</div></div></div><div class="gacha-result-grid">${heroGachaResults.map(renderGachaResult).join("")}</div></section>` : `<section class="panel"><div class="empty">抽卡结果会显示在这里</div></section>`}
   `);
@@ -5697,7 +5699,7 @@ async function pullHeroCards(pullCount) {
     });
     heroGachaResults = data.results || [];
     applyHeroMutationState(data.state);
-    setMessage(`${pullCount === 10 ? "十连" : "单抽"}完成`);
+    setMessage(`${pullCount === 100 ? "百连" : pullCount === 10 ? "十连" : "单抽"}完成`);
   } catch (error) {
     setMessage(error.message || "抽卡失败", true);
   } finally {

@@ -250,6 +250,10 @@ const MIGRATIONS = [
   {
     version: 44,
     path: fileURLToPath(new URL("./db/migrations/044_xiaoxu_advancement.sql", import.meta.url))
+  },
+  {
+    version: 45,
+    path: fileURLToPath(new URL("./db/migrations/045_home_level_200_and_hundred_pull.sql", import.meta.url))
   }
 ];
 const HISTORY_ENABLED = String(process.env.GAME_HISTORY_ENABLED || "").toLowerCase() === "true";
@@ -3147,7 +3151,7 @@ export async function upgradeHomeRegion(accountId, regionIdValue, requestIdValue
     if (!regionResult.rows[0]) throw commerceError("家园区域不存在", 404);
     const previousLevel = Number(regionResult.rows[0].level) || 0;
     const cost = regionUpgradeCost(previousLevel);
-    if (!cost) throw commerceError("区域已经达到100级", 409);
+    if (!cost) throw commerceError(`区域已经达到${HERO_HOME_RULES.maxRegionLevel}级`, 409);
     const materialsBefore = Number(profileResult.rows[0]?.building_materials) || 0;
     if (materialsBefore < cost) throw commerceError("建材不足", 409);
     await settleHomeRegion(client, accountId, regionId);
@@ -3588,7 +3592,7 @@ export async function refundBoardHeroSkillUses(gameIdValue) {
 export async function pullHeroGacha(accountId, pullCountValue, requestIdValue) {
   const database = requirePool();
   const pullCount = Number(pullCountValue);
-  if (pullCount !== 1 && pullCount !== 10) throw commerceError("抽卡次数只能是1次或10次");
+  if (!heroGachaCharge(pullCount)) throw commerceError("抽卡次数只能是1次、10次或100次");
   const requestId = normalizedRequestId(requestIdValue);
   const client = await database.connect();
   try {

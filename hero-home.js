@@ -1,5 +1,5 @@
 export const HERO_HOME_RULES = Object.freeze({
-  version: "2026-11-02-v15",
+  version: "2026-11-02-v16",
   skillVersion: "2026-09-24-skill-v9",
   boardSkillVersion: "2026-11-02-board-skill-v15",
   shenKaxiangScoreBonus: Object.freeze([0.3, 0.6, 0.9, 1.2, 1.5]),
@@ -18,6 +18,7 @@ export const HERO_HOME_RULES = Object.freeze({
   maxProductionHours: 6,
   singlePullPrice: 300,
   tenPullPrice: 2700,
+  hundredPullPrice: 27000,
   freePullRefreshHourBeijing: 6,
   minionChance: 0.5,
   srChance: 0.09,
@@ -41,7 +42,7 @@ export const HERO_HOME_RULES = Object.freeze({
   srProduction: Object.freeze([16, 22, 28, 34, 46]),
   ssrProduction: Object.freeze([30, 40, 50, 60, 80]),
   minionProduction: Object.freeze([8, 10, 12, 14, 16]),
-  maxRegionLevel: 100,
+  maxRegionLevel: 200,
   productionBonusPerLevel: 0.005,
   maxHoursPerTenLevels: 0.5,
   extraSlotUnlockLevel: 100,
@@ -60,7 +61,7 @@ export const HERO_HOME_RULES = Object.freeze({
   jieRanchenWinMultipliers: Object.freeze([2.1, 2.3, 2.6, 3, 3.5])
 });
 
-const REGION_UPGRADE_COSTS = Object.freeze([60, 70, 80, 100, 130, 160, 190, 230, 280, 350]);
+const REGION_UPGRADE_COSTS = Object.freeze([60, 70, 80, 100, 130, 160, 190, 230, 280, 350, 420, 500, 600, 720, 860, 1020, 1200, 1400, 1600, 1800]);
 const CARD_RANK_TO_NUMBER = Object.freeze({ A: 1, 2: 2, 3: 3, 4: 4, 5: 5, 6: 6, 7: 7, 8: 8, 9: 9, 10: 10, J: 11, Q: 12, K: 13 });
 
 export function cardRankNumber(card) {
@@ -474,6 +475,9 @@ export function heroGachaCharge(pullCount, freePullAvailable = false) {
   }
   if (Number(pullCount) === 10) {
     return { price: HERO_HOME_RULES.tenPullPrice, freePullUsed: false };
+  }
+  if (Number(pullCount) === 100) {
+    return { price: HERO_HOME_RULES.hundredPullPrice, freePullUsed: false };
   }
   return null;
 }

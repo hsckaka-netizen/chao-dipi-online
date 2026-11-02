@@ -80,10 +80,13 @@ test("free single pull refreshes at 06:00 Beijing time every day", () => {
   );
 });
 
-test("free pull applies only to a single draw and ten draws cost 10 percent less", () => {
+test("free pull applies only to a single draw and multi pulls cost 10 percent less", () => {
   assert.deepEqual(heroGachaCharge(1, true), { price: 0, freePullUsed: true });
   assert.deepEqual(heroGachaCharge(1, false), { price: 300, freePullUsed: false });
   assert.deepEqual(heroGachaCharge(10, true), { price: 2700, freePullUsed: false });
+  assert.deepEqual(heroGachaCharge(100, true), { price: 27000, freePullUsed: false });
+  assert.deepEqual(heroGachaCharge(100, false), { price: 27000, freePullUsed: false });
+  for (const count of [0, 2, 99, 101, 100.5, NaN]) assert.equal(heroGachaCharge(count), null);
 });
 
 test("gacha draws building materials as an independent pool result", () => {
@@ -628,7 +631,10 @@ test("region levels increase output every level and unlock capacity on milestone
   assert.equal(regionUpgradeCost(89), 280);
   assert.equal(regionUpgradeCost(90), 350);
   assert.equal(regionUpgradeCost(99), 350);
-  assert.equal(regionUpgradeCost(100), null);
+  assert.equal(regionUpgradeCost(100), 420);
+  assert.equal(regionUpgradeCost(199), 1800);
+  assert.equal(regionUpgradeCost(200), null);
+  assert.equal(regionUpgradeCost(201), null);
   const costs = Array.from({ length: 100 }, (_, level) => regionUpgradeCost(level));
   const totalCost = costs.reduce((sum, cost) => sum + cost, 0);
   const expectedDailyMaterials = 3 * 58.4 + 5 * 0.4 * 50;
@@ -651,6 +657,27 @@ test("region levels increase output every level and unlock capacity on milestone
   assert.ok(Math.abs(preview.ratePerHour - 33) < 1e-9);
   assert.equal(preview.maxProductionHours, 7);
   assert.equal(preview.extraSlotUnlocked, false);
+});
+
+test("levels above 100 extend production and storage through the level 200 cap", () => {
+  const costs = Array.from({ length: 200 }, (_, level) => regionUpgradeCost(level));
+  assert.equal(costs.reduce((sum, cost) => sum + cost, 0), 117700);
+  assert.ok(costs.every((cost) => Number.isInteger(cost) && cost > 0));
+  for (const level of [101, 110, 150, 199, 200, 201]) {
+    const cappedLevel = Math.min(level, 200);
+    const preview = previewHomeRegion({
+      regionId: "stage", unitId: "yokoyama-yui", stars: 5,
+      extraUnitId: "watanabe-mayu", extraStars: 5, level,
+      settledAt: "2026-11-01T00:00:00.000Z"
+    }, "2026-11-02T00:00:00.000Z");
+    const expectedHours = 6 + Math.floor(cappedLevel / 10) * 0.5;
+    assert.equal(preview.level, cappedLevel);
+    assert.equal(preview.maxProductionHours, expectedHours);
+    assert.equal(preview.productionHours, expectedHours);
+    assert.equal(preview.extraSlotUnlocked, true);
+    assert.equal(preview.ratePerHour, 103 * (1 + cappedLevel * 0.005));
+    assert.ok(Math.abs(preview.productionValue - preview.ratePerHour * expectedHours) < 1e-7);
+  }
 });
 
 test("the level 100 extra hero slot produces at 50 percent efficiency", () => {
