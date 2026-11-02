@@ -1,6 +1,6 @@
 import { applyStatePatch } from "./state-patch.js?v=9330552c7e1e";
 import { detectNewDraggedFiveEffects, detectNewLargePlayEffects } from "./gameplay-effects.js?v=14791e626d30";
-import { ASSET_URLS, versionedAssetUrl } from "./asset-versions.js?v=dc5862d4ad05";
+import { ASSET_URLS, versionedAssetUrl } from "./asset-versions.js?v=a8bd2d468ff5";
 import { createHistoryTrickEntry, filterHistoryTimelineEntries } from "./history-records.js?v=874ba3c97732";
 import { suitTractorOrderValue, isShenBenleiTrump, shenBenleiTractorOrderValue } from "./replacement-rank-rules.js?v=d9c12d800a5b";
 import { doudouPointLabel, doudouPointNotice } from "./doudou-notice.js?v=4327fd9b2a77";
@@ -2162,7 +2162,7 @@ async function submitBoardHeroSkill(action, investment = null, targetPlayerId = 
       selectedCardIds.clear();
       throwDraftComponents = null;
     }
-    const message = action === "shen-jiangwen-transfer" ? "已移交本轮首出权" : action === "shen-gelu-activate" ? "釜底抽薪已发动，请扣回底牌"
+    const message = action === "shen-kaxiang-activate" ? "逆转未来已发动，行动顺序已逆转" : action === "shen-jiangwen-transfer" ? "已移交本轮首出权" : action === "shen-gelu-activate" ? "釜底抽薪已发动，请扣回底牌"
       : action === "jie-ranchen-pass" ? "已放弃奇货可居"
       : action === "jie-ranchen-invest" ? "奇货可居已发动，身份已公开锁定"
       : action === "shen-biesan-pass" ? "已放弃偷梁换柱"
@@ -3437,6 +3437,17 @@ function renderAutoPlayMark(player) {
     : "";
 }
 
+function renderKaxiangControl() {
+  if (isSpectating() || !state?.boardHeroSkills?.shenKaxiang?.canActivate) return "";
+  return `<button type="button" class="secondary" data-action="shen-kaxiang-activate" title="每局一次，逆转当前炒底阶段或本轮剩余出牌顺序">逆转未来 · 发动</button>`;
+}
+
+function renderTurnPrompt() {
+  if (isSpectating() || !viewerCanPlayCurrent()) return "";
+  const lead = leadInfoFromSnapshot(state.currentTrick);
+  return `<div class="my-turn-prompt" role="status"><span class="my-turn-arrow" aria-hidden="true">▶</span><strong>${viewerAutoPlayEnabled() ? "轮到你 · 托管中" : "轮到你出牌"}</strong><span>${viewerAutoPlayEnabled() ? "系统将自动出牌，可随时取消托管" : lead ? `本轮需跟 ${lead.count} 张` : "你先出牌 · 请选择要打出的牌"}</span></div>`;
+}
+
 function renderJiangwenTransferControl() {
   if (isSpectating() || !state?.boardHeroSkills?.shenJiangwen?.canActivate) return "";
   return `<button type="button" class="secondary" data-action="open-jiangwen-transfer">诈疾藏锋 · 移交首出权</button>`;
@@ -3503,12 +3514,13 @@ function renderHandControls(action) {
         ? (!action.enabled ? action.reason : "")
         : (!action.throwEnabled ? action.throwReason : "");
       return `
-        <div class="row hand-controls throw-controls">
+        <div class="row hand-controls throw-controls my-turn-controls">
           <span class="tag">${escapeHtml(selectedCountLabel())}</span>
           <button type="button" data-action="add-throw-component" ${action.enabled ? "" : "disabled"}>加入牌型</button>
           <button type="button" data-action="confirm-throw" ${action.throwEnabled ? "" : "disabled"}>确认甩牌</button>
           <button type="button" class="secondary" data-action="cancel-throw">取消</button>
-          ${renderAutoPlayControl()}
+          ${renderKaxiangControl()}
+        ${renderAutoPlayControl()}
           ${renderJiangwenTransferControl()}
           ${renderTauntControl()}
           ${renderGameItemControl()}
@@ -3520,13 +3532,12 @@ function renderHandControls(action) {
       ? `<button type="button" class="secondary throw-entry" data-action="enter-throw">甩牌</button>`
       : "";
     const reason = !action.enabled && action.reason ? action.reason : "";
-    const turnIndicator = action.action === "play-selected" ? `<span class="turn-indicator">轮到你出牌</span>` : "";
     return `
-      <div class="row hand-controls">
-        ${turnIndicator}
+      <div class="row hand-controls ${action.action === "play-selected" ? "my-turn-controls" : ""}">
         <span class="tag">${escapeHtml(selectedCountLabel())}</span>
         <button type="button" data-action="${action.action}" ${action.enabled ? "" : "disabled"}>${escapeHtml(action.label)}</button>
         ${throwButton}
+        ${renderKaxiangControl()}
         ${renderAutoPlayControl()}
         ${renderJiangwenTransferControl()}
         ${renderTauntControl()}
@@ -3536,7 +3547,7 @@ function renderHandControls(action) {
     `;
   }
   if (state?.stage !== "playing") {
-    return state?.gameItems?.canUse ? `<div class="hand-waiting-controls">${renderGameItemControl()}</div>` : "";
+    return (state?.gameItems?.canUse || state?.boardHeroSkills?.shenKaxiang?.canActivate) ? `<div class="hand-waiting-controls">${renderKaxiangControl()}${renderGameItemControl()}</div>` : "";
   }
 
   const turnName = state.currentTrick?.currentTurnPlayerName || "";
@@ -3550,6 +3561,7 @@ function renderHandControls(action) {
     <div class="hand-waiting-controls">
       <span class="tag">${escapeHtml(selectedCountLabel())}</span>
       <div class="turn-waiting">${escapeHtml(text)}</div>
+      ${renderKaxiangControl()}
       ${renderAutoPlayControl()}
       ${renderTauntControl()}
       ${renderGameItemControl()}
@@ -6941,6 +6953,7 @@ function renderSetupCenter() {
       ${renderSetupLines([
         { label: "控底", value: escapeHtml(fry.lastFryerName || setup.bankerName) },
         { label: "门槛", value: escapeHtml(bidText(fry.lastBid)) },
+        { label: "顺序", value: fry.direction === -1 ? "↶ 已逆转" : "正常顺序" },
         { label: "当前", value: `轮到 ${escapeHtml(fry.currentPlayerName)} ${setupCountdownTag(deadline, " 后自动不炒")}` },
         currentTrumpItem
       ])}
@@ -7787,7 +7800,7 @@ function renderPlayTable() {
   const holdingPreviousResult = tableTrick && tableTrick !== state.currentTrick;
   return `
     <section class="panel stack game-table-panel">
-      ${renderTableToolbar("打牌桌面", `<span class="tag good">${escapeHtml(holdingPreviousResult ? `${turnText}，上一轮结果暂留` : turnText)}</span>`)}
+      ${renderTableToolbar("打牌桌面", `<span class="tag good">${state.currentTrick?.direction === -1 ? "↶ 本轮反向 · " : ""}${escapeHtml(holdingPreviousResult ? `${turnText}，上一轮结果暂留` : turnText)}</span>`)}
       ${renderTrick(tableTrick, true, { heldResult: holdingPreviousResult })}
     </section>
   `;
@@ -8007,6 +8020,7 @@ function renderSeatHand(action, play, trick, index, options = {}) {
   const roomPlayer = state.players.find((player) => player.id === play.playerId) || play;
   return `
     <div class="seat-hand ${myTurn ? "is-my-turn" : ""}" data-action="clear-selection">
+      ${myTurn ? renderTurnPrompt() : ""}
       <div class="seat-hand-layout">
         <aside class="seat-hand-profile-card">
           <div class="seat-hand-avatar-stage" tabindex="0" aria-label="查看${escapeHtml(play.playerName)}的历史数据">
@@ -8094,7 +8108,7 @@ function renderTrick(trick, current, options = {}) {
           const seatHand = showViewerHand ? renderSeatHand(viewerAction, play, trick, playIndex, { heldResult, setupTable }) : "";
           const playEffect = setupTable ? "" : renderLargePlayEffect(play, trick.number);
           const playerCard = `
-            <div class="trick-player ${roleClass(play.role)} ${play.played ? "played" : ""} ${play.lead ? "lead" : ""} ${play.currentTurn ? "current-turn" : ""} ${play.winning ? "winning" : ""}">
+            <div class="trick-player ${roleClass(play.role)} ${play.played ? "played" : ""} ${play.lead ? "lead" : ""} ${(current && !setupTable && !finishedResult ? state.currentTrick?.currentTurnPlayerId === play.playerId : play.currentTurn) ? "current-turn" : ""} ${play.winning ? "winning" : ""}">
               ${renderTablePlayerSummary(play, statusText, statusTone)}
               ${!current && play.played ? renderPlayedCards(play, playCards, trick.number) : ""}
             </div>
@@ -8122,13 +8136,14 @@ function playStatusText(trick, play, index, current, options = {}) {
     if (play.winning) return "本轮最大";
     return play.played ? fmtTime(play.at) : "未出牌";
   }
+  if (current && !options.finishedResult && state.stage === "playing" && state.currentTrick?.currentTurnPlayerId === play.playerId) return "出牌中";
   if (options.heldResult) {
     if (play.throwFailed) return "甩牌失败";
     if (play.throwPlay) return "甩牌成功";
     if (play.winning) return "本轮最大";
     return play.played ? "已出" : "未出牌";
   }
-  if (trick.currentTurnPlayerId === play.playerId) return "当前";
+  if (trick.currentTurnPlayerId === play.playerId) return "出牌中";
   if (play.throwFailed) return "甩牌失败";
   if (play.throwPlay) return "甩牌成功";
   if (play.winning && play.played) return "当前最大";
@@ -9364,7 +9379,7 @@ const mutatingActions = new Set([
   "claim-hero-advancement", "jie-denghuang-draw", "jie-denghuang-bury", "jie-denghuang-pass", "jie-jiangzha-select", "jie-jiangzha-pass",
   "purchase-energy", "claim-achievement", "equip-title",
   "shen-biesan-activate", "shen-biesan-pass", "jie-ranchen-invest", "jie-ranchen-pass", "yokoyama-activate", "yokoyama-pass",
-  "shen-haohao-activate", "shen-haohao-pass", "shen-gelu-activate", "shen-jiangwen-transfer"
+  "shen-haohao-activate", "shen-haohao-pass", "shen-gelu-activate", "shen-jiangwen-transfer", "shen-kaxiang-activate"
 ]);
 
 function isRapidMutatingAction(action) {
@@ -9806,6 +9821,7 @@ document.addEventListener("click", (event) => {
   if (action === "yokoyama-pass") submitBoardHeroSkill(action);
   if (action === "shen-haohao-activate") submitBoardHeroSkill(action);
   if (action === "shen-haohao-pass") submitBoardHeroSkill(action);
+  if (action === "shen-kaxiang-activate") submitBoardHeroSkill(action);
   if (action === "shen-gelu-activate") submitBoardHeroSkill(action);
   if (action === "open-jiangwen-transfer") {
     activeDialog = "jiangwen-transfer";

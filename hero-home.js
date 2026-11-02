@@ -1,7 +1,8 @@
 export const HERO_HOME_RULES = Object.freeze({
-  version: "2026-10-30-v14",
+  version: "2026-11-02-v15",
   skillVersion: "2026-09-24-skill-v9",
-  boardSkillVersion: "2026-10-30-board-skill-v14",
+  boardSkillVersion: "2026-11-02-board-skill-v15",
+  shenKaxiangScoreBonus: Object.freeze([0.3, 0.6, 0.9, 1.2, 1.5]),
   shenLafangScoreBonus: Object.freeze([0.5, 1, 1.5, 2, 3]),
   shenXiaoxuReserveCount: Object.freeze([1, 2, 3, 4, 5]),
   shenXiaoxuScorePerTen: Object.freeze([0.1, 0.2, 0.3, 0.4, 0.5]),
@@ -123,6 +124,11 @@ export const HOME_UNITS = Object.freeze([
     id: "shen-xiaoxu", name: "神 · 小旭", namePrefix: "神", baseName: "小旭", shortName: "旭", type: "hero", rarity: "ssr", gender: "male", regionId: "brick", color: "#257e73", advancementFrom: "xiaoxu",
     cardImage: "/assets/heroes/shen-xiaoxu-card-v2.png",
     skillName: "蓄势待发", skillDescription: "炒底结束、正式出牌前，可横置最多1/2/3/4/5张手牌；横置牌不参与任何出牌规则判定，首次赢得出牌权或手牌不足本轮跟牌张数时全部收回。获胜后，收回前每打出满10张牌，按1～5星额外获得0.1/0.2/0.3/0.4/0.5积分。"
+  }),
+  Object.freeze({
+    id: "shen-kaxiang", name: "神 · 卡翔", namePrefix: "神", baseName: "卡翔", shortName: "翔", type: "hero", rarity: "ssr", gender: "male", regionId: "brick", color: "#267f78",
+    cardImage: "/assets/heroes/shen-kaxiang-card-v1.png",
+    skillName: "逆转未来", skillDescription: "主动：每局一次，可在炒底阶段或出牌阶段免费发动。炒底时逆转本阶段后续顺序，当前操作玩家不变；出牌时逆转本轮剩余玩家顺序，已出牌者不重复出牌，下轮恢复正常。被动：本局至少一次由本人领出、最终由队友赢得该轮时，结算按1～5星额外获得0.3/0.6/0.9/1.2/1.5积分，整局只奖励一次，不要求获胜。"
   }),
   Object.freeze({
     id: "shen-lafang", name: "神 · 拉芳", namePrefix: "神", baseName: "拉芳", shortName: "芳", type: "hero", rarity: "ssr", gender: "male", regionId: "stage", color: "#a53632",
@@ -490,7 +496,7 @@ export function createBattleHeroSnapshot(unitId, stars = 1, cooldownValue = 0) {
     stars: normalizedStars(stars),
     skillVersion: unit.rarity === "ssr" ? HERO_HOME_RULES.boardSkillVersion : HERO_HOME_RULES.skillVersion
   };
-  if (unit.rarity === "ssr" && unit.id !== "jie-doudou" && unit.id !== "shen-haohao" && unit.id !== "jie-ranchen" && unit.id !== "shen-benlei" && unit.id !== "shen-lafang" && !unit.advancementFrom) {
+  if (unit.rarity === "ssr" && unit.id !== "jie-doudou" && unit.id !== "shen-haohao" && unit.id !== "jie-ranchen" && unit.id !== "shen-benlei" && unit.id !== "shen-lafang" && unit.id !== "shen-kaxiang" && !unit.advancementFrom) {
     snapshot.paidSkill = boardHeroSkillState(stars, cooldownValue, unit.id);
   }
   return snapshot;
@@ -569,6 +575,16 @@ export function calculateHeroSkillReward({
   if (!snapshot?.heroId || !playerId || !playerResult) return null;
   const stars = normalizedStars(snapshot.stars);
   const history = Array.isArray(trickHistory) ? trickHistory : [];
+
+  if (snapshot.heroId === "shen-kaxiang") {
+    const team = playerResult.team;
+    const allies = new Set(playerResults.filter((result) => team && result.team === team && result.playerId !== playerId).map((result) => result.playerId));
+    const matched = history.some((trick) => trick.leaderId === playerId && allies.has(trick.winnerId));
+    const scoreBonus = matched ? HERO_HOME_RULES.shenKaxiangScoreBonus[stars - 1] : 0;
+    return { ...baseSkillResult(snapshot, matched ? 1 : 0, 1, 0,
+      `${matched ? "已完成向最终队友传递出牌权" : "未完成向最终队友传递出牌权"}；额外${scoreBonus}积分，整局最多一次`),
+      rulesVersion: HERO_HOME_RULES.boardSkillVersion, scoreBonus };
+  }
 
   if (snapshot.heroId === "shen-lafang" || snapshot.heroId === "shen-xiaoxu") {
     const won = Number(playerResult.baseGameScore ?? playerResult.gameScore) > 0;

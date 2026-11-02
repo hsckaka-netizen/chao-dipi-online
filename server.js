@@ -1996,6 +1996,7 @@ function setupSnapshot(room, viewer = null) {
     biddingTurnPlayerName: room.setup?.biddingTurnPlayerId ? playerName(room, room.setup.biddingTurnPlayerId) : "",
     fry: fry
       ? {
+          direction: fry.direction || 1,
           currentPlayerId: fry.currentPlayerId,
           currentPlayerName: fry.currentPlayerId ? playerName(room, fry.currentPlayerId) : "",
           lastFryerId: fry.lastFryerId,
@@ -2141,6 +2142,12 @@ function boardHeroSkillsSnapshot(room, viewer = null) {
       cooldownAfterUse: haohaoSkill?.cooldownAfterUse || 0,
       activatedPlayerIds: [...shenHaohao.activatedPlayerIds]
     },
+    shenKaxiang: {
+      canActivate: shenKaxiangCanActivate(room, viewer),
+      used: Boolean(viewer && (room.boardHeroEffects?.uses || []).some((use) => use.playerId === viewer.id && use.heroId === "shen-kaxiang")),
+      fryDirection: room.setup?.fry?.direction || 1,
+      trickDirection: room.currentTrick?.direction || 1
+    },
     shenJiangwen: {
       canActivate: shenJiangwenCanTransfer(room, viewer),
       targetPlayerIds: shenJiangwenCanTransfer(room, viewer)
@@ -2192,7 +2199,7 @@ function playerRole(room, playerId, viewer = null) {
 function trickSnapshot(room, trick, viewer = null) {
   if (!trick) return null;
   const currentTurnPlayerId = trick === room.currentTrick ? expectedPlayerId(room) : null;
-  const turnIndexByPlayerId = new Map(orderedPlayersFrom(room, trick.leaderId || room.hostId).map((player, index) => [player.id, index]));
+  const turnIndexByPlayerId = new Map(trickTurnOrder(room, trick).map((player, index) => [player.id, index]));
   const provisionalOutcome = trick === room.currentTrick && trick.plays.length && trick.winningPlayIndex == null
     ? settleTrick(room, trick)
     : null;
@@ -2200,6 +2207,7 @@ function trickSnapshot(room, trick, viewer = null) {
   return {
     number: trick.number,
     leaderId: trick.leaderId,
+    direction: trick.direction || 1,
     leaderName: trick.leaderId ? playerName(room, trick.leaderId) : "",
     currentTurnPlayerId,
     currentTurnPlayerName: currentTurnPlayerId ? playerName(room, currentTurnPlayerId) : "",
@@ -3123,7 +3131,7 @@ function finishGame(room, completedTrick) {
       idleEachScore, bankerId: room.bankerId, mode: bankerScores.mode
     }),
     personalBonuses: room.result.playerResults.flatMap((playerResult) => (
-      playerResult.heroSkillReward?.scoreBonus && ["jie-doudou", "jie-jiangzha", "jie-denghuang", "shen-benlei", "shen-jiangwen", "shen-lafang", "shen-xiaoxu"].includes(playerResult.heroSkillReward?.hero?.heroId)
+      playerResult.heroSkillReward?.scoreBonus && ["jie-doudou", "jie-jiangzha", "jie-denghuang", "shen-benlei", "shen-jiangwen", "shen-lafang", "shen-xiaoxu", "shen-kaxiang"].includes(playerResult.heroSkillReward?.hero?.heroId)
         ? [{ playerId: playerResult.playerId, amount: playerResult.heroSkillReward.scoreBonus }]
         : []
     ))
@@ -3331,10 +3339,19 @@ function leadInfo(trick, trumpSuit) {
   };
 }
 
-function orderedPlayersFrom(room, leaderId) {
+function orderedPlayersFrom(room, leaderId, direction = null) {
   if (!room.players.length) return [];
+  const step = direction ?? (room.stage === "playing" ? room.currentTrick?.direction
+    : ["frying", "fry-burying"].includes(room.stage) ? room.setup?.fry?.direction : 1);
   const start = Math.max(0, room.players.findIndex((player) => player.id === leaderId));
-  return [...room.players.slice(start), ...room.players.slice(0, start)];
+  return room.players.map((_, offset) => room.players[(start + offset * (step === -1 ? -1 : 1) + room.players.length) % room.players.length]);
+}
+
+function trickTurnOrder(room, trick) {
+  const played = (trick.plays || []).map((play) => room.players.find((player) => player.id === play.playerId)).filter(Boolean);
+  const playedIds = new Set(played.map((player) => player.id));
+  const anchor = played.at(-1)?.id || trick.leaderId || room.hostId;
+  return [...played, ...orderedPlayersFrom(room, anchor, trick.direction || 1).filter((player) => !playedIds.has(player.id))];
 }
 
 function expectedPlayerId(room) {
@@ -3342,9 +3359,8 @@ function expectedPlayerId(room) {
   if (room.playPauseUntil && Date.now() < new Date(room.playPauseUntil).getTime()) return null;
   const trick = room.currentTrick;
   if (!trick) return null;
-  const leaderId = trick.leaderId || room.hostId || room.players[0]?.id || null;
   const playedIds = new Set(trick.plays.map((play) => play.playerId));
-  const nextPlayer = orderedPlayersFrom(room, leaderId).find((player) => player.hand.length && !playedIds.has(player.id));
+  const nextPlayer = trickTurnOrder(room, trick).find((player) => player.hand.length && !playedIds.has(player.id));
   return nextPlayer?.id || null;
 }
 
@@ -3839,6 +3855,29 @@ function transferShenJiangwenLead(room, player, targetPlayerId) {
   return { ok: true };
 }
 
+function shenKaxiangCanActivate(room, player) {
+  return Boolean(room.status === "dealt" && playerHasBoardHero(room, player, "shen-kaxiang")
+    && room.players.some((member) => member.id === player.id)
+    && !(room.boardHeroEffects?.uses || []).some((use) => use.playerId === player.id && use.heroId === "shen-kaxiang")
+    && ((room.stage === "frying" && room.setup?.fry?.currentPlayerId)
+      || (room.stage === "playing" && expectedPlayerId(room))));
+}
+
+function activateShenKaxiangSkill(room, player) {
+  if (!shenKaxiangCanActivate(room, player)) return { error: "逆转未来只能在炒底或出牌阶段发动，每局一次", status: 409 };
+  clearAiPlayTimer(room);
+  clearAiSetupTimer(room);
+  const frying = room.stage === "frying";
+  const target = frying ? room.setup.fry : room.currentTrick;
+  target.direction = (target.direction || 1) * -1;
+  recordBoardHeroSkillUse(room, player, "shen-kaxiang", { cost: 0, cooldownBefore: 0, cooldownAfter: 0 }, {
+    reverseOrder: true, stage: room.stage, direction: target.direction,
+    trickNumber: frying ? null : target.number
+  });
+  addEvent(room, `${player.name} 发动逆转未来，${frying ? "本次炒底阶段" : `第${target.number}轮`}行动顺序逆转`);
+  return { ok: true };
+}
+
 function shenGeluCanActivate(room, player) {
   const state = room.boardHeroSkills.shenGelu;
   return Boolean(
@@ -4057,7 +4096,7 @@ function passFry(room, player, options = {}) {
     at: now()
   });
   addEvent(room, options.automatic ? `${player.name} 炒底倒计时结束，自动不炒` : `${player.name} 选择不炒底`);
-  if (fry.passesSinceLast >= room.players.length - 1) {
+  if (room.players.every((candidate) => candidate.id === fry.lastFryerId || fry.passIds.includes(candidate.id))) {
     finishFrying(room);
     return { ok: true };
   }
@@ -5925,7 +5964,7 @@ function aiDecisionContext(room, player) {
 }
 
 function aiPlayersAfterCurrent(room, player) {
-  const ordered = orderedPlayersFrom(room, room.currentTrick?.leaderId);
+  const ordered = trickTurnOrder(room, room.currentTrick);
   const index = ordered.findIndex((item) => item.id === player.id);
   return index < 0 ? [] : ordered.slice(index + 1);
 }
@@ -8946,6 +8985,7 @@ async function handleApi(req, res, pathParts, url) {
       else if (body.action === "yokoyama-pass") result = passYokoyamaSkill(room, viewer);
       else if (body.action === "shen-haohao-activate") result = await submitShenHaohaoSkillChoice(room, viewer, true, body.resetCooldown, body.requestId);
       else if (body.action === "shen-haohao-pass") result = await submitShenHaohaoSkillChoice(room, viewer, false);
+      else if (body.action === "shen-kaxiang-activate") result = activateShenKaxiangSkill(room, viewer);
       else if (body.action === "shen-jiangwen-transfer") result = transferShenJiangwenLead(room, viewer, body.targetPlayerId);
       else if (body.action === "shen-gelu-activate") result = await activateShenGeluSkill(room, viewer, body.requestId, body.resetCooldown);
       else return writeJson(res, 400, { error: "未知的英雄技能操作" });
@@ -9340,6 +9380,8 @@ export const __aiPlayTesting = {
   setupBottomControlScore,
   setupBottomTransferForecast
 };
+
+export const __kaxiangTesting = { shenKaxiangCanActivate, activateShenKaxiangSkill, expectedPlayerId, trickTurnOrder, nextPlayerId, trickSnapshot, passFry, continueFryingAfterBury };
 
 export const __heroLeadTesting = { shenJiangwenCanTransfer, transferShenJiangwenLead,
   shenGeluCanActivate, completeShenGeluOffer, activateShenGeluSkill, boardHeroSkillsSnapshot,
