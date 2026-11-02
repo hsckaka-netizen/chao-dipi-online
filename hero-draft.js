@@ -4,6 +4,18 @@ import { HERO_UNITS, createBattleHeroSnapshot } from "./hero-home.js";
 export const HERO_DRAFT_STAGE = "hero-selecting";
 export const HERO_DRAFT_DURATION_MS = 30000;
 export const HERO_HIRE_COST = 300;
+export const HERO_HIRE_PROMOTION = Object.freeze({
+  id: "2026-season-5-free-hire",
+  name: "本赛季免费雇佣",
+  startsAt: "2026-11-01T03:00:00+08:00",
+  endsAt: "2026-12-01T03:00:00+08:00"
+});
+
+export function heroHireOffer(at = Date.now()) {
+  const time = new Date(at).getTime();
+  const active = time >= Date.parse(HERO_HIRE_PROMOTION.startsAt) && time < Date.parse(HERO_HIRE_PROMOTION.endsAt);
+  return { cost: active ? 0 : HERO_HIRE_COST, promotion: active ? HERO_HIRE_PROMOTION : null };
+}
 
 function shuffled(values, random) {
   const result = [...values];
@@ -66,7 +78,7 @@ export function chooseDraftHero(draft, playerId, heroId, { hire = false } = {}) 
   const entry = draft?.entries[playerId];
   if (!entry || entry.completed) return { error: "本局选将已完成", status: 409 };
   if (heroId && !entry.choices.includes(heroId)) return { error: "请选择当前候选中的英雄", status: 409 };
-  if (heroId && !entry.snapshots[heroId].owned && !hire) return { error: "尚未拥有这个候选英雄，可花费300钻石雇佣", status: 403 };
+  if (heroId && !entry.snapshots[heroId].owned && !hire) return { error: "尚未拥有这个候选英雄，请选择雇佣", status: 403 };
   if (hire && (!heroId || entry.snapshots[heroId].owned)) return { error: "只有未拥有的候选英雄可以雇佣", status: 409 };
   const selected = selectedHeroIds(draft);
   if (heroId && selected.has(heroId) && hasUniqueOwnedChoice(entry, selected)) {
@@ -83,7 +95,8 @@ export function heroDraftComplete(draft) {
   return Object.values(draft.entries).every((entry) => entry.completed && !entry.hiring);
 }
 
-export function heroDraftSnapshot(draft, playerId, active = true) {
+export function heroDraftSnapshot(draft, playerId, active = true, at = Date.now()) {
+  const offer = heroHireOffer(at);
   const entry = draft?.entries[playerId];
   const selected = draft ? selectedHeroIds(draft) : new Set();
   const hasUnique = entry ? hasUniqueOwnedChoice(entry, selected) : false;
@@ -91,13 +104,15 @@ export function heroDraftSnapshot(draft, playerId, active = true) {
     active: Boolean(active && draft),
     id: active ? draft?.id || null : null,
     hiring: Boolean(entry?.hiring),
+    hireCost: offer.cost,
+    hirePromotion: offer.promotion,
     deadlineAt: active ? draft?.deadlineAt || null : null,
     canChoose: Boolean(active && entry && !entry.completed),
     completedPlayerIds: Object.entries(draft?.entries || {}).filter(([, value]) => value.completed && !value.hiring).map(([id]) => id),
     choices: active && entry && !entry.completed ? entry.choices.map((id) => ({
       ...entry.snapshots[id], selectedElsewhere: selected.has(id),
       canSelect: entry.snapshots[id].owned && (!selected.has(id) || !hasUnique),
-      canHire: entry.hireEligible && !entry.snapshots[id].owned && (!selected.has(id) || !hasUnique), hireCost: HERO_HIRE_COST
+      canHire: entry.hireEligible && !entry.snapshots[id].owned && (!selected.has(id) || !hasUnique), hireCost: offer.cost
     })) : []
   };
 }

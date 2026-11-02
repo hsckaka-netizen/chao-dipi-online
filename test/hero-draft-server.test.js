@@ -174,3 +174,24 @@ test("guests, bots and expired draft requests never reach the hire payment", asy
   assert.equal((await game.selectRoomHero(current, current.players[2], current.heroDraft.entries.p2.choices[0], true, "frozen-game", noCharge)).status, 409);
   assert.ok(current.players.every((player) => !player.battleHeroSnapshot));
 });
+
+
+test("server forwards only its own request time and the displayed price guard to the hire transaction", async () => {
+  const current = room();
+  await game.beginHeroDraft(current, async () => ({}));
+  const player = current.players[0];
+  const heroId = current.heroDraft.entries[player.id].choices[0];
+  const before = Date.now();
+  let options;
+  const charge = async (accountId, gameId, id, paymentOptions) => {
+    options = paymentOptions;
+    return { cost: 0, balanceAfter: 0 };
+  };
+  const result = await game.selectRoomHero(current, player, heroId, true, current.heroDraft.id, charge, 0);
+  assert.equal(result.ok, true);
+  assert.equal(options.expectedCost, 0);
+  assert.ok(options.at >= before && options.at <= Date.now());
+  assert.equal(player.battleHeroSnapshot.stars, 1);
+  assert.equal(player.battleHeroSnapshot.owned, false);
+  game.resetRoomToLobby(current);
+});

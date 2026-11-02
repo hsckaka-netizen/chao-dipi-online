@@ -254,6 +254,10 @@ const MIGRATIONS = [
   {
     version: 45,
     path: fileURLToPath(new URL("./db/migrations/045_home_level_200_and_hundred_pull.sql", import.meta.url))
+  },
+  {
+    version: 46,
+    path: fileURLToPath(new URL("./db/migrations/046_season_free_hero_hire.sql", import.meta.url))
   }
 ];
 const HISTORY_ENABLED = String(process.env.GAME_HISTORY_ENABLED || "").toLowerCase() === "true";
@@ -3369,8 +3373,8 @@ async function withHeroHireClient(action) {
   finally { client.release(); }
 }
 
-export async function hireBattleHero(accountId, gameId, unitId) {
-  return withHeroHireClient((client) => chargeHeroHire(client, accountId, gameId, unitId));
+export async function hireBattleHero(accountId, gameId, unitId, options) {
+  return withHeroHireClient((client) => chargeHeroHire(client, accountId, gameId, unitId, options));
 }
 
 export async function refundBattleHeroHires(gameId) {

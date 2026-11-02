@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { HERO_UNITS } from "../hero-home.js";
-import { createHeroDraft, chooseDraftHero, heroDraftComplete, heroDraftSnapshot } from "../hero-draft.js";
+import { createHeroDraft, chooseDraftHero, heroDraftComplete, heroDraftSnapshot, heroHireOffer } from "../hero-draft.js";
 
 const players = (count) => Array.from({ length: count }, (_, index) => ({ id: `p${index}`, accountId: `a${index}` }));
 const zero = () => 0;
@@ -103,7 +103,7 @@ test("unowned candidates require an explicit hire and always produce a one-star 
   const choice = heroDraftSnapshot(draft, "p0").choices[0];
   assert.equal(choice.canSelect, false);
   assert.equal(choice.canHire, true);
-  assert.equal(choice.hireCost, 300);
+  assert.equal(choice.hireCost, heroHireOffer().cost);
   assert.equal(chooseDraftHero(draft, "p0", choice.heroId).status, 403);
   const hired = chooseDraftHero(draft, "p0", choice.heroId, { hire: true }).snapshot;
   assert.equal(hired.stars, 1);
@@ -127,4 +127,29 @@ test("owned heroes cannot be hired, and duplicate prevention still prefers an av
   assert.equal(chooseDraftHero(draft, otherId, duplicateId, { hire: true }).status, 409);
   entry.choices.filter((id) => id !== duplicateId).forEach((id) => { entry.snapshots[id].owned = false; });
   assert.equal(chooseDraftHero(draft, otherId, duplicateId, { hire: true }).snapshot.stars, 1);
+});
+
+
+test("the season offer has exact inclusive start and exclusive end boundaries", () => {
+  for (const [at, cost] of [
+    ["2026-11-01T02:59:59.999+08:00", 300],
+    ["2026-11-01T03:00:00+08:00", 0],
+    ["2026-12-01T02:59:59.999+08:00", 0],
+    ["2026-12-01T03:00:00+08:00", 300],
+    ["2027-01-02T00:00:00+08:00", 300]
+  ]) assert.equal(heroHireOffer(at).cost, cost);
+});
+
+test("draft prices and promotion copy follow server time without changing private candidates", () => {
+  const draft = createHeroDraft(players(2), {});
+  const active = heroDraftSnapshot(draft, "p0", true, "2026-11-02T00:00:00Z");
+  const expired = heroDraftSnapshot(draft, "p0", true, "2026-12-01T03:00:00+08:00");
+  assert.equal(active.hireCost, 0);
+  assert.equal(active.hirePromotion.name, "本赛季免费雇佣");
+  assert.ok(active.choices.every((hero) => hero.canHire && hero.hireCost === 0 && !hero.owned));
+  assert.equal(expired.hireCost, 300);
+  assert.equal(expired.hirePromotion, null);
+  assert.ok(expired.choices.every((hero) => hero.hireCost === 300));
+  assert.deepEqual(active.choices.map((hero) => hero.heroId), expired.choices.map((hero) => hero.heroId));
+  assert.deepEqual(heroDraftSnapshot(draft, "outsider").choices, []);
 });

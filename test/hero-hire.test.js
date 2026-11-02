@@ -1,7 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { chargeHeroHire, refundHeroHires, hiredSkillOwnership } from "../hero-hire.js";
+import { chargeHeroHire as chargeAtCurrentPrice, refundHeroHires, hiredSkillOwnership } from "../hero-hire.js";
 import { __heroHireStorageTesting as storage } from "../game-history.js";
+
+// Existing paid-hire regressions use a fixed time outside the promotion.
+const chargeHeroHire = (client, accountId, gameId, unitId) => chargeAtCurrentPrice(client, accountId, gameId, unitId, { at: "2026-10-28T00:00:00Z" });
 
 function store(balance = 1000) {
   let checkpoint;
@@ -27,6 +30,7 @@ function store(balance = 1000) {
         data.balance -= args[1];
         return { rows: [{ balance: data.balance }] };
       } else if (sql.includes("INSERT INTO cdp_game_hero_hires")) {
+        if (data.failReceipt) throw new Error("simulated receipt failure");
         assert.equal(data.hires[key], undefined);
         data.hires[key] = { game_id: args[0], account_id: args[1], unit_id: args[2], cost: args[3], balance_after: args[4], skill_cooldown: 0, refunded_at: null };
       } else if (sql.includes("INSERT INTO cdp_diamond_ledger")) {
@@ -134,4 +138,51 @@ test("owned SSR ignores legacy CD without extra fees, while same-game uses stay 
   await assert.rejects(storage.chargeBoardHeroSkillFromClient(client,"account","g2","shen-jiangwen","r3",{skillStars:1}),/次数已用完/);
   const repeat=await storage.chargeBoardHeroSkillFromClient(client,"account","g2","shen-jiangwen","r2",{skillStars:1});
   assert.equal(repeat.repeated,true);
+});
+
+
+test("season promotion hires with zero balance, retains skill eligibility and never refunds unspent diamonds", async () => {
+  const client = store(0);
+  const options = { at: "2026-11-02T00:00:00Z", expectedCost: 0 };
+  const hired = await chargeAtCurrentPrice(client, "account", "free-round", "shen-biesan", options);
+  assert.deepEqual(hired, { cost: 0, balanceAfter: 0 });
+  assert.equal(client.data.hires["free-round:account"].cost, 0);
+  assert.deepEqual(client.data.ledger, []);
+  assert.deepEqual(await hiredSkillOwnership(client, "account", "free-round", "shen-biesan"), { stars: 1, skill_cooldown: 0 });
+  const paid = await storage.chargeBoardHeroSkillFromClient(client, "account", "free-round", "shen-biesan", "skill", { hireGameId: "free-round", skillStars: 5 });
+  assert.equal(paid.effectData.skillStars, 1);
+  assert.equal(paid.cost, 0);
+  const replay = await chargeAtCurrentPrice(client, "account", "free-round", "shen-biesan", { at: "2026-12-01T03:00:00+08:00", expectedCost: 0 });
+  assert.equal(replay.repeated, true);
+  assert.equal(replay.cost, 0);
+  assert.equal((await refundHeroHires(client, "free-round")).refunded, 1);
+  assert.equal((await refundHeroHires(client, "free-round")).refunded, 0);
+  assert.equal(client.data.balance, 0);
+  assert.deepEqual(client.data.ledger, []);
+  await assert.rejects(hiredSkillOwnership(client, "account", "free-round", "shen-biesan"), /失效/);
+  assert.ok(client.data.queries.every((sql) => !sql.includes("cdp_hero_units")));
+});
+
+test("promotion expiry never silently charges a displayed free hire and restores normal pricing", async () => {
+  const client = store(300);
+  const at = "2026-12-01T03:00:00+08:00";
+  await assert.rejects(chargeAtCurrentPrice(client, "account", "expired", "shen-biesan", { at, expectedCost: 0 }), /活动已结束/);
+  assert.equal(client.data.balance, 300);
+  assert.deepEqual(client.data.hires, {});
+  assert.deepEqual(client.data.ledger, []);
+  const paid = await chargeAtCurrentPrice(client, "account", "expired", "shen-biesan", { at, expectedCost: 300 });
+  assert.equal(paid.cost, 300);
+  assert.equal(client.data.balance, 0);
+  assert.equal(client.data.ledger[0].amount, -300);
+});
+
+test("a failed free hire receipt rolls back cleanly and can be retried", async () => {
+  const client = store(0);
+  const options = { at: "2026-11-02T00:00:00Z" };
+  client.data.failReceipt = true;
+  await assert.rejects(chargeAtCurrentPrice(client, "account", "free", "shen-biesan", options), /receipt failure/);
+  assert.deepEqual(client.data.hires, {});
+  assert.equal(client.data.balance, 0);
+  client.data.failReceipt = false;
+  assert.equal((await chargeAtCurrentPrice(client, "account", "free", "shen-biesan", options)).cost, 0);
 });

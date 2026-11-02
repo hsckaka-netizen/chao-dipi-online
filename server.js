@@ -1602,7 +1602,8 @@ function scheduleHeroDraftTimer(room) {
   room.heroDraftTimer.unref?.();
 }
 
-async function selectRoomHero(room, player, heroId, hire, draftId, charge = hireBattleHero) {
+async function selectRoomHero(room, player, heroId, hire, draftId, charge = hireBattleHero, expectedCost = null) {
+  const hireRequestedAt = Date.now();
   expireHeroDraft(room);
   const snapshot = player.battleHeroSnapshot;
   if (hire && snapshot?.hired && snapshot.heroId === heroId && snapshot.hireGameId === draftId) return { ok: true, repeated: true };
@@ -1617,7 +1618,7 @@ async function selectRoomHero(room, player, heroId, hire, draftId, charge = hire
     entry.hiring = true;
     room.heroHireInFlight = true;
     try {
-      result.payment = await charge(player.accountId, draft.id, heroId);
+      result.payment = await charge(player.accountId, draft.id, heroId, { at: hireRequestedAt, expectedCost });
     } catch (error) {
       entry.completed = false;
       entry.selectedHeroId = null;
@@ -8943,7 +8944,7 @@ async function handleApi(req, res, pathParts, url) {
       const viewer = requirePlayer(res, room, body.playerId, body.token);
       if (!viewer) return;
       if (expireHeroDraft(room)) broadcastAndContinueAutomation(room);
-      const result = await selectRoomHero(room, viewer, body.heroId || null, body.hire === true, body.draftId);
+      const result = await selectRoomHero(room, viewer, body.heroId || null, body.hire === true, body.draftId, hireBattleHero, body.expectedHireCost ?? null);
       broadcastAndContinueAutomation(room);
       if (result.error) return writeJson(res, result.status, { error: result.error });
       return writeJson(res, 200, { ...roomStateAck(room), heroHire: result.payment || null });

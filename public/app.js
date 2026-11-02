@@ -5668,12 +5668,13 @@ async function claimDailyGameTask(taskId) {
 
 async function selectHeroForBattle(heroId, hire = false) {
   if (heroActionInFlight || !state?.heroDraft?.canChoose || isSpectating()) return;
+  const expectedHireCost = hire ? state.heroDraft.choices?.find((hero) => hero.heroId === heroId)?.hireCost : null;
   heroActionInFlight = "draft";
   render();
   try {
     await roomAction(`/api/rooms/${session.roomId}/hero-select`, {
       method: "POST",
-      body: JSON.stringify({ playerId: session.playerId, token: session.token, heroId: heroId || null, hire, draftId: state.heroDraft.id })
+      body: JSON.stringify({ playerId: session.playerId, token: session.token, heroId: heroId || null, hire, expectedHireCost, draftId: state.heroDraft.id })
     });
     if (hire) {
       ensureDiamondWallet(true);
@@ -6730,12 +6731,12 @@ function renderHeroDraftPanel() {
   const draft = state.heroDraft || {};
   const selected = state.viewer?.battleHeroSnapshot;
   return `<section class="panel hero-draft-panel" aria-label="选择出战英雄">
-    <div class="hero-draft-heading"><div><h2>选择本局英雄</h2><p>已拥有英雄按实际星数免费出战；未拥有候选可花300钻石雇佣1星，仅限本局。</p></div>${setupCountdownTag(draft.deadlineAt, " 后结束选将")}</div>
+    <div class="hero-draft-heading"><div><h2>选择本局英雄</h2><p>已拥有英雄按实际星数免费出战；${draft.hirePromotion ? `本赛季未拥有候选可免费雇佣1星，仅限本局；截至北京时间12月1日03:00。` : `未拥有候选可花${escapeHtml(draft.hireCost ?? 300)}钻石雇佣1星，仅限本局。`}</p></div>${setupCountdownTag(draft.deadlineAt, " 后结束选将")}</div>
     ${draft.canChoose && !isSpectating() ? `<div class="hero-draft-grid">${(draft.choices || []).map((hero) => `<article class="hero-draft-choice ${hero.owned ? "" : "is-unowned"}">
       ${heroCardArtwork(hero, "hero-draft-art", `draft:${hero.heroId}`, "medium")}
       <div class="hero-draft-details"><span class="tag ${hero.rarity === "ssr" ? "accent" : ""}">${escapeHtml(hero.rarity.toUpperCase())}</span><h3>${escapeHtml(hero.name)}</h3><div>${hero.owned ? heroStars(hero.stars) : "未拥有 · 可雇佣1星"}${hero.selectedElsewhere ? " · 本局已有人选择" : ""}</div>
       <strong>${escapeHtml(hero.skillName)}</strong><p>${escapeHtml(hero.skillDescription)}</p>
-      <button type="button" data-action="select-battle-hero" data-unit-id="${escapeHtml(hero.heroId)}" data-hire="${!hero.owned}" ${heroActionInFlight || !(hero.canSelect || hero.canHire) ? "disabled" : ""}>${hero.selectedElsewhere && !(hero.canSelect || hero.canHire) ? "请优先选择其他候选" : !hero.owned ? `300💎 雇佣 · 1星` : `选择 ${escapeHtml(hero.name)}`}</button></div>
+      <button type="button" data-action="select-battle-hero" data-unit-id="${escapeHtml(hero.heroId)}" data-hire="${!hero.owned}" ${heroActionInFlight || !(hero.canSelect || hero.canHire) ? "disabled" : ""}>${hero.selectedElsewhere && !(hero.canSelect || hero.canHire) ? "请优先选择其他候选" : !hero.owned ? hero.hireCost === 0 ? `免费雇佣 · 1星` : `${escapeHtml(hero.hireCost ?? 300)}💎 雇佣 · 1星` : `选择 ${escapeHtml(hero.name)}`}</button></div>
     </article>`).join("")}</div><div class="hero-draft-footer"><span>候选固定，不因拥有情况重抽；超时按本局不出战继续。</span><button type="button" class="secondary" data-action="select-battle-hero" data-unit-id="" ${heroActionInFlight ? "disabled" : ""}>本局不出战</button></div>`
       : `<p role="status">${isSpectating() ? "等待玩家选择英雄" : draft.hiring ? "正在雇佣英雄，请稍候…" : selected ? `${selected.hired ? "已雇佣" : "已选择"} ${escapeHtml(selected.name)} · ${selected.stars} 星，等待其他玩家` : "本局不出战，等待其他玩家"}</p>`}
     <div class="meta">已完成 ${draft.completedPlayerIds?.length || 0}/${state.players.length}</div>

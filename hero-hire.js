@@ -1,4 +1,4 @@
-import { HERO_HIRE_COST } from "./hero-draft.js";
+import { heroHireOffer } from "./hero-draft.js";
 import { HERO_HOME_RULES, HERO_UNITS } from "./hero-home.js";
 
 function hireError(message, status = 409) {
@@ -6,7 +6,9 @@ function hireError(message, status = 409) {
 }
 
 // The caller validates the private draft. The account lock serializes payment retries.
-export async function chargeHeroHire(client, accountId, gameId, unitId) {
+export async function chargeHeroHire(client, accountId, gameId, unitId, { at = Date.now(), expectedCost = null } = {}) {
+  const offer = heroHireOffer(at);
+  const cost = offer.cost;
   if (!HERO_UNITS.some((hero) => hero.id === unitId)) throw hireError("候选英雄不存在", 404);
   await client.query("BEGIN");
   try {
@@ -23,23 +25,27 @@ export async function chargeHeroHire(client, accountId, gameId, unitId) {
       await client.query("COMMIT");
       return { cost: Number(row.cost), balanceAfter: Number(row.balance_after), repeated: true };
     }
+    if (expectedCost !== null && (!Number.isInteger(expectedCost) || expectedCost < cost)) {
+      throw hireError("雇佣活动已结束，价格已恢复为300钻石，请重新选择");
+    }
+    await client.query("INSERT INTO cdp_diamond_wallets (account_id) VALUES ($1::uuid) ON CONFLICT (account_id) DO NOTHING", [accountId]);
     const wallet = await client.query(
       `UPDATE cdp_diamond_wallets SET balance = balance - $2, updated_at = now()
-       WHERE account_id = $1::uuid AND balance >= $2 RETURNING balance`, [accountId, HERO_HIRE_COST]
+       WHERE account_id = $1::uuid AND balance >= $2 RETURNING balance`, [accountId, cost]
     );
     if (!wallet.rows[0]) throw hireError("钻石不足，需要300钻石才能雇佣");
     const balanceAfter = Number(wallet.rows[0].balance);
     await client.query(
       `INSERT INTO cdp_game_hero_hires (game_id, account_id, unit_id, cost, balance_after)
-       VALUES ($1::uuid, $2::uuid, $3, $4, $5)`, [gameId, accountId, unitId, HERO_HIRE_COST, balanceAfter]
+       VALUES ($1::uuid, $2::uuid, $3, $4, $5)`, [gameId, accountId, unitId, cost, balanceAfter]
     );
-    await client.query(
+    if (cost > 0) await client.query(
       `INSERT INTO cdp_diamond_ledger (account_id, amount, balance_after, reason, rules_version, idempotency_key, detail)
        VALUES ($1::uuid, $2, $3, 'hero_hire', $4, $5, $6::jsonb)`,
-      [accountId, -HERO_HIRE_COST, balanceAfter, HERO_HOME_RULES.version, `hero_hire:${gameId}:${accountId}`, JSON.stringify({ gameId, unitId, stars: 1 })]
+      [accountId, -cost, balanceAfter, HERO_HOME_RULES.version, `hero_hire:${gameId}:${accountId}`, JSON.stringify({ gameId, unitId, stars: 1 })]
     );
     await client.query("COMMIT");
-    return { cost: HERO_HIRE_COST, balanceAfter };
+    return { cost, balanceAfter };
   } catch (error) {
     await client.query("ROLLBACK");
     throw error;
@@ -55,17 +61,19 @@ export async function refundHeroHires(client, gameId) {
        WHERE game_id = $1::uuid AND refunded_at IS NULL ORDER BY account_id FOR UPDATE`, [gameId]
     );
     for (const hire of hires.rows) {
-      const wallet = await client.query(
-        `UPDATE cdp_diamond_wallets SET balance = balance + $2, updated_at = now()
-         WHERE account_id = $1::uuid RETURNING balance`, [hire.account_id, Number(hire.cost)]
-      );
-      if (!wallet.rows[0]) throw hireError("雇佣费用返还失败");
-      await client.query(
-        `INSERT INTO cdp_diamond_ledger (account_id, amount, balance_after, reason, rules_version, idempotency_key, detail)
-         VALUES ($1::uuid, $2, $3, 'hero_hire_refund', $4, $5, $6::jsonb)`,
-        [hire.account_id, Number(hire.cost), Number(wallet.rows[0].balance), HERO_HOME_RULES.version,
-          `hero_hire_refund:${gameId}:${hire.account_id}`, JSON.stringify({ gameId, unitId: hire.unit_id })]
-      );
+      if (Number(hire.cost) > 0) {
+        const wallet = await client.query(
+          `UPDATE cdp_diamond_wallets SET balance = balance + $2, updated_at = now()
+           WHERE account_id = $1::uuid RETURNING balance`, [hire.account_id, Number(hire.cost)]
+        );
+        if (!wallet.rows[0]) throw hireError("雇佣费用返还失败");
+        await client.query(
+          `INSERT INTO cdp_diamond_ledger (account_id, amount, balance_after, reason, rules_version, idempotency_key, detail)
+           VALUES ($1::uuid, $2, $3, 'hero_hire_refund', $4, $5, $6::jsonb)`,
+          [hire.account_id, Number(hire.cost), Number(wallet.rows[0].balance), HERO_HOME_RULES.version,
+            `hero_hire_refund:${gameId}:${hire.account_id}`, JSON.stringify({ gameId, unitId: hire.unit_id })]
+        );
+      }
       await client.query(
         "UPDATE cdp_game_hero_hires SET refunded_at = now() WHERE game_id = $1::uuid AND account_id = $2::uuid", [gameId, hire.account_id]
       );
