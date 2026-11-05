@@ -500,7 +500,7 @@ function roomStartValidation(room) {
   const teams = validateFixedTeams(room);
   if (!teams.valid) return teams;
   if (!allPlayersReady(room)) {
-    return { valid: false, error: `还有玩家未准备：${readyPlayerCount(room)}/${room.players.length}` };
+    return { valid: false, error: `还有玩家未准备：${readyPlayerCount(room)}/${playersRequiringReady(room).length}` };
   }
   return { valid: true, error: "" };
 }
@@ -549,6 +549,7 @@ function joinableRoomsList() {
       playerCount: room.players.length,
       humanPlayerCount: humanPlayers(room).length,
       readyCount: readyPlayerCount(room),
+      readyNeededCount: playersRequiringReady(room).length,
       minPlayers: roomPlayerLimits(room).minPlayers,
       maxPlayers: roomPlayerLimits(room).maxPlayers,
       humanTarget: roomPlayerLimits(room).humanTarget,
@@ -1793,12 +1794,16 @@ function deal(room, options = {}) {
   else beginShenBiesanSkillStage(room);
 }
 
+function playersRequiringReady(room) {
+  return room.players.filter((player) => !player.host && player.id !== room.hostId);
+}
+
 function readyPlayerCount(room) {
-  return room.players.filter((player) => player.ready).length;
+  return playersRequiringReady(room).filter((player) => player.ready).length;
 }
 
 function allPlayersReady(room) {
-  return room.players.length > 0 && room.players.every((player) => player.ready);
+  return room.players.length > 0 && playersRequiringReady(room).every((player) => player.ready);
 }
 
 function allPlayersEnteredNextRound(room) {
@@ -2395,6 +2400,7 @@ function roomSnapshot(room, viewer = null, options = {}) {
     createdAt: room.createdAt,
     startedAt: room.startedAt,
     readyCount,
+    readyNeededCount: playersRequiringReady(room).length,
     allReady,
     notice: room.notice?.expiresAt && Date.now() < new Date(room.notice.expiresAt).getTime() ? room.notice : null,
     tauntPresets: availableTauntPresets(tauntPresets, viewer?.accountId || null),
@@ -8944,6 +8950,8 @@ async function handleApi(req, res, pathParts, url) {
       if (room.stage === "finished" && !viewer.nextRoundEntered) {
         return writeJson(res, 409, { error: "请先在结算页点击再来一局" });
       }
+      // Hosts start the game directly; ignore legacy clients' ready toggles.
+      if (viewer.host) return writeJson(res, 200, roomStateAck(room));
       const nextReady = Boolean(body.ready);
       if (viewer.ready !== nextReady) {
         viewer.ready = nextReady;

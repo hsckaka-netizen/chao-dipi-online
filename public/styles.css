@@ -9472,11 +9472,40 @@ button.auto-play-toggle.active {
 .room-team-toggle input:checked { background: var(--primary); }
 .room-team-toggle input:checked::before { transform: translateX(14px); }
 .room-setting select:focus-visible, .room-setting button:focus-visible, .room-team-toggle input:focus-visible { outline: 3px solid #75bca6; outline-offset: 2px; }
-.room-lobby-actions { padding-top: 3px; }
 @media (max-width: 620px) {
   .room-settings-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px 12px; }
   .room-setting.game-mode-control, .room-team-toggle { width: 100%; }
   .room-setting .segmented button { padding-inline: 4px; }
-  .room-lobby-actions button { min-height: 42px; }
 }
 @media (max-width: 350px) { .room-settings-grid { grid-template-columns: minmax(0, 1fr); } }
+
+/* Invite, configure, prepare/start, arrange players, and manage the room in context. */
+.room-invite-row { display: flex; align-items: end; flex-wrap: wrap; gap: 10px; }
+.room-invite-link { display: grid; gap: 5px; min-width: 0; flex: 1 1 280px; }
+.room-invite-link code { display: block; border: 1px solid var(--line); border-radius: 8px; padding: 11px 12px; background: #f8faf8; overflow-wrap: anywhere; font-size: 12px; }
+.room-rules-section { display: grid; gap: 8px; }
+.room-rules-section h3 { margin: 4px 0 0; }
+.room-rules-section .room-settings-grid { border-top: none; padding-top: 0; margin: 0; }
+.room-start-panel { display: flex; align-items: center; justify-content: space-between; gap: 16px; border-radius: 10px; padding: 14px 16px; background: #f0f6f2; }
+.room-start-status { display: grid; gap: 5px; min-width: 0; }
+.room-start-status strong { font-size: 14px; }
+.room-start-status span { color: var(--muted); font-size: 12px; line-height: 1.5; }
+.room-start-buttons { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
+.room-start-button { min-width: 160px; }
+.lobby-player-tools { justify-content: flex-end; }
+.lobby-team-options { display: flex; align-items: center; flex-wrap: wrap; gap: 10px 16px; margin-bottom: 14px; }
+.lobby-team-options .room-team-toggle { min-width: 180px; }
+.lobby-room-management { display: flex; align-items: center; justify-content: flex-end; gap: 12px; padding: 0 4px; }
+@media (max-width: 620px) {
+  .room-invite-row { align-items: stretch; }
+  .room-invite-link { flex-basis: 100%; }
+  .room-invite-row > button { flex: 1; }
+  .room-start-panel { align-items: stretch; flex-direction: column; padding: 12px; gap: 12px; }
+  .room-start-buttons { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .room-start-buttons > :only-child { grid-column: 1 / -1; }
+  .room-start-button { min-width: 0; }
+  .room-start-buttons button { min-height: 44px; }
+  .lobby-team-options .room-team-toggle { flex: 1; width: auto; }
+  .lobby-team-options .room-setting-hint { flex-basis: 100%; }
+  .lobby-player-tools button { flex: 0 0 auto; }
+}

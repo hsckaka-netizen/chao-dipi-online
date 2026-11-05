@@ -124,7 +124,7 @@ test("team PVP and official PVE start with public fixed teams and no score biddi
     method: "POST",
     body: JSON.stringify({ playerId: teamHost.playerId, token: teamHost.token, enabled: true })
   });
-  for (const player of teamPlayers) {
+  for (const player of teamPlayers.slice(1)) {
     await jsonRequest(`${teamRoomUrl}/ready`, {
       method: "POST",
       body: JSON.stringify({ playerId: player.playerId, token: player.token, ready: true })
@@ -161,7 +161,7 @@ test("team PVP and official PVE start with public fixed teams and no score biddi
     method: "POST",
     body: JSON.stringify({ profileId: "player-jiangmen" })
   });
-  for (const player of [pveHost, pveGuest]) {
+  for (const player of [pveGuest]) {
     await jsonRequest(`${pveRoomUrl}/ready`, {
       method: "POST",
       body: JSON.stringify({ playerId: player.playerId, token: player.token, ready: true })
@@ -621,4 +621,67 @@ test("hero draft keeps unowned random candidates fixed and rejects unavailable o
   assert.equal(dealt.stage, "score-bidding");
   assert.equal(dealt.hand.length, 53);
   assert.equal(dealt.viewer.battleHeroSnapshot, null);
+});
+
+
+test("only guests ready up; hosts start directly and host transfer immediately changes the readiness requirement", async (t) => {
+  const server = await startServer();
+  t.after(() => server.child.kill());
+  const host = await jsonRequest(`${server.baseUrl}/api/rooms`, {
+    method: "POST", body: JSON.stringify({ profileId: "player-benlei" })
+  });
+  const base = `${server.baseUrl}/api/rooms/${host.roomId}`;
+  const auth = (player) => ({ playerId: player.playerId, token: player.token });
+  const post = (player, action, body = {}) => jsonRequest(`${base}/${action}`, {
+    method: "POST", body: JSON.stringify({ ...auth(player), ...body })
+  });
+  const snapshot = (player) => jsonRequest(`${base}/state?${new URLSearchParams(auth(player))}`);
+  const startResponse = (player) => fetch(`${base}/start`, {
+    method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(auth(player))
+  });
+  const guests = [];
+  for (const profileId of ["player-biesan", "player-denghuang", "player-jiangzha", "player-jiangmen"]) {
+    guests.push(await jsonRequest(`${base}/join`, { method: "POST", body: JSON.stringify({ profileId }) }));
+  }
+  let current = await snapshot(host);
+  assert.equal(current.viewer.ready, false);
+  assert.equal(current.readyNeededCount, 4);
+  assert.equal(current.readyCount, 0);
+  assert.equal((await startResponse(host)).status, 409);
+  for (const guest of guests) await post(guest, "ready", { ready: true });
+  current = await snapshot(host);
+  assert.equal(current.canStart, true);
+  assert.equal(current.allReady, true);
+  assert.equal(current.readyCount, 4);
+  assert.equal(current.viewer.ready, false);
+  // Compatibility with an older client cannot turn a host's ready button into a prerequisite.
+  await post(host, "ready", { ready: true });
+  await post(host, "ready", { ready: false });
+  assert.equal((await snapshot(host)).viewer.ready, false);
+  assert.equal((await startResponse(guests[0])).status, 403);
+  await post(guests[0], "ready", { ready: false });
+  assert.equal((await snapshot(host)).canStart, false);
+  assert.equal((await startResponse(host)).status, 409);
+
+  // The unready guest becomes host. The former host rejoins as a guest and must prepare.
+  await post(host, "leave-room");
+  const returned = await jsonRequest(`${base}/join`, {
+    method: "POST", body: JSON.stringify({ profileId: "player-benlei" })
+  });
+  current = await snapshot(guests[0]);
+  assert.equal(current.viewer.host, true);
+  assert.equal(current.viewer.ready, false);
+  assert.equal(current.readyNeededCount, 4);
+  assert.equal(current.canStart, false);
+  assert.equal((await startResponse(guests[0])).status, 409);
+  for (const guest of [...guests.slice(1), returned]) await post(guest, "ready", { ready: true });
+  current = await snapshot(guests[0]);
+  assert.equal(current.canStart, true);
+  assert.equal(current.readyCount, 4);
+  assert.equal(current.viewer.ready, false);
+  const listed = (await jsonRequest(`${server.baseUrl}/api/rooms`)).rooms.find(room => room.roomId === host.roomId);
+  assert.equal(listed.readyCount, 4);
+  assert.equal(listed.readyNeededCount, 4);
+  await post(guests[0], "start");
+  assert.notEqual((await snapshot(guests[0])).stage, "lobby");
 });

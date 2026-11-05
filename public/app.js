@@ -2202,6 +2202,11 @@ async function startGame() {
       method: "POST",
       body: JSON.stringify({ playerId: session.playerId, token: session.token })
     });
+    if (state?.stage === "hero-selecting") {
+      if (state.gameMode === "pve") ensureEnergyState(true);
+      setMessage("游戏已开始，请选择本局英雄。");
+      return;
+    }
     if (state?.gameMode === "pve") {
       ensureEnergyState(true);
       const viewer = viewerPlayer();
@@ -2211,19 +2216,6 @@ async function startGame() {
     } else {
       setMessage("已发牌。每个玩家现在只会看到自己的手牌。");
     }
-  } catch (error) {
-    setMessage(error.message, true);
-  }
-}
-
-async function addRobot() {
-  if (!session) return;
-  try {
-    await roomAction(`/api/rooms/${session.roomId}/robot`, {
-      method: "POST",
-      body: JSON.stringify({ playerId: session.playerId, token: session.token })
-    });
-    setMessage("已添加 1 个机器人。");
   } catch (error) {
     setMessage(error.message, true);
   }
@@ -2794,8 +2786,9 @@ function viewerEnteredNextRound() {
 
 function readyStatusText() {
   if (!state) return "";
-  const readyCount = state.readyCount ?? state.players.filter((player) => player.ready).length;
-  return `已准备 ${readyCount}/${state.players.length}`;
+  const required = state.players.filter((player) => !player.host);
+  const readyCount = state.readyCount ?? required.filter((player) => player.ready).length;
+  return `已准备 ${readyCount}/${state.readyNeededCount ?? required.length}`;
 }
 
 function viewerPlayedCurrent() {
@@ -3617,7 +3610,7 @@ function renderThrowDraft() {
 
 function renderReadyControls({ waitingNextRound = false } = {}) {
   const viewer = viewerPlayer();
-  if (!viewer) return "";
+  if (!viewer || viewer.host) return "";
   const ready = Boolean(viewer.ready);
   const label = ready ? (waitingNextRound ? "取消下一局准备" : "取消准备") : "准备";
   return `<button type="button" class="${ready ? "secondary" : ""}" data-action="${ready ? "ready-off" : "ready-on"}">${escapeHtml(label)}</button>`;
@@ -3655,7 +3648,8 @@ function renderGameModeControls() {
 
 function renderTeamLobbyControls() {
   if (state.gameMode !== "pvp" || state.playMode !== "team") return "";
-  return `<div class="room-setting"><span class="meta">队伍安排</span>
+  return `<div class="lobby-team-options">
+    <button type="button" class="secondary" data-action="random-teams">随机分队</button>
     <label class="team-random-toggle room-team-toggle">
       <input type="checkbox" role="switch" data-action="auto-random-teams" ${state.autoRandomTeams ? "checked" : ""}>
       <span>每局自动随机</span>
@@ -3708,12 +3702,25 @@ function renderDoglegModeControl() {
 function renderRoomSettings() {
   return `<div class="room-settings-grid" role="group" aria-label="房间规则设置">
     ${renderGameModeControls()}
-    ${state.playMode !== "team" ? `${renderOpeningBidPercentControl()}${renderBankerScoreModeControl()}${renderDoglegModeControl()}${renderDoglegCountControl()}` : renderTeamLobbyControls()}
+    ${state.playMode !== "team" ? `${renderOpeningBidPercentControl()}${renderBankerScoreModeControl()}${renderDoglegModeControl()}${renderDoglegCountControl()}` : ""}
+  </div>`;
+}
+
+function renderLobbyStartControls(waitingNextRound) {
+  if (isSpectating() || state.status !== "lobby") return "";
+  const requirement = waitingNextRound
+    ? "等待其他玩家进入下一局"
+    : state.startRequirement || (state.canStart ? (state.viewer?.host ? "其他玩家已准备，可以开始游戏" : "玩家已准备，等待房主开始游戏") : "等待其他玩家准备");
+  return `<div class="room-start-panel" role="group" aria-label="准备与开始游戏">
+    <div class="room-start-status"><strong>${escapeHtml(readyStatusText())}</strong><span>${escapeHtml(requirement)}</span></div>
+    <div class="room-start-buttons">${renderReadyControls({ waitingNextRound })}
+      ${state.viewer?.host ? `<button type="button" class="room-start-button" data-action="start" ${canStart() ? "" : "disabled"}>开始游戏</button>` : ""}
+    </div>
   </div>`;
 }
 
 function lobbyEmptyText(waitingNextRound) {
-  if (waitingNextRound) return `你已准备下一局，等待其他玩家确认。${readyStatusText()}。`;
+  if (waitingNextRound) return `${state.viewer?.host ? "你已返回房间" : "你已准备下一局"}，等待其他玩家确认。${readyStatusText()}。`;
   return "房主开始后，这里会显示你的 53 张手牌。";
 }
 
@@ -4281,7 +4288,7 @@ function renderJoinableRoom(room) {
           <span class="tag accent">${escapeHtml(room.playerCount)}/${escapeHtml(room.maxPlayers)} 人</span>
           <span class="tag accent">${escapeHtml(room.gameModeName || "PVP")} · ${escapeHtml(room.playModeName || "乱斗模式")}</span>
           ${room.gameMode === "pve" ? `<span class="tag">真人 ${escapeHtml(room.humanPlayerCount || 0)}/${escapeHtml(room.humanTarget || 2)}</span>` : ""}
-          ${room.status === "lobby" ? `<span class="tag good">准备 ${escapeHtml(room.readyCount)}/${escapeHtml(room.playerCount)}</span>` : ""}
+          ${room.status === "lobby" ? `<span class="tag good">准备 ${escapeHtml(room.readyCount)}/${escapeHtml(room.readyNeededCount ?? (room.players || []).filter((player) => !player.host).length)}</span>` : ""}
           <span class="tag">房主 ${escapeHtml(room.hostName || "未知")}</span>
           ${room.playMode !== "team" ? `<span class="tag">起叫 ${escapeHtml(room.openingBidPercent || 40)}%</span>` : ""}
           ${room.playMode !== "team" ? `<span class="tag">${escapeHtml(room.bankerScoreModeName || "庄家承余")}</span>` : ""}
@@ -6562,11 +6569,6 @@ function renderRoom() {
   const showTable = state.stage !== "lobby" && !waitingNextRound;
   selectedCardIds = new Set([...selectedCardIds].filter((cardId) => state.hand.some((card) => card.id === cardId)));
   maybeAutoOpenActionDialog();
-  const waitingText = state.startRequirement
-    ? state.startRequirement
-    : state.players.every((player) => player.ready)
-      ? "所有玩家已准备，房主可以开始"
-      : "人数已满足，等待所有玩家准备";
 
   renderShell(`
     ${!spectating && gameInProgress && Number(state.viewer?.doudouNumber) ? `<div class="status good doudou-point-notice" role="status"><strong>界·豆豆「守株待兔」：${escapeHtml(doudouPointLabel(state.viewer.doudouNumber))}</strong><span>本局技能按此点数结算</span></div>` : ""}
@@ -6592,35 +6594,19 @@ function renderRoom() {
               ${inLobbyView ? `<span class="tag good">${escapeHtml(readyStatusText())}</span>` : ""}
             </div>
           </div>
-          <div class="share">
-            <div class="meta">邀请链接</div>
-            <code>${escapeHtml(shareUrl(state.roomId))}</code>
-            <div class="row">
-              <button type="button" data-action="copy">复制链接</button>
-              <button type="button" class="secondary" data-action="open-players">玩家</button>
-              ${state.status === "dealt" || state.events.length ? `<button type="button" class="secondary" data-action="open-history">牌局记录 ${state.trickHistory.length} 轮</button>` : ""}
-              ${state.canViewKitty ? `<button type="button" class="secondary" data-action="open-kitty">查看底牌</button>` : ""}
-            </div>
-            ${!spectating && state.viewer.host && configuringLobby ? renderRoomSettings() : ""}
-            <div class="row room-lobby-actions">
-              ${spectating ? "" : `
-                ${inLobbyView ? renderReadyControls({ waitingNextRound }) : ""}
-                ${state.viewer.host && configuringLobby && state.gameMode === "pvp" && state.playMode === "team" ? `<button type="button" class="secondary" data-action="random-teams">随机分队</button>` : ""}
-                ${state.viewer.host && configuringLobby && state.gameMode === "pvp" && state.playMode === "brawl" ? `<button type="button" class="secondary" data-action="add-robot" ${state.players.length >= state.maxPlayers ? "disabled" : ""}>添加机器人</button>` : ""}
-                ${state.viewer.host && configuringLobby && state.playMode === "brawl" ? `<button type="button" class="secondary" data-action="random-seats" ${state.players.length < 2 ? "disabled" : ""}>随机座位</button>` : ""}
-                ${state.viewer.host && state.status === "lobby" ? `<button type="button" data-action="start" ${canStart() ? "" : "disabled"}>开始选将</button>` : ""}
-                ${state.viewer.host && gameInProgress ? `<button type="button" class="secondary" data-action="reset">重开房间</button>` : ""}
-                ${state.viewer.host ? `<button type="button" class="secondary danger" data-action="dissolve-room">解散房间</button>` : ""}
-                ${state.status === "lobby" ? `<button type="button" class="secondary" data-action="room-leave">退出房间</button>` : ""}
-              `}
-            </div>
-            ${spectating ? `<div class="spectator-notice">只读观战中：你看到的是 ${escapeHtml(state.spectator?.targetPlayerName || state.viewer?.name || "该玩家")} 的完整视角，无法操作任何牌。</div>` : ""}
-            ${inLobbyView && !spectating ? `<div class="meta">${escapeHtml(waitingNextRound ? `你已准备下一局，等待其他玩家确认。${readyStatusText()}` : `${waitingText}。${readyStatusText()}。${state.gameMode === "pve" ? "支持 2-4 名真人对战等量电脑" : state.playMode === "team" ? "支持 2v2 至 5v4" : "乱斗支持 5-9 人"}。`)}</div>` : ""}
+          <div class="room-invite-row">
+            <div class="room-invite-link"><span class="meta">邀请好友</span><code>${escapeHtml(shareUrl(state.roomId))}</code></div>
+            <button type="button" class="secondary" data-action="copy">复制邀请链接</button>
+            ${state.status === "dealt" || state.events.length ? `<button type="button" class="secondary" data-action="open-history">牌局记录 ${state.trickHistory.length} 轮</button>` : ""}
           </div>
+          ${!spectating && state.viewer.host && configuringLobby ? `<div class="room-rules-section"><h3>游戏规则</h3>${renderRoomSettings()}</div>` : ""}
+          ${renderLobbyStartControls(waitingNextRound)}
+          ${spectating ? `<div class="spectator-notice">只读观战中：你看到的是 ${escapeHtml(state.spectator?.targetPlayerName || state.viewer?.name || "该玩家")} 的完整视角，无法操作任何牌。</div>` : ""}
         </section>
 
         ${!showTable ? renderPveEnergyNotice() : ""}
         ${!showTable ? renderLobbyPlayersPanel() : ""}
+        ${!showTable && !spectating && state.viewer?.host ? `<div class="lobby-room-management"><span class="meta">房间管理</span><button type="button" class="secondary danger compact-button" data-action="dissolve-room">解散房间</button></div>` : ""}
         ${showTable ? renderRoomManagementActions() : ""}
         ${state.stage === "hero-selecting" ? renderHeroDraftPanel() : ""}
         ${showTable ? renderPlayTable() : ""}
@@ -7242,6 +7228,7 @@ function renderSpectatorsDialog() {
 }
 
 function renderLobbyPlayersPanel() {
+  const canArrange = !isSpectating() && state.viewer?.host && state.stage === "lobby";
   const fixedTeams = state.playMode === "team";
   if (fixedTeams) {
     const teamLabel = (team) => state.gameMode === "pve"
@@ -7253,6 +7240,7 @@ function renderLobbyPlayersPanel() {
           <div><h2>战队</h2><div class="meta">队伍身份公开；开局后系统自动穿插排座</div></div>
           <span class="tag">${state.players.length}/${state.maxPlayers}</span>
         </div>
+        ${canArrange ? renderTeamLobbyControls() : ""}
         <div class="team-lobby-grid">
           ${["a", "b"].map((team) => `
             <div class="team-lobby-column team-${team}">
@@ -7268,7 +7256,9 @@ function renderLobbyPlayersPanel() {
     <section class="panel">
       <div class="section-head">
         <h2>玩家</h2>
-        <span class="tag">${state.players.length}/${state.maxPlayers}</span>
+        <div class="row lobby-player-tools"><span class="tag">${state.players.length}/${state.maxPlayers}</span>
+          ${canArrange && state.playMode === "brawl" ? `<button type="button" class="secondary compact-button" data-action="random-seats" ${state.players.length < 2 ? "disabled" : ""}>随机座位</button>` : ""}
+        </div>
       </div>
       <div class="players lobby-players">
         ${state.players.map(renderPlayer).join("")}
@@ -8882,7 +8872,7 @@ function renderPlayer(player) {
           ${player.test ? `<span class="tag">${player.pveRobot ? "电脑" : "机器人"}</span>` : ""}
           ${player.squad ? `<span class="tag team-tag team-${escapeHtml(player.squad)}">${state.gameMode === "pve" ? (player.squad === "a" ? "玩家队" : "电脑队") : (player.squad === "a" ? "红队" : "蓝队")}</span>` : ""}
           ${player.autoPlayEnabled ? `<span class="tag auto-play-mark">托管中</span>` : ""}
-          ${state.status === "lobby" ? `<span class="tag ${player.ready ? "good" : ""}">${player.ready ? "已准备" : "未准备"}</span>` : ""}
+          ${state.status === "lobby" && !player.host ? `<span class="tag ${player.ready ? "good" : ""}">${player.ready ? "已准备" : "未准备"}</span>` : ""}
           ${isTurn ? `<span class="tag good">出牌</span>` : ""}
           ${isSetupTurn || isBankerAction ? `<span class="tag good">操作</span>` : ""}
           <span class="tag ${player.connected ? "good" : ""}">${player.connected ? "在线" : "未连接"}</span>
@@ -9456,7 +9446,7 @@ function clearSelectionFromPageClick(event) {
 const mutatingActions = new Set([
   "room-leave", "confirm-room-action", "game-mode", "play-mode", "pve-human-count", "select-team", "random-teams",
   "opening-bid-percent", "banker-score-mode", "dogleg-mode", "dogleg-count",
-  "add-robot", "random-seats", "start", "ready-on", "ready-off", "bid-selected",
+  "random-seats", "start", "ready-on", "ready-off", "bid-selected",
   "bid-pass", "random-bid", "score-bid-start", "score-bid-10", "score-bid-20",
   "score-bid-30", "score-pass", "trump-suit-S", "trump-suit-H", "trump-suit-C",
   "trump-suit-D", "bury-selected", "fry-selected",
@@ -9880,7 +9870,6 @@ document.addEventListener("click", (event) => {
   if (action === "banker-score-mode") setBankerScoreMode(event.target.closest("[data-mode]")?.dataset.mode || "banker-remainder");
   if (action === "dogleg-mode") setDoglegMode(event.target.closest("[data-mode]")?.dataset.mode || "traditional");
   if (action === "dogleg-count") setDoglegCount(Number(event.target.closest("[data-count]")?.dataset.count || 0));
-  if (action === "add-robot") addRobot();
   if (action === "random-seats") randomizeSeats();
   if (action === "start") startGame();
   if (action === "ready-on") setReady(true);
