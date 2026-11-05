@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { HERO_UNITS } from "../hero-home.js";
-import { createHeroDraft, chooseDraftHero, heroDraftComplete, heroDraftSnapshot, heroHireOffer } from "../hero-draft.js";
+import { createHeroDraft, chooseDraftHero, heroDraftComplete, heroDraftSnapshot, heroHireOffer, automaticDraftChoice } from "../hero-draft.js";
 
 const players = (count) => Array.from({ length: count }, (_, index) => ({ id: `p${index}`, accountId: `a${index}` }));
 const zero = () => 0;
@@ -152,4 +152,17 @@ test("draft prices and promotion copy follow server time without changing privat
   assert.ok(expired.choices.every((hero) => hero.hireCost === 300));
   assert.deepEqual(active.choices.map((hero) => hero.heroId), expired.choices.map((hero) => hero.heroId));
   assert.deepEqual(heroDraftSnapshot(draft, "outsider").choices, []);
+});
+
+
+test("automatic choice follows duplicate restrictions, free hire eligibility and the promotion boundary", () => {
+  const heroes = [HERO_UNITS.find(h => h.rarity === "ssr"), HERO_UNITS.find(h => h.rarity === "sr")];
+  const draft = createHeroDraft(players(2), allOwned(2, heroes), { heroes, random: zero });
+  chooseDraftHero(draft, "p0", heroes[0].id);
+  assert.equal(automaticDraftChoice(draft, "p1", { random: zero }).heroId, heroes[1].id);
+  const unowned = createHeroDraft(players(1), {}, { heroes, random: zero });
+  assert.equal(automaticDraftChoice(unowned, "p0", { at: "2026-11-05", random: zero }).hire, true);
+  assert.equal(automaticDraftChoice(unowned, "p0", { at: "2026-12-01T03:00:00+08:00" }).heroId, null);
+  unowned.entries.p0.hireEligible = false;
+  assert.equal(automaticDraftChoice(unowned, "p0", { at: "2026-11-05" }).heroId, null);
 });

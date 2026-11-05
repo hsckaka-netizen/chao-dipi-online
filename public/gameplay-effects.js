@@ -52,3 +52,27 @@ export function detectNewDraggedFiveEffects(previousState, nextState, nowMs = Da
     .filter((entry) => !previousKeys.has(entry.key))
     .map((entry) => ({ ...entry, until: nowMs + durationMs }));
 }
+
+function skillActivations(snapshot) {
+  const uses = (snapshot?.boardHeroSkills?.uses || []).map((use, index) => ({
+    ...use, key: `skill:${index}:${use.playerId}:${use.heroId}:${use.at}`
+  }));
+  // A trial becomes public only after its entry fee succeeds. Candidate/pass actions have no effect.
+  for (const trial of snapshot?.judgment?.trials || []) {
+    if (!trial.entryFeePaid || !trial.targetId) continue;
+    uses.push({ key: `judgment:${trial.id}`, playerId: trial.ownerId, playerName: trial.ownerName,
+      heroId: "shen-yingwu", skillName: "战犯审判" });
+  }
+  return uses;
+}
+
+export function detectNewHeroSkillEffects(previousState, nextState) {
+  if (!previousState?.roomId || previousState.roomId !== nextState?.roomId) return [];
+  const previousKeys = new Set(skillActivations(previousState).map((use) => use.key));
+  return skillActivations(nextState).filter((use) => !previousKeys.has(use.key)).map((use) => {
+    const player = nextState.players?.find((item) => item.id === use.playerId);
+    return { key: use.key, playerId: use.playerId, playerName: use.playerName || player?.name || "玩家",
+      heroId: use.heroId, skillName: use.skillName || player?.battleHeroSnapshot?.skillName || "限定技",
+      hero: player?.battleHeroSnapshot || null };
+  });
+}

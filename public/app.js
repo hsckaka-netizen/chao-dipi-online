@@ -1,5 +1,5 @@
 import { applyStatePatch } from "./state-patch.js?v=9330552c7e1e";
-import { detectNewDraggedFiveEffects, detectNewLargePlayEffects } from "./gameplay-effects.js?v=14791e626d30";
+import { detectNewDraggedFiveEffects, detectNewLargePlayEffects, detectNewHeroSkillEffects } from "./gameplay-effects.js?v=bda42a4300ec";
 import { ASSET_URLS, versionedAssetUrl } from "./asset-versions.js?v=a4e98d8729ea";
 import { createHistoryTrickEntry, filterHistoryTimelineEntries } from "./history-records.js?v=874ba3c97732";
 import { suitTractorOrderValue, isShenBenleiTrump, shenBenleiTractorOrderValue } from "./replacement-rank-rules.js?v=d9c12d800a5b";
@@ -109,6 +109,7 @@ let gameplayEffectTimer = null;
 let doglegRevealEffects = [];
 let draggedFiveEffect = null;
 let largePlayEffects = [];
+let heroSkillEffects = [];
 let lastMutatingActionAt = 0;
 let homeView = "rooms";
 let profiles = [];
@@ -229,6 +230,8 @@ function clearSession() {
   doglegRevealEffects = [];
   draggedFiveEffect = null;
   largePlayEffects = [];
+  heroSkillEffects = [];
+  document.querySelector(".hero-skill-cinematic")?.remove();
   stateSyncTimer = null;
   stateWatchdogTimer = null;
   actionDialogResumeTimer = null;
@@ -275,6 +278,7 @@ function setMessage(text, bad = false, autoDismiss = true) {
 function shouldHighlightNewKitty(nextState) {
   const viewerId = nextState?.viewer?.id;
   if (!viewerId) return false;
+  if (nextState.stage === "jie-denghuang-skill") return Boolean(nextState.boardHeroSkills?.advanced?.canChoose && nextState.boardHeroSkills.advanced.hasDrawn);
   if (nextState.stage === "burying") return nextState.setup?.bankerId === viewerId;
   if (nextState.stage === "fry-burying") return nextState.setup?.fry?.currentPlayerId === viewerId;
   return false;
@@ -335,8 +339,9 @@ function applyState(nextState, options = {}) {
   scheduleScoreBidAutoPass();
   scheduleSetupCountdownRender();
   if (options.highlightNewKitty === false || !shouldHighlightNewKitty(nextState)) return false;
+  const drawnIds = new Set(nextState.boardHeroSkills?.advanced?.drawnCardIds || []);
   const newCardIds = (nextState.hand || [])
-    .filter((card) => !previousHandIds.has(card.id))
+    .filter((card) => nextState.stage === "jie-denghuang-skill" ? drawnIds.has(card.id) && !previousHandIds.has(card.id) : !previousHandIds.has(card.id))
     .map((card) => card.id);
   if (!newCardIds.length) return false;
   selectedCardIds = new Set(newCardIds);
@@ -424,8 +429,17 @@ function captureGameplayEffects(previousState, nextState) {
   const nowMs = Date.now();
   doglegRevealEffects = doglegRevealEffects.filter((effect) => effect.until > nowMs);
   largePlayEffects = largePlayEffects.filter((effect) => effect.until > nowMs);
+  heroSkillEffects = heroSkillEffects.filter((effect) => effect.until > nowMs);
+  if (["hero-selecting", "lobby"].includes(nextState?.stage)) heroSkillEffects = [];
 
   if (previousState?.roomId === nextState?.roomId) {
+    const skillKeys = new Set(heroSkillEffects.map((effect) => effect.key));
+    for (const effect of detectNewHeroSkillEffects(previousState, nextState)) {
+      if (skillKeys.has(effect.key)) continue;
+      const startsAt = Math.max(nowMs, heroSkillEffects.at(-1)?.until || 0);
+      heroSkillEffects.push({ ...effect, startsAt, until: startsAt + 1650 });
+      skillKeys.add(effect.key);
+    }
     const activeKeys = new Set(largePlayEffects.map((effect) => effect.key));
     largePlayEffects.push(...detectNewLargePlayEffects(previousState, nextState, nowMs)
       .filter((effect) => !activeKeys.has(effect.key)));
@@ -483,6 +497,7 @@ function captureGameplayEffects(previousState, nextState) {
     doglegRevealEffects = [];
     draggedFiveEffect = null;
     largePlayEffects = [];
+    heroSkillEffects = [];
   }
   scheduleGameplayEffectEnd();
 }
@@ -494,6 +509,7 @@ function scheduleGameplayEffectEnd() {
   const expirations = doglegRevealEffects.map((effect) => effect.until);
   if (draggedFiveEffect?.animateUntil > nowMs) expirations.push(draggedFiveEffect.animateUntil);
   expirations.push(...largePlayEffects.map((effect) => effect.until));
+  expirations.push(...heroSkillEffects.flatMap((effect) => [effect.startsAt, effect.until]));
   const nextExpiration = expirations.filter((value) => value > nowMs).sort((a, b) => a - b)[0];
   if (!nextExpiration) return;
   gameplayEffectTimer = window.setTimeout(() => {
@@ -501,6 +517,7 @@ function scheduleGameplayEffectEnd() {
     const currentTime = Date.now();
     doglegRevealEffects = doglegRevealEffects.filter((effect) => effect.until > currentTime);
     largePlayEffects = largePlayEffects.filter((effect) => effect.until > currentTime);
+    heroSkillEffects = heroSkillEffects.filter((effect) => effect.until > currentTime);
     if (draggedFiveEffect?.animateUntil <= currentTime) draggedFiveEffect.animateUntil = 0;
     render();
     scheduleGameplayEffectEnd();
@@ -3648,24 +3665,12 @@ function renderTeamLobbyControls() {
 }
 
 function renderOpeningBidPercentControl() {
-  const options = [10, 20, 30, 40, 50];
+  const options = [10, 15, 20, 25, 30, 35, 40, 45, 50];
   const current = options.includes(Number(state.openingBidPercent)) ? Number(state.openingBidPercent) : 40;
-  return `
-    <span class="dogleg-count-control">
-      <span class="meta">起始叫分</span>
-      <span class="segmented" aria-label="起始叫分占总牌分比例">
-        ${options.map((percent) => `
-          <button
-            type="button"
-            class="${percent === current ? "" : "secondary"}"
-            data-action="opening-bid-percent"
-            data-percent="${percent}"
-            ${percent === current ? "disabled" : ""}
-          >${percent}%</button>
-        `).join("")}
-      </span>
-    </span>
-  `;
+  return `<label class="dogleg-count-control opening-bid-control"><span class="meta">起始叫分</span>
+    <select data-opening-bid-percent aria-label="起始叫分占总牌分比例">
+      ${options.map((percent) => `<option value="${percent}" ${percent === current ? "selected" : ""}>${percent}%${percent === 40 ? "（默认）" : ""}</option>`).join("")}
+    </select><span class="meta">每档 5%</span></label>`;
 }
 
 function renderBankerScoreModeControl() {
@@ -6814,7 +6819,7 @@ function renderHeroDraftPanel() {
       <div class="hero-draft-details"><span class="tag ${hero.rarity === "ssr" ? "accent" : ""}">${escapeHtml(hero.rarity.toUpperCase())}</span><h3>${escapeHtml(hero.name)}</h3><div>${hero.owned ? heroStars(hero.stars) : "未拥有 · 可雇佣1星"}${hero.selectedElsewhere ? " · 本局已有人选择" : ""}</div>
       <strong>${escapeHtml(hero.skillName)}</strong><p>${escapeHtml(hero.skillDescription)}</p>
       <button type="button" data-action="select-battle-hero" data-unit-id="${escapeHtml(hero.heroId)}" data-hire="${!hero.owned}" ${heroActionInFlight || !(hero.canSelect || hero.canHire) ? "disabled" : ""}>${hero.selectedElsewhere && !(hero.canSelect || hero.canHire) ? "请优先选择其他候选" : !hero.owned ? hero.hireCost === 0 ? `免费雇佣 · 1星` : `${escapeHtml(hero.hireCost ?? 300)}💎 雇佣 · 1星` : `选择 ${escapeHtml(hero.name)}`}</button></div>
-    </article>`).join("")}</div><div class="hero-draft-footer"><span>候选固定，不因拥有情况重抽；超时按本局不出战继续。</span><button type="button" class="secondary" data-action="select-battle-hero" data-unit-id="" ${heroActionInFlight ? "disabled" : ""}>本局不出战</button></div>`
+    </article>`).join("")}</div><div class="hero-draft-footer"><span>候选固定，不因拥有情况重抽；超时从可免费出战的候选中随机选一名；无免费候选时不出战。</span><button type="button" class="secondary" data-action="select-battle-hero" data-unit-id="" ${heroActionInFlight ? "disabled" : ""}>本局不出战</button></div>`
       : `<p role="status">${isSpectating() ? "等待玩家选择英雄" : draft.hiring ? "正在雇佣英雄，请稍候…" : selected ? `${selected.hired ? "已雇佣" : "已选择"} ${escapeHtml(selected.name)} · ${selected.stars} 星，等待其他玩家` : "本局不出战，等待其他玩家"}</p>`}
     <div class="meta">已完成 ${draft.completedPlayerIds?.length || 0}/${state.players.length}</div>
   </section>`;
@@ -6850,8 +6855,8 @@ function renderSetupCenter() {
     body = `${renderSetupLines([
       { label: "英雄技能", value: isDeng ? "探囊取物" : "择木而栖" },
       { label: "当前操作", value: escapeHtml(actor) },
-      { label: "倒计时", value: setupCountdownTag(skill.deadlineAt, " 后自动完成") }
-    ])}<p>${isDeng ? (skill.hasDrawn ? `已随机拿取${skill.exchangeCount}张底牌，请选择相同数量的手牌扣回；超时自动扣回刚拿取的牌。` : "可随机拿取底牌，再从手牌中扣回相同数量的牌。") : "选择手中一张非比牌作为专属狗腿牌，仅改变自己的狗腿判定；放弃则沿用庄家选择。"}</p>
+      ...(isDeng ? [] : [{ label: "倒计时", value: setupCountdownTag(skill.deadlineAt, " 后自动完成") }])
+    ])}<p>${isDeng ? (skill.hasDrawn ? `已随机拿取${skill.exchangeCount}张底牌，拿到的牌已抬起，请选择相同数量的手牌扣回，确认后继续。` : "可随机拿取底牌，再从手牌中扣回相同数量的牌。") : "选择手中一张非比牌作为专属狗腿牌，仅改变自己的狗腿判定；放弃则沿用庄家选择。"}</p>
     <div class="row">${!isSpectating() && skill.canChoose ? (isDeng
       ? (skill.hasDrawn ? `<button type="button" data-action="jie-denghuang-bury">扣回选中的 ${skill.exchangeCount} 张牌</button>` : `<button type="button" data-action="jie-denghuang-draw">随机拿取 ${skill.exchangeCount} 张底牌</button><button type="button" class="secondary" data-action="jie-denghuang-pass">放弃</button>`)
       : `<button type="button" data-action="jie-jiangzha-select">确认专属狗腿牌</button><button type="button" class="secondary" data-action="jie-jiangzha-pass">沿用庄家选择</button>`) : `<span class="tag">等待 ${escapeHtml(actor)} 操作</span>`}</div>`;
@@ -9301,6 +9306,45 @@ function renderLargePlayEffect(play, trickNumber) {
   `;
 }
 
+const HERO_SKILL_THEMES = {
+  "shen-biesan": ["#aa9cff", "雷", "storm"],
+  "shen-gelu": ["#ffb357", "破", "strike"],
+  "shen-jiangwen": ["#7cbcff", "让", "orbit"],
+  "shen-kaxiang": ["#b89bff", "逆", "reverse"],
+  "jie-denghuang": ["#5ce4ba", "取", "strike"],
+  "jie-jiangzha": ["#6ecfff", "择", "orbit"],
+  "shen-xiaoxu": ["#ffcf70", "蓄", "orbit"],
+  "yokoyama-yui": ["#f5a0e4", "移", "reverse"],
+  "jie-ranchen": ["#f6ce6d", "契", "strike"],
+  "shen-haohao": ["#ffd880", "御", "orbit"],
+  "shen-yingwu": ["#ff7d76", "判", "strike"]
+};
+
+function renderHeroSkillEffect() {
+  const effect = heroSkillEffects.find((item) => item.startsAt <= Date.now() && item.until > Date.now());
+  const existing = document.querySelector(".hero-skill-cinematic");
+  if (!effect) { existing?.remove(); return; }
+  if (existing?.dataset.effectKey === effect.key) return;
+  existing?.remove();
+  const [color, glyph, motion] = HERO_SKILL_THEMES[effect.heroId] || ["#f5d17f", "技", "strike"];
+  const layer = document.createElement("div");
+  layer.className = `hero-skill-cinematic skill-motion-${motion}`;
+  layer.dataset.effectKey = effect.key;
+  layer.style.setProperty("--skill-color", color);
+  layer.setAttribute("role", "status");
+  layer.setAttribute("aria-live", "polite");
+  layer.innerHTML = `<div class="skill-impact-ring" aria-hidden="true"></div>
+    <div class="skill-cut-in"><div class="skill-speedlines" aria-hidden="true"></div>
+      <span class="skill-seal" aria-hidden="true">${glyph}</span>
+      ${effect.hero?.cardImage ? heroCardArtwork(effect.hero, "skill-hero-art", "", "medium").replace('loading="lazy"', 'loading="eager"') : ""}
+      <div class="skill-title"><span class="skill-kicker">限定技 · 发动</span>
+        <strong>${escapeHtml(effect.skillName)}</strong>
+        <span class="skill-actor">${escapeHtml(effect.playerName)} · ${escapeHtml(effect.hero?.name || "英雄")}</span>
+      </div><span class="skill-sweep" aria-hidden="true"></span>
+    </div>`;
+  document.body.append(layer);
+}
+
 function renderEvent(event) {
   return `
     <div class="event">
@@ -9313,9 +9357,11 @@ function renderEvent(event) {
 function render() {
   if (!session || !state) {
     clearSetupCountdownRenderTimer();
+    document.querySelector(".hero-skill-cinematic")?.remove();
     return renderHome();
   }
   renderRoom();
+  renderHeroSkillEffect();
   scheduleSetupCountdownRender();
 }
 
@@ -9495,6 +9541,10 @@ document.addEventListener("submit", (event) => {
 });
 
 document.addEventListener("change", (event) => {
+  if (event.target.matches("[data-opening-bid-percent]")) {
+    setOpeningBidPercent(Number(event.target.value));
+    return;
+  }
   const exchangeForm = event.target.closest('[data-form="war-effort-exchange"]');
   if (exchangeForm) { updateWarEffortExchangePreview(exchangeForm); return; }
   const avatarFrameUploadTarget = event.target.closest('input[name="avatarFrame"]');
@@ -10053,7 +10103,7 @@ async function submitAdvancedHeroAction(action) {
     await roomAction(`/api/rooms/${session.roomId}/board-hero-skill`, {
       method: "POST", body: JSON.stringify({ playerId: session.playerId, token: session.token, action, cardIds: [...selectedCardIds] })
     });
-    selectedCardIds = new Set();
+    if (action !== "jie-denghuang-draw") selectedCardIds = new Set();
     render();
   } catch (error) { setMessage(error.message || "技能操作失败", true); }
 }

@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { detectNewDraggedFiveEffects, detectNewLargePlayEffects } from "../public/gameplay-effects.js";
+import { detectNewDraggedFiveEffects, detectNewLargePlayEffects, detectNewHeroSkillEffects } from "../public/gameplay-effects.js";
 
 function playState(cardCount, options = {}) {
   return {
@@ -103,4 +103,25 @@ test("a protected five that cannot become current winner animates on its own pla
   assert.equal(effect.cardId, "diamond-five");
   assert.equal(effect.suit, "D");
   assert.equal(effect.until, 2900);
+});
+
+
+test("every successful active hero skill produces one public cue, including multiple skills in a patch", () => {
+  const ids = ["shen-biesan", "shen-gelu", "shen-jiangwen", "shen-kaxiang", "jie-denghuang", "jie-jiangzha", "shen-xiaoxu", "yokoyama-yui", "jie-ranchen", "shen-haohao"];
+  const before = { roomId: "R", boardHeroSkills: { uses: [] } };
+  const next = { ...before, players: ids.map(id => ({ id, name: id, battleHeroSnapshot: { heroId: id, cardImage: "card.png" } })),
+    boardHeroSkills: { uses: ids.map(heroId => ({ playerId: heroId, heroId, skillName: "技能", at: "now" })) } };
+  assert.equal(detectNewHeroSkillEffects(before, next).length, ids.length);
+  assert.equal(detectNewHeroSkillEffects(next, next).length, 0);
+  assert.deepEqual(detectNewHeroSkillEffects(null, next), []);
+  assert.deepEqual(detectNewHeroSkillEffects({ roomId: "OTHER" }, next), []);
+  assert.equal(detectNewHeroSkillEffects(before, next)[0].hero.cardImage, "card.png");
+});
+
+test("judgment cues require a paid successful launch and never replay on votes or settlement", () => {
+  const before = { roomId: "R", judgment: { trials: [{ id: "T", ownerId: "p", status: "charging" }] } };
+  const next = { roomId: "R", judgment: { trials: [{ id: "T", ownerId: "p", targetId: "q", entryFeePaid: 200, status: "voting" }] } };
+  assert.equal(detectNewHeroSkillEffects(before, next)[0].heroId, "shen-yingwu");
+  assert.deepEqual(detectNewHeroSkillEffects(next, { ...next, judgment: { trials: [{ ...next.judgment.trials[0], status: "resolved" }] } }), []);
+  assert.deepEqual(detectNewHeroSkillEffects({ roomId: "R" }, before), []);
 });

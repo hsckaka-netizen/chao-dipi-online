@@ -49,7 +49,7 @@ test("server waits before dealing, restores the same private candidates, and dea
   assert.ok(current.players.every((player) => player.battleHeroSnapshot === null));
 });
 
-test("timeout never picks a hero for a human, including an entirely unowned candidate list", async () => {
+test("timeout without free or owned candidates continues without a hero and never charges", async () => {
   const current = room();
   await game.beginHeroDraft(current, async () => ({}));
   assert.equal(current.stage, HERO_DRAFT_STAGE);
@@ -57,7 +57,7 @@ test("timeout never picks a hero for a human, including an entirely unowned cand
   const selectedId = current.heroDraft.entries.p0.choices[0];
   assert.equal(chooseDraftHero(current.heroDraft, "p0", selectedId).status, 403);
   current.heroDraft.deadlineAt = new Date(Date.now() - 1000).toISOString();
-  assert.equal(game.expireHeroDraft(current), true);
+  assert.equal(game.expireHeroDraft(current, { at: Date.parse("2026-12-02"), charge: () => assert.fail("paid hire") }), true);
   assert.ok(current.players.every((player) => player.hand.length === 53 && player.battleHeroSnapshot === null));
 });
 
@@ -130,6 +130,7 @@ test("payment failure releases the candidate; a submitted hire cannot be duplica
   assert.equal(failed.status, 409);
   assert.equal(player.battleHeroSnapshot, null);
   assert.equal(current.heroDraft.entries.p0.completed, false);
+  current.players.slice(1).forEach(p => chooseDraftHero(current.heroDraft, p.id, null));
   let resolve;
   const pending = game.selectRoomHero(current, player, id, true, "frozen-game", () => new Promise((done) => { resolve = done; }));
   assert.equal(game.roomSnapshot(current, player).heroDraft.hiring, true);
@@ -171,7 +172,9 @@ test("guests, bots and expired draft requests never reach the hire payment", asy
   current.players[1].test = true;
   assert.equal((await game.selectRoomHero(current, current.players[1], current.heroDraft.entries.p1.choices[0], true, "frozen-game", noCharge)).status, 403);
   current.heroDraft.deadlineAt = new Date(0).toISOString();
-  assert.equal((await game.selectRoomHero(current, current.players[2], current.heroDraft.entries.p2.choices[0], true, "frozen-game", noCharge)).status, 409);
+  const expiredHeroId = current.heroDraft.entries.p2.choices[0];
+  game.expireHeroDraft(current, { at: Date.parse("2026-12-02"), charge: noCharge });
+  assert.equal((await game.selectRoomHero(current, current.players[2], expiredHeroId, true, "frozen-game", noCharge)).status, 409);
   assert.ok(current.players.every((player) => !player.battleHeroSnapshot));
 });
 
@@ -194,4 +197,53 @@ test("server forwards only its own request time and the displayed price guard to
   assert.equal(player.battleHeroSnapshot.stars, 1);
   assert.equal(player.battleHeroSnapshot.owned, false);
   game.resetRoomToLobby(current);
+});
+
+
+test("timeout freezes random owned heroes with real stars and preserves an explicit opt-out", async () => {
+  const current = room();
+  await game.beginHeroDraft(current, async () => inventory());
+  chooseDraftHero(current.heroDraft, "p0", null);
+  current.heroDraft.deadlineAt = new Date(0).toISOString();
+  assert.equal(game.expireHeroDraft(current, { charge: () => assert.fail("owned hero must not charge") }), true);
+  assert.equal(current.players[0].battleHeroSnapshot, null);
+  for (const [index, player] of current.players.entries()) {
+    assert.equal(player.hand.length, 53);
+    if (index) assert.equal(player.battleHeroSnapshot.stars, index + 1);
+  }
+});
+
+test("automatic free hires retain receipts, wait for payment, and cannot charge twice or charge a paid price", async () => {
+  const current = room();
+  await game.beginHeroDraft(current, async () => ({}));
+  current.heroDraft.deadlineAt = new Date(0).toISOString();
+  let payments = 0; let resolveFirst;
+  const at = Date.parse("2026-11-05T12:00:00+08:00");
+  const charge = async (accountId, gameId, heroId, options) => {
+    payments++;
+    assert.deepEqual(options, { at, expectedCost: 0 });
+    assert.equal(gameId, "frozen-game");
+    assert.ok(current.heroDraft.entries[current.players.find(p => p.accountId === accountId).id].choices.includes(heroId));
+    if (payments === 1) await new Promise(resolve => { resolveFirst = resolve; });
+    return { cost: 0 };
+  };
+  assert.equal(game.expireHeroDraft(current, { at, charge }), false);
+  assert.equal(current.stage, HERO_DRAFT_STAGE);
+  assert.equal(game.expireHeroDraft(current, { at, charge }), false);
+  assert.equal((await game.refundRoomHeroHires(current)).status, 409);
+  resolveFirst();
+  await current.heroDraftExpiryPromise;
+  assert.equal(payments, 5);
+  assert.equal(current.heroHireGameId, "frozen-game");
+  assert.ok(current.players.every(p => p.hand.length === 53 && p.battleHeroSnapshot.hired && p.battleHeroSnapshot.stars === 1));
+});
+
+test("failed automatic free hire continues without a hero instead of blocking the deal", async () => {
+  const current = room();
+  await game.beginHeroDraft(current, async () => ({}));
+  current.heroDraft.deadlineAt = new Date(0).toISOString();
+  game.expireHeroDraft(current, { at: Date.parse("2026-11-05"), charge: async () => { throw new Error("offline"); } });
+  await current.heroDraftExpiryPromise;
+  assert.ok(current.players.every(p => p.hand.length === 53 && !p.battleHeroSnapshot));
+  assert.equal(current.heroHireInFlight, false);
 });

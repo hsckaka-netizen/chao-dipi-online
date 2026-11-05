@@ -146,19 +146,28 @@ test("Denghuang exchanges exact physical cards once, validates count and ownersh
   assert.equal(game.submitAdvancedHeroChoice(r, hero, "jie-denghuang-draw").status, 409);
 });
 
-test("Denghuang timeout returns the newly drawn cards and processes multiple heroes in seat order", async () => {
+test("Denghuang has no deadline before or after drawing and waits for each player's manual return", async () => {
   const r = room(); const hero = r.players[1]; const second = r.players[2];
   second.battleHeroSnapshot = createBattleHeroSnapshot("jie-denghuang", 1);
-  const kittyBefore = r.kitty.map(c => c.id).sort(); const handBefore = hero.hand.map(c => c.id).sort();
-  game.beginAdvancedHeroStage(r, "denghuang"); game.submitAdvancedHeroChoice(r, hero, "jie-denghuang-draw");
+  game.beginAdvancedHeroStage(r, "denghuang");
+  assert.equal(r.boardHeroSkills.advanced.deadlineAt, null);
+  assert.equal(await game.autoAdvanceExpiredBoardHeroSkill(r), false);
+  game.submitAdvancedHeroChoice(r, hero, "jie-denghuang-draw");
+  const drawn = [...r.boardHeroSkills.advanced.drawnCardIds];
+  assert.equal(r.boardHeroSkills.advanced.deadlineAt, null);
+  assert.deepEqual(game.boardHeroSkillsSnapshot(r, hero).advanced.drawnCardIds, drawn);
+  assert.deepEqual(game.boardHeroSkillsSnapshot(r, second).advanced.drawnCardIds, []);
   r.boardHeroSkills.advanced.deadlineAt = new Date(0).toISOString();
-  assert.equal(await game.autoAdvanceExpiredBoardHeroSkill(r), true);
+  assert.equal(await game.autoAdvanceExpiredBoardHeroSkill(r), false);
+  assert.equal(r.boardHeroSkills.advanced.currentPlayerId, hero.id);
+  assert.equal(hero.hand.length, 4);
+  assert.equal(game.submitAdvancedHeroChoice(r, hero, "jie-denghuang-bury", drawn).ok, true);
   assert.equal(r.boardHeroSkills.advanced.currentPlayerId, second.id);
-  assert.deepEqual(hero.hand.map(c => c.id).sort(), handBefore); assert.deepEqual(r.kitty.map(c => c.id).sort(), kittyBefore);
-  assert.equal(game.submitAdvancedHeroChoice(r, second, "jie-denghuang-draw").ok, true);
-  assert.equal(second.hand.length, 3);
-  r.boardHeroSkills.advanced.deadlineAt = new Date(0).toISOString(); await game.autoAdvanceExpiredBoardHeroSkill(r);
-  assert.equal(r.stage, "dogleg"); assert.equal(second.hand.length, 2);
+  assert.equal(r.boardHeroSkills.advanced.deadlineAt, null);
+  assert.equal(game.submitAdvancedHeroChoice(r, second, "jie-denghuang-pass").ok, true);
+  assert.equal(r.stage, "dogleg");
+  assert.equal(hero.hand.length, 2);
+  assert.equal(r.boardHeroEffects.uses.length, 1);
 });
 
 test("Jiangzha privately replaces only his criterion; the public card cannot trigger him afterward", () => {

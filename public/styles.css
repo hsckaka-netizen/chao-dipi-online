@@ -9415,3 +9415,44 @@ button.auto-play-toggle.active {
 .hero-point-choice[open] summary {
   margin-bottom: 10px;
 }
+
+/* Limited skills: short, nonblocking cut-in; the table and controls remain usable. */
+.opening-bid-control select { width: auto; min-width: 114px; padding: 7px 10px; }
+.hero-skill-cinematic { position: fixed; inset: 0; z-index: 180; pointer-events: none; overflow: hidden; animation: skill-cinematic-life 1.65s both; }
+.skill-cut-in { position: absolute; top: 30%; left: 0; width: 100%; height: 230px; display: flex; align-items: center; justify-content: center; gap: 30px; color: #fff; isolation: isolate; background: linear-gradient(90deg, transparent, #0b1429ed 18%, #0b1429f5 75%, transparent); border-block: 1px solid color-mix(in srgb, var(--skill-color) 70%, transparent); box-shadow: 0 0 60px #07112250, inset 0 1px 24px color-mix(in srgb, var(--skill-color) 18%, transparent); animation: skill-band-enter 1.65s both; }
+.skill-cut-in .skill-hero-art { width: 168px; height: 252px; flex: 0 0 168px; object-fit: cover; overflow: hidden; border-radius: 8px; transform: rotate(-7deg); filter: drop-shadow(0 0 22px var(--skill-color)); animation: skill-portrait-enter 1.65s both; }
+.skill-hero-art img { width: 100%; height: 100%; object-fit: cover; }
+.skill-title { display: grid; gap: 10px; position: relative; z-index: 2; text-shadow: 0 3px 12px #000; animation: skill-title-enter 1.65s both; }
+.skill-title strong { font-size: clamp(32px, 6vw, 66px); font-weight: 950; letter-spacing: .12em; line-height: 1.15; color: #fff; text-shadow: 0 0 22px var(--skill-color), 0 3px 5px #000; }
+.skill-kicker { color: var(--skill-color); font-size: 12px; font-weight: 800; letter-spacing: .4em; }
+.skill-actor { color: #dfdfef; font-size: 14px; letter-spacing: .08em; }
+.skill-seal { position: absolute; right: 12%; font-size: 230px; font-weight: 950; color: var(--skill-color); opacity: .12; transform: rotate(-12deg); z-index: -1; }
+.skill-speedlines { position: absolute; inset: 0; z-index: -1; opacity: .32; background: repeating-linear-gradient(-12deg, transparent 0 24px, var(--skill-color) 25px 26px, transparent 27px 53px); mask-image: linear-gradient(90deg, #000, transparent 42%, transparent 70%, #000); animation: skill-lines .55s ease-out both; }
+.skill-sweep { position: absolute; inset: 0; z-index: 3; background: linear-gradient(110deg, transparent 38%, #ffffff55 50%, transparent 60%); animation: skill-sweep .55s .12s ease-out both; }
+.skill-impact-ring { position: absolute; left: 50%; top: calc(30% + 115px); width: 320px; height: 320px; margin: -160px; border: 3px solid var(--skill-color); border-radius: 50%; opacity: 0; box-shadow: 0 0 25px var(--skill-color), inset 0 0 20px var(--skill-color); animation: skill-impact .8s .18s ease-out both; }
+.skill-motion-storm .skill-speedlines { background: repeating-linear-gradient(115deg, transparent 0 39px, var(--skill-color) 40px 43px, transparent 44px 80px); }
+.skill-motion-orbit .skill-impact-ring { border-style: dashed; animation-name: skill-orbit; }
+.skill-motion-reverse .skill-speedlines { animation-direction: reverse; }
+.skill-motion-reverse .skill-impact-ring { border-width: 8px 1px; animation-name: skill-orbit; animation-direction: reverse; }
+@keyframes skill-cinematic-life { 0% { opacity: 0; } 9%, 80% { opacity: 1; } 100% { opacity: 0; } }
+@keyframes skill-band-enter { 0% { transform: scaleX(.7) skewX(-10deg); } 18%, 85% { transform: scaleX(1) skewX(0); } 100% { transform: scaleX(1.05); } }
+@keyframes skill-portrait-enter { 0% { opacity: 0; transform: translateX(-100px) rotate(-12deg) scale(.85); } 23%, 85% { opacity: 1; transform: translateX(0) rotate(-7deg) scale(1); } 100% { opacity: 0; transform: translateX(35px) rotate(-4deg); } }
+@keyframes skill-title-enter { 0%, 8% { opacity: 0; transform: translateX(90px); } 26%, 85% { opacity: 1; transform: translateX(0); } 100% { opacity: 0; transform: translateX(-25px); } }
+@keyframes skill-sweep { from { transform: translateX(-90%); } to { transform: translateX(90%); } }
+@keyframes skill-lines { from { transform: translateX(80px); } to { transform: translateX(0); } }
+@keyframes skill-impact { 0% { opacity: 0; transform: scale(.3); } 20% { opacity: .65; } 100% { opacity: 0; transform: scale(3); } }
+@keyframes skill-orbit { 0% { opacity: 0; transform: scale(.5) rotate(-80deg); } 20% { opacity: .6; } 100% { opacity: 0; transform: scale(2) rotate(100deg); } }
+@media (max-width: 600px) {
+  .skill-cut-in { top: 26%; height: 172px; gap: 18px; padding: 0 18px; }
+  .skill-cut-in .skill-hero-art { width: 105px; height: 164px; flex-basis: 105px; }
+  .skill-title { gap: 9px; min-width: 0; }
+  .skill-title strong { font-size: clamp(25px, 7.5vw, 40px); letter-spacing: .04em; }
+  .skill-kicker { font-size: 10px; letter-spacing: .2em; }
+  .skill-actor { font-size: 11px; letter-spacing: 0; }
+  .skill-seal { right: 5%; font-size: 160px; }
+  .skill-impact-ring { top: calc(26% + 86px); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .hero-skill-cinematic, .hero-skill-cinematic * { animation: none !important; }
+  .hero-skill-cinematic .skill-speedlines, .hero-skill-cinematic .skill-impact-ring, .hero-skill-cinematic .skill-sweep { display: none; }
+}

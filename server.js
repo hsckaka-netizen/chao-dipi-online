@@ -88,7 +88,7 @@ import { versionedAssetUrl } from "./public/asset-versions.js";
 import { createStatePatch } from "./public/state-patch.js";
 import { applyShenBiesanCardRules, applyShenBenleiCardRules, isShenBenleiTrump, shenBenleiTractorOrderValue, suitTractorOrderValue } from "./public/replacement-rank-rules.js";
 import { calculateHeroSkillReward, cardRankNumber, HERO_HOME_RULES } from "./hero-home.js";
-import { createHeroDraft, chooseDraftHero, heroDraftComplete, heroDraftSnapshot, HERO_DRAFT_STAGE } from "./hero-draft.js";
+import { createHeroDraft, chooseDraftHero, automaticDraftChoice, heroDraftComplete, heroDraftSnapshot, HERO_DRAFT_STAGE } from "./hero-draft.js";
 import { eligibleAdvancementSrIds } from "./hero-advancement.js";
 import { ACHIEVEMENT_TITLE_BY_ID } from "./achievements.js";
 import {
@@ -207,7 +207,7 @@ const PLAYER_COUNT_REMOVAL_SUITS = new Map([
   [9, ["H", "H", "D"]]
 ]);
 const CALL_MODE_SCORE = "score";
-const OPENING_BID_PERCENTAGES = new Set([10, 20, 30, 40, 50]);
+const OPENING_BID_PERCENTAGES = new Set([10, 15, 20, 25, 30, 35, 40, 45, 50]);
 const DEFAULT_OPENING_BID_PERCENT = 40;
 const SCORE_BID_SECONDS = 20;
 const FRY_SECONDS = 20;
@@ -1366,6 +1366,7 @@ function recordBoardHeroSkillUse(room, player, heroId, payment, effect = {}) {
     effect,
     at: now()
   };
+  room.boardHeroEffects ||= emptyBoardHeroEffects();
   room.boardHeroEffects.uses.push(use);
   return use;
 }
@@ -1579,14 +1580,45 @@ function finishHeroDraftIfComplete(room) {
   return true;
 }
 
-function expireHeroDraft(room) {
-  if (room.heroHireClosing) return false;
-  if (room.stage !== HERO_DRAFT_STAGE || Date.parse(room.heroDraft.deadlineAt) > Date.now()) return false;
-  room.players.forEach((player) => {
-    const entry = room.heroDraft.entries[player.id];
-    if (entry && !entry.completed) chooseDraftHero(room.heroDraft, player.id, null);
-  });
-  return finishHeroDraftIfComplete(room);
+function expireHeroDraft(room, { at = Date.now(), charge = hireBattleHero } = {}) {
+  if (room.heroHireClosing || room.heroHireInFlight) return false;
+  if (room.stage !== HERO_DRAFT_STAGE || Date.parse(room.heroDraft.deadlineAt) > at) return false;
+  const draft = room.heroDraft;
+  const pending = [];
+  for (const player of room.players) {
+    const entry = draft.entries[player.id];
+    if (!entry || entry.completed) continue;
+    const choice = automaticDraftChoice(draft, player.id, { at });
+    const result = chooseDraftHero(draft, player.id, choice.heroId, choice);
+    if (choice.hire) {
+      entry.hiring = true;
+      pending.push({ player, entry, choice, result });
+    } else player.battleHeroSnapshot = result.snapshot;
+  }
+  if (!pending.length) return finishHeroDraftIfComplete(room);
+  room.heroHireInFlight = true;
+  room.heroDraftExpiryPromise = (async () => {
+    try {
+      for (const { player, entry, choice, result } of pending) {
+        try {
+          // Keep the free hire receipt: later active skills validate it in storage.
+          await charge(player.accountId, draft.id, choice.heroId, { at, expectedCost: 0 });
+          player.battleHeroSnapshot = result.snapshot;
+          room.heroHireGameId = draft.id;
+        } catch {
+          entry.completed = false;
+          entry.selectedHeroId = null;
+          const fallback = automaticDraftChoice(draft, player.id, { at, allowFreeHire: false });
+          player.battleHeroSnapshot = chooseDraftHero(draft, player.id, fallback.heroId).snapshot;
+        } finally { entry.hiring = false; }
+      }
+    } finally {
+      room.heroHireInFlight = false;
+      finishHeroDraftIfComplete(room);
+      if (rooms.get(room.id) === room) broadcastAndContinueAutomation(room);
+    }
+  })();
+  return false;
 }
 
 function clearHeroDraftTimer(room) {
@@ -2087,6 +2119,7 @@ function boardHeroSkillsSnapshot(room, viewer = null) {
       canChoose: Boolean(viewer && viewer.id === advanced.currentPlayerId && ["jie-denghuang-skill", "jie-jiangzha-skill", "shen-xiaoxu-skill"].includes(room.stage)),
       reserveCount: viewer?.battleHeroSnapshot?.heroId === "shen-xiaoxu" ? HERO_HOME_RULES.shenXiaoxuReserveCount[(viewer.battleHeroSnapshot.stars || 1) - 1] : 0,
       exchangeCount: viewer?.battleHeroSnapshot?.heroId === "jie-denghuang" ? HERO_HOME_RULES.denghuangExchangeCount[(viewer.battleHeroSnapshot.stars || 1) - 1] : 0,
+      drawnCardIds: viewer?.id === advanced.currentPlayerId ? [...(advanced.drawnCardIds || [])] : [],
       hasDrawn: Boolean(viewer && viewer.id === advanced.currentPlayerId && advanced.drawnCardIds?.length)
     },
     replacementRank: room.boardHeroEffects?.replacementRank || null,
@@ -5205,6 +5238,7 @@ function clearBoardHeroSkillTimer(room) {
 async function autoAdvanceExpiredBoardHeroSkill(room) {
   if (["jie-denghuang-skill", "jie-jiangzha-skill", "shen-xiaoxu-skill"].includes(room.stage)) {
     const skill = room.boardHeroSkills.advanced;
+    if (skill.kind === "denghuang") return false;
     if (!skill.deadlineAt || Date.parse(skill.deadlineAt) > Date.now()) return false;
     const player = playerById(room, skill.currentPlayerId);
     if (skill.drawnCardIds.length) finishAdvancedExchange(room, player, skill.drawnCardIds);
@@ -5284,6 +5318,7 @@ function scheduleBoardHeroSkillTimer(room) {
         ? room.boardHeroSkills.shenHaohao.deadlineAt
       : null;
   if (!deadlineAt) return false;
+  if (room.stage === "jie-denghuang-skill") return false;
   const deadline = new Date(deadlineAt).getTime();
   if (!Number.isFinite(deadline)) return false;
   room.boardHeroSkillTimer = setTimeout(async () => {
@@ -8776,7 +8811,7 @@ async function handleApi(req, res, pathParts, url) {
       if (isFixedTeamGame(room)) return writeJson(res, 409, { error: "战队模式不需要设置起始叫分" });
       const nextPercent = Number(body.percent);
       if (!OPENING_BID_PERCENTAGES.has(nextPercent)) {
-        return writeJson(res, 400, { error: "起始叫分比例只能设置为 10%、20%、30%、40% 或 50%" });
+        return writeJson(res, 400, { error: "起始叫分比例须在 10%～50% 之间，以 5% 为步长" });
       }
       if (room.openingBidPercent !== nextPercent) {
         room.openingBidPercent = nextPercent;
@@ -9452,7 +9487,7 @@ function beginAdvancedHeroStage(room, kind) {
     .map((player) => player.id);
   if (!eligiblePlayerIds.length) return false;
   if (kind === "xiaoxu") room.xiaoxuReserveOffered = true;
-  room.boardHeroSkills.advanced = { kind, eligiblePlayerIds, completedPlayerIds: [], currentPlayerId: eligiblePlayerIds[0], drawnCardIds: [], deadlineAt: new Date(Date.now() + 20000).toISOString() };
+  room.boardHeroSkills.advanced = { kind, eligiblePlayerIds, completedPlayerIds: [], currentPlayerId: eligiblePlayerIds[0], drawnCardIds: [], deadlineAt: kind === "denghuang" ? null : new Date(Date.now() + 20000).toISOString() };
   room.stage = `${heroId}-skill`;
   room.phase = { denghuang: "界·灯皇选择随机换底", jiangzha: "界·蒋渣选择专属狗腿牌", xiaoxu: "神·小旭选择横置牌" }[kind];
   return true;
@@ -9463,7 +9498,7 @@ function completeAdvancedHeroChoice(room) {
   skill.completedPlayerIds.push(skill.currentPlayerId);
   skill.currentPlayerId = skill.eligiblePlayerIds.find((playerId) => !skill.completedPlayerIds.includes(playerId)) || null;
   skill.drawnCardIds = [];
-  skill.deadlineAt = skill.currentPlayerId ? new Date(Date.now() + 20000).toISOString() : null;
+  skill.deadlineAt = skill.currentPlayerId && skill.kind !== "denghuang" ? new Date(Date.now() + 20000).toISOString() : null;
   if (skill.currentPlayerId) return;
   clearBoardHeroSkillTimer(room);
   if (skill.kind === "denghuang") finishAdvancedBottomStage(room);
@@ -9487,7 +9522,7 @@ function submitAdvancedHeroChoice(room, player, action, cardIds) {
   const prefix = { denghuang: "jie-denghuang", jiangzha: "jie-jiangzha", xiaoxu: "shen-xiaoxu" }[skill.kind];
   if (room.stage !== `${prefix}-skill` || !action.startsWith(`${prefix}-`)) return { error: "当前不能发动该技能", status: 409 };
   if (skill.currentPlayerId !== player.id) return { error: "尚未轮到你操作", status: 403 };
-  if (Date.parse(skill.deadlineAt) <= Date.now()) return { error: "技能选择已超时", status: 409 };
+  if (skill.kind !== "denghuang" && Date.parse(skill.deadlineAt) <= Date.now()) return { error: "技能选择已超时", status: 409 };
   if (action === `${prefix}-pass`) {
     if (skill.drawnCardIds.length) return { error: "已经拿底，请先扣回相应数量的牌", status: 409 };
     completeAdvancedHeroChoice(room);
@@ -9503,6 +9538,7 @@ function submitAdvancedHeroChoice(room, player, action, cardIds) {
     player.hand = player.hand.filter((card) => !ids.has(card.id));
     room.heroRoundState ||= {};
     room.heroRoundState[player.id] = { ...room.heroRoundState[player.id], reservedCards: selected.cards, playedBeforeReturn: 0 };
+    if (selected.cards.length) recordBoardHeroSkillUse(room, player, "shen-xiaoxu", { cost: 0 }, { reservedCount: selected.cards.length });
     addEvent(room, `${player.name} 横置了${selected.cards.length}张牌`);
     completeAdvancedHeroChoice(room);
     return { ok: true };
@@ -9514,6 +9550,7 @@ function submitAdvancedHeroChoice(room, player, action, cardIds) {
     const card = selected.cards[0];
     room.heroRoundState ||= {};
     room.heroRoundState[player.id] = { ...room.heroRoundState[player.id], personalDoglegCard: publicCard(card) };
+    recordBoardHeroSkillUse(room, player, "jie-jiangzha", { cost: 0 }, { personalDoglegSelected: true });
     addEvent(room, `${player.name} 已重新选择自己的专属狗腿牌`);
     completeAdvancedHeroChoice(room);
     return { ok: true };
@@ -9527,8 +9564,8 @@ function submitAdvancedHeroChoice(room, player, action, cardIds) {
     room.kitty = room.kitty.filter((card) => !ids.has(card.id));
     player.hand = sortHand([...player.hand, ...cards]);
     skill.drawnCardIds = [...ids];
-    // A full return window starts after the server confirms the random draw.
-    skill.deadlineAt = new Date(Date.now() + 20000).toISOString();
+    skill.deadlineAt = null;
+    recordBoardHeroSkillUse(room, player, "jie-denghuang", { cost: 0 }, { exchangeCount: count });
     return { ok: true };
   }
   if (action === "jie-denghuang-bury") {

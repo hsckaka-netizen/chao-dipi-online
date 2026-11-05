@@ -91,6 +91,14 @@ export function chooseDraftHero(draft, playerId, heroId, { hire = false } = {}) 
     : entry.snapshots[heroId] : null };
 }
 
+// Reuse the manual selection constraints; never opt into a paid hire.
+export function automaticDraftChoice(draft, playerId, { at = Date.now(), random = randomInt, allowFreeHire = true } = {}) {
+  const choices = heroDraftSnapshot(draft, playerId, true, at).choices
+    .filter((hero) => hero.canSelect || (allowFreeHire && hero.canHire && hero.hireCost === 0));
+  const hero = choices.length ? choices[random(choices.length)] : null;
+  return { heroId: hero?.heroId || null, hire: Boolean(hero && !hero.owned) };
+}
+
 export function heroDraftComplete(draft) {
   return Object.values(draft.entries).every((entry) => entry.completed && !entry.hiring);
 }

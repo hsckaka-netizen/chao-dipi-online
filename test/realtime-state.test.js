@@ -254,20 +254,22 @@ test("host configures the opening bid from 10% to 50% before a score-bidding gam
   });
   assert.equal(invalidDoglegModeResponse.status, 400);
 
-  await jsonRequest(`${roomUrl}/opening-bid-percent`, {
-    method: "POST",
-    body: JSON.stringify({ ...credentials, percent: 50 })
-  });
+  for (const percent of [10, 15, 20, 25, 30, 35, 40, 45, 50]) {
+    await jsonRequest(`${roomUrl}/opening-bid-percent`, {
+      method: "POST", body: JSON.stringify({ ...credentials, percent })
+    });
+    assert.equal((await jsonRequest(`${roomUrl}/state?${stateParams}`)).openingBidPercent, percent);
+  }
   const configured = await jsonRequest(`${roomUrl}/state?${stateParams.toString()}`);
   assert.equal(configured.openingBidPercent, 50);
 
   const invalidResponse = await fetch(`${roomUrl}/opening-bid-percent`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ ...credentials, percent: 15 })
+    body: JSON.stringify({ ...credentials, percent: 17 })
   });
   assert.equal(invalidResponse.status, 400);
-  assert.match((await invalidResponse.json()).error, /10%、20%、30%、40% 或 50%/);
+  assert.match((await invalidResponse.json()).error, /10%～50%.*5%/);
 
   const removedModeResponse = await fetch(`${roomUrl}/call-mode`, {
     method: "POST",
