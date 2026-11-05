@@ -3627,124 +3627,89 @@ function renderGameModeControls() {
   const gameMode = state.gameMode === "pve" ? "pve" : "pvp";
   const playMode = state.playMode === "team" ? "team" : "brawl";
   return `
-    <span class="dogleg-count-control game-mode-control">
+    <div class="room-setting game-mode-control">
       <span class="meta">对战</span>
-      <span class="segmented">
-        <button type="button" data-action="game-mode" data-mode="pvp" class="${gameMode === "pvp" ? "" : "secondary"}" ${gameMode === "pvp" ? "disabled" : ""}>PVP</button>
-        <button type="button" data-action="game-mode" data-mode="pve" class="${gameMode === "pve" ? "" : "secondary"}" ${gameMode === "pve" ? "disabled" : ""}>PVE</button>
-      </span>
-    </span>
+      <div class="segmented" role="group" aria-label="对战模式">
+        <button type="button" data-action="game-mode" data-mode="pvp" aria-pressed="${gameMode === "pvp"}" class="${gameMode === "pvp" ? "" : "secondary"}" ${gameMode === "pvp" ? "disabled" : ""}>PVP</button>
+        <button type="button" data-action="game-mode" data-mode="pve" aria-pressed="${gameMode === "pve"}" class="${gameMode === "pve" ? "" : "secondary"}" ${gameMode === "pve" ? "disabled" : ""}>PVE</button>
+      </div>
+    </div>
     ${gameMode === "pvp" ? `
-      <span class="dogleg-count-control game-mode-control">
+      <div class="room-setting game-mode-control">
         <span class="meta">玩法</span>
-        <span class="segmented">
-          <button type="button" data-action="play-mode" data-mode="brawl" class="${playMode === "brawl" ? "" : "secondary"}" ${playMode === "brawl" ? "disabled" : ""}>乱斗</button>
-          <button type="button" data-action="play-mode" data-mode="team" class="${playMode === "team" ? "" : "secondary"}" ${playMode === "team" ? "disabled" : ""}>战队</button>
-        </span>
-      </span>
+        <div class="segmented" role="group" aria-label="PVP 玩法">
+          <button type="button" data-action="play-mode" data-mode="brawl" aria-pressed="${playMode === "brawl"}" class="${playMode === "brawl" ? "" : "secondary"}" ${playMode === "brawl" ? "disabled" : ""}>乱斗</button>
+          <button type="button" data-action="play-mode" data-mode="team" aria-pressed="${playMode === "team"}" class="${playMode === "team" ? "" : "secondary"}" ${playMode === "team" ? "disabled" : ""}>战队</button>
+        </div>
+      </div>
     ` : `
-      <span class="dogleg-count-control game-mode-control">
+      <div class="room-setting game-mode-control">
         <span class="meta">真人队</span>
-        <span class="segmented">
-          ${[2, 3, 4].map((count) => `<button type="button" data-action="pve-human-count" data-count="${count}" class="${Number(state.pveHumanCount) === count ? "" : "secondary"}" ${Number(state.pveHumanCount) === count ? "disabled" : ""}>${count}v${count}</button>`).join("")}
-        </span>
-      </span>
+        <div class="segmented" role="group" aria-label="PVE 对战人数">
+          ${[2, 3, 4].map((count) => `<button type="button" data-action="pve-human-count" data-count="${count}" aria-pressed="${Number(state.pveHumanCount) === count}" class="${Number(state.pveHumanCount) === count ? "" : "secondary"}" ${Number(state.pveHumanCount) === count ? "disabled" : ""}>${count}v${count}</button>`).join("")}
+        </div>
+      </div>
     `}
   `;
 }
 
 function renderTeamLobbyControls() {
   if (state.gameMode !== "pvp" || state.playMode !== "team") return "";
-  return `
-    <button type="button" class="secondary" data-action="random-teams">随机分队</button>
-    <label class="team-random-toggle">
-      <input type="checkbox" data-action="auto-random-teams" ${state.autoRandomTeams ? "checked" : ""}>
-      <span>每局结束自动随机</span>
-    </label>
-  `;
+  return `<div class="room-setting"><span class="meta">队伍安排</span>
+    <label class="team-random-toggle room-team-toggle">
+      <input type="checkbox" role="switch" data-action="auto-random-teams" ${state.autoRandomTeams ? "checked" : ""}>
+      <span>每局自动随机</span>
+    </label><small class="room-setting-hint">${state.autoRandomTeams ? "每局结束后重新分队" : "下一局保持当前队伍"}</small>
+  </div>`;
 }
 
 function renderOpeningBidPercentControl() {
   const options = [10, 15, 20, 25, 30, 35, 40, 45, 50];
   const current = options.includes(Number(state.openingBidPercent)) ? Number(state.openingBidPercent) : 40;
-  return `<label class="dogleg-count-control opening-bid-control"><span class="meta">起始叫分</span>
-    <select data-opening-bid-percent aria-label="起始叫分占总牌分比例">
+  return `<label class="room-setting opening-bid-control"><span class="meta">起始叫分</span>
+    <select data-room-setting data-action="opening-bid-percent" data-opening-bid-percent aria-label="起始叫分占总牌分比例">
       ${options.map((percent) => `<option value="${percent}" ${percent === current ? "selected" : ""}>${percent}%${percent === 40 ? "（默认）" : ""}</option>`).join("")}
-    </select><span class="meta">每档 5%</span></label>`;
+    </select><small class="room-setting-hint">占总牌分的比例，每档 5%</small></label>`;
 }
 
 function renderBankerScoreModeControl() {
   const current = state.bankerScoreMode === "team-average" ? "team-average" : "banker-remainder";
-  const options = [
-    { id: "banker-remainder", label: "庄家承余", title: "狗腿与闲家单人积分相反，庄家承担庄队剩余积分" },
-    { id: "team-average", label: "庄队均摊", title: "庄家与狗腿平均分摊庄队积分" }
-  ];
-  return `
-    <span class="dogleg-count-control banker-score-mode-control">
-      <span class="meta">庄腿积分</span>
-      <span class="segmented" aria-label="庄腿积分模式">
-        ${options.map((option) => `
-          <button
-            type="button"
-            class="${option.id === current ? "" : "secondary"}"
-            data-action="banker-score-mode"
-            data-mode="${escapeHtml(option.id)}"
-            title="${escapeHtml(option.title)}"
-            ${option.id === current ? "disabled" : ""}
-          >${escapeHtml(option.label)}</button>
-        `).join("")}
-      </span>
-    </span>
-  `;
+  return `<label class="room-setting"><span class="meta">庄腿积分</span>
+    <select data-room-setting data-action="banker-score-mode" aria-label="庄腿积分模式">
+      <option value="banker-remainder" ${current === "banker-remainder" ? "selected" : ""}>庄家承余</option>
+      <option value="team-average" ${current === "team-average" ? "selected" : ""}>庄队均摊</option>
+    </select><small class="room-setting-hint">${current === "team-average" ? "庄家与狗腿平均分摊积分" : "庄家承担庄队剩余积分"}</small></label>`;
 }
 
 function renderDoglegCountControl() {
   const max = Number.isFinite(state.setup?.doglegMax) ? state.setup.doglegMax : Math.max(0, state.players.length - 3);
   const current = Math.max(0, Math.min(max, state.setup?.doglegNeeded ?? 0));
-  const buttons = Array.from({ length: max + 1 }, (_, count) => `
-    <button
-      type="button"
-      class="${count === current ? "" : "secondary"}"
-      data-action="dogleg-count"
-      data-count="${count}"
-      ${count === current ? "disabled" : ""}
-    >${count}</button>
-  `).join("");
-  return `
-    <span class="dogleg-count-control">
-      <span class="meta">狗腿</span>
-      <span class="segmented">${buttons}</span>
-    </span>
-  `;
+  return `<label class="room-setting"><span class="meta">狗腿人数</span>
+    <select data-room-setting data-action="dogleg-count" aria-label="狗腿人数">
+      ${Array.from({ length: max + 1 }, (_, count) => `<option value="${count}" ${count === current ? "selected" : ""}>${count} 人</option>`).join("")}
+    </select></label>`;
 }
 
 function renderDoglegModeControl() {
   const current = ["traditional", "dynamic", "hidden", "random-order"].includes(state.doglegMode)
-    ? state.doglegMode
-    : "traditional";
+    ? state.doglegMode : "traditional";
   const options = [
     { id: "traditional", label: "传统狗腿", title: "由庄家选择统一狗腿牌" },
     { id: "dynamic", label: "动态狗腿", title: "每名非庄家玩家独立随机狗腿牌，按标记数实时排名" },
     { id: "hidden", label: "暗狗腿", title: "随机确定固定狗腿，专属狗腿牌打出后公开身份" },
     { id: "random-order", label: "顺位狗腿", title: "随机同色同点牌组或正副皇牌组，并随机指定生效出牌顺位" }
   ];
-  return `
-    <span class="dogleg-count-control dogleg-mode-control">
-      <span class="meta">狗腿机制</span>
-      <span class="segmented" aria-label="狗腿机制">
-        ${options.map((option) => `
-          <button
-            type="button"
-            class="${option.id === current ? "" : "secondary"}"
-            data-action="dogleg-mode"
-            data-mode="${escapeHtml(option.id)}"
-            title="${escapeHtml(option.title)}"
-            ${option.id === current ? "disabled" : ""}
-          >${escapeHtml(option.label)}</button>
-        `).join("")}
-      </span>
-    </span>
-  `;
+  return `<label class="room-setting"><span class="meta">狗腿机制</span>
+    <select data-room-setting data-action="dogleg-mode" aria-label="狗腿机制" aria-describedby="room-dogleg-mode-hint">
+      ${options.map((option) => `<option value="${option.id}" ${option.id === current ? "selected" : ""}>${option.label}</option>`).join("")}
+    </select><small id="room-dogleg-mode-hint" class="room-setting-hint">${options.find((option) => option.id === current).title}</small></label>`;
+}
+
+function renderRoomSettings() {
+  return `<div class="room-settings-grid" role="group" aria-label="房间规则设置">
+    ${renderGameModeControls()}
+    ${state.playMode !== "team" ? `${renderOpeningBidPercentControl()}${renderBankerScoreModeControl()}${renderDoglegModeControl()}${renderDoglegCountControl()}` : renderTeamLobbyControls()}
+  </div>`;
 }
 
 function lobbyEmptyText(waitingNextRound) {
@@ -6635,14 +6600,12 @@ function renderRoom() {
               <button type="button" class="secondary" data-action="open-players">玩家</button>
               ${state.status === "dealt" || state.events.length ? `<button type="button" class="secondary" data-action="open-history">牌局记录 ${state.trickHistory.length} 轮</button>` : ""}
               ${state.canViewKitty ? `<button type="button" class="secondary" data-action="open-kitty">查看底牌</button>` : ""}
+            </div>
+            ${!spectating && state.viewer.host && configuringLobby ? renderRoomSettings() : ""}
+            <div class="row room-lobby-actions">
               ${spectating ? "" : `
-                ${state.viewer.host && configuringLobby ? renderGameModeControls() : ""}
-                ${state.viewer.host && configuringLobby && state.playMode !== "team" ? renderOpeningBidPercentControl() : ""}
-                ${state.viewer.host && configuringLobby && state.playMode !== "team" ? renderBankerScoreModeControl() : ""}
-                ${state.viewer.host && configuringLobby && state.playMode !== "team" ? renderDoglegModeControl() : ""}
-                ${state.viewer.host && configuringLobby && state.playMode !== "team" ? renderDoglegCountControl() : ""}
                 ${inLobbyView ? renderReadyControls({ waitingNextRound }) : ""}
-                ${state.viewer.host && configuringLobby ? renderTeamLobbyControls() : ""}
+                ${state.viewer.host && configuringLobby && state.gameMode === "pvp" && state.playMode === "team" ? `<button type="button" class="secondary" data-action="random-teams">随机分队</button>` : ""}
                 ${state.viewer.host && configuringLobby && state.gameMode === "pvp" && state.playMode === "brawl" ? `<button type="button" class="secondary" data-action="add-robot" ${state.players.length >= state.maxPlayers ? "disabled" : ""}>添加机器人</button>` : ""}
                 ${state.viewer.host && configuringLobby && state.playMode === "brawl" ? `<button type="button" class="secondary" data-action="random-seats" ${state.players.length < 2 ? "disabled" : ""}>随机座位</button>` : ""}
                 ${state.viewer.host && state.status === "lobby" ? `<button type="button" data-action="start" ${canStart() ? "" : "disabled"}>开始选将</button>` : ""}
@@ -9541,8 +9504,13 @@ document.addEventListener("submit", (event) => {
 });
 
 document.addEventListener("change", (event) => {
-  if (event.target.matches("[data-opening-bid-percent]")) {
-    setOpeningBidPercent(Number(event.target.value));
+  const roomSetting = event.target.closest("select[data-room-setting]");
+  if (roomSetting) {
+    const action = roomSetting.dataset.action;
+    if (action === "opening-bid-percent") setOpeningBidPercent(Number(roomSetting.value));
+    if (action === "banker-score-mode") setBankerScoreMode(roomSetting.value);
+    if (action === "dogleg-mode") setDoglegMode(roomSetting.value);
+    if (action === "dogleg-count") setDoglegCount(Number(roomSetting.value));
     return;
   }
   const exchangeForm = event.target.closest('[data-form="war-effort-exchange"]');
@@ -9628,6 +9596,7 @@ document.addEventListener("toggle", (event) => {
 }, true);
 
 document.addEventListener("click", (event) => {
+  if (event.target.closest("select[data-room-setting]")) return;
   const action = event.target.closest("[data-action]")?.dataset.action;
   if (!action) {
     const selectionCleared = clearSelectionFromPageClick(event);
